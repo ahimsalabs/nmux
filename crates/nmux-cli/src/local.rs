@@ -1511,10 +1511,13 @@ impl ClientPaneSurface {
         if update.patch_kind == Some(protocol::PatchKind::FullRefreshRequired) {
             return Err("surface patch requires full refresh".into());
         }
-        if update.patch_kind != Some(protocol::PatchKind::ReplaceRows) {
+        if update.patch_kind == Some(protocol::PatchKind::CursorOnly) {
             self.cursor = update.cursor;
             self.version = update.version;
             return Ok(());
+        }
+        if update.patch_kind != Some(protocol::PatchKind::ReplaceRows) {
+            return Err(format!("unsupported surface patch kind: {:?}", update.patch_kind).into());
         }
         self.apply_rows(&update.row_updates)?;
         self.cursor = update.cursor;
@@ -2242,6 +2245,27 @@ mod tests {
         assert_eq!(surface.version, 2);
         assert_eq!(surface.render_text(), "top\nbottom");
         assert_eq!(surface.cursor, patch.cursor);
+    }
+
+    #[test]
+    fn client_surface_rejects_mode_only_patch_without_mode_fields() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top")],
+        );
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        patch.patch_kind = Some(protocol::PatchKind::ModeOnly);
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("unsupported mode patch");
+
+        assert!(err.to_string().contains("unsupported surface patch kind"));
+        assert_eq!(surface.version, 1);
+        assert_eq!(surface.render_text(), "top");
     }
 
     #[test]

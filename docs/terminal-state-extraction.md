@@ -47,7 +47,8 @@ backend terminal state into the same nmux objects:
 - Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; row
   changes should use `PatchKind::ReplaceRows`; changes that cannot be expressed
   by the current patch schema, including mode-only updates before mode fields
-  exist, should force a full snapshot.
+  exist, should force a full snapshot. Clients must reject unsupported patch
+  kinds rather than applying them as cursor-only updates.
 
 ## Known Schema Gaps
 
