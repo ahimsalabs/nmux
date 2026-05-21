@@ -8,3 +8,4 @@ repository.workspace = true
 [dependencies]
 flatbuffers = "=25.12.19"
 nmux-proto = { path = "../nmux-proto" }
+portable-pty = "0.9.0"

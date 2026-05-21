@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+
+use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostSpec {
@@ -132,6 +134,19 @@ struct LocalProcess {
     stdin: Option<ChildStdin>,
 }
 
+#[derive(Default)]
+pub struct LocalPtyHost {
+    processes: HashMap<String, LocalPtyProcess>,
+}
+
+struct LocalPtyProcess {
+    process: PaneProcess,
+    child: Box<dyn PtyChild + Send>,
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    reader: Box<dyn Read + Send>,
+}
+
 impl LocalProcessHost {
     fn process_mut(&mut self, pane_id: &str) -> Result<&mut LocalProcess, HostError> {
         self.processes
@@ -148,6 +163,152 @@ impl LocalProcessHost {
             operation: operation.to_owned(),
             message: error.to_string(),
         }
+    }
+}
+
+impl LocalPtyHost {
+    fn process_mut(&mut self, pane_id: &str) -> Result<&mut LocalPtyProcess, HostError> {
+        self.processes
+            .get_mut(pane_id)
+            .filter(|process| process.process.status == ProcessStatus::Running)
+            .ok_or_else(|| HostError::NotRunning {
+                pane_id: pane_id.to_owned(),
+            })
+    }
+
+    fn io_error(pane_id: &str, operation: &str, error: impl ToString) -> HostError {
+        HostError::Io {
+            pane_id: pane_id.to_owned(),
+            operation: operation.to_owned(),
+            message: error.to_string(),
+        }
+    }
+
+    pub fn read_available(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
+        let process = self.process_mut(pane_id)?;
+        process
+            .reader
+            .read(bytes)
+            .map_err(|error| Self::io_error(pane_id, "read_available", error))
+    }
+}
+
+impl ProcessHost for LocalPtyHost {
+    fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
+        if spec.kind != HostKind::Local {
+            return Err(HostError::UnsupportedHostKind {
+                host_id: spec.id.clone(),
+                kind: spec.kind.clone(),
+            });
+        }
+
+        if let Some(process) = self.processes.get(pane_id) {
+            if process.process.status == ProcessStatus::Running {
+                return Err(HostError::AlreadyRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+        }
+
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| Self::io_error(pane_id, "openpty", error))?;
+        let mut command = CommandBuilder::new(&spec.command.program);
+        command.args(&spec.command.args);
+        if let Some(working_dir) = &spec.command.working_dir {
+            command.cwd(working_dir);
+        }
+
+        let child = pair
+            .slave
+            .spawn_command(command)
+            .map_err(|error| Self::io_error(pane_id, "start", error))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|error| Self::io_error(pane_id, "take_writer", error))?;
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|error| Self::io_error(pane_id, "try_clone_reader", error))?;
+        let process = PaneProcess {
+            pane_id: pane_id.to_owned(),
+            host_id: spec.id.clone(),
+            status: ProcessStatus::Running,
+        };
+
+        self.processes.insert(
+            pane_id.to_owned(),
+            LocalPtyProcess {
+                process: process.clone(),
+                child,
+                master: pair.master,
+                writer,
+                reader,
+            },
+        );
+        Ok(process)
+    }
+
+    fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
+        let process = self.process_mut(pane_id)?;
+        process
+            .writer
+            .write_all(bytes)
+            .and_then(|()| process.writer.flush())
+            .map_err(|error| Self::io_error(pane_id, "write_input", error))
+    }
+
+    fn resize_pane(&mut self, pane_id: &str, cols: u32, rows: u32) -> Result<(), HostError> {
+        let process = self.process_mut(pane_id)?;
+        process
+            .master
+            .resize(PtySize {
+                rows: rows as u16,
+                cols: cols as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| Self::io_error(pane_id, "resize_pane", error))
+    }
+
+    fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError> {
+        let mut process = self
+            .processes
+            .remove(pane_id)
+            .ok_or_else(|| HostError::NotRunning {
+                pane_id: pane_id.to_owned(),
+            })?;
+        if process.process.status != ProcessStatus::Running {
+            return Err(HostError::NotRunning {
+                pane_id: pane_id.to_owned(),
+            });
+        }
+
+        if process
+            .child
+            .try_wait()
+            .map_err(|error| Self::io_error(pane_id, "stop", error))?
+            .is_none()
+        {
+            process
+                .child
+                .kill()
+                .map_err(|error| Self::io_error(pane_id, "stop", error))?;
+        }
+        process
+            .child
+            .wait()
+            .map_err(|error| Self::io_error(pane_id, "stop", error))?;
+
+        process.process.status = ProcessStatus::Exited;
+        Ok(process.process)
     }
 }
 
@@ -378,8 +539,8 @@ pub enum HostEvent {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandSpec, HostError, HostEvent, HostKind, HostSpec, LocalProcessHost, PlanningHost,
-        ProcessHost, ProcessStatus, UnsupportedSandboxHost,
+        CommandSpec, HostError, HostEvent, HostKind, HostSpec, LocalProcessHost, LocalPtyHost,
+        PlanningHost, ProcessHost, ProcessStatus, UnsupportedSandboxHost,
     };
 
     #[test]
@@ -546,5 +707,30 @@ mod tests {
             })
         );
         host.stop_pane("pane-1").expect("stop pane");
+    }
+
+    #[test]
+    fn local_pty_host_starts_resizes_writes_and_stops_command() {
+        let spec = HostSpec::local(
+            "local",
+            CommandSpec::new("sh").with_args(["-c", "cat >/dev/null"]),
+        );
+        let mut host = LocalPtyHost::default();
+
+        let process = host.start_pane("pane-1", &spec).expect("start pty pane");
+        assert_eq!(process.status, ProcessStatus::Running);
+
+        host.resize_pane("pane-1", 100, 30).expect("resize pty");
+        host.write_input("pane-1", b"hello\r")
+            .expect("write pty input");
+
+        let stopped = host.stop_pane("pane-1").expect("stop pty pane");
+        assert_eq!(stopped.status, ProcessStatus::Exited);
+        assert_eq!(
+            host.resize_pane("pane-1", 80, 24),
+            Err(HostError::NotRunning {
+                pane_id: "pane-1".to_owned(),
+            })
+        );
     }
 }
