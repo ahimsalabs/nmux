@@ -14,9 +14,10 @@ M0 defines the smallest useful state-sync envelope:
 - `PaneSurfacePatch` for row, cursor, or mode updates against a known surface version.
 - `InputEvent` for key, mouse, and paste input from an actor to a pane.
 - `ResizeIntent` for client-originated size requests.
+- `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time.
 - `Error` for protocol-level failures.
 
-Scrollback, presence, permissions, sandbox hosts, adapters, and image-specific payloads are intentionally outside M0. They should be added as new envelope bodies when their object model is clear.
+Permissions, sandbox hosts, adapters, and image-specific payloads are intentionally outside M0. They should be added as new envelope bodies when their object model is clear.
 
 ## State Ownership
 

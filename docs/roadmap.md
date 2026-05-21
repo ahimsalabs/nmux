@@ -48,10 +48,10 @@ Done:
 - The `nmux` CLI renders through client-side pane surface state and can persist that state with `--state` so a later attach sends known pane versions and can apply a server patch.
 - The `nmux --follow` local loop keeps one client render state across repeated reconnects, applies snapshots/patches, and treats current-version reconnects as no render update.
 - ADR 0008 for promoting the local attach prelude into a public FlatBuffers `AttachRequest`.
+- `AttachRequest` and known pane surface versions are public schema objects, and the local attach handshake uses a FlatBuffers envelope instead of the text prelude.
 
 Next:
 
-- Add `AttachRequest` and known pane surface versions to the FlatBuffers schema and migrate the local attach handshake to it.
 - Track upstream Ghostty/libghostty API work needed for external surface hydration.
 
 ## Milestones

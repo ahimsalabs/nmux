@@ -15,5 +15,9 @@ mod tests {
             protocol::EnvelopeBody::WorkspaceTreeSnapshot.variant_name(),
             Some("WorkspaceTreeSnapshot")
         );
+        assert_eq!(
+            protocol::EnvelopeBody::AttachRequest.variant_name(),
+            Some("AttachRequest")
+        );
     }
 }

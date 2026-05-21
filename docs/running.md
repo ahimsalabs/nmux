@@ -1,6 +1,6 @@
 # Running nmux
 
-The current prototype is a local attach skeleton with a real local PTY host behind the daemon. `nmuxd` owns one workspace tree, one backend-owned pane surface, one scrollback object, and one attached actor. The client sends a local-only attach prelude with actor ID, attach mode, and known pane surface versions. The daemon starts the pane command in a local PTY, polls already-pumped PTY output into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`, a `PresenceUpdate`, and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. `nmux` applies those state objects to a client-side pane surface render state before printing. After rendering, it sends one basic `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
+The current prototype is a local attach skeleton with a real local PTY host behind the daemon. `nmuxd` owns one workspace tree, one backend-owned pane surface, one scrollback object, and one attached actor. The client sends an `AttachRequest` with actor ID, attach mode, focused pane, and known pane surface versions. The daemon starts the pane command in a local PTY, polls already-pumped PTY output into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`, a `PresenceUpdate`, and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. `nmux` applies those state objects to a client-side pane surface render state before printing. After rendering, it sends one basic `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
 
 Run all checks:
 
@@ -90,7 +90,7 @@ This is not a terminal emulator yet. The interim text surface only converts simp
 
 ## Presence And Attach Modes
 
-The local attach prelude currently carries actor ID and attach mode. The daemon replies with `PresenceUpdate`.
+The FlatBuffers `AttachRequest` carries actor ID, user metadata, focused pane, and attach mode. The daemon replies with `PresenceUpdate`.
 
 Current behavior:
 
@@ -104,7 +104,7 @@ The local skeleton currently accepts clients sequentially. Simultaneous multi-cl
 
 ## Reconnect Behavior
 
-The reconnect request prelude is intentionally local-only and not part of [schema/nmux.fbs](../schema/nmux.fbs) yet.
+Reconnect metadata is carried by `AttachRequest.known_surfaces`.
 
 Current behavior:
 
@@ -135,9 +135,9 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --key $
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nmux-client.state --no-input --scrollback-start 1 --scrollback-count 4
 ```
 
-The final attach sends the cached `pane-1` surface version in the local prelude. If the daemon has exactly one newer surface version, it sends `PaneSurfacePatch`; `nmux` applies that patch to the persisted client surface and updates `/tmp/nmux-client.state`.
+The final attach sends the cached `pane-1` surface version in `AttachRequest`. If the daemon has exactly one newer surface version, it sends `PaneSurfacePatch`; `nmux` applies that patch to the persisted client surface and updates `/tmp/nmux-client.state`.
 
-This proves the reconnect decision and client-side patch rendering before promoting attach metadata into the public FlatBuffers schema.
+This proves the reconnect decision and client-side patch rendering through the public FlatBuffers attach metadata.
 
 ## Scrollback Behavior
 

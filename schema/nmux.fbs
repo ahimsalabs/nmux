@@ -230,6 +230,20 @@ table Error {
   retryable:bool;
 }
 
+table KnownPaneSurfaceVersion {
+  pane_id:string;
+  version:ulong;
+}
+
+table AttachRequest {
+  actor_id:string;
+  user_id:string;
+  display_name:string;
+  mode:AttachMode = ReadOnly;
+  focused_pane_id:string;
+  known_surfaces:[KnownPaneSurfaceVersion];
+}
+
 union EnvelopeBody {
   WorkspaceTreeSnapshot,
   PaneSurfaceSnapshot,
@@ -240,6 +254,7 @@ union EnvelopeBody {
   ScrollbackFetch,
   ScrollbackChunk,
   PresenceUpdate,
+  AttachRequest,
 }
 
 table Envelope {

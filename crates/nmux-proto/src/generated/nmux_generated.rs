@@ -1093,10 +1093,10 @@ impl ::flatbuffers::SimpleToVerifyInSlice for PresenceKind {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_ENVELOPE_BODY: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_ENVELOPE_BODY: u8 = 9;
+pub const ENUM_MAX_ENVELOPE_BODY: u8 = 10;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 10] = [
+pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 11] = [
   EnvelopeBody::NONE,
   EnvelopeBody::WorkspaceTreeSnapshot,
   EnvelopeBody::PaneSurfaceSnapshot,
@@ -1107,6 +1107,7 @@ pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 10] = [
   EnvelopeBody::ScrollbackFetch,
   EnvelopeBody::ScrollbackChunk,
   EnvelopeBody::PresenceUpdate,
+  EnvelopeBody::AttachRequest,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -1124,9 +1125,10 @@ impl EnvelopeBody {
   pub const ScrollbackFetch: Self = Self(7);
   pub const ScrollbackChunk: Self = Self(8);
   pub const PresenceUpdate: Self = Self(9);
+  pub const AttachRequest: Self = Self(10);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 9;
+  pub const ENUM_MAX: u8 = 10;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::NONE,
     Self::WorkspaceTreeSnapshot,
@@ -1138,6 +1140,7 @@ impl EnvelopeBody {
     Self::ScrollbackFetch,
     Self::ScrollbackChunk,
     Self::PresenceUpdate,
+    Self::AttachRequest,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -1152,6 +1155,7 @@ impl EnvelopeBody {
       Self::ScrollbackFetch => Some("ScrollbackFetch"),
       Self::ScrollbackChunk => Some("ScrollbackChunk"),
       Self::PresenceUpdate => Some("PresenceUpdate"),
+      Self::AttachRequest => Some("AttachRequest"),
       _ => None,
     }
   }
@@ -4352,6 +4356,300 @@ impl ::core::fmt::Debug for Error<'_> {
       ds.finish()
   }
 }
+pub enum KnownPaneSurfaceVersionOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct KnownPaneSurfaceVersion<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for KnownPaneSurfaceVersion<'a> {
+  type Inner = KnownPaneSurfaceVersion<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> KnownPaneSurfaceVersion<'a> {
+  pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_VERSION: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    KnownPaneSurfaceVersion { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args KnownPaneSurfaceVersionArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<KnownPaneSurfaceVersion<'bldr>> {
+    let mut builder = KnownPaneSurfaceVersionBuilder::new(_fbb);
+    builder.add_version(args.version);
+    if let Some(x) = args.pane_id { builder.add_pane_id(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn pane_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(KnownPaneSurfaceVersion::VT_PANE_ID, None)}
+  }
+  #[inline]
+  pub fn version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(KnownPaneSurfaceVersion::VT_VERSION, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for KnownPaneSurfaceVersion<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
+     .visit_field::<u64>("version", Self::VT_VERSION, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct KnownPaneSurfaceVersionArgs<'a> {
+    pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub version: u64,
+}
+impl<'a> Default for KnownPaneSurfaceVersionArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    KnownPaneSurfaceVersionArgs {
+      pane_id: None,
+      version: 0,
+    }
+  }
+}
+
+pub struct KnownPaneSurfaceVersionBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> KnownPaneSurfaceVersionBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(KnownPaneSurfaceVersion::VT_PANE_ID, pane_id);
+  }
+  #[inline]
+  pub fn add_version(&mut self, version: u64) {
+    self.fbb_.push_slot::<u64>(KnownPaneSurfaceVersion::VT_VERSION, version, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> KnownPaneSurfaceVersionBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    KnownPaneSurfaceVersionBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<KnownPaneSurfaceVersion<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for KnownPaneSurfaceVersion<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("KnownPaneSurfaceVersion");
+      ds.field("pane_id", &self.pane_id());
+      ds.field("version", &self.version());
+      ds.finish()
+  }
+}
+pub enum AttachRequestOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct AttachRequest<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for AttachRequest<'a> {
+  type Inner = AttachRequest<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> AttachRequest<'a> {
+  pub const VT_ACTOR_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_USER_ID: ::flatbuffers::VOffsetT = 6;
+  pub const VT_DISPLAY_NAME: ::flatbuffers::VOffsetT = 8;
+  pub const VT_MODE: ::flatbuffers::VOffsetT = 10;
+  pub const VT_FOCUSED_PANE_ID: ::flatbuffers::VOffsetT = 12;
+  pub const VT_KNOWN_SURFACES: ::flatbuffers::VOffsetT = 14;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    AttachRequest { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args AttachRequestArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<AttachRequest<'bldr>> {
+    let mut builder = AttachRequestBuilder::new(_fbb);
+    if let Some(x) = args.known_surfaces { builder.add_known_surfaces(x); }
+    if let Some(x) = args.focused_pane_id { builder.add_focused_pane_id(x); }
+    if let Some(x) = args.display_name { builder.add_display_name(x); }
+    if let Some(x) = args.user_id { builder.add_user_id(x); }
+    if let Some(x) = args.actor_id { builder.add_actor_id(x); }
+    builder.add_mode(args.mode);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn actor_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AttachRequest::VT_ACTOR_ID, None)}
+  }
+  #[inline]
+  pub fn user_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AttachRequest::VT_USER_ID, None)}
+  }
+  #[inline]
+  pub fn display_name(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AttachRequest::VT_DISPLAY_NAME, None)}
+  }
+  #[inline]
+  pub fn mode(&self) -> AttachMode {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<AttachMode>(AttachRequest::VT_MODE, Some(AttachMode::ReadOnly)).unwrap()}
+  }
+  #[inline]
+  pub fn focused_pane_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AttachRequest::VT_FOCUSED_PANE_ID, None)}
+  }
+  #[inline]
+  pub fn known_surfaces(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion>>>>(AttachRequest::VT_KNOWN_SURFACES, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for AttachRequest<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("actor_id", Self::VT_ACTOR_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("user_id", Self::VT_USER_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("display_name", Self::VT_DISPLAY_NAME, false)?
+     .visit_field::<AttachMode>("mode", Self::VT_MODE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("focused_pane_id", Self::VT_FOCUSED_PANE_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion>>>>("known_surfaces", Self::VT_KNOWN_SURFACES, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct AttachRequestArgs<'a> {
+    pub actor_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub user_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub display_name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub mode: AttachMode,
+    pub focused_pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub known_surfaces: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion<'a>>>>>,
+}
+impl<'a> Default for AttachRequestArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    AttachRequestArgs {
+      actor_id: None,
+      user_id: None,
+      display_name: None,
+      mode: AttachMode::ReadOnly,
+      focused_pane_id: None,
+      known_surfaces: None,
+    }
+  }
+}
+
+pub struct AttachRequestBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> AttachRequestBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_actor_id(&mut self, actor_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_ACTOR_ID, actor_id);
+  }
+  #[inline]
+  pub fn add_user_id(&mut self, user_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_USER_ID, user_id);
+  }
+  #[inline]
+  pub fn add_display_name(&mut self, display_name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_DISPLAY_NAME, display_name);
+  }
+  #[inline]
+  pub fn add_mode(&mut self, mode: AttachMode) {
+    self.fbb_.push_slot::<AttachMode>(AttachRequest::VT_MODE, mode, AttachMode::ReadOnly);
+  }
+  #[inline]
+  pub fn add_focused_pane_id(&mut self, focused_pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_FOCUSED_PANE_ID, focused_pane_id);
+  }
+  #[inline]
+  pub fn add_known_surfaces(&mut self, known_surfaces: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_KNOWN_SURFACES, known_surfaces);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> AttachRequestBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    AttachRequestBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<AttachRequest<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for AttachRequest<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("AttachRequest");
+      ds.field("actor_id", &self.actor_id());
+      ds.field("user_id", &self.user_id());
+      ds.field("display_name", &self.display_name());
+      ds.field("mode", &self.mode());
+      ds.field("focused_pane_id", &self.focused_pane_id());
+      ds.field("known_surfaces", &self.known_surfaces());
+      ds.finish()
+  }
+}
 pub enum EnvelopeOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -4590,6 +4888,21 @@ impl<'a> Envelope<'a> {
     }
   }
 
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_attach_request(&self) -> Option<AttachRequest<'a>> {
+    if self.body_type() == EnvelopeBody::AttachRequest {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { AttachRequest::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
 }
 
 impl ::flatbuffers::Verifiable for Envelope<'_> {
@@ -4615,6 +4928,7 @@ impl ::flatbuffers::Verifiable for Envelope<'_> {
           EnvelopeBody::ScrollbackFetch => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ScrollbackFetch>>("EnvelopeBody::ScrollbackFetch", pos),
           EnvelopeBody::ScrollbackChunk => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ScrollbackChunk>>("EnvelopeBody::ScrollbackChunk", pos),
           EnvelopeBody::PresenceUpdate => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<PresenceUpdate>>("EnvelopeBody::PresenceUpdate", pos),
+          EnvelopeBody::AttachRequest => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<AttachRequest>>("EnvelopeBody::AttachRequest", pos),
           _ => Ok(()),
         }
      })?
@@ -4769,6 +5083,13 @@ impl ::core::fmt::Debug for Envelope<'_> {
         },
         EnvelopeBody::PresenceUpdate => {
           if let Some(x) = self.body_as_presence_update() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::AttachRequest => {
+          if let Some(x) = self.body_as_attach_request() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")

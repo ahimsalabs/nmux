@@ -4,9 +4,12 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
+use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{Actor, AttachMode, Session};
-use nmux_proto::{protocol, wire};
+use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
+
+const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
 
 pub trait ProcessHostOutput: ProcessHost + ProcessOutput {}
 
@@ -204,7 +207,10 @@ pub fn attach_with_known_surfaces(
         path,
         AttachRequest {
             actor_id: "local-actor".to_owned(),
+            user_id: "local-user".to_owned(),
+            display_name: "local".to_owned(),
             mode: AttachMode::ReadWrite,
+            focused_pane_id: Some("pane-1".to_owned()),
             known_surfaces,
         },
     )
@@ -223,7 +229,10 @@ impl Default for AttachOptions {
         Self {
             request: AttachRequest {
                 actor_id: "local-actor".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
             },
             input_text: Some("a".to_owned()),
@@ -602,114 +611,137 @@ pub fn scrollback_chunk_from_frame(
 }
 
 pub fn write_attach_request<W: Write>(writer: &mut W, request: &AttachRequest) -> io::Result<()> {
-    let payload = request.encode();
-    let len = u32::try_from(payload.len()).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "local attach request exceeds u32 length",
-        )
-    })?;
-    writer.write_all(&len.to_le_bytes())?;
-    writer.write_all(payload.as_bytes())
+    let frame = request.frame();
+    wire::write_frame(writer, &frame, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)
 }
 
 pub fn read_attach_request<R: Read>(reader: &mut R) -> io::Result<AttachRequest> {
-    let mut len = [0_u8; 4];
-    reader.read_exact(&mut len)?;
-    let len = u32::from_le_bytes(len) as usize;
-    if len > 4096 {
+    let frame = wire::read_frame(reader, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)?;
+    attach_request_from_frame(&frame)
+}
+
+fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid attach frame: {err}"),
+        )
+    })?;
+    if envelope.body_type() != protocol::EnvelopeBody::AttachRequest {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "local attach request exceeds 4096 byte limit",
+            format!(
+                "unexpected attach envelope body: {:?}",
+                envelope.body_type()
+            ),
         ));
     }
 
-    let mut payload = vec![0_u8; len];
-    reader.read_exact(&mut payload)?;
-    let payload = String::from_utf8(payload)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-    AttachRequest::decode(&payload)
+    let request = envelope
+        .body_as_attach_request()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing attach body"))?;
+    let known = request.known_surfaces();
+    let mut known_surfaces = Vec::with_capacity(known.map(|known| known.len()).unwrap_or(0));
+    if let Some(known) = known {
+        for index in 0..known.len() {
+            let surface = known.get(index);
+            known_surfaces.push(KnownSurfaceVersion {
+                pane_id: surface.pane_id().unwrap_or_default().to_owned(),
+                version: surface.version(),
+            });
+        }
+    }
+
+    Ok(AttachRequest {
+        actor_id: request.actor_id().unwrap_or("local-actor").to_owned(),
+        user_id: request.user_id().unwrap_or("local-user").to_owned(),
+        display_name: request.display_name().unwrap_or("local").to_owned(),
+        mode: attach_mode_from_protocol(request.mode()),
+        focused_pane_id: request.focused_pane_id().map(ToOwned::to_owned),
+        known_surfaces,
+    })
+}
+
+fn wire_error_to_io(err: wire::WireError) -> io::Error {
+    match err {
+        wire::WireError::Io(err) => err,
+        err => io::Error::new(io::ErrorKind::InvalidData, err),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachRequest {
     pub actor_id: String,
+    pub user_id: String,
+    pub display_name: String,
     pub mode: AttachMode,
+    pub focused_pane_id: Option<String>,
     pub known_surfaces: Vec<KnownSurfaceVersion>,
 }
 
 impl AttachRequest {
-    fn encode(&self) -> String {
-        let mut payload = String::from("NMUX_LOCAL_ATTACH 1\n");
-        payload.push_str("actor ");
-        payload.push_str(&self.actor_id);
-        payload.push('\n');
-        payload.push_str("mode ");
-        payload.push_str(attach_mode_name(self.mode));
-        payload.push('\n');
+    fn frame(&self) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let mut known_surface_offsets = Vec::with_capacity(self.known_surfaces.len());
         for surface in &self.known_surfaces {
-            payload.push_str("surface ");
-            payload.push_str(&surface.pane_id);
-            payload.push(' ');
-            payload.push_str(&surface.version.to_string());
-            payload.push('\n');
+            let pane_id = builder.create_string(&surface.pane_id);
+            let known_surface = protocol::KnownPaneSurfaceVersion::create(
+                &mut builder,
+                &protocol::KnownPaneSurfaceVersionArgs {
+                    pane_id: Some(pane_id),
+                    version: surface.version,
+                },
+            );
+            known_surface_offsets.push(known_surface);
         }
-        payload
-    }
+        let known_surfaces = builder.create_vector(&known_surface_offsets);
 
-    fn decode(payload: &str) -> io::Result<Self> {
-        let mut lines = payload.lines();
-        if lines.next() != Some("NMUX_LOCAL_ATTACH 1") {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid local attach request header",
-            ));
-        }
+        let actor_id = builder.create_string(&self.actor_id);
+        let user_id = builder.create_string(&self.user_id);
+        let display_name = builder.create_string(&self.display_name);
+        let focused_pane_id = self
+            .focused_pane_id
+            .as_ref()
+            .map(|focused_pane_id| builder.create_string(focused_pane_id));
+        let request = protocol::AttachRequest::create(
+            &mut builder,
+            &protocol::AttachRequestArgs {
+                actor_id: Some(actor_id),
+                user_id: Some(user_id),
+                display_name: Some(display_name),
+                mode: attach_mode_as_protocol(self.mode),
+                focused_pane_id,
+                known_surfaces: Some(known_surfaces),
+            },
+        );
 
-        let mut known_surfaces = Vec::new();
-        let mut actor_id = None;
-        let mut mode = None;
-        for line in lines {
-            let mut parts = line.split(' ');
-            match (parts.next(), parts.next(), parts.next(), parts.next()) {
-                (Some("actor"), Some(value), None, None) => {
-                    actor_id = Some(value.to_owned());
-                }
-                (Some("mode"), Some(value), None, None) => {
-                    mode = Some(parse_attach_mode(value)?);
-                }
-                (Some("surface"), Some(pane_id), Some(version), None) => {
-                    let version = version
-                        .parse::<u64>()
-                        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-                    known_surfaces.push(KnownSurfaceVersion {
-                        pane_id: pane_id.to_owned(),
-                        version,
-                    });
-                }
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "invalid local attach request line",
-                    ));
-                }
-            }
-        }
+        let session_id = builder.create_string("local");
+        let connection_id = builder.create_string("local-client");
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(session_id),
+                connection_id: Some(connection_id),
+                seq: 0,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::AttachRequest,
+                body: Some(request.as_union_value()),
+            },
+        );
 
-        Ok(Self {
-            actor_id: actor_id.unwrap_or_else(|| "local-actor".to_owned()),
-            mode: mode.unwrap_or(AttachMode::ReadWrite),
-            known_surfaces,
-        })
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
     }
 
     fn actor(&self) -> Actor {
         Actor {
             id: self.actor_id.clone(),
-            user_id: "local-user".to_owned(),
-            display_name: "local".to_owned(),
+            user_id: self.user_id.clone(),
+            display_name: self.display_name.clone(),
             mode: self.mode,
-            focused_pane_id: Some("pane-1".to_owned()),
+            focused_pane_id: self.focused_pane_id.clone(),
         }
     }
 
@@ -738,21 +770,10 @@ impl AttachRequest {
     }
 }
 
-fn attach_mode_name(mode: AttachMode) -> &'static str {
+fn attach_mode_as_protocol(mode: AttachMode) -> protocol::AttachMode {
     match mode {
-        AttachMode::ReadOnly => "read-only",
-        AttachMode::ReadWrite => "read-write",
-    }
-}
-
-fn parse_attach_mode(value: &str) -> io::Result<AttachMode> {
-    match value {
-        "read-only" => Ok(AttachMode::ReadOnly),
-        "read-write" => Ok(AttachMode::ReadWrite),
-        _ => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "invalid local attach mode",
-        )),
+        AttachMode::ReadOnly => protocol::AttachMode::ReadOnly,
+        AttachMode::ReadWrite => protocol::AttachMode::ReadWrite,
     }
 }
 
@@ -1380,7 +1401,10 @@ mod tests {
         AttachOptions {
             request: AttachRequest {
                 actor_id: "local-actor".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
             },
             input_text: None,
@@ -1722,7 +1746,10 @@ mod tests {
             &socket_path,
             AttachRequest {
                 actor_id: "spectator".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
             },
         )
@@ -1757,7 +1784,10 @@ mod tests {
             &mut stream,
             &AttachRequest {
                 actor_id: "local-actor".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
             },
         )
@@ -1856,7 +1886,10 @@ mod tests {
     fn attach_request_round_trips_read_only_mode() {
         let request = AttachRequest {
             actor_id: "spectator".to_owned(),
+            user_id: "user-2".to_owned(),
+            display_name: "Spectator".to_owned(),
             mode: AttachMode::ReadOnly,
+            focused_pane_id: Some("pane-1".to_owned()),
             known_surfaces: vec![KnownSurfaceVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
@@ -1865,6 +1898,18 @@ mod tests {
 
         let mut buffer = Vec::new();
         write_attach_request(&mut buffer, &request).expect("write attach request");
+        let envelope = protocol::size_prefixed_root_as_envelope(&buffer).expect("attach envelope");
+        assert_eq!(envelope.body_type(), protocol::EnvelopeBody::AttachRequest);
+        let body = envelope.body_as_attach_request().expect("attach body");
+        assert_eq!(body.actor_id(), Some("spectator"));
+        assert_eq!(body.user_id(), Some("user-2"));
+        assert_eq!(body.display_name(), Some("Spectator"));
+        assert_eq!(body.mode(), protocol::AttachMode::ReadOnly);
+        assert_eq!(body.focused_pane_id(), Some("pane-1"));
+        let known_surfaces = body.known_surfaces().expect("known surfaces");
+        assert_eq!(known_surfaces.len(), 1);
+        assert_eq!(known_surfaces.get(0).pane_id(), Some("pane-1"));
+        assert_eq!(known_surfaces.get(0).version(), 2);
         let decoded = read_attach_request(&mut buffer.as_slice()).expect("read attach request");
 
         assert_eq!(decoded, request);
@@ -1881,7 +1926,10 @@ mod tests {
             &socket_path,
             AttachRequest {
                 actor_id: "spectator".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
             },
         )
@@ -1908,7 +1956,10 @@ mod tests {
             &socket_path,
             AttachRequest {
                 actor_id: "spectator".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
             },
         )
