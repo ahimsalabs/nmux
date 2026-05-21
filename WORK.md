@@ -409,6 +409,7 @@ M11: terminal frontend polish [done]
 M12: live workspace usability [next]
   nmuxd --live-clients COUNT keeps one workspace and PTY alive across bounded sequential live clients
   nmuxd live mode flags fail fast on ambiguous server modes and zero live counts
+  live reattach with --state renders cached current surfaces instead of waiting for raw replay
   choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available

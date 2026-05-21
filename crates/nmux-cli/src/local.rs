@@ -541,7 +541,14 @@ pub fn attach_from_stream(
 
     let surface = match wire::read_default_frame(stream) {
         Ok(surface_frame) => Some(surface_update_from_frame(&surface_frame)?),
-        Err(wire::WireError::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => None,
+        Err(wire::WireError::Io(err))
+            if matches!(
+                err.kind(),
+                io::ErrorKind::UnexpectedEof | io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ) =>
+        {
+            None
+        }
         Err(err) => return Err(err.into()),
     };
 
@@ -1392,6 +1399,13 @@ impl ClientAttachState {
         update: &SurfaceUpdate,
     ) -> Result<String, Box<dyn std::error::Error>> {
         self.apply_surface_update(update)
+    }
+
+    pub fn cached_surface_text(&self, pane_id: &str) -> Option<String> {
+        self.surfaces
+            .iter()
+            .find(|surface| surface.pane_id == pane_id)
+            .map(ClientPaneSurface::render_text)
     }
 
     fn apply_surface_update(

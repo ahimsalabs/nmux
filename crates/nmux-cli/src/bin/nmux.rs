@@ -101,7 +101,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     options.request.known_surfaces = client_state.known_surfaces();
     local::write_attach_request(&mut stream, &options.request)?;
     let snapshot = local::attach_from_stream(&mut stream)?;
-    let rendered = client_state.render_attach(snapshot)?;
+    let mut rendered = client_state.render_attach(snapshot)?;
+    if rendered.surface_text.is_none() {
+        rendered.surface_text = client_state.cached_surface_text(&rendered.workspace.pane_id);
+    }
     warn_if_resize_intent_conflicts_with_policy(args.live_resize, rendered.workspace.resize_policy);
     let mut current_workspace = rendered.workspace.clone();
     let mut current_surface_text = rendered

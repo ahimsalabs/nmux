@@ -376,7 +376,9 @@ fn live_cli_redraw_repaints_surface_in_place() {
 #[test]
 fn live_clients_can_reattach_to_persisted_workspace_state() {
     let socket_path = test_socket_path();
+    let state_path = socket_path.with_extension("state");
     let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
 
     let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
         .args([
@@ -396,6 +398,8 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
             "--live",
             "--iterations",
             "1",
@@ -417,14 +421,16 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
             "--live",
             "--no-input",
             "--iterations",
             "1",
             "--scrollback-start",
-            "1",
+            "999",
             "--scrollback-count",
-            "8",
+            "1",
             "--interval-ms",
             "1000",
         ])
@@ -433,6 +439,7 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
 
     let server_status = server.wait().expect("wait for nmuxd");
     let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
 
     assert!(
         second_client.status.success(),
@@ -444,7 +451,7 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
         stdout.contains("echo:reattach"),
-        "reattached client did not see prior live state:\n{stdout}"
+        "reattached client did not render cached current live surface:\n{stdout}"
     );
 }
 
