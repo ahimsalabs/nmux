@@ -53,6 +53,7 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("--command SHELL"));
     assert!(stdout.contains("Default socket: $XDG_RUNTIME_DIR/nmux/nmuxd.sock"));
     assert!(stdout.contains("else /tmp/nmux-$UID/nmuxd.sock"));
+    assert!(stdout.contains("Existing socket paths are not replaced automatically"));
     assert!(stdout.contains("Examples:"));
     assert!(stdout.contains("nmuxd --one-shot"));
     assert!(stdout.contains("nmuxd --live"));
@@ -160,6 +161,33 @@ fn nmuxd_rejects_conflicting_server_modes() {
     assert_nmuxd_rejects(
         &["--live-clients", "0"],
         "nmuxd: --live-clients must be greater than 0",
+    );
+}
+
+#[test]
+fn nmuxd_reports_existing_socket_path() {
+    let socket_path = test_socket_path();
+    fs::write(&socket_path, "not a socket").expect("write placeholder");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+        ])
+        .output()
+        .expect("run nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(!output.status.success(), "nmuxd unexpectedly succeeded");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nmuxd: socket path already exists"),
+        "missing existing socket context:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(socket_path.to_str().expect("socket path")),
+        "missing socket path:\n{stderr}"
     );
 }
 

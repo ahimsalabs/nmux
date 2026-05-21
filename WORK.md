@@ -419,6 +419,7 @@ M12: live workspace usability [next]
   help output documents the shared default socket path
   nmux connection failures include the socket path
   nmuxd --live-forever serves sequential live clients until the daemon is stopped
+  nmuxd refuses to replace an existing socket path and reports the path
   choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available

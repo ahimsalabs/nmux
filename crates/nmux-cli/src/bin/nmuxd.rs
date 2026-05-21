@@ -191,6 +191,7 @@ Options:
 
 Notes:
   Default socket: $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+  Existing socket paths are not replaced automatically.
 
 Examples:
   nmuxd --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
@@ -244,6 +245,7 @@ mod tests {
         assert!(usage.contains("--live-cycles COUNT"));
         assert!(usage.contains("--live-clients COUNT"));
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
+        assert!(usage.contains("Existing socket paths are not replaced automatically"));
     }
 
     #[test]

@@ -38,8 +38,13 @@ pub fn bind_listener(path: &Path) -> io::Result<UnixListener> {
         fs::create_dir_all(parent)?;
     }
 
-    match fs::remove_file(path) {
-        Ok(()) => {}
+    match fs::symlink_metadata(path) {
+        Ok(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                format!("socket path already exists: {}", path.display()),
+            ));
+        }
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
         Err(err) => return Err(err),
     }
@@ -1797,6 +1802,20 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(first, PathBuf::from("/tmp/nmux-501").join("nmuxd.sock"));
+    }
+
+    #[test]
+    fn bind_listener_rejects_existing_socket_path() {
+        let socket_path = test_socket_path();
+        let _listener = bind_listener(&socket_path).expect("bind listener");
+        let err = bind_listener(&socket_path).expect_err("existing socket should fail");
+
+        assert_eq!(err.kind(), io::ErrorKind::AddrInUse);
+        assert!(
+            err.to_string().contains("socket path already exists"),
+            "missing existing path context: {err}"
+        );
+        let _ = fs::remove_file(socket_path);
     }
 
     fn surface_update(
