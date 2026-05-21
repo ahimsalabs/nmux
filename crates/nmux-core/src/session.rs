@@ -1,6 +1,8 @@
 use flatbuffers::FlatBufferBuilder;
 use nmux_proto::{PROTOCOL_VERSION, protocol};
 
+use crate::host::{CommandSpec, HostSpec};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
     pub id: String,
@@ -44,6 +46,7 @@ pub struct Tab {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pane {
     pub id: String,
+    pub host: HostSpec,
     pub surface_version: u64,
     pub cols: u32,
     pub rows: u32,
@@ -85,6 +88,7 @@ impl Session {
                 active_pane_id: "pane-1".to_owned(),
                 root: Pane {
                     id: "pane-1".to_owned(),
+                    host: HostSpec::local("local", CommandSpec::new("sh")),
                     surface_version: 2,
                     cols: 80,
                     rows: 24,
@@ -589,6 +593,8 @@ fn build_cell_run<'a>(
 
 #[cfg(test)]
 mod tests {
+    use crate::host::HostKind;
+
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
     use super::{AttachMode, Session};
@@ -606,6 +612,9 @@ mod tests {
         assert_eq!(tab.id, "tab-1");
         assert_eq!(tab.active_pane_id, "pane-1");
         assert_eq!(tab.root.id, "pane-1");
+        assert_eq!(tab.root.host.id, "local");
+        assert_eq!(tab.root.host.kind, HostKind::Local);
+        assert_eq!(tab.root.host.command.program, "sh");
         assert_eq!(tab.root.surface_version, 2);
         assert_eq!(tab.root.cols, 80);
         assert_eq!(tab.root.rows, 24);
