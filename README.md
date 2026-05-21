@@ -47,8 +47,10 @@ Bounded live attach:
 ```sh
 rm -f /tmp/nmux.sock
 nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
-nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --interval-ms 500
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --scrollback-start 1 --scrollback-count 4 --interval-ms 500
 ```
+
+Live attach renders the requested initial scrollback range before streaming updates.
 
 Line-streamed live input:
 

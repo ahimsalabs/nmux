@@ -112,7 +112,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 
 Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached.
 
-Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache.
+Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`. It can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache.
 
 By default, live mode prints each rendered update as plain text. Add `--redraw` to clear the terminal and repaint the current client-side pane surface on each update:
 

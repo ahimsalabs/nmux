@@ -61,6 +61,7 @@ Done:
 - Byte-streamed live sessions support Ctrl-] as a local detach key.
 - Interactive byte-streamed live sessions listen for `SIGWINCH` and send resize intents from the current TTY size when explicit `--cols` and `--rows` are not set.
 - `nmux --live --no-input` observes command output without forwarding input and, without `--iterations`, keeps polling until the daemon closes the live connection.
+- `nmux --live` renders the requested initial scrollback range before streaming live surface updates.
 - `nmux --live --redraw` clears and repaints the current client-side pane surface on each streamed update instead of appending every render.
 - Live mode renders streamed snapshots and patches through the same client-side pane surface state used by reconnects, and can persist that state with `--state`.
 - `nmux --live --cols --rows` sends `ResizeIntent` through the live loop; after process-host resize succeeds, the daemon commits the pane size and republishes a `WorkspaceTreeSnapshot`.

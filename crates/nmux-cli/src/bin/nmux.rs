@@ -101,6 +101,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let rendered = client_state.render_attach(snapshot)?;
     warn_if_resize_intent_conflicts_with_policy(args.live_resize, rendered.workspace.resize_policy);
     print_live_rendered(rendered, args.redraw);
+    if let Some(scrollback) = initial_live_scrollback(args, &mut stream)? {
+        print_scrollback(scrollback);
+    }
     flush_stdout()?;
 
     let cycle_limit = args.iterations.or_else(|| {
@@ -236,6 +239,22 @@ fn save_live_state(
         client_state.save(path)?;
     }
     Ok(())
+}
+
+fn initial_live_scrollback(
+    args: &Args,
+    stream: &mut UnixStream,
+) -> Result<Option<local::ScrollbackChunkSummary>, Box<dyn std::error::Error>> {
+    if args.redraw {
+        return Ok(None);
+    }
+    local::send_scrollback_fetch(
+        stream,
+        "pane-1",
+        args.scrollback_start_line,
+        args.scrollback_line_count,
+    )?;
+    Ok(Some(local::read_scrollback_chunk_from_stream(stream)?))
 }
 
 fn next_stdin_line(

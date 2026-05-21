@@ -183,29 +183,45 @@ fn serve_live_attached_client(
         };
 
     for _ in 0..cycles {
-        if Session::input_allowed(&actor) {
-            let input = loop {
-                match read_optional_live_client_frame_from_stream(stream)? {
-                    LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
-                        let policy = session
-                            .pane_resize_policy(&resize.pane_id)
-                            .unwrap_or(protocol::ResizePolicy::Fixed);
-                        if Session::resize_intent_allowed(policy, resize.reason) {
-                            host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
-                        } else {
-                            continue;
-                        }
-                        if session.commit_pane_resize(&resize.pane_id, resize.cols, resize.rows) {
-                            let workspace_frame = session.workspace_tree_frame("local-client", seq);
-                            wire::write_default_frame(stream, &workspace_frame)?;
-                            seq += 1;
-                        }
-                    }
-                    LiveClientRead::Frame(LiveClientFrame::Input(input)) => break Some(input),
-                    LiveClientRead::NoFrame => break None,
-                    LiveClientRead::Closed => return Ok(()),
+        let input = loop {
+            match read_optional_live_client_frame_from_stream(stream)? {
+                LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
+                    let chunk = session.scrollback_chunk_frame(
+                        "local-client",
+                        seq,
+                        fetch.start_line,
+                        fetch.line_count,
+                    );
+                    wire::write_default_frame(stream, &chunk)?;
+                    seq += 1;
                 }
-            };
+                LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
+                    if !Session::input_allowed(&actor) {
+                        continue;
+                    }
+                    let policy = session
+                        .pane_resize_policy(&resize.pane_id)
+                        .unwrap_or(protocol::ResizePolicy::Fixed);
+                    if !Session::resize_intent_allowed(policy, resize.reason) {
+                        continue;
+                    }
+                    host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
+                    if session.commit_pane_resize(&resize.pane_id, resize.cols, resize.rows) {
+                        let workspace_frame = session.workspace_tree_frame("local-client", seq);
+                        wire::write_default_frame(stream, &workspace_frame)?;
+                        seq += 1;
+                    }
+                }
+                LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
+                    if Session::input_allowed(&actor) {
+                        break Some(input);
+                    }
+                }
+                LiveClientRead::NoFrame => break None,
+                LiveClientRead::Closed => return Ok(()),
+            }
+        };
+        if Session::input_allowed(&actor) {
             if let Some(input) = input {
                 host.write_input(&input.pane_id, &input.bytes)?;
                 poll_pane_output_until_quiet(session, host, &input.pane_id)?;
@@ -248,6 +264,9 @@ fn read_optional_live_client_frame_from_stream(
             match envelope.body_type() {
                 protocol::EnvelopeBody::ResizeIntent => Ok(LiveClientRead::Frame(
                     LiveClientFrame::Resize(resize_intent_from_frame(&frame)?),
+                )),
+                protocol::EnvelopeBody::ScrollbackFetch => Ok(LiveClientRead::Frame(
+                    LiveClientFrame::Scrollback(scrollback_fetch_from_frame(&frame)?),
                 )),
                 protocol::EnvelopeBody::InputEvent => Ok(LiveClientRead::Frame(
                     LiveClientFrame::Input(input_summary_from_frame(&frame)?),
@@ -301,6 +320,7 @@ enum LiveClientRead {
 
 enum LiveClientFrame {
     Resize(ResizeIntentSummary),
+    Scrollback(ScrollbackFetchSummary),
     Input(InputSummary),
 }
 
@@ -2490,6 +2510,62 @@ mod tests {
                 .any(|event| matches!(event, HostEvent::Input { .. }))
         );
 
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_attach_serves_initial_scrollback_fetch() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![Vec::new()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve live scrollback");
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "spectator".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadOnly);
+        send_scrollback_fetch(&mut stream, "pane-1", 1, 2).expect("send scrollback fetch");
+        let scrollback = read_scrollback_chunk_from_stream(&mut stream).expect("scrollback chunk");
+
+        assert_eq!(
+            scrollback,
+            ScrollbackChunkSummary {
+                pane_id: "pane-1".to_owned(),
+                scrollback_version: 1,
+                start_line: 1,
+                total_lines: 3,
+                lines: vec![
+                    ScrollbackLine {
+                        line: 1,
+                        text: "nmux pane-1".to_owned(),
+                    },
+                    ScrollbackLine {
+                        line: 2,
+                        text: "server-owned terminal state".to_owned(),
+                    },
+                ],
+            }
+        );
+
+        server.join().expect("server thread");
         let _ = fs::remove_file(socket_path);
     }
 
