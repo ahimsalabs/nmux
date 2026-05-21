@@ -1,0 +1,399 @@
+**nmux is a portable Ghostty-style workspace whose backend owns terminal state, and libghostty is the canonical terminal-state/snapshot engine.**
+
+That means nmux should not primarily synchronize raw PTY bytes. It should synchronize **versioned terminal state objects**: session tree, tab tree, pane grid, cursor, scrollback ranges, titles, agent state, presence, and input/control events. That matches the direction in your prior notes: `session -> tab -> pane`, resumable connections, multi-player presence, sandbox-hosted PTYs, and a protocol boundary rather than a herdr-shaped core. 
+
+## The thesis
+
+`tmux -CC : iTerm2 :: nmux : libghostty`
+
+But unlike tmux control mode, nmux should not be a retrofit. iTerm2’s tmux integration lets tmux windows appear as native iTerm2 windows/tabs and lets native menu commands operate on tmux windows. ([iTerm2][1]) nmux’s version should be designed from day one as:
+
+**terminal engine + mux daemon + state-sync protocol + many clients**
+
+Ghostty is a strong substrate because its own architecture already separates GUI apps from `libghostty`: the docs describe `libghostty` as a cross-platform C-ABI-compatible core providing terminal emulation, font handling, and rendering, with the macOS and Linux GUI apps consuming that library. ([Ghostty][2]) The repository also describes `libghostty` as usable for building or embedding terminal functionality, while noting the broader libghostty API/docs/versioning are still evolving. ([GitHub][3]) Ghostty is MIT-licensed, which fits your MIT/Apache preference for the core. ([GitHub][3])
+
+## Architecture
+
+Think of nmux as four layers:
+
+```text
+frontends
+  ghostty/libghostty native app
+  forked Ghostty UI
+  web client
+  mobile client
+  maybe cmux-compatible bridge
+
+state-sync protocol
+  FlatBuffers envelope
+  snapshots + patches
+  input/control streams
+  presence
+  permissions
+  scrollback range fetches
+
+nmuxd
+  session/tab/pane model
+  process hosts
+  sandbox/PTY lifecycle
+  authoritative terminal state
+  libghostty snapshot extraction
+
+backends/adapters
+  native local PTY backend
+  sandbox/container backend
+  tmux backend
+  herdr adapter, optional AGPL membrane
+```
+
+The key move is that **nmuxd runs libghostty per pane**. PTY bytes go into libghostty. libghostty maintains the authoritative terminal state. nmux serializes that state into snapshots and diffs. Clients render the state and send input back. This directly uses the thing you actually wanted from libghostty: snapshotting, VT correctness, Unicode, styles, modes, images, scrollback, and eventually render integration. Your previous notes already called out the snapshot/VT layer as the central place Ghostty belongs, not as a backend adapter. 
+
+## Mosh inspiration, but not a Mosh clone
+
+Mosh’s big idea is not just UDP; it is **state synchronization instead of byte-stream replay**. The paper says Mosh synchronizes client/server terminal state, supports intermittent connectivity and roaming, and uses a server-side terminal emulator to synchronize screen states rather than shipping an octet stream like SSH. 
+
+nmux should steal that model:
+
+```text
+client: I have pane p version 1042, scrollback ranges 0..200 and 900..1100
+server: pane p current version is 1088
+server: here are patches 1043..1088
+```
+
+or, if the client is too stale:
+
+```text
+server: patches expired
+server: here is a full snapshot at version 1088
+```
+
+Mosh intentionally optimizes for the current visible screen and notes that scrollback history is problematic in that model.  nmux should not inherit that limitation. Treat scrollback as a separate synchronized object:
+
+```text
+PaneSurface        current visible/alternate screen
+PaneScrollback     durable append-only-ish line store
+PaneViewport       client-specific visible range
+PanePatch          small current-screen update
+ScrollbackChunk    lazy historical range
+```
+
+That is what makes it a **portable workspace**, not just a remote shell.
+
+## What “Ghostty control mode” looks like
+
+The Ghostty equivalent of `tmux -CC` is not a line protocol that Ghostty parses. It is more like:
+
+```bash
+ghostty --workspace nmux://host/session-id
+```
+
+or:
+
+```bash
+nmux attach --frontend ghostty session-id
+```
+
+The frontend handshake would say:
+
+```text
+Hello
+  client_id
+  user_id
+  frontend = ghostty | web | mobile | tui
+  capabilities:
+    cell_rendering
+    ligatures
+    images
+    sixel/kitty-graphics
+    local_echo
+    clipboard
+    hyperlinks
+    truecolor
+    font_metrics
+    max_patch_rate
+```
+
+Then:
+
+```text
+AttachWorkspace
+  session_id
+  known_object_versions:
+    tree = 71
+    pane:abc.surface = 1042
+    pane:abc.scrollback = 980
+```
+
+Then the server replies with either patches or fresh snapshots:
+
+```text
+WorkspaceTreeSnapshot
+PaneSurfaceSnapshot
+PaneSurfacePatch
+ScrollbackChunk
+PresenceSnapshot
+AgentStateSnapshot
+```
+
+Input goes the other direction:
+
+```text
+InputEvent
+  pane_id
+  actor_id
+  monotonic_input_seq
+  key/mouse/paste/resize-intent
+```
+
+So `tmux -CC for Ghostty` becomes:
+
+**Ghostty/libghostty as a native renderer and terminal UX shell for a backend-owned, versioned terminal-state graph.**
+
+## libghostty’s exact role
+
+There are two distinct libghostty uses.
+
+First, **backend libghostty**: this is the important one. `nmuxd` feeds PTY bytes into libghostty and extracts an nmux snapshot model. Mitchell Hashimoto’s libghostty roadmap specifically calls out `libghostty-vt` as a minimal dependency terminal-sequence parser that maintains terminal state such as cursor position, styles, wrapping, and more, with longer-term libraries for input handling, GPU rendering, Swift frameworks, GTK widgets, and related pieces. ([Mitchell Hashimoto][4])
+
+Second, **frontend libghostty**: this is the nice-to-have or later deep integration. A native frontend could use libghostty for rendering, font shaping, theme parsing, keyboard encoding, and maybe terminal widgets. But you do not want the frontend to re-parse raw PTY bytes as the source of truth. That would reintroduce divergence across clients. The frontend should render the authoritative server state.
+
+That means the hard API question is:
+
+```text
+Can libghostty render externally supplied terminal state?
+```
+
+If yes, great: nmux snapshots can hydrate a libghostty render state. If no, you either need a small custom renderer for v0, or a Ghostty fork/API contribution that adds “render this external grid/surface” support. The prior “backend emulates, Ghostty renderer sits idle” concern was too pessimistic; the better statement is: **backend libghostty is mandatory, frontend libghostty is an integration milestone.** Your uploaded notes already converged on the Mosh-style “state object” protocol and flagged that raw-output RPC was the wrong shape. 
+
+## FlatBuffers contract
+
+FlatBuffers is still the right serialization layer, but the schema should be state-sync-first, not RPC-first. FlatBuffers supports zero-copy access without parsing/unpacking and works across languages including Rust, Swift, and TypeScript. ([GitHub][5]) Its evolution rules also fit this project: append fields, do not remove fields, deprecate instead. ([FlatBuffers][6])
+
+A good `nmux.fbs` shape is:
+
+```text
+Envelope
+  protocol_version
+  session_id
+  connection_id
+  seq
+  ack
+  body: union
+
+Bodies
+  Hello
+  Attach
+  Detach
+  Ping
+  WorkspaceTreeSnapshot
+  WorkspaceTreePatch
+  PaneSurfaceSnapshot
+  PaneSurfacePatch
+  ScrollbackFetch
+  ScrollbackChunk
+  InputEvent
+  ResizeIntent
+  PresenceUpdate
+  AgentStateUpdate
+  HostSpec
+  Error
+```
+
+Do **not** start with a naïve `Cell { codepoint:u32, attrs:u64 }` and freeze it. Terminal cells are messier than that: grapheme clusters, double-width characters, combining marks, hyperlinks, images, underlines, cursor modes, palette changes, and ligatures all matter. The protocol should probably encode rows as runs:
+
+```text
+CellRun
+  text_utf8
+  cell_widths
+  style_id
+  hyperlink_id
+  flags
+
+Row
+  runs
+  dirty_hash
+```
+
+Then keep a separate style table:
+
+```text
+Style
+  fg
+  bg
+  underline_color
+  bold
+  italic
+  faint
+  underline_kind
+  strikethrough
+  reverse
+  blink
+```
+
+That lets snapshots be compact and patches be row/range-based.
+
+## Resize policy is a first-class problem
+
+Multi-client terminal muxing has a subtle issue: a PTY has one size, but your clients may be a MacBook, iPad, phone, browser split, and TUI. nmux should not let every client resize the PTY whenever its window changes.
+
+Make pane size authoritative:
+
+```text
+PaneSize
+  cols
+  rows
+  policy = fixed | active_client | leader | max | manual
+```
+
+Clients send:
+
+```text
+ResizeIntent { pane_id, desired_cols, desired_rows, reason }
+```
+
+The server replies with:
+
+```text
+PaneResized { committed_cols, committed_rows, by_actor }
+```
+
+Spectators can have smaller viewports. Controllers can request resize. A “leader” client can own size. This prevents mobile reconnects from trashing everyone else’s layout.
+
+## cmux taxonomy
+
+cmux is not really a backend adapter. It is prior art / a peer frontend shape: a native macOS app built on Ghostty with vertical tabs, notifications, split panes, a socket API, and automation. ([cmux][7]) The GitHub README says it uses libghostty for terminal rendering, reads Ghostty config, and exposes CLI/socket automation. ([GitHub][8]) It is GPL-3.0-or-later, so treat it like inspiration or an integration target, not code to pull into an MIT/Apache core. ([GitHub][8])
+
+So the taxonomy becomes:
+
+```text
+frontends
+  nmux-ghostty
+  nmux-web
+  nmux-mobile
+  maybe cmux bridge / cmux-compatible mode
+
+backends
+  nmux-native
+  nmux-tmux
+  nmux-herdr
+
+terminal engine
+  libghostty
+```
+
+Ghostty is not a backend adapter either. It is the terminal engine and likely the flagship native frontend substrate.
+
+## Plugins and scriptability
+
+Avoid an in-process plugin system at first. The nmux protocol is the plugin system.
+
+A scriptable CLI can just speak nmux:
+
+```bash
+nmux session create
+nmux tab new
+nmux pane split --right
+nmux pane send --pane p123 'cargo test\n'
+nmux pane snapshot --json
+nmux agent mark --pane p123 --state waiting
+```
+
+Adapters are sidecars:
+
+```text
+nmuxd <-> nmux-tmux-adapter
+nmuxd <-> nmux-herdr-adapter
+nmuxd <-> nmux-sandbox-host
+```
+
+That keeps licensing and failure isolation clean. Your prior notes already had the right instinct: adapters as separate processes, with herdr quarantined behind its own AGPL membrane and the MIT/Apache core speaking only the nmux protocol. 
+
+## Transport
+
+Use the same FlatBuffer envelopes over multiple transports:
+
+```text
+local:   Unix domain socket
+native:  QUIC
+browser: WebSocket first, WebTransport later
+debug:   JSON framing
+```
+
+For mobile-style roaming, QUIC is the natural native transport because RFC 9000 defines connection migration via connection identifiers, allowing a QUIC connection to move to a new network path and survive address/topology changes such as NAT rebinding. ([IETF Datatracker][9]) The quic-go docs describe the exact mobile case: moving from Wi‑Fi to cellular while keeping the application connection alive. ([quic-go][10])
+
+But the protocol should not depend on QUIC. State sync is the real win. QUIC helps the connection survive; nmux snapshots help the workspace survive even when the connection does not.
+
+## The first build target
+
+Do not start with a beautiful Ghostty fork. Start with this:
+
+```text
+M0: nmux.fbs
+  Envelope
+  WorkspaceTreeSnapshot
+  PaneSurfaceSnapshot
+  PaneSurfacePatch
+  InputEvent
+  ResizeIntent
+
+M1: nmuxd local
+  spawn PTY
+  feed bytes into libghostty
+  extract visible grid snapshot
+  accept input
+  fixed pane size
+
+M2: dumb viewer
+  terminal/TUI or simple web canvas
+  attach
+  receive snapshots
+  send keys
+
+M3: reconnect
+  client drops
+  reconnects with known versions
+  server sends patch or full snapshot
+
+M4: scrollback object
+  lazy range fetch
+  snapshot + scrollback consistency tests
+
+M5: multi-player
+  presence
+  actor IDs
+  read-only vs read-write attach
+
+M6: sandbox host
+  local/container/sandbox process host abstraction
+
+M7: Ghostty frontend
+  either embed libghostty renderer if state injection is possible
+  or fork/contribute API for external surface rendering
+
+M8: tmux adapter
+
+M9: herdr adapter in separate AGPL repo
+```
+
+The crisp product phrase is:
+
+**nmux: a Mosh-inspired, Ghostty-powered, FlatBuffers-native terminal workspace protocol.**
+
+Or more directly:
+
+**portable Ghostty workspaces, synchronized across clients.**
+
+[1]: https://iterm2.com/3.3/documentation-highlights.html "Highlights for New Users - Documentation - iTerm2 - macOS Terminal Replacement"
+[2]: https://ghostty.org/docs/about "About Ghostty"
+[3]: https://github.com/ghostty-org/ghostty "GitHub - ghostty-org/ghostty:  Ghostty is a fast, feature-rich, and cross-platform terminal emulator that uses platform-native UI and GPU acceleration. · GitHub"
+[4]: https://mitchellh.com/writing/libghostty-is-coming "Libghostty Is Coming – Mitchell Hashimoto"
+[5]: https://github.com/google/flatbuffers "GitHub - google/flatbuffers: FlatBuffers: Memory Efficient Serialization Library · GitHub"
+[6]: https://flatbuffers.dev/evolution/ "Evolution - FlatBuffers Docs"
+[7]: https://cmux.com/ "cmux — The terminal built for multitasking"
+[8]: https://github.com/manaflow-ai/cmux "GitHub - manaflow-ai/cmux: Ghostty-based macOS terminal with vertical tabs and notifications for AI coding agents · GitHub"
+[9]: https://datatracker.ietf.org/doc/html/rfc9000 "
+            
+                RFC 9000 - QUIC: A UDP-Based Multiplexed and Secure Transport
+            
+        "
+[10]: https://quic-go.net/docs/quic/connection-migration/ "Connection Migration – quic-go docs"
