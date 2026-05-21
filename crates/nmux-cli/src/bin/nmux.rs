@@ -1,3 +1,4 @@
+use std::io::{self, BufRead};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::thread;
@@ -46,7 +47,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    let cycles = args.iterations.unwrap_or(1);
+    let input_lines = if args.stdin_input {
+        Some(read_stdin_lines()?)
+    } else {
+        None
+    };
+    let cycles = args
+        .iterations
+        .unwrap_or_else(|| input_lines.as_ref().map(Vec::len).unwrap_or(1));
     let mut stream = UnixStream::connect(&args.socket_path)?;
     stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
 
@@ -64,9 +72,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = local::attach_from_stream(&mut stream)?;
     print_snapshot(snapshot);
 
-    for _ in 0..cycles {
+    for cycle in 0..cycles {
         if options.request.mode == AttachMode::ReadWrite {
-            if let Some(input_text) = options.input_text.as_deref() {
+            if let Some(input_text) =
+                live_input_for_cycle(input_lines.as_deref(), cycle, options.input_text.as_deref())
+            {
                 local::send_key_input(&mut stream, "pane-1", input_text)?;
             }
         }
@@ -77,6 +87,28 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn read_stdin_lines() -> io::Result<Vec<String>> {
+    let mut lines = Vec::new();
+    for line in io::stdin().lock().lines() {
+        let mut line = line?;
+        line.push('\n');
+        lines.push(line);
+    }
+    Ok(lines)
+}
+
+fn live_input_for_cycle<'a>(
+    stdin_lines: Option<&'a [String]>,
+    cycle: usize,
+    fallback: Option<&'a str>,
+) -> Option<&'a str> {
+    if let Some(lines) = stdin_lines {
+        let line = lines.get(cycle)?;
+        return Some(line);
+    }
+    fallback
 }
 
 fn attach_once(
@@ -128,6 +160,7 @@ struct Args {
     state_path: Option<PathBuf>,
     follow: bool,
     live: bool,
+    stdin_input: bool,
     interval_ms: u64,
     iterations: Option<usize>,
 }
@@ -140,6 +173,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut state_path = None;
     let mut follow = false;
     let mut live = false;
+    let mut stdin_input = false;
     let mut interval_ms = 1000;
     let mut iterations = None;
     let mut args = std::env::args().skip(1);
@@ -184,6 +218,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             "--live" => {
                 live = true;
             }
+            "--stdin" => {
+                stdin_input = true;
+            }
             "--interval-ms" => {
                 interval_ms = args
                     .next()
@@ -209,6 +246,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         state_path,
         follow,
         live,
+        stdin_input,
         interval_ms,
         iterations,
     })
