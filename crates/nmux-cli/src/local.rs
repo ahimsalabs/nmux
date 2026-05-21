@@ -210,19 +210,62 @@ pub fn attach_with_known_surfaces(
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachOptions {
+    pub request: AttachRequest,
+    pub input_text: Option<String>,
+    pub scrollback_start_line: u64,
+    pub scrollback_line_count: u32,
+}
+
+impl Default for AttachOptions {
+    fn default() -> Self {
+        Self {
+            request: AttachRequest {
+                actor_id: "local-actor".to_owned(),
+                mode: AttachMode::ReadWrite,
+                known_surfaces: Vec::new(),
+            },
+            input_text: Some("a".to_owned()),
+            scrollback_start_line: 1,
+            scrollback_line_count: 2,
+        }
+    }
+}
+
 pub fn attach_with_options(
     path: &Path,
     request: AttachRequest,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
+    attach_with_client_options(
+        path,
+        AttachOptions {
+            request,
+            ..AttachOptions::default()
+        },
+    )
+}
+
+pub fn attach_with_client_options(
+    path: &Path,
+    options: AttachOptions,
+) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
     let mut stream = UnixStream::connect(path)?;
-    let mode = request.mode;
-    write_attach_request(&mut stream, &request)?;
+    let mode = options.request.mode;
+    write_attach_request(&mut stream, &options.request)?;
     let snapshot = attach_from_stream(&mut stream)?;
     if snapshot.surface.is_some() {
         if mode == AttachMode::ReadWrite {
-            send_key_input(&mut stream, "pane-1", "a")?;
+            if let Some(input_text) = options.input_text.as_deref() {
+                send_key_input(&mut stream, "pane-1", input_text)?;
+            }
         }
-        send_scrollback_fetch(&mut stream, "pane-1", 1, 2)?;
+        send_scrollback_fetch(
+            &mut stream,
+            "pane-1",
+            options.scrollback_start_line,
+            options.scrollback_line_count,
+        )?;
         let scrollback = read_scrollback_chunk_from_stream(&mut stream)?;
         return Ok(AttachSnapshot {
             scrollback: Some(scrollback),
@@ -1032,6 +1075,47 @@ mod tests {
                     text: "z".to_owned(),
                 }],
             }
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_with_client_options_controls_input_and_scrollback_range() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = EchoHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start echo pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+        });
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: Some("custom".to_owned()),
+                scrollback_start_line: 3,
+                scrollback_line_count: 1,
+                ..AttachOptions::default()
+            },
+        )
+        .expect("attach snapshot");
+        server.join().expect("server thread");
+
+        assert_eq!(
+            snapshot.scrollback,
+            Some(ScrollbackChunkSummary {
+                pane_id: "pane-1".to_owned(),
+                scrollback_version: 1,
+                start_line: 3,
+                total_lines: 4,
+                lines: vec![ScrollbackLine {
+                    line: 3,
+                    text: "custom".to_owned(),
+                }],
+            })
         );
 
         let _ = fs::remove_file(socket_path);
