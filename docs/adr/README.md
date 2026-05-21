@@ -13,3 +13,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0005: Process Host Boundary](0005-process-host-boundary.md)
 - [0006: Interim PTY Text Surface](0006-interim-pty-text-surface.md)
 - [0007: Ghostty/libghostty Frontend Boundary](0007-ghostty-libghostty-frontend-boundary.md)
+- [0008: FlatBuffers Attach Request](0008-flatbuffers-attach-request.md)
