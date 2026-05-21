@@ -107,6 +107,8 @@ Expected output includes the initial surface and two streamed updates ending in 
 
 Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache.
 
+Read-write live clients also poll process output during idle cycles. That means a process can update the backend-owned pane surface and stream patches to an attached read-write client even when the client has not sent a key frame in that cycle.
+
 To send a resize intent before each live input cycle, pass both `--cols` and `--rows`:
 
 ```sh

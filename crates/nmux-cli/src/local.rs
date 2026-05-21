@@ -184,15 +184,21 @@ fn serve_live_attached_client(
 
     for _ in 0..cycles {
         if Session::input_allowed(&actor) {
-            let input = match read_live_client_frame_from_stream(stream)? {
-                LiveClientFrame::Resize(resize) => {
-                    host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
-                    read_input_event_from_stream(stream)?
+            let input = loop {
+                match read_optional_live_client_frame_from_stream(stream)? {
+                    Some(LiveClientFrame::Resize(resize)) => {
+                        host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
+                    }
+                    Some(LiveClientFrame::Input(input)) => break Some(input),
+                    None => break None,
                 }
-                LiveClientFrame::Input(input) => input,
             };
-            host.write_input(&input.pane_id, input.text.as_bytes())?;
-            poll_pane_output_until_quiet(session, host, &input.pane_id)?;
+            if let Some(input) = input {
+                host.write_input(&input.pane_id, input.text.as_bytes())?;
+                poll_pane_output_until_quiet(session, host, &input.pane_id)?;
+            } else {
+                poll_pane_output_until_quiet(session, host, pane_id)?;
+            }
         } else {
             poll_pane_output_until_quiet(session, host, pane_id)?;
         }
@@ -209,20 +215,36 @@ fn serve_live_attached_client(
     Ok(())
 }
 
-fn read_live_client_frame_from_stream(
+fn read_optional_live_client_frame_from_stream(
     stream: &mut UnixStream,
-) -> Result<LiveClientFrame, Box<dyn std::error::Error>> {
-    let frame = wire::read_default_frame(stream)?;
-    let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
-    match envelope.body_type() {
-        protocol::EnvelopeBody::ResizeIntent => {
-            Ok(LiveClientFrame::Resize(resize_intent_from_frame(&frame)?))
+) -> Result<Option<LiveClientFrame>, Box<dyn std::error::Error>> {
+    let previous_timeout = stream.read_timeout()?;
+    stream.set_read_timeout(Some(Duration::from_millis(20)))?;
+    let result = match wire::read_default_frame(stream) {
+        Ok(frame) => {
+            let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+            match envelope.body_type() {
+                protocol::EnvelopeBody::ResizeIntent => Ok(Some(LiveClientFrame::Resize(
+                    resize_intent_from_frame(&frame)?,
+                ))),
+                protocol::EnvelopeBody::InputEvent => Ok(Some(LiveClientFrame::Input(
+                    input_summary_from_frame(&frame)?,
+                ))),
+                other => Err(format!("unexpected live client frame: {other:?}").into()),
+            }
         }
-        protocol::EnvelopeBody::InputEvent => {
-            Ok(LiveClientFrame::Input(input_summary_from_frame(&frame)?))
+        Err(wire::WireError::Io(err))
+            if matches!(
+                err.kind(),
+                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ) =>
+        {
+            Ok(None)
         }
-        other => Err(format!("unexpected live client frame: {other:?}").into()),
-    }
+        Err(err) => Err(err.into()),
+    };
+    stream.set_read_timeout(previous_timeout)?;
+    result
 }
 
 enum LiveClientFrame {
@@ -2103,6 +2125,48 @@ mod tests {
         assert!(second_update.text.ends_with("second"));
 
         server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_read_write_attach_observes_output_without_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![Vec::new(), b"idle update\n".to_vec()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve read-write live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadWrite);
+        assert_eq!(
+            initial.surface.as_ref().map(|surface| surface.version),
+            Some(2)
+        );
+
+        let update = read_surface_update_from_stream(&mut stream).expect("idle output update");
+        assert_eq!(update.kind, SurfaceUpdateKind::Patch);
+        assert_eq!(update.base_version, Some(2));
+        assert_eq!(update.version, 3);
+        assert!(update.text.ends_with("idle update"));
+
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
         let _ = fs::remove_file(socket_path);
     }
 
