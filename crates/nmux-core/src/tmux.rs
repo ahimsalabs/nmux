@@ -1,5 +1,7 @@
 use std::fmt;
 
+use nmux_proto::protocol;
+
 use crate::host::{CommandSpec, HostSpec};
 use crate::session::{Pane, Session, Tab};
 
@@ -102,6 +104,7 @@ impl TmuxSession {
                 surface_version: 1,
                 cols: active_pane.cols,
                 rows: active_pane.rows,
+                resize_policy: protocol::ResizePolicy::Fixed,
                 surface_lines: Vec::new(),
                 scrollback_lines: Vec::new(),
             },

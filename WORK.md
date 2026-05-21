@@ -386,9 +386,11 @@ M10: live local interactive attach [in progress]
   --redraw clears and repaints the current client-side pane surface on each update
   CLI workspace summary displays daemon-published resize policy
   successful live resize intents commit pane size and republish workspace snapshot
+  nmuxd --resize-policy can publish fixed, leader, active-client, or manual policy
+  manual resize policy blocks frontend viewport resize intents
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state
-  next: richer layout policy and signal handling
+  next: signal handling
 ```
 
 The crisp product phrase is:

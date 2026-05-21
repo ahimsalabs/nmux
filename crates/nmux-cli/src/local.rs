@@ -187,7 +187,14 @@ fn serve_live_attached_client(
             let input = loop {
                 match read_optional_live_client_frame_from_stream(stream)? {
                     LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
-                        host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
+                        let policy = session
+                            .pane_resize_policy(&resize.pane_id)
+                            .unwrap_or(protocol::ResizePolicy::Fixed);
+                        if Session::resize_intent_allowed(policy, resize.reason) {
+                            host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
+                        } else {
+                            continue;
+                        }
                         if session.commit_pane_resize(&resize.pane_id, resize.cols, resize.rows) {
                             let workspace_frame = session.workspace_tree_frame("local-client", seq);
                             wire::write_default_frame(stream, &workspace_frame)?;
@@ -2378,6 +2385,54 @@ mod tests {
             cols: 100,
             rows: 30,
         }));
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"after-resize".to_vec(),
+        }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_attach_ignores_frontend_resize_when_policy_is_manual() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        assert!(session.set_pane_resize_policy("pane-1", protocol::ResizePolicy::Manual));
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(
+            initial.workspace.resize_policy,
+            protocol::ResizePolicy::Manual
+        );
+
+        send_resize_intent(&mut stream, "pane-1", 100, 30).expect("send resize intent");
+        send_key_input(&mut stream, "pane-1", "after-resize").expect("send input");
+        let update = read_live_surface_update_from_stream(&mut stream).expect("live update");
+        assert!(matches!(
+            update,
+            LiveSurfaceRead::NoFrame | LiveSurfaceRead::Closed
+        ));
+
+        let host = server.join().expect("server thread");
+        assert!(!host.events().iter().any(|event| matches!(
+            event,
+            HostEvent::Resized {
+                pane_id,
+                cols: 100,
+                rows: 30,
+            } if pane_id == "pane-1"
+        )));
         assert!(host.events().contains(&HostEvent::Input {
             pane_id: "pane-1".to_owned(),
             bytes: b"after-resize".to_vec(),

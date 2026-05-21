@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use nmux_cli::local;
 use nmux_core::host::{CommandSpec, LocalPtyHost, ProcessHost};
 use nmux_core::session::Session;
+use nmux_proto::protocol;
 
 fn main() {
     if let Err(err) = run() {
@@ -22,6 +23,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(command) = args.command {
         session.tabs[0].root.host.command = CommandSpec::new("sh").with_args(["-lc", &command]);
     }
+    session.set_pane_resize_policy("pane-1", args.resize_policy);
     let pane_id = "pane-1";
     let host_spec = session.tabs[0].root.host.clone();
     let mut pty_host = LocalPtyHost::default();
@@ -57,6 +59,7 @@ struct Args {
     live: bool,
     live_cycles: Option<usize>,
     command: Option<String>,
+    resize_policy: protocol::ResizePolicy,
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
@@ -65,6 +68,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut live = false;
     let mut live_cycles = None;
     let mut command = None;
+    let mut resize_policy = protocol::ResizePolicy::Fixed;
     let mut args = std::env::args().skip(1);
 
     while let Some(arg) = args.next() {
@@ -87,6 +91,13 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             "--command" => {
                 command = Some(args.next().ok_or("--command requires a shell command")?);
             }
+            "--resize-policy" => {
+                resize_policy =
+                    parse_resize_policy(&args.next().ok_or(
+                        "--resize-policy requires fixed, leader, active-client, or manual",
+                    )?)
+                    .map_err(|err| format!("--resize-policy {err}"))?;
+            }
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
@@ -97,7 +108,18 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         live,
         live_cycles,
         command,
+        resize_policy,
     })
+}
+
+fn parse_resize_policy(value: &str) -> Result<protocol::ResizePolicy, &'static str> {
+    match value {
+        "fixed" => Ok(protocol::ResizePolicy::Fixed),
+        "leader" => Ok(protocol::ResizePolicy::Leader),
+        "active-client" => Ok(protocol::ResizePolicy::ActiveClient),
+        "manual" => Ok(protocol::ResizePolicy::Manual),
+        _ => Err("requires fixed, leader, active-client, or manual"),
+    }
 }
 
 fn wait_for_pane_output(

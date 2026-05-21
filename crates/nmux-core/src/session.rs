@@ -50,6 +50,7 @@ pub struct Pane {
     pub surface_version: u64,
     pub cols: u32,
     pub rows: u32,
+    pub resize_policy: protocol::ResizePolicy,
     pub surface_lines: Vec<String>,
     pub scrollback_lines: Vec<String>,
 }
@@ -94,6 +95,7 @@ impl Session {
                     surface_version: 2,
                     cols: 80,
                     rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
                     surface_lines: vec![
                         "nmux pane-1".to_owned(),
                         "server-owned terminal state".to_owned(),
@@ -153,6 +155,37 @@ impl Session {
         true
     }
 
+    pub fn pane_resize_policy(&self, pane_id: &str) -> Option<protocol::ResizePolicy> {
+        self.pane(pane_id).map(|pane| pane.resize_policy)
+    }
+
+    pub fn set_pane_resize_policy(
+        &mut self,
+        pane_id: &str,
+        policy: protocol::ResizePolicy,
+    ) -> bool {
+        let Some(pane) = self.pane_mut(pane_id) else {
+            return false;
+        };
+        if pane.resize_policy == policy {
+            return false;
+        }
+
+        pane.resize_policy = policy;
+        self.version = self.version.saturating_add(1);
+        true
+    }
+
+    pub fn resize_intent_allowed(
+        policy: protocol::ResizePolicy,
+        reason: protocol::ResizeReason,
+    ) -> bool {
+        match policy {
+            protocol::ResizePolicy::Manual => reason == protocol::ResizeReason::UserCommand,
+            _ => true,
+        }
+    }
+
     pub fn initial_actor(mode: AttachMode) -> Actor {
         Actor {
             id: "local-actor".to_owned(),
@@ -183,7 +216,7 @@ impl Session {
                     surface_version: tab.root.surface_version,
                     cols: tab.root.cols,
                     rows: tab.root.rows,
-                    resize_policy: protocol::ResizePolicy::Fixed,
+                    resize_policy: tab.root.resize_policy,
                 },
             );
 
@@ -264,6 +297,16 @@ impl Session {
         self.tabs.iter().find_map(|tab| {
             if tab.root.id == pane_id {
                 Some(tab.root.surface_version)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn pane(&self, pane_id: &str) -> Option<&Pane> {
+        self.tabs.iter().find_map(|tab| {
+            if tab.root.id == pane_id {
+                Some(&tab.root)
             } else {
                 None
             }
@@ -862,6 +905,44 @@ mod tests {
         assert_eq!(pane.cols(), 100);
         assert_eq!(pane.rows(), 30);
         assert_eq!(pane.resize_policy(), protocol::ResizePolicy::Fixed);
+    }
+
+    #[test]
+    fn pane_resize_policy_is_published_in_workspace_snapshot() {
+        let mut session = Session::initial();
+
+        assert!(session.set_pane_resize_policy("pane-1", protocol::ResizePolicy::Manual));
+        assert_eq!(
+            session.pane_resize_policy("pane-1"),
+            Some(protocol::ResizePolicy::Manual)
+        );
+
+        let frame = session.workspace_tree_frame("conn-1", 7);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope
+            .body_as_workspace_tree_snapshot()
+            .expect("snapshot");
+        assert_eq!(snapshot.version(), 2);
+
+        let tabs = snapshot.tabs().expect("tabs");
+        let pane = tabs.get(0).root().expect("pane");
+        assert_eq!(pane.resize_policy(), protocol::ResizePolicy::Manual);
+    }
+
+    #[test]
+    fn manual_resize_policy_rejects_frontend_viewport_intents() {
+        assert!(!Session::resize_intent_allowed(
+            protocol::ResizePolicy::Manual,
+            protocol::ResizeReason::FrontendViewport
+        ));
+        assert!(Session::resize_intent_allowed(
+            protocol::ResizePolicy::Manual,
+            protocol::ResizeReason::UserCommand
+        ));
+        assert!(Session::resize_intent_allowed(
+            protocol::ResizePolicy::Fixed,
+            protocol::ResizeReason::FrontendViewport
+        ));
     }
 
     #[test]
