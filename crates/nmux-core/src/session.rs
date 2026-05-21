@@ -601,6 +601,51 @@ impl Session {
         protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
         builder.finished_data().to_vec()
     }
+
+    pub fn resize_intent_frame(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        actor_id: &str,
+        pane_id: &str,
+        cols: u32,
+        rows: u32,
+        reason: protocol::ResizeReason,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+
+        let pane_id = builder.create_string(pane_id);
+        let actor_id = builder.create_string(actor_id);
+        let resize = protocol::ResizeIntent::create(
+            &mut builder,
+            &protocol::ResizeIntentArgs {
+                pane_id: Some(pane_id),
+                actor_id: Some(actor_id),
+                desired_cols: cols,
+                desired_rows: rows,
+                reason,
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::ResizeIntent,
+                body: Some(resize.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
 }
 
 fn stable_row_hash(line: &str) -> u64 {

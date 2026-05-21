@@ -37,6 +37,10 @@ fn live_cli_streams_repeated_command_output() {
             "2",
             "--key",
             "ping\n",
+            "--cols",
+            "100",
+            "--rows",
+            "30",
             "--interval-ms",
             "1000",
         ])

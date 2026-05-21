@@ -85,6 +85,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
     for _ in 0..cycles {
         if options.request.mode == AttachMode::ReadWrite {
+            if let Some((cols, rows)) = args.live_resize {
+                local::send_resize_intent(&mut stream, "pane-1", cols, rows)?;
+            }
             let stdin_line = next_stdin_line(stdin_lines.as_mut())?;
             if let Some(input_text) = stdin_line.as_deref().or(options.input_text.as_deref()) {
                 local::send_key_input(&mut stream, "pane-1", input_text)?;
@@ -159,6 +162,7 @@ struct Args {
     follow: bool,
     live: bool,
     stdin_input: bool,
+    live_resize: Option<(u32, u32)>,
     interval_ms: u64,
     iterations: Option<usize>,
 }
@@ -172,6 +176,8 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut follow = false;
     let mut live = false;
     let mut stdin_input = false;
+    let mut live_cols = None;
+    let mut live_rows = None;
     let mut interval_ms = 1000;
     let mut iterations = None;
     let mut args = std::env::args().skip(1);
@@ -219,6 +225,12 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             "--stdin" => {
                 stdin_input = true;
             }
+            "--cols" => {
+                live_cols = Some(args.next().ok_or("--cols requires a count")?.parse()?);
+            }
+            "--rows" => {
+                live_rows = Some(args.next().ok_or("--rows requires a count")?.parse()?);
+            }
             "--interval-ms" => {
                 interval_ms = args
                     .next()
@@ -235,6 +247,11 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
+    let live_resize = match (live_cols, live_rows) {
+        (Some(cols), Some(rows)) => Some((cols, rows)),
+        (None, None) => None,
+        _ => return Err("--cols and --rows must be provided together".into()),
+    };
 
     Ok(Args {
         socket_path,
@@ -245,6 +262,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         follow,
         live,
         stdin_input,
+        live_resize,
         interval_ms,
         iterations,
     })

@@ -107,6 +107,14 @@ Expected output includes the initial surface and two streamed updates ending in 
 
 Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache.
 
+To send a resize intent before each live input cycle, pass both `--cols` and `--rows`:
+
+```sh
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --cols 100 --rows 30 --interval-ms 500
+```
+
+The daemon forwards that intent through the process-host resize boundary before forwarding the cycle input. This is still a prototype policy path; committed size publication is not a full layout protocol yet.
+
 For line-streamed live input, pipe lines through stdin:
 
 ```sh

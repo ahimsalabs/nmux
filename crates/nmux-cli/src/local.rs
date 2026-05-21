@@ -184,7 +184,13 @@ fn serve_live_attached_client(
 
     for _ in 0..cycles {
         if Session::input_allowed(&actor) {
-            let input = read_input_event_from_stream(stream)?;
+            let input = match read_live_client_frame_from_stream(stream)? {
+                LiveClientFrame::Resize(resize) => {
+                    host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
+                    read_input_event_from_stream(stream)?
+                }
+                LiveClientFrame::Input(input) => input,
+            };
             host.write_input(&input.pane_id, input.text.as_bytes())?;
             poll_pane_output_until_quiet(session, host, &input.pane_id)?;
         } else {
@@ -201,6 +207,27 @@ fn serve_live_attached_client(
     }
 
     Ok(())
+}
+
+fn read_live_client_frame_from_stream(
+    stream: &mut UnixStream,
+) -> Result<LiveClientFrame, Box<dyn std::error::Error>> {
+    let frame = wire::read_default_frame(stream)?;
+    let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+    match envelope.body_type() {
+        protocol::EnvelopeBody::ResizeIntent => {
+            Ok(LiveClientFrame::Resize(resize_intent_from_frame(&frame)?))
+        }
+        protocol::EnvelopeBody::InputEvent => {
+            Ok(LiveClientFrame::Input(input_summary_from_frame(&frame)?))
+        }
+        other => Err(format!("unexpected live client frame: {other:?}").into()),
+    }
+}
+
+enum LiveClientFrame {
+    Resize(ResizeIntentSummary),
+    Input(InputSummary),
 }
 
 fn serve_attached_client(
@@ -423,6 +450,25 @@ pub fn send_key_input(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame =
         Session::initial().key_input_frame("local-client", 3, "local-actor", pane_id, 1, text);
+    wire::write_default_frame(stream, &frame)?;
+    Ok(())
+}
+
+pub fn send_resize_intent(
+    stream: &mut UnixStream,
+    pane_id: &str,
+    cols: u32,
+    rows: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = Session::initial().resize_intent_frame(
+        "local-client",
+        3,
+        "local-actor",
+        pane_id,
+        cols,
+        rows,
+        protocol::ResizeReason::FrontendViewport,
+    );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
 }
@@ -662,6 +708,26 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         actor_id: input.actor_id().unwrap_or_default().to_owned(),
         input_seq: input.input_seq(),
         text: key.text_utf8().unwrap_or_default().to_owned(),
+    })
+}
+
+pub fn resize_intent_from_frame(
+    frame: &[u8],
+) -> Result<ResizeIntentSummary, Box<dyn std::error::Error>> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::ResizeIntent {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let resize = envelope
+        .body_as_resize_intent()
+        .ok_or("missing resize intent body")?;
+    Ok(ResizeIntentSummary {
+        pane_id: resize.pane_id().unwrap_or_default().to_owned(),
+        actor_id: resize.actor_id().unwrap_or_default().to_owned(),
+        cols: resize.desired_cols(),
+        rows: resize.desired_rows(),
+        reason: resize.reason(),
     })
 }
 
@@ -1398,6 +1464,15 @@ pub struct InputSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizeIntentSummary {
+    pub pane_id: String,
+    pub actor_id: String,
+    pub cols: u32,
+    pub rows: u32,
+    pub reason: protocol::ResizeReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PresenceSummary {
     pub actor_id: String,
     pub user_id: String,
@@ -2058,6 +2133,45 @@ mod tests {
         assert_eq!(update, None);
 
         server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_attach_forwards_resize_intent_before_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert!(initial.surface.is_some());
+
+        send_resize_intent(&mut stream, "pane-1", 100, 30).expect("send resize intent");
+        send_key_input(&mut stream, "pane-1", "after-resize").expect("send input");
+        let update =
+            read_optional_surface_update_from_stream(&mut stream).expect("optional surface update");
+        assert_eq!(update, None);
+
+        let host = server.join().expect("server thread");
+        assert!(host.events().contains(&HostEvent::Resized {
+            pane_id: "pane-1".to_owned(),
+            cols: 100,
+            rows: 30,
+        }));
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"after-resize".to_vec(),
+        }));
+
         let _ = fs::remove_file(socket_path);
     }
 
