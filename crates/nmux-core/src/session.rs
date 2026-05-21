@@ -149,6 +149,16 @@ impl Session {
         }
     }
 
+    pub fn surface_version(&self, pane_id: &str) -> Option<u64> {
+        self.tabs.iter().find_map(|tab| {
+            if tab.root.id == pane_id {
+                Some(tab.root.surface_version)
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn pane_surface_frame(&self, connection_id: &str, seq: u64) -> Vec<u8> {
         let surface = self.initial_pane_surface();
         let mut builder = FlatBufferBuilder::new();
@@ -396,6 +406,14 @@ mod tests {
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.len(), 1);
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
+    }
+
+    #[test]
+    fn finds_initial_pane_surface_version() {
+        let session = Session::initial();
+
+        assert_eq!(session.surface_version("pane-1"), Some(1));
+        assert_eq!(session.surface_version("missing"), None);
     }
 
     #[test]
