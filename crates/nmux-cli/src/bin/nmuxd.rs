@@ -35,9 +35,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     pty_host.start_pane(pane_id, &host_spec)?;
     wait_for_pane_output(&mut session, &mut pty_host, pane_id)?;
 
-    if args.live || args.live_cycles.is_some() || args.live_clients.is_some() {
+    if args.live || args.live_forever || args.live_cycles.is_some() || args.live_clients.is_some() {
         let cycles = args.live_cycles.unwrap_or(usize::MAX);
-        let clients = args.live_clients.unwrap_or(1);
+        let clients = if args.live_forever {
+            usize::MAX
+        } else {
+            args.live_clients.unwrap_or(1)
+        };
         let serve_result =
             local::serve_live_n_with_host(&listener, &mut session, &mut pty_host, clients, cycles);
         let stop_result = pty_host.stop_pane(pane_id);
@@ -64,6 +68,7 @@ struct Args {
     socket_path: PathBuf,
     one_shot: bool,
     live: bool,
+    live_forever: bool,
     live_cycles: Option<usize>,
     live_clients: Option<usize>,
     command: Option<String>,
@@ -75,6 +80,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut socket_path = local::default_socket_path();
     let mut one_shot = false;
     let mut live = false;
+    let mut live_forever = false;
     let mut live_cycles = None;
     let mut live_clients = None;
     let mut command = None;
@@ -94,6 +100,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             }
             "--one-shot" => one_shot = true,
             "--live" => live = true,
+            "--live-forever" => live_forever = true,
             "--live-cycles" => {
                 live_cycles = Some(
                     args.next()
@@ -121,13 +128,14 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
-    validate_mode_args(one_shot, live, live_cycles, live_clients)?;
+    validate_mode_args(one_shot, live, live_forever, live_cycles, live_clients)?;
 
     Ok(Args {
         help,
         socket_path,
         one_shot,
         live,
+        live_forever,
         live_cycles,
         live_clients,
         command,
@@ -138,14 +146,20 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
 fn validate_mode_args(
     one_shot: bool,
     live: bool,
+    live_forever: bool,
     live_cycles: Option<usize>,
     live_clients: Option<usize>,
 ) -> Result<(), &'static str> {
-    if one_shot && (live || live_cycles.is_some() || live_clients.is_some()) {
+    if one_shot && (live || live_forever || live_cycles.is_some() || live_clients.is_some()) {
         return Err("--one-shot cannot be combined with live daemon modes");
     }
-    if live && (live_cycles.is_some() || live_clients.is_some()) {
-        return Err("--live cannot be combined with --live-cycles or --live-clients");
+    if live && (live_forever || live_cycles.is_some() || live_clients.is_some()) {
+        return Err(
+            "--live cannot be combined with --live-forever, --live-cycles, or --live-clients",
+        );
+    }
+    if live_forever && (live_cycles.is_some() || live_clients.is_some()) {
+        return Err("--live-forever cannot be combined with --live-cycles or --live-clients");
     }
     if live_cycles == Some(0) {
         return Err("--live-cycles must be greater than 0");
@@ -167,6 +181,7 @@ Options:
   --socket PATH                         Unix socket path
   --one-shot                            Serve one attach client
   --live                                Serve one live client until detach
+  --live-forever                        Serve sequential live clients until stopped
   --live-cycles COUNT                   Serve a bounded live client
   --live-clients COUNT                  Serve bounded sequential live clients
   --command SHELL                       Run a shell command in the pane PTY
@@ -180,6 +195,7 @@ Notes:
 Examples:
   nmuxd --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
   nmuxd --live --command \"printf 'ready\\n'; cat\"
+  nmuxd --live-forever --command \"printf 'ready\\n'; cat\"
   nmuxd --live-clients 2 --command \"printf 'ready\\n'; cat\"
 "
 }
@@ -224,6 +240,7 @@ mod tests {
     fn usage_mentions_live_and_resize_policy_flags() {
         let usage = usage();
         assert!(usage.contains("--live"));
+        assert!(usage.contains("--live-forever"));
         assert!(usage.contains("--live-cycles COUNT"));
         assert!(usage.contains("--live-clients COUNT"));
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
@@ -232,22 +249,31 @@ mod tests {
     #[test]
     fn mode_validation_rejects_ambiguous_daemon_modes() {
         assert_eq!(
-            validate_mode_args(true, false, None, Some(2)),
+            validate_mode_args(true, false, false, None, Some(2)),
             Err("--one-shot cannot be combined with live daemon modes")
         );
         assert_eq!(
-            validate_mode_args(false, true, Some(1), None),
-            Err("--live cannot be combined with --live-cycles or --live-clients")
+            validate_mode_args(false, true, true, None, None),
+            Err("--live cannot be combined with --live-forever, --live-cycles, or --live-clients")
         );
         assert_eq!(
-            validate_mode_args(false, false, Some(0), None),
+            validate_mode_args(false, true, false, Some(1), None),
+            Err("--live cannot be combined with --live-forever, --live-cycles, or --live-clients")
+        );
+        assert_eq!(
+            validate_mode_args(false, false, true, Some(1), None),
+            Err("--live-forever cannot be combined with --live-cycles or --live-clients")
+        );
+        assert_eq!(
+            validate_mode_args(false, false, false, Some(0), None),
             Err("--live-cycles must be greater than 0")
         );
         assert_eq!(
-            validate_mode_args(false, false, None, Some(0)),
+            validate_mode_args(false, false, false, None, Some(0)),
             Err("--live-clients must be greater than 0")
         );
-        assert!(validate_mode_args(false, false, Some(2), Some(3)).is_ok());
+        assert!(validate_mode_args(false, false, false, Some(2), Some(3)).is_ok());
+        assert!(validate_mode_args(false, false, true, None, None).is_ok());
     }
 }
 

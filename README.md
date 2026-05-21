@@ -53,6 +53,7 @@ Both binaries share a stable default socket path for the current user. Pass `--s
 Connection failures include the socket path, which helps distinguish a missing daemon from an isolated test socket.
 Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled.
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache when the daemon has no newer surface update to send.
+Use `nmuxd --live-forever` for an unbounded sequential local workspace that survives repeated live client detach and reattach until the daemon is stopped.
 State load/save failures include the state path in the error.
 Bounded client loops require `--iterations` greater than zero.
 Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.

@@ -47,6 +47,7 @@ fn nmuxd_help_lists_live_server_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--live-cycles COUNT"));
+    assert!(stdout.contains("--live-forever"));
     assert!(stdout.contains("--live-clients COUNT"));
     assert!(stdout.contains("--resize-policy fixed|leader|active-client|manual"));
     assert!(stdout.contains("--command SHELL"));
@@ -55,6 +56,7 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("Examples:"));
     assert!(stdout.contains("nmuxd --one-shot"));
     assert!(stdout.contains("nmuxd --live"));
+    assert!(stdout.contains("nmuxd --live-forever"));
     assert!(stdout.contains("nmuxd --live-clients 2"));
 }
 
@@ -136,8 +138,20 @@ fn nmuxd_rejects_conflicting_server_modes() {
         "nmuxd: --one-shot cannot be combined with live daemon modes",
     );
     assert_nmuxd_rejects(
+        &["--one-shot", "--live-forever"],
+        "nmuxd: --one-shot cannot be combined with live daemon modes",
+    );
+    assert_nmuxd_rejects(
         &["--live", "--live-cycles", "1"],
-        "nmuxd: --live cannot be combined with --live-cycles or --live-clients",
+        "nmuxd: --live cannot be combined with --live-forever, --live-cycles, or --live-clients",
+    );
+    assert_nmuxd_rejects(
+        &["--live", "--live-forever"],
+        "nmuxd: --live cannot be combined with --live-forever, --live-cycles, or --live-clients",
+    );
+    assert_nmuxd_rejects(
+        &["--live-forever", "--live-clients", "2"],
+        "nmuxd: --live-forever cannot be combined with --live-cycles or --live-clients",
     );
     assert_nmuxd_rejects(
         &["--live-cycles", "0"],

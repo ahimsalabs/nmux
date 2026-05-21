@@ -511,6 +511,80 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
 }
 
 #[test]
+fn live_forever_can_serve_sequential_reattach_clients() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-forever",
+            "--command",
+            "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let first_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--key",
+            "forever\n",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run first nmux");
+
+    assert!(
+        first_client.status.success(),
+        "first nmux failed: {}",
+        String::from_utf8_lossy(&first_client.stderr)
+    );
+
+    let second_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run second nmux");
+
+    let _ = server.kill();
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        second_client.status.success(),
+        "second nmux failed: {}",
+        String::from_utf8_lossy(&second_client.stderr)
+    );
+    assert!(
+        !server_status.success(),
+        "nmuxd should have been terminated after test clients"
+    );
+
+    let stdout = String::from_utf8_lossy(&second_client.stdout);
+    assert!(
+        stdout.contains("echo:forever"),
+        "unbounded reattached client did not see prior live state:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_cli_can_drive_distinct_input_lines_from_stdin() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

@@ -106,6 +106,12 @@ rm -f /tmp/nmux.sock
 nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 ```
 
+Use `--live-forever` to keep the same daemon-owned workspace and PTY alive for sequential live clients until the daemon is stopped:
+
+```sh
+nix develop path:$PWD -c cargo run --bin nmuxd -- --live-forever --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+```
+
 Use `--live-clients COUNT` to keep the same daemon-owned workspace and PTY alive for a bounded number of sequential live clients:
 
 ```sh
