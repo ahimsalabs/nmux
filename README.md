@@ -68,6 +68,7 @@ printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socke
 
 For interactive `--stdin-bytes`, Ctrl-] detaches the client.
 Add `--redraw` to repaint the current pane surface in place on each live update. Interactive byte mode uses noncanonical stdin, defaults local echo off, can preserve the TTY echo setting with `--local-echo tty`, and sends TTY-size resize intents on `SIGWINCH` unless explicit `--cols` and `--rows` are provided.
+Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set.
 
 Resize policy smoke:
 

@@ -40,3 +40,47 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("--resize-policy fixed|leader|active-client|manual"));
     assert!(stdout.contains("--command SHELL"));
 }
+
+#[test]
+fn nmux_rejects_live_only_flags_outside_live_mode() {
+    assert_nmux_rejects(&["--stdin"], "nmux: --stdin requires --live");
+    assert_nmux_rejects(&["--stdin-bytes"], "nmux: --stdin-bytes requires --live");
+    assert_nmux_rejects(&["--redraw"], "nmux: --redraw requires --live");
+    assert_nmux_rejects(
+        &["--cols", "100", "--rows", "30"],
+        "nmux: --cols and --rows require --live",
+    );
+}
+
+#[test]
+fn nmux_rejects_conflicting_frontend_modes() {
+    assert_nmux_rejects(
+        &["--live", "--follow"],
+        "nmux: --follow cannot be combined with --live",
+    );
+    assert_nmux_rejects(
+        &["--local-echo", "tty"],
+        "nmux: --local-echo requires --stdin-bytes",
+    );
+    assert_nmux_rejects(
+        &["--iterations", "1"],
+        "nmux: --iterations requires --live or --follow",
+    );
+}
+
+fn assert_nmux_rejects(args: &[&str], expected_stderr: &str) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args(args)
+        .output()
+        .expect("run nmux");
+
+    assert!(
+        !output.status.success(),
+        "nmux unexpectedly succeeded for args {args:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(expected_stderr),
+        "missing expected error {expected_stderr:?} for args {args:?}:\n{stderr}"
+    );
+}

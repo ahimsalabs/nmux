@@ -399,6 +399,7 @@ M11: terminal frontend polish [in progress]
   stdin EOF and live server socket close exits report status on stderr
   explicit live resize requests warn when daemon-published manual policy will ignore them
   nmux --help and interactive TTY byte mode call out interim text surface / non-VT-correct renderer limitations
+  live-only frontend flags fail fast outside --live instead of being silently ignored
   runnable docs and help output should cover expected live attach workflows
   tests should cover changed user-visible terminal output behavior
 ```

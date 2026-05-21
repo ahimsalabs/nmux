@@ -71,6 +71,7 @@ Done:
 - The client warns when an explicit live resize request conflicts with daemon-published `manual` resize policy.
 - `nmux --help` calls out that the current renderer uses an interim text surface, not a VT-correct terminal emulator.
 - Interactive TTY byte mode warns once on stderr that the interim text surface lacks full VT fidelity; scripted and piped runs stay quiet.
+- Live-only frontend flags now fail fast outside `--live` instead of being silently ignored, and `--follow --live` is rejected as an ambiguous client mode.
 - Read-write live clients no longer have to send input before receiving output; idle read-write cycles poll process output and stream updates when the backend-owned surface changes.
 - The live daemon treats a client EOF/disconnect during read-write polling as a clean detach, so piped stdin clients can finish without requiring a matching daemon cycle count.
 

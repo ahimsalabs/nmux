@@ -563,6 +563,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut live_rows = None;
     let mut interval_ms = 1000;
     let mut iterations = None;
+    let mut local_echo_set = false;
     let mut args = std::env::args().skip(1);
 
     while let Some(arg) = args.next() {
@@ -615,6 +616,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                 stdin_bytes = true;
             }
             "--local-echo" => {
+                local_echo_set = true;
                 local_echo =
                     parse_local_echo(&args.next().ok_or("--local-echo requires off or tty")?)
                         .map_err(|err| format!("--local-echo {err}"))?;
@@ -652,6 +654,16 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     if stdin_input && stdin_bytes {
         return Err("--stdin and --stdin-bytes cannot be used together".into());
     }
+    validate_mode_args(
+        live,
+        follow,
+        stdin_input,
+        stdin_bytes,
+        local_echo_set,
+        redraw,
+        live_resize,
+        iterations,
+    )?;
 
     Ok(Args {
         help,
@@ -670,6 +682,40 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         interval_ms,
         iterations,
     })
+}
+
+fn validate_mode_args(
+    live: bool,
+    follow: bool,
+    stdin_input: bool,
+    stdin_bytes: bool,
+    local_echo_set: bool,
+    redraw: bool,
+    live_resize: Option<(u32, u32)>,
+    iterations: Option<usize>,
+) -> Result<(), &'static str> {
+    if live && follow {
+        return Err("--follow cannot be combined with --live");
+    }
+    if stdin_input && !live {
+        return Err("--stdin requires --live");
+    }
+    if stdin_bytes && !live {
+        return Err("--stdin-bytes requires --live");
+    }
+    if local_echo_set && !stdin_bytes {
+        return Err("--local-echo requires --stdin-bytes");
+    }
+    if redraw && !live {
+        return Err("--redraw requires --live");
+    }
+    if live_resize.is_some() && !live {
+        return Err("--cols and --rows require --live");
+    }
+    if iterations.is_some() && !live && !follow {
+        return Err("--iterations requires --live or --follow");
+    }
+    Ok(())
 }
 
 fn usage() -> &'static str {
@@ -722,7 +768,7 @@ mod tests {
     use super::{
         LocalEcho, interim_surface_fidelity_warning_needed, parse_local_echo, raw_terminal_lflag,
         raw_terminal_mode_needed, resize_policy_warning, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage, validate_mode_args,
     };
 
     #[test]
@@ -786,6 +832,61 @@ mod tests {
         assert_eq!(parse_local_echo("off"), Ok(LocalEcho::Off));
         assert_eq!(parse_local_echo("tty"), Ok(LocalEcho::Tty));
         assert!(parse_local_echo("auto").is_err());
+    }
+
+    #[test]
+    fn mode_validation_rejects_ignored_or_conflicting_flags() {
+        assert_eq!(
+            validate_mode_args(true, true, false, false, false, false, None, None),
+            Err("--follow cannot be combined with --live")
+        );
+        assert_eq!(
+            validate_mode_args(false, false, true, false, false, false, None, None),
+            Err("--stdin requires --live")
+        );
+        assert_eq!(
+            validate_mode_args(false, false, false, true, false, false, None, None),
+            Err("--stdin-bytes requires --live")
+        );
+        assert_eq!(
+            validate_mode_args(true, false, false, false, true, false, None, None),
+            Err("--local-echo requires --stdin-bytes")
+        );
+        assert_eq!(
+            validate_mode_args(false, false, false, false, false, true, None, None),
+            Err("--redraw requires --live")
+        );
+        assert_eq!(
+            validate_mode_args(
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                Some((80, 24)),
+                None
+            ),
+            Err("--cols and --rows require --live")
+        );
+        assert_eq!(
+            validate_mode_args(false, false, false, false, false, false, None, Some(1)),
+            Err("--iterations requires --live or --follow")
+        );
+        assert!(
+            validate_mode_args(
+                true,
+                false,
+                false,
+                true,
+                true,
+                true,
+                Some((80, 24)),
+                Some(1)
+            )
+            .is_ok()
+        );
+        assert!(validate_mode_args(false, true, false, false, false, false, None, Some(1)).is_ok());
     }
 
     #[test]
