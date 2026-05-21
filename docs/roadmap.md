@@ -53,10 +53,11 @@ Done:
 - Internal tmux adapter inventory structs can map a tmux session/window/active-pane view into the existing nmux session model without launching tmux or changing the public schema.
 - ADR 0010 for the herdr integration boundary and AGPL membrane.
 - ADR 0011 for making live local interactive attach the next milestone before live adapter work.
+- The local library has a bounded long-lived attach loop helper with tests for repeated input/output patches, no-update behavior, and read-only observation without input forwarding.
 
 Next:
 
-- Add a library-level long-lived attach loop test that keeps one connection open across repeated input/output updates.
+- Wire the long-lived attach loop into `nmuxd`/`nmux` behind explicit flags before attempting raw terminal mode.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -186,4 +187,4 @@ Exit evidence:
 - A read-only client can observe updates without forwarding input.
 - Tests cover repeated input/output, current-version no-update behavior, and read-only permission enforcement.
 
-Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work and scopes the first implementation to a library-level long-lived attach loop before raw terminal UX.
+Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work. The local library now has a bounded live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, current-version cycles send no update frame, and read-only clients can observe output without forwarding input. The next step is wiring this path into `nmuxd`/`nmux` behind explicit flags before attempting raw terminal mode.

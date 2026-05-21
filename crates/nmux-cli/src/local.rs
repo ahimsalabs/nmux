@@ -63,6 +63,21 @@ where
     serve_n_with_host(listener, session, host, 1)
 }
 
+pub fn serve_live_one_with_host<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+    cycles: usize,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    let (mut stream, _) = listener.accept()?;
+    let request = read_attach_request(&mut stream)?;
+    poll_pane_output(session, host, "pane-1")?;
+    serve_live_attached_client(&mut stream, request, session, host, cycles)
+}
+
 pub fn serve_n(
     listener: &UnixListener,
     session: &mut Session,
@@ -137,6 +152,55 @@ where
     serve_attached_client(&mut stream, request, session, Some(host))
 }
 
+fn serve_live_attached_client(
+    stream: &mut UnixStream,
+    request: AttachRequest,
+    session: &mut Session,
+    host: &mut dyn ProcessHostOutput,
+    cycles: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let pane_id = "pane-1";
+    let mut seq = 1;
+    let workspace_frame = session.workspace_tree_frame("local-client", seq);
+    wire::write_default_frame(stream, &workspace_frame)?;
+    seq += 1;
+
+    let actor = request.actor();
+    let presence_frame = session.presence_update_frame("local-client", seq, &actor);
+    wire::write_default_frame(stream, &presence_frame)?;
+    seq += 1;
+
+    let mut known_surface_version =
+        if let Some(response) = request.surface_response(session, pane_id) {
+            let surface_frame = surface_response_frame(session, response, seq);
+            wire::write_default_frame(stream, &surface_frame)?;
+            seq += 1;
+            session.surface_version(pane_id).unwrap_or_default()
+        } else {
+            session.surface_version(pane_id).unwrap_or_default()
+        };
+
+    for _ in 0..cycles {
+        if Session::input_allowed(&actor) {
+            let input = read_input_event_from_stream(stream)?;
+            host.write_input(&input.pane_id, input.text.as_bytes())?;
+            poll_pane_output(session, host, &input.pane_id)?;
+        } else {
+            poll_pane_output(session, host, pane_id)?;
+        }
+
+        let current = session.surface_version(pane_id).unwrap_or_default();
+        if let Some(response) = surface_response_for_known_version(current, known_surface_version) {
+            let surface_frame = surface_response_frame(session, response, seq);
+            wire::write_default_frame(stream, &surface_frame)?;
+            seq += 1;
+            known_surface_version = current;
+        }
+    }
+
+    Ok(())
+}
+
 fn serve_attached_client(
     stream: &mut UnixStream,
     request: AttachRequest,
@@ -151,12 +215,7 @@ fn serve_attached_client(
     wire::write_default_frame(stream, &presence_frame)?;
 
     if let Some(response) = request.surface_response(session, "pane-1") {
-        let surface_frame = match response {
-            SurfaceResponse::Snapshot => session.pane_surface_frame("local-client", 3),
-            SurfaceResponse::Patch { base_version } => {
-                session.pane_surface_patch_frame("local-client", 3, base_version)
-            }
-        };
+        let surface_frame = surface_response_frame(session, response, 3);
         wire::write_default_frame(stream, &surface_frame)?;
         if Session::input_allowed(&actor) {
             let input = read_input_event_from_stream(stream)?;
@@ -171,6 +230,15 @@ fn serve_attached_client(
         wire::write_default_frame(stream, &chunk)?;
     }
     Ok(())
+}
+
+fn surface_response_frame(session: &Session, response: SurfaceResponse, seq: u64) -> Vec<u8> {
+    match response {
+        SurfaceResponse::Snapshot => session.pane_surface_frame("local-client", seq),
+        SurfaceResponse::Patch { base_version } => {
+            session.pane_surface_patch_frame("local-client", seq, base_version)
+        }
+    }
 }
 
 pub fn poll_pane_output(
@@ -520,6 +588,13 @@ pub fn read_scrollback_chunk_from_stream(
     scrollback_chunk_from_frame(&frame)
 }
 
+pub fn read_surface_update_from_stream(
+    stream: &mut UnixStream,
+) -> Result<SurfaceUpdate, Box<dyn std::error::Error>> {
+    let frame = wire::read_default_frame(stream)?;
+    surface_update_from_frame(&frame)
+}
+
 pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     if envelope.body_type() != protocol::EnvelopeBody::InputEvent {
@@ -758,15 +833,19 @@ impl AttachRequest {
             return Some(SurfaceResponse::Snapshot);
         };
 
-        if known.version == current {
-            None
-        } else if known.version.checked_add(1) == Some(current) {
-            Some(SurfaceResponse::Patch {
-                base_version: known.version,
-            })
-        } else {
-            Some(SurfaceResponse::Snapshot)
-        }
+        surface_response_for_known_version(current, known.version)
+    }
+}
+
+fn surface_response_for_known_version(current: u64, known: u64) -> Option<SurfaceResponse> {
+    if known == current {
+        None
+    } else if known.checked_add(1) == Some(current) {
+        Some(SurfaceResponse::Patch {
+            base_version: known,
+        })
+    } else {
+        Some(SurfaceResponse::Snapshot)
     }
 }
 
@@ -1858,6 +1937,127 @@ mod tests {
     }
 
     #[test]
+    fn live_attach_forwards_repeated_input_and_streams_surface_updates() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = EchoHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start echo pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 2).expect("serve live");
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(
+            initial.surface.as_ref().map(|surface| surface.version),
+            Some(2)
+        );
+
+        send_key_input(&mut stream, "pane-1", "first").expect("send first input");
+        let first_update = read_surface_update_from_stream(&mut stream).expect("first update");
+        assert_eq!(first_update.kind, SurfaceUpdateKind::Patch);
+        assert_eq!(first_update.base_version, Some(2));
+        assert_eq!(first_update.version, 3);
+        assert!(first_update.text.ends_with("first"));
+
+        send_key_input(&mut stream, "pane-1", "second").expect("send second input");
+        let second_update = read_surface_update_from_stream(&mut stream).expect("second update");
+        assert_eq!(second_update.kind, SurfaceUpdateKind::Patch);
+        assert_eq!(second_update.base_version, Some(3));
+        assert_eq!(second_update.version, 4);
+        assert!(second_update.text.ends_with("second"));
+
+        server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_attach_sends_no_surface_update_when_version_is_current() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live")
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(
+            initial.surface.as_ref().map(|surface| surface.version),
+            Some(2)
+        );
+
+        send_key_input(&mut stream, "pane-1", "silent").expect("send silent input");
+        let err = read_surface_update_from_stream(&mut stream).expect_err("no update frame");
+        assert!(err.to_string().contains("failed to fill whole buffer"));
+
+        server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_read_only_attach_observes_output_without_forwarding_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![Vec::new(), b"observer update\n".to_vec()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve read-only live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "spectator".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadOnly);
+        assert_eq!(
+            initial.surface.as_ref().map(|surface| surface.version),
+            Some(2)
+        );
+
+        let update = read_surface_update_from_stream(&mut stream).expect("observer update");
+        assert_eq!(update.kind, SurfaceUpdateKind::Patch);
+        assert_eq!(update.base_version, Some(2));
+        assert_eq!(update.version, 3);
+        assert!(update.text.ends_with("observer update"));
+
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn serves_no_surface_when_client_has_current_surface_version() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -2225,6 +2425,104 @@ mod tests {
             let count = bytes.len().min(self.output.len());
             for byte in &mut bytes[..count] {
                 *byte = self.output.pop_front().expect("queued echo output");
+            }
+            Ok(count)
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct ScriptedOutputHost {
+        running: bool,
+        events: Vec<HostEvent>,
+        output: VecDeque<Vec<u8>>,
+        pending: VecDeque<u8>,
+    }
+
+    impl ScriptedOutputHost {
+        fn new(output: Vec<Vec<u8>>) -> Self {
+            Self {
+                output: output.into(),
+                ..Self::default()
+            }
+        }
+    }
+
+    impl ProcessHost for ScriptedOutputHost {
+        fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
+            self.running = true;
+            self.events.push(HostEvent::Started {
+                pane_id: pane_id.to_owned(),
+                host_id: spec.id.clone(),
+                kind: spec.kind.clone(),
+            });
+            Ok(PaneProcess {
+                pane_id: pane_id.to_owned(),
+                host_id: spec.id.clone(),
+                status: ProcessStatus::Running,
+            })
+        }
+
+        fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            self.events.push(HostEvent::Input {
+                pane_id: pane_id.to_owned(),
+                bytes: bytes.to_vec(),
+            });
+            Ok(())
+        }
+
+        fn resize_pane(&mut self, pane_id: &str, cols: u32, rows: u32) -> Result<(), HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            self.events.push(HostEvent::Resized {
+                pane_id: pane_id.to_owned(),
+                cols,
+                rows,
+            });
+            Ok(())
+        }
+
+        fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            self.running = false;
+            self.events.push(HostEvent::Stopped {
+                pane_id: pane_id.to_owned(),
+            });
+            Ok(PaneProcess {
+                pane_id: pane_id.to_owned(),
+                host_id: "scripted".to_owned(),
+                status: ProcessStatus::Exited,
+            })
+        }
+    }
+
+    impl ProcessOutput for ScriptedOutputHost {
+        fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            if self.pending.is_empty() {
+                if let Some(next) = self.output.pop_front() {
+                    self.pending.extend(next);
+                }
+            }
+
+            let count = bytes.len().min(self.pending.len());
+            for byte in &mut bytes[..count] {
+                *byte = self.pending.pop_front().expect("queued scripted output");
             }
             Ok(count)
         }
