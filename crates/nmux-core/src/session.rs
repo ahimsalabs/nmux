@@ -36,6 +36,13 @@ pub struct PaneSurface {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneScrollback {
+    pub pane_id: String,
+    pub version: u64,
+    pub lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cursor {
     pub row: u32,
     pub col: u32,
@@ -143,6 +150,19 @@ impl Session {
                 visible: true,
             },
             lines: vec![
+                "nmux pane-1".to_owned(),
+                "server-owned terminal state".to_owned(),
+            ],
+        }
+    }
+
+    pub fn initial_scrollback(&self) -> PaneScrollback {
+        let surface = self.initial_pane_surface();
+        PaneScrollback {
+            pane_id: surface.pane_id,
+            version: 1,
+            lines: vec![
+                "booting nmux workspace".to_owned(),
                 "nmux pane-1".to_owned(),
                 "server-owned terminal state".to_owned(),
             ],
@@ -285,6 +305,72 @@ impl Session {
                 sent_at_mono_ms: 0,
                 body_type: protocol::EnvelopeBody::PaneSurfacePatch,
                 body: Some(patch.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+
+    pub fn scrollback_chunk_frame(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        start_line: u64,
+        line_count: u32,
+    ) -> Vec<u8> {
+        let scrollback = self.initial_scrollback();
+        let mut builder = FlatBufferBuilder::new();
+
+        let start = usize::try_from(start_line).unwrap_or(usize::MAX);
+        let count = line_count as usize;
+        let end = start.saturating_add(count).min(scrollback.lines.len());
+        let selected = scrollback
+            .lines
+            .get(start..end)
+            .map_or(&[][..], |rows| rows);
+
+        let mut row_offsets = Vec::with_capacity(selected.len());
+        for (offset, line) in selected.iter().enumerate() {
+            let run = build_cell_run(&mut builder, line);
+            let runs = builder.create_vector(&[run]);
+            let row = protocol::ScrollbackRow::create(
+                &mut builder,
+                &protocol::ScrollbackRowArgs {
+                    line: start_line + offset as u64,
+                    runs: Some(runs),
+                    dirty_hash: stable_row_hash(line),
+                },
+            );
+            row_offsets.push(row);
+        }
+
+        let rows = builder.create_vector(&row_offsets);
+        let pane_id = builder.create_string(&scrollback.pane_id);
+        let chunk = protocol::ScrollbackChunk::create(
+            &mut builder,
+            &protocol::ScrollbackChunkArgs {
+                pane_id: Some(pane_id),
+                scrollback_version: scrollback.version,
+                start_line,
+                total_lines: scrollback.lines.len() as u64,
+                rows: Some(rows),
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::ScrollbackChunk,
+                body: Some(chunk.as_union_value()),
             },
         );
 
@@ -515,6 +601,55 @@ mod tests {
         assert_eq!(first_row.row(), 0);
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
+    }
+
+    #[test]
+    fn scrollback_chunk_frame_decodes_requested_range() {
+        let frame = Session::initial().scrollback_chunk_frame("conn-1", 11, 1, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
+        assert_eq!(envelope.session_id(), Some("local"));
+        assert_eq!(envelope.connection_id(), Some("conn-1"));
+        assert_eq!(envelope.seq(), 11);
+        assert_eq!(
+            envelope.body_type(),
+            protocol::EnvelopeBody::ScrollbackChunk
+        );
+
+        let chunk = envelope
+            .body_as_scrollback_chunk()
+            .expect("scrollback chunk body");
+        assert_eq!(chunk.pane_id(), Some("pane-1"));
+        assert_eq!(chunk.scrollback_version(), 1);
+        assert_eq!(chunk.start_line(), 1);
+        assert_eq!(chunk.total_lines(), 3);
+
+        let rows = chunk.rows().expect("scrollback rows");
+        assert_eq!(rows.len(), 2);
+
+        let first = rows.get(0);
+        assert_eq!(first.line(), 1);
+        let first_runs = first.runs().expect("first runs");
+        assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
+
+        let second = rows.get(1);
+        assert_eq!(second.line(), 2);
+        let second_runs = second.runs().expect("second runs");
+        assert_eq!(
+            second_runs.get(0).text_utf8(),
+            Some("server-owned terminal state")
+        );
+    }
+
+    #[test]
+    fn initial_surface_matches_tail_of_scrollback() {
+        let session = Session::initial();
+        let surface = session.initial_pane_surface();
+        let scrollback = session.initial_scrollback();
+        let tail = &scrollback.lines[scrollback.lines.len() - surface.lines.len()..];
+
+        assert_eq!(surface.lines, tail);
     }
 
     #[test]
