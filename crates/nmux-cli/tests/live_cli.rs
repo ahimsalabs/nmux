@@ -145,6 +145,150 @@ fn live_cli_can_drive_distinct_input_lines_from_stdin() {
 }
 
 #[test]
+fn live_cli_can_drive_input_chunks_from_stdin_bytes() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--stdin-bytes",
+            "--interval-ms",
+            "1000",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
+
+    let stdout = client.stdout.take().expect("client stdout");
+    let (lines_tx, lines_rx) = mpsc::channel();
+    let stdout_reader = thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            lines_tx.send(line.expect("stdout line")).ok();
+        }
+    });
+
+    let mut stdin = client.stdin.take().expect("client stdin");
+    stdin.write_all(b"pi").expect("write partial ping");
+    stdin.flush().expect("flush partial ping");
+    thread::sleep(Duration::from_millis(30));
+    stdin.write_all(b"ng\n").expect("write ping terminator");
+    stdin.flush().expect("flush ping");
+    let mut lines = read_until_line(&lines_rx, "echo:ping");
+
+    stdin.write_all(b"po").expect("write partial pong");
+    stdin.flush().expect("flush partial pong");
+    thread::sleep(Duration::from_millis(30));
+    stdin.write_all(b"ng\n").expect("write pong terminator");
+    stdin.flush().expect("flush pong");
+    lines.extend(read_until_line(&lines_rx, "echo:pong"));
+    drop(stdin);
+
+    let client = client.wait_with_output().expect("wait for nmux");
+    stdout_reader.join().expect("stdout reader");
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(
+        lines.iter().any(|line| line.contains("echo:ping")),
+        "missing ping echo:\n{}",
+        lines.join("\n")
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("echo:pong")),
+        "missing pong echo:\n{}",
+        lines.join("\n")
+    );
+}
+
+#[test]
+fn live_stdin_bytes_keeps_polling_before_input_arrives() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'ready\n'; sleep 0.05; printf 'tick-before-input\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--stdin-bytes",
+            "--interval-ms",
+            "1000",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
+
+    let stdout = client.stdout.take().expect("client stdout");
+    let (lines_tx, lines_rx) = mpsc::channel();
+    let stdout_reader = thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            lines_tx.send(line.expect("stdout line")).ok();
+        }
+    });
+
+    let lines = read_until_line(&lines_rx, "tick-before-input");
+    drop(client.stdin.take().expect("client stdin"));
+
+    let client = client.wait_with_output().expect("wait for nmux");
+    stdout_reader.join().expect("stdout reader");
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(
+        lines.iter().any(|line| line.contains("tick-before-input")),
+        "missing delayed output:\n{}",
+        lines.join("\n")
+    );
+}
+
+#[test]
 fn live_read_only_cli_observes_output_without_input() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

@@ -132,6 +132,14 @@ printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socke
 
 With `--stdin`, each input line is read and sent during its live input cycle, after the client has attached. If `--iterations` is omitted, stdin EOF ends the client loop without falling back to the default `--key` input. If `--iterations` is present, the client runs at most that many stdin cycles. The daemon treats client EOF during live read-write polling as a clean detach.
 
+For byte-streamed live input, use `--stdin-bytes`:
+
+```sh
+printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin-bytes --interval-ms 500
+```
+
+`--stdin-bytes` reads stdin on a background thread and sends available UTF-8-ish chunks during the live polling loop. This keeps output polling active even while no complete input line is available. It is a step toward raw terminal input, but the current protocol still carries input as UTF-8 text rather than arbitrary terminal bytes.
+
 For read-only live observation, use `--no-input`:
 
 ```sh

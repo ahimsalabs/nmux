@@ -1,6 +1,7 @@
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Read};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
 use std::time::Duration;
 
@@ -59,6 +60,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let stdin_bytes = if args.stdin_bytes {
+        Some(spawn_stdin_byte_reader())
+    } else {
+        None
+    };
+    let mut stdin_bytes_closed = false;
 
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
@@ -66,7 +73,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         scrollback_line_count: args.scrollback_line_count,
         ..local::AttachOptions::default()
     };
-    if args.stdin_input {
+    if args.stdin_input || args.stdin_bytes {
         options.request.mode = AttachMode::ReadWrite;
     } else if options.input_text.is_none() {
         options.request.mode = AttachMode::ReadOnly;
@@ -79,7 +86,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     print_rendered(rendered);
 
     let cycle_limit = args.iterations.or_else(|| {
-        (!args.stdin_input && options.request.mode == AttachMode::ReadWrite).then_some(1)
+        (!args.stdin_input && !args.stdin_bytes && options.request.mode == AttachMode::ReadWrite)
+            .then_some(1)
     });
     let mut cycles = 0;
     loop {
@@ -91,17 +99,31 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             if let Some((cols, rows)) = args.live_resize {
                 local::send_resize_intent(&mut stream, "pane-1", cols, rows)?;
             }
-            let stdin_line = next_stdin_line(stdin_lines.as_mut())?;
-            let input_text = if args.stdin_input {
-                match stdin_line.as_deref() {
+            let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
+                match receiver.try_recv() {
+                    Ok(StdinByteRead::Input(input)) => Some(input),
+                    Ok(StdinByteRead::Closed) => {
+                        stdin_bytes_closed = true;
+                        None
+                    }
+                    Ok(StdinByteRead::Error(err)) => return Err(err.into()),
+                    Err(TryRecvError::Empty) => None,
+                    Err(TryRecvError::Disconnected) => {
+                        stdin_bytes_closed = true;
+                        None
+                    }
+                }
+            } else if args.stdin_input {
+                let stdin_line = next_stdin_line(stdin_lines.as_mut())?;
+                match stdin_line {
                     Some(line) => Some(line),
                     None if args.iterations.is_none() => break,
                     None => None,
                 }
             } else {
-                options.input_text.as_deref()
+                options.input_text.as_deref().map(ToOwned::to_owned)
             };
-            if let Some(input_text) = input_text {
+            if let Some(input_text) = input_text.as_deref() {
                 local::send_key_input(&mut stream, "pane-1", input_text)?;
             }
         }
@@ -112,6 +134,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             }
             local::LiveSurfaceRead::NoFrame => {}
             local::LiveSurfaceRead::Closed => break,
+        }
+        if stdin_bytes_closed && args.iterations.is_none() {
+            break;
         }
         cycles += 1;
     }
@@ -134,6 +159,39 @@ fn next_stdin_line(
     let mut line = line?;
     line.push('\n');
     Ok(Some(line))
+}
+
+fn spawn_stdin_byte_reader() -> mpsc::Receiver<StdinByteRead> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut stdin = io::stdin().lock();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            match stdin.read(&mut buffer) {
+                Ok(0) => {
+                    let _ = tx.send(StdinByteRead::Closed);
+                    break;
+                }
+                Ok(count) => {
+                    let input = String::from_utf8_lossy(&buffer[..count]).into_owned();
+                    if tx.send(StdinByteRead::Input(input)).is_err() {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    let _ = tx.send(StdinByteRead::Error(err.to_string()));
+                    break;
+                }
+            }
+        }
+    });
+    rx
+}
+
+enum StdinByteRead {
+    Input(String),
+    Closed,
+    Error(String),
 }
 
 fn attach_once(
@@ -179,6 +237,7 @@ struct Args {
     follow: bool,
     live: bool,
     stdin_input: bool,
+    stdin_bytes: bool,
     live_resize: Option<(u32, u32)>,
     interval_ms: u64,
     iterations: Option<usize>,
@@ -193,6 +252,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut follow = false;
     let mut live = false;
     let mut stdin_input = false;
+    let mut stdin_bytes = false;
     let mut live_cols = None;
     let mut live_rows = None;
     let mut interval_ms = 1000;
@@ -242,6 +302,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             "--stdin" => {
                 stdin_input = true;
             }
+            "--stdin-bytes" => {
+                stdin_bytes = true;
+            }
             "--cols" => {
                 live_cols = Some(args.next().ok_or("--cols requires a count")?.parse()?);
             }
@@ -269,6 +332,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         (None, None) => None,
         _ => return Err("--cols and --rows must be provided together".into()),
     };
+    if stdin_input && stdin_bytes {
+        return Err("--stdin and --stdin-bytes cannot be used together".into());
+    }
 
     Ok(Args {
         socket_path,
@@ -279,6 +345,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         follow,
         live,
         stdin_input,
+        stdin_bytes,
         live_resize,
         interval_ms,
         iterations,

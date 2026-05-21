@@ -219,8 +219,17 @@ fn serve_live_attached_client(
 fn read_optional_live_client_frame_from_stream(
     stream: &mut UnixStream,
 ) -> Result<LiveClientRead, Box<dyn std::error::Error>> {
-    let previous_timeout = stream.read_timeout()?;
-    stream.set_read_timeout(Some(Duration::from_millis(20)))?;
+    let previous_timeout = match stream.read_timeout() {
+        Ok(timeout) => timeout,
+        Err(err) if socket_closed_error(&err) => return Ok(LiveClientRead::Closed),
+        Err(err) => return Err(err.into()),
+    };
+    if let Err(err) = stream.set_read_timeout(Some(Duration::from_millis(20))) {
+        if socket_closed_error(&err) {
+            return Ok(LiveClientRead::Closed);
+        }
+        return Err(err.into());
+    }
     let read_result = match wire::read_default_frame(stream) {
         Ok(frame) => {
             let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
@@ -257,13 +266,19 @@ fn read_optional_live_client_frame_from_stream(
     match (read_result, stream.set_read_timeout(previous_timeout)) {
         (Err(err), _) => Err(err),
         (Ok(read), Ok(())) => Ok(read),
-        (Ok(read), Err(err))
-            if err.kind() == io::ErrorKind::InvalidInput || err.raw_os_error() == Some(22) =>
-        {
-            Ok(read)
-        }
+        (Ok(read), Err(err)) if socket_closed_error(&err) => Ok(read),
         (Ok(_), Err(err)) => Err(err.into()),
     }
+}
+
+fn socket_closed_error(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::InvalidInput
+            | io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::BrokenPipe
+    ) || err.raw_os_error() == Some(22)
 }
 
 enum LiveClientRead {

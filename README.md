@@ -49,4 +49,12 @@ nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live
 printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin --interval-ms 500
 ```
 
+Byte-streamed live input:
+
+```sh
+rm -f /tmp/nmux.sock
+nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin-bytes --interval-ms 500
+```
+
 This is still a prototype. It is not yet raw terminal mode, and the temporary text surface is not a VT-correct terminal emulator.
