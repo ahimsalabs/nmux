@@ -44,10 +44,11 @@ Done:
 - Local attach polls process output after forwarded input so echoed command output can update backend-owned scrollback.
 - Client flags can drive an interaction smoke across attaches with custom input and scrollback ranges.
 - ADR 0007 for the Ghostty/libghostty frontend boundary.
+- Client-side pane surface render state can initialize from snapshots, apply row patches by row index, and reject patch base-version mismatches.
 
 Next:
 
-- Prototype a minimal native/frontend renderer that consumes `PaneSurfaceSnapshot` and `PaneSurfacePatch` as authoritative server-owned state.
+- Route the local `nmux` frontend output through the client-side surface render state and persist known pane versions across a reconnect smoke.
 - Track upstream Ghostty/libghostty API work needed for external surface hydration.
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
 
@@ -142,7 +143,7 @@ Exit evidence:
 - The project has a documented answer for external surface rendering.
 - A prototype frontend can render server-owned state or the needed upstream/API work is documented.
 
-Status: In progress. ADR 0007 documents the boundary: backend libghostty/libghostty-vt is the primary correctness path, frontend libghostty rendering must not re-parse PTY bytes, and a temporary nmux renderer is the practical prototype path unless Ghostty/libghostty exposes external surface hydration.
+Status: In progress. ADR 0007 documents the boundary: backend libghostty/libghostty-vt is the primary correctness path, frontend libghostty rendering must not re-parse PTY bytes, and a temporary nmux renderer is the practical prototype path unless Ghostty/libghostty exposes external surface hydration. The local client library now has a small pane-surface render state that applies server-owned snapshots and patches by version.
 
 ### M8: tmux Adapter
 

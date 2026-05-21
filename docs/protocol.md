@@ -34,6 +34,8 @@ Pane surfaces are encoded as rows of runs:
 
 This avoids freezing a simplistic per-cell ABI before the project has enough implementation feedback about graphemes, combining marks, double-width characters, terminal modes, hyperlinks, and image protocols.
 
+Clients should maintain a pane-surface render state keyed by pane ID and version. A snapshot initializes the local surface buffer, and a patch is applied only when its `base_version` matches the client's current version. Row patches are applied by encoded row index, not by vector order. If a client cannot apply a patch, it must request or wait for a full snapshot instead of replaying raw PTY bytes.
+
 ## Resize Model
 
 Clients do not directly resize PTYs. They send `ResizeIntent` with desired columns, rows, actor, pane, and reason. The daemon applies policy and later publishes committed size through workspace or pane state.
