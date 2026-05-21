@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M12 is the current target: continue improving live workspace usability from the local CLI while preserving the backend-owned state-sync model and keeping interim renderer limitations explicit.
+M13 is the current target: replace the interim backend text surface with a daemon-owned terminal engine path, starting with the terminal engine boundary and then moving toward backend `libghostty-vt` extraction.
 
 Done:
 
@@ -80,11 +80,16 @@ Done:
 - The live daemon treats a client EOF/disconnect during read-write polling as a clean detach, so piped stdin clients can finish without requiring a matching daemon cycle count.
 - `nmuxd --live-clients COUNT` keeps the same local workspace and PTY alive across bounded sequential live clients.
 - `nmuxd` rejects ambiguous live server mode combinations and zero live counts instead of silently choosing one mode.
+- `nmuxd` and `nmux` share a stable default socket path for local workflows without `--socket`.
+- `nmux --connect-timeout-ms` can wait across daemon socket startup races.
+- ADR 0012 documents the backend terminal engine boundary.
+- `nmux-core` routes pane output through a terminal engine trait, with the interim text engine as the current implementation.
+- Local daemon serving paths keep terminal engine instances alive per pane across output polls and sequential live clients.
 
 Next:
 
-- Choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence.
-- Preserve sequential live reattach behavior while moving toward more durable workspace lifetimes.
+- Map the current interim terminal output fields to the first backend `libghostty-vt` extraction requirements.
+- Keep client attach, reconnect, live streaming, and scrollback fetch semantics on nmux state objects.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -258,6 +263,6 @@ Exit evidence:
 - The interim text surface remains explicitly labeled temporary until replaced.
 - No GPL or AGPL terminal parser code is copied into the core.
 
-Status: Planned as the next correctness milestone after enough M12 live workflow is usable to validate snapshots, patches, scrollback ranges, reconnect behavior, and live attach against a real terminal-state engine.
+Status: Started. ADR 0012 documents the terminal engine boundary. `nmux-core` exposes a terminal engine trait, the interim text behavior implements it, and local daemon serving paths keep engine instances alive per pane across output polls and sequential clients.
 
 Initial boundary slice: `nmux-core` now exposes a terminal engine boundary for daemon-owned pane output hydration. The existing interim text behavior lives behind that boundary, preserving current `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` semantics while creating the replacement point for backend `libghostty-vt` extraction. Local daemon serving paths keep terminal engine instances alive per pane across output polls and sequential clients, matching the stateful shape expected from a real VT engine.

@@ -17,3 +17,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0009: tmux Adapter Process Boundary](0009-tmux-adapter-process-boundary.md)
 - [0010: herdr Integration Boundary](0010-herdr-integration-boundary.md)
 - [0011: Live Local Interactive Attach](0011-live-local-interactive-attach.md)
+- [0012: Backend Terminal Engine Boundary](0012-backend-terminal-engine-boundary.md)
