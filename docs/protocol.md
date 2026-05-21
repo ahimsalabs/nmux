@@ -42,4 +42,10 @@ The policy is part of `PaneNode` so a pane can be fixed-size, leader-controlled,
 
 ## Validation
 
-The schema should be validated with `flatc` once FlatBuffers tooling is added to the repo. Until then, edits to [schema/nmux.fbs](../schema/nmux.fbs) should be reviewed as schema changes and kept append-friendly.
+Validate the schema with:
+
+```sh
+nix develop path:$PWD -c make check-schema
+```
+
+The `check-schema` target runs `flatc` against [schema/nmux.fbs](../schema/nmux.fbs). Schema edits should stay append-friendly unless an ADR explicitly changes the compatibility posture.

@@ -67,25 +67,6 @@ enum ErrorCode : ushort {
   StaleVersion = 5,
 }
 
-table Envelope {
-  protocol_version:uint;
-  session_id:string;
-  connection_id:string;
-  seq:ulong;
-  ack:ulong;
-  sent_at_mono_ms:ulong;
-  body:EnvelopeBody;
-}
-
-union EnvelopeBody {
-  WorkspaceTreeSnapshot,
-  PaneSurfaceSnapshot,
-  PaneSurfacePatch,
-  InputEvent,
-  ResizeIntent,
-  Error,
-}
-
 table WorkspaceTreeSnapshot {
   version:ulong;
   session_id:string;
@@ -205,6 +186,25 @@ table Error {
   code:ErrorCode = Unknown;
   message:string;
   retryable:bool;
+}
+
+union EnvelopeBody {
+  WorkspaceTreeSnapshot,
+  PaneSurfaceSnapshot,
+  PaneSurfacePatch,
+  InputEvent,
+  ResizeIntent,
+  Error,
+}
+
+table Envelope {
+  protocol_version:uint;
+  session_id:string;
+  connection_id:string;
+  seq:ulong;
+  ack:ulong;
+  sent_at_mono_ms:ulong;
+  body:EnvelopeBody;
 }
 
 root_type Envelope;

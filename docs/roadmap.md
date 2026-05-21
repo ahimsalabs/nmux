@@ -12,10 +12,10 @@ Done:
 - ADR 0001 for backend-owned terminal state.
 - Initial M0 schema in [schema/nmux.fbs](../schema/nmux.fbs).
 - M0 protocol notes in [docs/protocol.md](protocol.md).
+- Reproducible schema validation through `nix develop path:$PWD -c make check-schema`.
 
 Next:
 
-- Add reproducible FlatBuffers schema validation.
 - Add a minimal codegen/build path for the chosen implementation language.
 - Add the first local daemon/client skeleton around the M0 envelope.
 
