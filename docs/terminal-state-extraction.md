@@ -43,6 +43,9 @@ backend terminal state into the same nmux objects:
 - Versions: bump surface versions when the nmux-visible surface, cursor, or
   surface dimensions change; scrollback-only updates should not force a surface
   version bump. Keep workspace versions for tree metadata changes.
+- Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; row
+  changes should use `PatchKind::ReplaceRows`; changes that cannot be expressed
+  by the current patch schema should force a full snapshot.
 
 ## Known Schema Gaps
 
@@ -63,7 +66,7 @@ only after the backend extraction proves the exact shape needed.
 - Images and graphics protocols: placement, dimensions, persistence, and
   fallback behavior for clients without image support.
 - Damage granularity: row replacement is enough for the prototype, but rich
-  cells may need run-level or region-level patches.
+  cells may need run-level or region-level patches beyond cursor-only updates.
 
 ## Acceptance Gate
 
@@ -71,7 +74,8 @@ Before enabling `nmuxd --terminal-engine libghostty-vt`, the repository should
 have tests proving:
 
 - the engine is stateful per pane across multiple PTY output reads;
-- cursor movement without printable text updates `PaneSurfacePatch.cursor`;
+- cursor movement without printable text updates `PaneSurfacePatch.cursor` using
+  `PatchKind::CursorOnly`;
 - resize events are handled by the engine instance used for that pane;
 - scrollback fetches return backend-owned history after viewport changes;
 - alternate-screen behavior is either correctly modeled or explicitly withheld

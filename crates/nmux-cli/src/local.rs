@@ -407,7 +407,12 @@ fn serve_live_attached_client(
         }
 
         let current = session.surface_version(pane_id).unwrap_or_default();
-        if let Some(response) = surface_response_for_known_version(current, known_surface_version) {
+        let patch_kind = session
+            .surface_patch_kind(pane_id)
+            .unwrap_or(protocol::PatchKind::ReplaceRows);
+        if let Some(response) =
+            surface_response_for_known_version(current, known_surface_version, patch_kind)
+        {
             let surface_frame = surface_response_frame(session, response, seq);
             wire::write_default_frame(stream, &surface_frame)?;
             seq += 1;
@@ -1302,13 +1307,22 @@ impl AttachRequest {
             return Some(SurfaceResponse::Snapshot);
         };
 
-        surface_response_for_known_version(current, known.version)
+        let patch_kind = session
+            .surface_patch_kind(pane_id)
+            .unwrap_or(protocol::PatchKind::ReplaceRows);
+        surface_response_for_known_version(current, known.version, patch_kind)
     }
 }
 
-fn surface_response_for_known_version(current: u64, known: u64) -> Option<SurfaceResponse> {
+fn surface_response_for_known_version(
+    current: u64,
+    known: u64,
+    patch_kind: protocol::PatchKind,
+) -> Option<SurfaceResponse> {
     if known == current {
         None
+    } else if patch_kind == protocol::PatchKind::FullRefreshRequired {
+        Some(SurfaceResponse::Snapshot)
     } else if known.checked_add(1) == Some(current) {
         Some(SurfaceResponse::Patch {
             base_version: known,
@@ -1333,6 +1347,7 @@ fn attach_mode_from_protocol(mode: protocol::AttachMode) -> AttachMode {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum SurfaceResponse {
     Snapshot,
     Patch { base_version: u64 },
@@ -2195,6 +2210,31 @@ mod tests {
     }
 
     #[test]
+    fn client_surface_applies_cursor_only_patch_without_rows() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top"), surface_row(1, "bottom")],
+        );
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        patch.patch_kind = Some(protocol::PatchKind::CursorOnly);
+        patch.cursor = Some(CursorSummary {
+            row: 1,
+            col: 6,
+            visible: true,
+            shape: protocol::CursorShape::Beam,
+        });
+
+        surface.apply_patch(&patch).expect("apply patch");
+
+        assert_eq!(surface.version, 2);
+        assert_eq!(surface.render_text(), "top\nbottom");
+        assert_eq!(surface.cursor, patch.cursor);
+    }
+
+    #[test]
     fn client_surface_rejects_patch_base_mismatch() {
         let snapshot = surface_update(
             SurfaceUpdateKind::Snapshot,
@@ -2215,6 +2255,14 @@ mod tests {
         assert!(err.to_string().contains("base version mismatch"));
         assert_eq!(surface.version, 3);
         assert_eq!(surface.render_text(), "current");
+    }
+
+    #[test]
+    fn full_refresh_required_surface_response_uses_snapshot() {
+        assert_eq!(
+            surface_response_for_known_version(2, 1, protocol::PatchKind::FullRefreshRequired),
+            Some(SurfaceResponse::Snapshot)
+        );
     }
 
     #[test]

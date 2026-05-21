@@ -21,6 +21,7 @@ pub struct TerminalCursor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalUpdate {
+    pub patch_kind: protocol::PatchKind,
     pub surface: protocol::SurfaceKind,
     pub cursor: TerminalCursor,
     pub surface_lines: Vec<String>,
@@ -131,6 +132,7 @@ fn interim_text_update(
     };
 
     TerminalUpdate {
+        patch_kind: protocol::PatchKind::ReplaceRows,
         surface,
         cursor,
         surface_lines,

@@ -49,6 +49,7 @@ pub struct Pane {
     pub id: String,
     pub host: HostSpec,
     pub surface_version: u64,
+    pub last_patch_kind: protocol::PatchKind,
     pub cols: u32,
     pub rows: u32,
     pub resize_policy: protocol::ResizePolicy,
@@ -98,6 +99,7 @@ impl Session {
                     id: "pane-1".to_owned(),
                     host: HostSpec::local("local", CommandSpec::new("sh")),
                     surface_version: 2,
+                    last_patch_kind: protocol::PatchKind::ReplaceRows,
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
@@ -347,6 +349,10 @@ impl Session {
         })
     }
 
+    pub fn surface_patch_kind(&self, pane_id: &str) -> Option<protocol::PatchKind> {
+        self.pane(pane_id).map(|pane| pane.last_patch_kind)
+    }
+
     fn pane(&self, pane_id: &str) -> Option<&Pane> {
         self.tabs.iter().find_map(|tab| {
             if tab.root.id == pane_id {
@@ -440,21 +446,28 @@ impl Session {
         base_version: u64,
     ) -> Vec<u8> {
         let surface = self.initial_pane_surface();
+        let patch_kind = self
+            .pane(&surface.pane_id)
+            .map(|pane| pane.last_patch_kind)
+            .unwrap_or(protocol::PatchKind::ReplaceRows);
         let mut builder = FlatBufferBuilder::new();
 
-        let mut row_offsets = Vec::with_capacity(surface.lines.len());
-        for (row, line) in surface.lines.iter().enumerate() {
-            let run = build_cell_run(&mut builder, line);
-            let runs = builder.create_vector(&[run]);
-            let row = protocol::RowUpdate::create(
-                &mut builder,
-                &protocol::RowUpdateArgs {
-                    row: row as u32,
-                    runs: Some(runs),
-                    dirty_hash: stable_row_hash(line),
-                },
-            );
-            row_offsets.push(row);
+        let mut row_offsets = Vec::new();
+        if patch_kind == protocol::PatchKind::ReplaceRows {
+            row_offsets.reserve(surface.lines.len());
+            for (row, line) in surface.lines.iter().enumerate() {
+                let run = build_cell_run(&mut builder, line);
+                let runs = builder.create_vector(&[run]);
+                let row = protocol::RowUpdate::create(
+                    &mut builder,
+                    &protocol::RowUpdateArgs {
+                        row: row as u32,
+                        runs: Some(runs),
+                        dirty_hash: stable_row_hash(line),
+                    },
+                );
+                row_offsets.push(row);
+            }
         }
 
         let row_updates = builder.create_vector(&row_offsets);
@@ -474,7 +487,7 @@ impl Session {
                 pane_id: Some(pane_id),
                 base_version,
                 version: surface.version,
-                kind: protocol::PatchKind::ReplaceRows,
+                kind: patch_kind,
                 row_updates: Some(row_updates),
                 cursor: Some(cursor),
             },
@@ -835,10 +848,10 @@ fn apply_terminal_update(
     force_surface_version: bool,
 ) -> bool {
     let cursor = Cursor::from(update.cursor);
-    let surface_changed = force_surface_version
-        || pane.surface != update.surface
-        || pane.surface_lines != update.surface_lines
-        || pane.cursor != cursor;
+    let rows_changed = pane.surface_lines != update.surface_lines;
+    let surface_kind_changed = pane.surface != update.surface;
+    let surface_changed =
+        force_surface_version || surface_kind_changed || rows_changed || pane.cursor != cursor;
     let scrollback_changed = pane.scrollback_lines != update.scrollback_lines;
 
     pane.scrollback_lines = update.scrollback_lines;
@@ -848,9 +861,25 @@ fn apply_terminal_update(
 
     if surface_changed {
         pane.surface_version = pane.surface_version.saturating_add(1);
+        pane.last_patch_kind =
+            terminal_patch_kind(update.patch_kind, rows_changed, surface_kind_changed);
     }
 
     surface_changed || scrollback_changed
+}
+
+fn terminal_patch_kind(
+    requested: protocol::PatchKind,
+    rows_changed: bool,
+    surface_kind_changed: bool,
+) -> protocol::PatchKind {
+    if surface_kind_changed {
+        protocol::PatchKind::FullRefreshRequired
+    } else if rows_changed {
+        protocol::PatchKind::ReplaceRows
+    } else {
+        requested
+    }
 }
 
 fn stable_row_hash(line: &str) -> u64 {
@@ -1313,6 +1342,7 @@ mod tests {
                 assert_eq!(input.scrollback_lines.len(), 3);
                 assert_eq!(output, b"ignored by test engine");
                 Some(TerminalUpdate {
+                    patch_kind: protocol::PatchKind::ReplaceRows,
                     surface: protocol::SurfaceKind::Alternate,
                     cursor: TerminalCursor {
                         row: 7,
@@ -1393,6 +1423,7 @@ mod tests {
                 assert_eq!(cols, 100);
                 assert_eq!(rows, 10);
                 Some(TerminalUpdate {
+                    patch_kind: protocol::PatchKind::ReplaceRows,
                     surface: input.surface,
                     cursor: TerminalCursor {
                         row: 3,
@@ -1431,6 +1462,64 @@ mod tests {
     }
 
     #[test]
+    fn cursor_only_engine_update_emits_cursor_only_patch() {
+        struct CursorOnlyEngine;
+
+        impl TerminalEngine for CursorOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"cursor only");
+                Some(TerminalUpdate {
+                    patch_kind: protocol::PatchKind::CursorOnly,
+                    surface: input.surface,
+                    cursor: TerminalCursor {
+                        row: 1,
+                        col: 12,
+                        visible: true,
+                        shape: protocol::CursorShape::Beam,
+                    },
+                    surface_lines: input.surface_lines.to_vec(),
+                    scrollback_lines: input.scrollback_lines.to_vec(),
+                })
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = CursorOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"cursor only", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::CursorOnly)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 8, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::CursorOnly);
+        assert_eq!(patch.base_version(), 2);
+        assert_eq!(patch.version(), 3);
+        assert_eq!(patch.row_updates().expect("row updates").len(), 0);
+
+        let cursor = patch.cursor().expect("cursor");
+        assert_eq!(cursor.row(), 1);
+        assert_eq!(cursor.col(), 12);
+        assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
+    }
+
+    #[test]
     fn scrollback_only_engine_update_does_not_bump_surface_version() {
         struct ScrollbackOnlyEngine;
 
@@ -1444,6 +1533,7 @@ mod tests {
                 let mut scrollback_lines = input.scrollback_lines.to_vec();
                 scrollback_lines.push("history only".to_owned());
                 Some(TerminalUpdate {
+                    patch_kind: protocol::PatchKind::ReplaceRows,
                     surface: input.surface,
                     cursor: input.cursor,
                     surface_lines: input.surface_lines.to_vec(),

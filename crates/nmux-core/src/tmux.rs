@@ -102,6 +102,7 @@ impl TmuxSession {
                 id: pane_id.clone(),
                 host: tmux_pane_host(&self.name, &window.id, &active_pane.id),
                 surface_version: 1,
+                last_patch_kind: protocol::PatchKind::ReplaceRows,
                 cols: active_pane.cols,
                 rows: active_pane.rows,
                 resize_policy: protocol::ResizePolicy::Fixed,
