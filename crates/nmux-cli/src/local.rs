@@ -4,7 +4,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
-use nmux_core::host::{HostError, ProcessOutput};
+use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{Actor, AttachMode, Session};
 use nmux_proto::{protocol, wire};
 
@@ -45,6 +45,17 @@ pub fn serve_one_with_output<O: ProcessOutput>(
     serve_n_with_output(listener, session, output, 1)
 }
 
+pub fn serve_one_with_host<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    serve_n_with_host(listener, session, host, 1)
+}
+
 pub fn serve_n(
     listener: &UnixListener,
     session: &mut Session,
@@ -68,11 +79,28 @@ pub fn serve_n_with_output<O: ProcessOutput>(
     Ok(())
 }
 
+pub fn serve_n_with_host<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+    clients: usize,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    for _ in 0..clients {
+        serve_next_with_host(listener, session, host)?;
+    }
+    Ok(())
+}
+
 fn serve_next(
     listener: &UnixListener,
     session: &mut Session,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    serve_next_with_output(listener, session, None)
+    let (mut stream, _) = listener.accept()?;
+    let request = read_attach_request(&mut stream)?;
+    serve_attached_client(&mut stream, request, session, None)
 }
 
 fn serve_next_with_output(
@@ -85,12 +113,35 @@ fn serve_next_with_output(
     if let Some(output) = output.as_deref_mut() {
         poll_pane_output(session, output, "pane-1")?;
     }
+    serve_attached_client(&mut stream, request, session, None)
+}
+
+fn serve_next_with_host<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    let (mut stream, _) = listener.accept()?;
+    let request = read_attach_request(&mut stream)?;
+    poll_pane_output(session, host, "pane-1")?;
+    serve_attached_client(&mut stream, request, session, Some(host))
+}
+
+fn serve_attached_client(
+    stream: &mut UnixStream,
+    request: AttachRequest,
+    session: &mut Session,
+    mut host: Option<&mut dyn ProcessHost>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let workspace_frame = session.workspace_tree_frame("local-client", 1);
-    wire::write_default_frame(&mut stream, &workspace_frame)?;
+    wire::write_default_frame(stream, &workspace_frame)?;
 
     let actor = request.actor();
     let presence_frame = session.presence_update_frame("local-client", 2, &actor);
-    wire::write_default_frame(&mut stream, &presence_frame)?;
+    wire::write_default_frame(stream, &presence_frame)?;
 
     if let Some(response) = request.surface_response(session, "pane-1") {
         let surface_frame = match response {
@@ -99,14 +150,17 @@ fn serve_next_with_output(
                 session.pane_surface_patch_frame("local-client", 3, base_version)
             }
         };
-        wire::write_default_frame(&mut stream, &surface_frame)?;
+        wire::write_default_frame(stream, &surface_frame)?;
         if Session::input_allowed(&actor) {
-            read_input_event_from_stream(&mut stream)?;
+            let input = read_input_event_from_stream(stream)?;
+            if let Some(host) = host.as_deref_mut() {
+                host.write_input(&input.pane_id, input.text.as_bytes())?;
+            }
         }
-        let fetch = read_scrollback_fetch_from_stream(&mut stream)?;
+        let fetch = read_scrollback_fetch_from_stream(stream)?;
         let chunk =
             session.scrollback_chunk_frame("local-client", 5, fetch.start_line, fetch.line_count);
-        wire::write_default_frame(&mut stream, &chunk)?;
+        wire::write_default_frame(stream, &chunk)?;
     }
     Ok(())
 }
@@ -692,7 +746,7 @@ mod tests {
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use nmux_core::host::RecordingOutput;
+    use nmux_core::host::{HostEvent, PlanningHost, ProcessHost, RecordingOutput};
 
     use super::*;
 
@@ -864,6 +918,31 @@ mod tests {
                     .to_owned()
             )
         );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn serve_one_with_host_forwards_read_write_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let snapshot = attach(&socket_path).expect("attach snapshot");
+        let host = server.join().expect("server thread");
+
+        assert!(snapshot.surface.is_some());
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"a".to_vec(),
+        }));
 
         let _ = fs::remove_file(socket_path);
     }

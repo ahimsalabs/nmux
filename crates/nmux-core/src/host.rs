@@ -586,6 +586,13 @@ impl ProcessHost for PlanningHost {
     }
 }
 
+impl ProcessOutput for PlanningHost {
+    fn try_read_output(&mut self, pane_id: &str, _bytes: &mut [u8]) -> Result<usize, HostError> {
+        self.running_process(pane_id)?;
+        Ok(0)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct UnsupportedSandboxHost;
 
