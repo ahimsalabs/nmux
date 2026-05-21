@@ -74,6 +74,10 @@ fn nmux_rejects_conflicting_frontend_modes() {
         &["--iterations", "1"],
         "nmux: --iterations requires --live or --follow",
     );
+    assert_nmux_rejects(
+        &["--live", "--iterations", "0"],
+        "nmux: --iterations must be greater than 0",
+    );
 }
 
 #[test]

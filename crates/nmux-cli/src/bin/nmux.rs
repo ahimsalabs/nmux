@@ -796,6 +796,9 @@ fn validate_mode_args(
     if iterations.is_some() && !live && !follow {
         return Err("--iterations requires --live or --follow");
     }
+    if iterations == Some(0) {
+        return Err("--iterations must be greater than 0");
+    }
     Ok(())
 }
 
@@ -967,6 +970,10 @@ mod tests {
         assert_eq!(
             validate_mode_args(false, false, false, false, false, false, None, Some(1)),
             Err("--iterations requires --live or --follow")
+        );
+        assert_eq!(
+            validate_mode_args(true, false, false, false, false, false, None, Some(0)),
+            Err("--iterations must be greater than 0")
         );
         assert!(
             validate_mode_args(
