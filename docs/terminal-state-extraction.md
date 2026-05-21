@@ -38,8 +38,9 @@ backend terminal state into the same nmux objects:
   range model.
 - Resize: feed resize events into the VT engine and publish the resulting pane
   size, cursor, visible rows, and scrollback state.
-- Versions: bump surface versions only when the nmux-visible surface or cursor
-  changes; keep workspace versions for tree metadata changes.
+- Versions: bump surface versions when the nmux-visible surface, cursor, or
+  surface dimensions change; scrollback-only updates should not force a surface
+  version bump. Keep workspace versions for tree metadata changes.
 
 ## Known Schema Gaps
 

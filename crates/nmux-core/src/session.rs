@@ -154,11 +154,7 @@ impl Session {
             return false;
         };
 
-        pane.scrollback_lines = update.scrollback_lines;
-        pane.surface_lines = update.surface_lines;
-        pane.cursor = Cursor::from(update.cursor);
-        pane.surface_version = pane.surface_version.saturating_add(1);
-        true
+        apply_terminal_update(pane, update, false)
     }
 
     pub fn commit_pane_resize(&mut self, pane_id: &str, cols: u32, rows: u32) -> bool {
@@ -194,10 +190,7 @@ impl Session {
 
         pane.cols = cols;
         pane.rows = rows;
-        pane.scrollback_lines = update.scrollback_lines;
-        pane.surface_lines = update.surface_lines;
-        pane.cursor = Cursor::from(update.cursor);
-        pane.surface_version = pane.surface_version.saturating_add(1);
+        apply_terminal_update(pane, update, true);
         self.version = self.version.saturating_add(1);
         true
     }
@@ -826,6 +819,28 @@ impl From<TerminalCursor> for Cursor {
     }
 }
 
+fn apply_terminal_update(
+    pane: &mut Pane,
+    update: crate::terminal::TerminalUpdate,
+    force_surface_version: bool,
+) -> bool {
+    let cursor = Cursor::from(update.cursor);
+    let surface_changed = force_surface_version
+        || pane.surface_lines != update.surface_lines
+        || pane.cursor != cursor;
+    let scrollback_changed = pane.scrollback_lines != update.scrollback_lines;
+
+    pane.scrollback_lines = update.scrollback_lines;
+    pane.surface_lines = update.surface_lines;
+    pane.cursor = cursor;
+
+    if surface_changed {
+        pane.surface_version = pane.surface_version.saturating_add(1);
+    }
+
+    surface_changed || scrollback_changed
+}
+
 fn stable_row_hash(line: &str) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for byte in line.as_bytes() {
@@ -1385,6 +1400,62 @@ mod tests {
         );
         assert_eq!(surface.lines, vec!["resized surface".to_owned()]);
         assert_eq!(scrollback.lines, vec!["resized scrollback".to_owned()]);
+    }
+
+    #[test]
+    fn scrollback_only_engine_update_does_not_bump_surface_version() {
+        struct ScrollbackOnlyEngine;
+
+        impl TerminalEngine for ScrollbackOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"history only");
+                let mut scrollback_lines = input.scrollback_lines.to_vec();
+                scrollback_lines.push("history only".to_owned());
+                Some(TerminalUpdate {
+                    cursor: input.cursor,
+                    surface_lines: input.surface_lines.to_vec(),
+                    scrollback_lines,
+                })
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = ScrollbackOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"history only", &mut engine));
+
+        let surface = session.initial_pane_surface();
+        let scrollback = session.initial_scrollback();
+        assert_eq!(surface.version, 2);
+        assert_eq!(
+            surface.lines,
+            vec![
+                "nmux pane-1".to_owned(),
+                "server-owned terminal state".to_owned()
+            ]
+        );
+        assert_eq!(
+            scrollback.lines,
+            vec![
+                "booting nmux workspace".to_owned(),
+                "nmux pane-1".to_owned(),
+                "server-owned terminal state".to_owned(),
+                "history only".to_owned(),
+            ]
+        );
     }
 
     #[test]
