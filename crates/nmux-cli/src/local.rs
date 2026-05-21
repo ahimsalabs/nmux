@@ -4,6 +4,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
+use nmux_core::host::{HostError, ProcessOutput};
 use nmux_core::session::{Actor, AttachMode, Session};
 use nmux_proto::{protocol, wire};
 
@@ -36,6 +37,14 @@ pub fn serve_one(
     serve_n(listener, session, 1)
 }
 
+pub fn serve_one_with_output<O: ProcessOutput>(
+    listener: &UnixListener,
+    session: &mut Session,
+    output: &mut O,
+) -> Result<(), Box<dyn std::error::Error>> {
+    serve_n_with_output(listener, session, output, 1)
+}
+
 pub fn serve_n(
     listener: &UnixListener,
     session: &mut Session,
@@ -47,12 +56,35 @@ pub fn serve_n(
     Ok(())
 }
 
+pub fn serve_n_with_output<O: ProcessOutput>(
+    listener: &UnixListener,
+    session: &mut Session,
+    output: &mut O,
+    clients: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for _ in 0..clients {
+        serve_next_with_output(listener, session, Some(output))?;
+    }
+    Ok(())
+}
+
 fn serve_next(
     listener: &UnixListener,
     session: &mut Session,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    serve_next_with_output(listener, session, None)
+}
+
+fn serve_next_with_output(
+    listener: &UnixListener,
+    session: &mut Session,
+    mut output: Option<&mut dyn ProcessOutput>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
+    if let Some(output) = output.as_deref_mut() {
+        apply_pumped_output(session, output, "pane-1")?;
+    }
     let workspace_frame = session.workspace_tree_frame("local-client", 1);
     wire::write_default_frame(&mut stream, &workspace_frame)?;
 
@@ -77,6 +109,28 @@ fn serve_next(
         wire::write_default_frame(&mut stream, &chunk)?;
     }
     Ok(())
+}
+
+fn apply_pumped_output(
+    session: &mut Session,
+    output: &mut dyn ProcessOutput,
+    pane_id: &str,
+) -> Result<bool, HostError> {
+    let mut buffer = [0_u8; 4096];
+    let mut pumped = Vec::new();
+    loop {
+        let count = output.try_read_output(pane_id, &mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        pumped.extend_from_slice(&buffer[..count]);
+    }
+
+    if pumped.is_empty() {
+        return Ok(false);
+    }
+
+    Ok(session.apply_pane_output(pane_id, &pumped))
 }
 
 pub fn attach(path: &Path) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
@@ -638,6 +692,8 @@ mod tests {
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use nmux_core::host::RecordingOutput;
+
     use super::*;
 
     static NEXT_SOCKET_ID: AtomicU64 = AtomicU64::new(0);
@@ -744,6 +800,69 @@ mod tests {
                 total_lines: 1,
                 lines: Vec::new(),
             })
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn serve_one_with_output_polls_before_attach_response() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut output = RecordingOutput::default();
+        output.push_output("pane-1", b"real output\n");
+
+        let server = thread::spawn(move || {
+            serve_one_with_output(&listener, &mut session, &mut output).expect("serve one")
+        });
+        let snapshot = attach(&socket_path).expect("attach snapshot");
+        server.join().expect("server thread");
+
+        assert_eq!(
+            snapshot.surface,
+            Some(SurfaceUpdate {
+                kind: SurfaceUpdateKind::Snapshot,
+                text:
+                    "booting nmux workspace\nnmux pane-1\nserver-owned terminal state\nreal output"
+                        .to_owned(),
+            })
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn serve_one_with_output_polls_before_reconnect_decision() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut output = RecordingOutput::default();
+        output.push_output("pane-1", b"new output\n");
+
+        let server = thread::spawn(move || {
+            serve_one_with_output(&listener, &mut session, &mut output).expect("serve one")
+        });
+        let snapshot = attach_with_known_surfaces(
+            &socket_path,
+            vec![KnownSurfaceVersion {
+                pane_id: "pane-1".to_owned(),
+                version: 2,
+            }],
+        )
+        .expect("attach snapshot");
+        server.join().expect("server thread");
+
+        assert_eq!(
+            snapshot.surface.as_ref().map(|surface| surface.kind),
+            Some(SurfaceUpdateKind::Patch)
+        );
+        assert_eq!(
+            snapshot.surface.map(|surface| surface.text),
+            Some(
+                "booting nmux workspace\nnmux pane-1\nserver-owned terminal state\nnew output"
+                    .to_owned()
+            )
         );
 
         let _ = fs::remove_file(socket_path);

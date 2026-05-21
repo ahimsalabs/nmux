@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::fmt;
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -110,6 +111,38 @@ pub enum HostError {
         message: String,
     },
 }
+
+impl fmt::Display for HostError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedHostKind { host_id, kind } => {
+                write!(formatter, "unsupported host kind for {host_id}: {kind:?}")
+            }
+            Self::UnsupportedOperation { pane_id, operation } => {
+                write!(
+                    formatter,
+                    "unsupported host operation {operation} for {pane_id}"
+                )
+            }
+            Self::AlreadyRunning { pane_id } => {
+                write!(formatter, "pane process is already running: {pane_id}")
+            }
+            Self::NotRunning { pane_id } => {
+                write!(formatter, "pane process is not running: {pane_id}")
+            }
+            Self::Io {
+                pane_id,
+                operation,
+                message,
+            } => write!(
+                formatter,
+                "host I/O error during {operation} for {pane_id}: {message}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for HostError {}
 
 pub trait ProcessHost {
     fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError>;
