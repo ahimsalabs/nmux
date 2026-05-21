@@ -1,0 +1,210 @@
+namespace nmux.protocol;
+
+enum PaneKind : byte {
+  Pty = 0,
+  Adapter = 1,
+}
+
+enum SplitAxis : byte {
+  None = 0,
+  Horizontal = 1,
+  Vertical = 2,
+}
+
+enum SurfaceKind : byte {
+  Main = 0,
+  Alternate = 1,
+}
+
+enum CursorShape : byte {
+  Block = 0,
+  Beam = 1,
+  Underline = 2,
+}
+
+enum InputKind : byte {
+  Key = 0,
+  Mouse = 1,
+  Paste = 2,
+}
+
+enum MouseButton : byte {
+  None = 0,
+  Left = 1,
+  Middle = 2,
+  Right = 3,
+  WheelUp = 4,
+  WheelDown = 5,
+}
+
+enum ResizeReason : byte {
+  FrontendViewport = 0,
+  UserCommand = 1,
+  Attach = 2,
+  Policy = 3,
+}
+
+enum ResizePolicy : byte {
+  Fixed = 0,
+  Leader = 1,
+  ActiveClient = 2,
+  Manual = 3,
+}
+
+enum PatchKind : byte {
+  ReplaceRows = 0,
+  CursorOnly = 1,
+  ModeOnly = 2,
+  FullRefreshRequired = 3,
+}
+
+enum ErrorCode : ushort {
+  Unknown = 0,
+  ProtocolVersionUnsupported = 1,
+  SessionNotFound = 2,
+  PaneNotFound = 3,
+  PermissionDenied = 4,
+  StaleVersion = 5,
+}
+
+table Envelope {
+  protocol_version:uint;
+  session_id:string;
+  connection_id:string;
+  seq:ulong;
+  ack:ulong;
+  sent_at_mono_ms:ulong;
+  body:EnvelopeBody;
+}
+
+union EnvelopeBody {
+  WorkspaceTreeSnapshot,
+  PaneSurfaceSnapshot,
+  PaneSurfacePatch,
+  InputEvent,
+  ResizeIntent,
+  Error,
+}
+
+table WorkspaceTreeSnapshot {
+  version:ulong;
+  session_id:string;
+  tabs:[TabNode];
+  active_tab_id:string;
+}
+
+table TabNode {
+  tab_id:string;
+  title:string;
+  root:PaneNode;
+  active_pane_id:string;
+}
+
+table PaneNode {
+  pane_id:string;
+  kind:PaneKind = Pty;
+  split_axis:SplitAxis = None;
+  children:[PaneNode];
+  surface_version:ulong;
+  cols:uint;
+  rows:uint;
+  resize_policy:ResizePolicy = Fixed;
+}
+
+table PaneSurfaceSnapshot {
+  pane_id:string;
+  version:ulong;
+  surface:SurfaceKind = Main;
+  cols:uint;
+  rows:uint;
+  cursor:CursorState;
+  styles:[Style];
+  rows_data:[SurfaceRow];
+}
+
+table PaneSurfacePatch {
+  pane_id:string;
+  base_version:ulong;
+  version:ulong;
+  kind:PatchKind = ReplaceRows;
+  row_updates:[RowUpdate];
+  cursor:CursorState;
+}
+
+table CursorState {
+  row:uint;
+  col:uint;
+  visible:bool = true;
+  shape:CursorShape = Block;
+}
+
+table SurfaceRow {
+  row:uint;
+  runs:[CellRun];
+  dirty_hash:ulong;
+}
+
+table RowUpdate {
+  row:uint;
+  runs:[CellRun];
+  dirty_hash:ulong;
+}
+
+table CellRun {
+  text_utf8:string;
+  cell_widths:[ubyte];
+  style_id:uint;
+  flags:uint;
+  hyperlink_id:uint;
+}
+
+table Style {
+  fg_rgba:uint;
+  bg_rgba:uint;
+  underline_rgba:uint;
+  flags:uint;
+}
+
+table InputEvent {
+  pane_id:string;
+  actor_id:string;
+  input_seq:ulong;
+  kind:InputKind;
+  key:KeyInput;
+  mouse:MouseInput;
+  paste:PasteInput;
+}
+
+table KeyInput {
+  text_utf8:string;
+  key_name:string;
+  modifiers:uint;
+}
+
+table MouseInput {
+  row:uint;
+  col:uint;
+  button:MouseButton = None;
+  modifiers:uint;
+}
+
+table PasteInput {
+  text_utf8:string;
+  bracketed:bool = true;
+}
+
+table ResizeIntent {
+  pane_id:string;
+  actor_id:string;
+  desired_cols:uint;
+  desired_rows:uint;
+  reason:ResizeReason;
+}
+
+table Error {
+  code:ErrorCode = Unknown;
+  message:string;
+  retryable:bool;
+}
+
+root_type Envelope;
