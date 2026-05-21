@@ -46,7 +46,8 @@ backend terminal state into the same nmux objects:
   version bump. Keep workspace versions for tree metadata changes.
 - Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; row
   changes should use `PatchKind::ReplaceRows`; changes that cannot be expressed
-  by the current patch schema should force a full snapshot.
+  by the current patch schema, including mode-only updates before mode fields
+  exist, should force a full snapshot.
 
 ## Known Schema Gaps
 

@@ -92,6 +92,7 @@ Done:
 - Scrollback now has pane-owned versioning, so backend-owned history changes are visible independently from pane surface versions.
 - Local attach response tests cover surface-kind transitions, proving alternate-screen style changes get a full snapshot when the current patch schema cannot express them.
 - Scrollback chunk generation is pane-scoped, and attach/live fetch handling uses the requested pane ID rather than implicitly returning the initial pane.
+- Mode-only terminal updates are treated as full-refresh-required until nmux has explicit mode fields in the surface schema.
 - `nmuxd --terminal-engine interim` exposes the current engine choice explicitly; backend `libghostty-vt` is not imported yet.
 
 Next:

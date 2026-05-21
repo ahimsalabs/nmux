@@ -899,6 +899,8 @@ fn terminal_patch_kind(
         protocol::PatchKind::FullRefreshRequired
     } else if rows_changed {
         protocol::PatchKind::ReplaceRows
+    } else if requested == protocol::PatchKind::ModeOnly {
+        protocol::PatchKind::FullRefreshRequired
     } else {
         requested
     }
@@ -1557,6 +1559,51 @@ mod tests {
         assert_eq!(cursor.row(), 1);
         assert_eq!(cursor.col(), 12);
         assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
+    }
+
+    #[test]
+    fn mode_only_engine_update_requires_full_refresh_until_modes_are_modeled() {
+        struct ModeOnlyEngine;
+
+        impl TerminalEngine for ModeOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"mode only");
+                Some(TerminalUpdate {
+                    patch_kind: protocol::PatchKind::ModeOnly,
+                    surface: input.surface,
+                    cursor: TerminalCursor {
+                        row: input.cursor.row,
+                        col: input.cursor.col,
+                        visible: input.cursor.visible,
+                        shape: protocol::CursorShape::Beam,
+                    },
+                    surface_lines: input.surface_lines.to_vec(),
+                    scrollback_lines: input.scrollback_lines.to_vec(),
+                })
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = ModeOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"mode only", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::FullRefreshRequired)
+        );
     }
 
     #[test]
