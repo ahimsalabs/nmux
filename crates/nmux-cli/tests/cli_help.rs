@@ -78,6 +78,26 @@ fn nmux_rejects_conflicting_frontend_modes() {
         &["--live", "--iterations", "0"],
         "nmux: --iterations must be greater than 0",
     );
+    assert_nmux_rejects(
+        &["--live", "--key", "ping", "--stdin"],
+        "nmux: --key cannot be combined with --stdin",
+    );
+    assert_nmux_rejects(
+        &["--live", "--key", "ping", "--stdin-bytes"],
+        "nmux: --key cannot be combined with --stdin-bytes",
+    );
+    assert_nmux_rejects(
+        &["--live", "--no-input", "--stdin"],
+        "nmux: --no-input cannot be combined with --stdin",
+    );
+    assert_nmux_rejects(
+        &["--live", "--no-input", "--stdin-bytes"],
+        "nmux: --no-input cannot be combined with --stdin-bytes",
+    );
+    assert_nmux_rejects(
+        &["--key", "ping", "--no-input"],
+        "nmux: --key cannot be combined with --no-input",
+    );
 }
 
 #[test]

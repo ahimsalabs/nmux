@@ -88,7 +88,7 @@ For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 ## Live Attach Prototype
 
-The live attach prototype keeps one local connection open for repeated input/output cycles. It is not a terminal UI yet; it sends the same `--key` text on each bounded client cycle, line-streams stdin, or forwards stdin byte chunks, and renders streamed pane surface updates through the same client-side pane surface state used by reconnects. Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes fail before the client tries to connect.
+The live attach prototype keeps one local connection open for repeated input/output cycles. It is not a terminal UI yet; it sends the same `--key` text on each bounded client cycle, line-streams stdin, or forwards stdin byte chunks, and renders streamed pane surface updates through the same client-side pane surface state used by reconnects. Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive. Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes fail before the client tries to connect.
 
 Start a daemon that serves one live client for two input cycles:
 

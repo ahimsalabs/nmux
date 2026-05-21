@@ -53,6 +53,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled.
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache when the daemon has no newer surface update to send.
 Bounded client loops require `--iterations` greater than zero.
+Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.
 
 Line-streamed live input:
 

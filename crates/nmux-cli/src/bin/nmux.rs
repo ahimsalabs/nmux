@@ -645,6 +645,8 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut interval_ms = 1000;
     let mut iterations = None;
     let mut local_echo_set = false;
+    let mut key_set = false;
+    let mut no_input_set = false;
     let mut args = std::env::args().skip(1);
 
     while let Some(arg) = args.next() {
@@ -659,9 +661,11 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                     .ok_or("--socket requires a path")?;
             }
             "--key" => {
+                key_set = true;
                 input_text = Some(args.next().ok_or("--key requires text")?);
             }
             "--no-input" => {
+                no_input_set = true;
                 input_text = None;
             }
             "--scrollback-start" => {
@@ -735,6 +739,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     if stdin_input && stdin_bytes {
         return Err("--stdin and --stdin-bytes cannot be used together".into());
     }
+    validate_explicit_input_modes(key_set, no_input_set, stdin_input, stdin_bytes)?;
     validate_mode_args(
         live,
         follow,
@@ -763,6 +768,30 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         interval_ms,
         iterations,
     })
+}
+
+fn validate_explicit_input_modes(
+    key_set: bool,
+    no_input_set: bool,
+    stdin_input: bool,
+    stdin_bytes: bool,
+) -> Result<(), &'static str> {
+    if key_set && no_input_set {
+        return Err("--key cannot be combined with --no-input");
+    }
+    if key_set && stdin_input {
+        return Err("--key cannot be combined with --stdin");
+    }
+    if key_set && stdin_bytes {
+        return Err("--key cannot be combined with --stdin-bytes");
+    }
+    if no_input_set && stdin_input {
+        return Err("--no-input cannot be combined with --stdin");
+    }
+    if no_input_set && stdin_bytes {
+        return Err("--no-input cannot be combined with --stdin-bytes");
+    }
+    Ok(())
 }
 
 fn validate_mode_args(
@@ -858,7 +887,7 @@ mod tests {
         LocalEcho, interim_surface_fidelity_warning_needed, parse_local_echo, raw_terminal_lflag,
         raw_terminal_mode_needed, redraw_terminal_guard_needed, resize_policy_warning,
         sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
-        validate_mode_args,
+        validate_explicit_input_modes, validate_mode_args,
     };
 
     #[test]
@@ -989,6 +1018,34 @@ mod tests {
             .is_ok()
         );
         assert!(validate_mode_args(false, true, false, false, false, false, None, Some(1)).is_ok());
+    }
+
+    #[test]
+    fn input_mode_validation_rejects_explicit_conflicts() {
+        assert_eq!(
+            validate_explicit_input_modes(true, true, false, false),
+            Err("--key cannot be combined with --no-input")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(true, false, true, false),
+            Err("--key cannot be combined with --stdin")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(true, false, false, true),
+            Err("--key cannot be combined with --stdin-bytes")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(false, true, true, false),
+            Err("--no-input cannot be combined with --stdin")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(false, true, false, true),
+            Err("--no-input cannot be combined with --stdin-bytes")
+        );
+        assert!(validate_explicit_input_modes(false, false, true, false).is_ok());
+        assert!(validate_explicit_input_modes(false, false, false, true).is_ok());
+        assert!(validate_explicit_input_modes(true, false, false, false).is_ok());
+        assert!(validate_explicit_input_modes(false, true, false, false).is_ok());
     }
 
     #[test]
