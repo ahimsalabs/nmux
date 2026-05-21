@@ -141,7 +141,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 let stdin_line = next_stdin_line(stdin_lines.as_mut())?;
                 match stdin_line {
                     Some(line) => Some(line),
-                    None if args.iterations.is_none() => break,
+                    None if args.iterations.is_none() => {
+                        eprintln!("nmux: stdin EOF; detached");
+                        break;
+                    }
                     None => None,
                 }
             } else {
@@ -165,7 +168,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::NoFrame => break,
-                local::LiveSurfaceRead::Closed => return save_live_state(args, &client_state),
+                local::LiveSurfaceRead::Closed => {
+                    eprintln!("nmux: live server closed connection");
+                    return save_live_state(args, &client_state);
+                }
             }
         }
         if detach_requested {
@@ -173,6 +179,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         if stdin_bytes_closed && args.iterations.is_none() {
+            eprintln!("nmux: stdin EOF; detached");
             break;
         }
         cycles += 1;

@@ -367,6 +367,11 @@ fn live_stdin_bytes_keeps_polling_before_input_arrives() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains("nmux: stdin EOF; detached"),
+        "missing stdin EOF status:\n{stderr}"
+    );
     assert!(server_status.success(), "nmuxd failed: {server_status}");
     assert!(
         lines.iter().any(|line| line.contains("tick-before-input")),
@@ -540,6 +545,11 @@ fn live_read_only_cli_without_iterations_runs_until_server_closes() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains("nmux: live server closed connection"),
+        "missing daemon close status:\n{stderr}"
+    );
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
@@ -598,6 +608,11 @@ fn live_stdin_without_iterations_stops_on_eof_without_default_key() {
         client.status.success(),
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains("nmux: stdin EOF; detached"),
+        "missing stdin EOF status:\n{stderr}"
     );
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 

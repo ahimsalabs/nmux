@@ -138,7 +138,7 @@ For line-streamed live input, pipe lines through stdin:
 printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin --interval-ms 500
 ```
 
-With `--stdin`, each input line is read and sent during its live input cycle, after the client has attached. If `--iterations` is omitted, stdin EOF ends the client loop without falling back to the default `--key` input. If `--iterations` is present, the client runs at most that many stdin cycles. The daemon treats client EOF during live read-write polling as a clean detach.
+With `--stdin`, each input line is read and sent during its live input cycle, after the client has attached. If `--iterations` is omitted, stdin EOF ends the client loop without falling back to the default `--key` input and the client reports `nmux: stdin EOF; detached` on stderr. If `--iterations` is present, the client runs at most that many stdin cycles. The daemon treats client EOF during live read-write polling as a clean detach.
 
 For byte-streamed live input, use `--stdin-bytes`:
 
@@ -146,7 +146,7 @@ For byte-streamed live input, use `--stdin-bytes`:
 printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin-bytes --interval-ms 500
 ```
 
-`--stdin-bytes` reads stdin on a background thread and sends available chunks during the live polling loop as `InputKind.RawBytes`. This keeps output polling active even while no complete input line is available. When stdin is an interactive TTY, the client temporarily disables canonical input and local echo for this mode; piped stdin is left untouched. Pass `--local-echo tty` to preserve the TTY's existing echo setting while still using noncanonical byte input. Interactive byte mode also listens for `SIGWINCH` and sends resize intents from the current TTY size unless explicit `--cols` and `--rows` were supplied. Press Ctrl-] to detach from a byte-streamed live session; the client reports that local detach on stderr.
+`--stdin-bytes` reads stdin on a background thread and sends available chunks during the live polling loop as `InputKind.RawBytes`. This keeps output polling active even while no complete input line is available. When stdin is an interactive TTY, the client temporarily disables canonical input and local echo for this mode; piped stdin is left untouched. Pass `--local-echo tty` to preserve the TTY's existing echo setting while still using noncanonical byte input. Interactive byte mode also listens for `SIGWINCH` and sends resize intents from the current TTY size unless explicit `--cols` and `--rows` were supplied. Press Ctrl-] to detach from a byte-streamed live session; the client reports that local detach on stderr. When unbounded byte-streamed stdin reaches EOF, the client reports `nmux: stdin EOF; detached`.
 
 For read-only live observation, use `--no-input`:
 
@@ -155,6 +155,8 @@ rm -f /tmp/nmux.sock
 nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-cycles 3 --command "printf 'ready\n'; sleep 0.05; printf 'tick-one\n'; sleep 0.05; printf 'tick-two\n'; sleep 1"
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --no-input --interval-ms 500
 ```
+
+When an unbounded live client exits because the daemon closes the live socket, the client reports `nmux: live server closed connection` on stderr.
 
 The read-only client attaches once, sends no input, and prints streamed surface updates when the daemon observes process output. If `--iterations` is omitted, it keeps polling until the daemon closes the live connection.
 
