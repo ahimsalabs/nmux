@@ -19,6 +19,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nmux-core"
+version = "0.1.0"
+dependencies = [
+ "flatbuffers",
+ "nmux-proto",
+]
+
+[[package]]
 name = "nmux-proto"
 version = "0.1.0"
 dependencies = [

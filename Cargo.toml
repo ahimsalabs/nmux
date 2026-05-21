@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/nmux-core",
   "crates/nmux-proto",
 ]
 resolver = "3"
