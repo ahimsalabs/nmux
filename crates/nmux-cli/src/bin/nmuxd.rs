@@ -1,7 +1,9 @@
 use std::path::PathBuf;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use nmux_cli::local;
-use nmux_core::host::{LocalPtyHost, ProcessHost};
+use nmux_core::host::{CommandSpec, LocalPtyHost, ProcessHost};
 use nmux_core::session::Session;
 
 fn main() {
@@ -12,17 +14,21 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let (socket_path, one_shot) = args()?;
-    let listener = local::bind_listener(&socket_path)?;
-    eprintln!("nmuxd: listening on {}", socket_path.display());
+    let args = args()?;
+    let listener = local::bind_listener(&args.socket_path)?;
+    eprintln!("nmuxd: listening on {}", args.socket_path.display());
 
     let mut session = Session::initial();
+    if let Some(command) = args.command {
+        session.tabs[0].root.host.command = CommandSpec::new("sh").with_args(["-lc", &command]);
+    }
     let pane_id = "pane-1";
     let host_spec = session.tabs[0].root.host.clone();
     let mut pty_host = LocalPtyHost::default();
     pty_host.start_pane(pane_id, &host_spec)?;
+    wait_for_pane_output(&mut session, &mut pty_host, pane_id)?;
 
-    if one_shot {
+    if args.one_shot {
         let serve_result = local::serve_one_with_output(&listener, &mut session, &mut pty_host);
         let stop_result = pty_host.stop_pane(pane_id);
         serve_result?;
@@ -35,9 +41,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn args() -> Result<(PathBuf, bool), Box<dyn std::error::Error>> {
+struct Args {
+    socket_path: PathBuf,
+    one_shot: bool,
+    command: Option<String>,
+}
+
+fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut socket_path = local::default_socket_path();
     let mut one_shot = false;
+    let mut command = None;
     let mut args = std::env::args().skip(1);
 
     while let Some(arg) = args.next() {
@@ -49,9 +62,31 @@ fn args() -> Result<(PathBuf, bool), Box<dyn std::error::Error>> {
                     .ok_or("--socket requires a path")?;
             }
             "--one-shot" => one_shot = true,
+            "--command" => {
+                command = Some(args.next().ok_or("--command requires a shell command")?);
+            }
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
 
-    Ok((socket_path, one_shot))
+    Ok(Args {
+        socket_path,
+        one_shot,
+        command,
+    })
+}
+
+fn wait_for_pane_output(
+    session: &mut Session,
+    output: &mut LocalPtyHost,
+    pane_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < deadline {
+        if local::poll_pane_output(session, output, pane_id)? {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
 }
