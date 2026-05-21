@@ -86,15 +86,22 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --follo
 
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
-## Bounded Live Attach Prototype
+## Live Attach Prototype
 
-The live attach prototype keeps one local connection open for a bounded number of input/output cycles. It is not raw terminal mode yet; it sends the same `--key` text on each cycle and renders streamed pane surface updates through the same client-side pane surface state used by reconnects.
+The live attach prototype keeps one local connection open for repeated input/output cycles. It is not raw terminal mode yet; it sends the same `--key` text on each bounded client cycle or line-streams stdin, and renders streamed pane surface updates through the same client-side pane surface state used by reconnects.
 
 Start a daemon that serves one live client for two input cycles:
 
 ```sh
 rm -f /tmp/nmux.sock
 nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+```
+
+Use `--live` instead of `--live-cycles` to keep serving that one live client until the client detaches:
+
+```sh
+rm -f /tmp/nmux.sock
+nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 ```
 
 Attach a bounded live client:
