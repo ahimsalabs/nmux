@@ -145,21 +145,6 @@ fn live_cli_can_drive_distinct_input_lines_from_stdin() {
 }
 
 #[test]
-fn live_stdin_requires_iterations_while_bounded() {
-    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
-        .args(["--socket", "/tmp/nmux-missing.sock", "--live", "--stdin"])
-        .output()
-        .expect("run nmux");
-
-    assert!(!client.status.success());
-    let stderr = String::from_utf8_lossy(&client.stderr);
-    assert!(
-        stderr.contains("--stdin requires --iterations"),
-        "unexpected stderr:\n{stderr}"
-    );
-}
-
-#[test]
 fn live_read_only_cli_observes_output_without_input() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
@@ -210,6 +195,64 @@ fn live_read_only_cli_observes_output_without_input() {
     assert!(
         stdout.contains("tick-two"),
         "missing second observed tick:\n{stdout}"
+    );
+}
+
+#[test]
+fn live_stdin_without_iterations_stops_on_eof_without_default_key() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "2",
+            "--command",
+            "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--stdin",
+            "--interval-ms",
+            "1000",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
+
+    let mut stdin = client.stdin.take().expect("client stdin");
+    stdin.write_all(b"ping\npong\n").expect("write stdin");
+    drop(stdin);
+
+    let client = client.wait_with_output().expect("wait for nmux");
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(stdout.contains("echo:ping"), "missing ping echo:\n{stdout}");
+    assert!(stdout.contains("echo:pong"), "missing pong echo:\n{stdout}");
+    assert!(
+        !stdout.contains("echo:a"),
+        "stdin mode fell back to default key input:\n{stdout}"
     );
 }
 

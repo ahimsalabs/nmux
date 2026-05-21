@@ -47,15 +47,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    if args.stdin_input && args.iterations.is_none() {
-        return Err("--stdin requires --iterations while live mode is bounded".into());
-    }
-
     let mut client_state = match args.state_path.as_deref() {
         Some(path) => local::ClientAttachState::load(path)?,
         None => local::ClientAttachState::default(),
     };
-    let cycles = args.iterations.unwrap_or(1);
     let mut stream = UnixStream::connect(&args.socket_path)?;
     stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
     let stdin = io::stdin();
@@ -83,13 +78,28 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let rendered = client_state.render_attach(snapshot)?;
     print_rendered(rendered);
 
-    for _ in 0..cycles {
+    let cycle_limit = args.iterations.or_else(|| (!args.stdin_input).then_some(1));
+    let mut cycles = 0;
+    loop {
+        if cycle_limit.is_some_and(|iterations| cycles >= iterations) {
+            break;
+        }
+
         if options.request.mode == AttachMode::ReadWrite {
             if let Some((cols, rows)) = args.live_resize {
                 local::send_resize_intent(&mut stream, "pane-1", cols, rows)?;
             }
             let stdin_line = next_stdin_line(stdin_lines.as_mut())?;
-            if let Some(input_text) = stdin_line.as_deref().or(options.input_text.as_deref()) {
+            let input_text = if args.stdin_input {
+                match stdin_line.as_deref() {
+                    Some(line) => Some(line),
+                    None if args.iterations.is_none() => break,
+                    None => None,
+                }
+            } else {
+                options.input_text.as_deref()
+            };
+            if let Some(input_text) = input_text {
                 local::send_key_input(&mut stream, "pane-1", input_text)?;
             }
         }
@@ -97,6 +107,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(update) = local::read_optional_surface_update_from_stream(&mut stream)? {
             println!("{}", client_state.render_surface_update(&update)?);
         }
+        cycles += 1;
     }
 
     if let Some(path) = args.state_path.as_deref() {

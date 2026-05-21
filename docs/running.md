@@ -120,10 +120,10 @@ The daemon forwards that intent through the process-host resize boundary before 
 For line-streamed live input, pipe lines through stdin:
 
 ```sh
-printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin --iterations 2 --interval-ms 500
+printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin --interval-ms 500
 ```
 
-With `--stdin`, each input line is read and sent during its live input cycle, after the client has attached. Because the prototype is still bounded, `--stdin` currently requires `--iterations`.
+With `--stdin`, each input line is read and sent during its live input cycle, after the client has attached. If `--iterations` is omitted, stdin EOF ends the client loop without falling back to the default `--key` input. If `--iterations` is present, the client runs at most that many stdin cycles.
 
 For read-only live observation, use `--no-input`:
 
