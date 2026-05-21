@@ -1,0 +1,138 @@
+use std::env;
+use std::fs;
+use std::io;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
+
+use nmux_core::session::Session;
+use nmux_proto::{protocol, wire};
+
+pub fn default_socket_path() -> PathBuf {
+    if let Some(runtime_dir) = env::var_os("XDG_RUNTIME_DIR") {
+        return PathBuf::from(runtime_dir).join("nmux").join("nmuxd.sock");
+    }
+
+    PathBuf::from(format!("/tmp/nmux-{}.sock", std::process::id()))
+}
+
+pub fn bind_listener(path: &Path) -> io::Result<UnixListener> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+
+    UnixListener::bind(path)
+}
+
+pub fn serve_one(
+    listener: &UnixListener,
+    session: &Session,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (mut stream, _) = listener.accept()?;
+    let frame = session.workspace_tree_frame("local-client", 1);
+    wire::write_default_frame(&mut stream, &frame)?;
+    Ok(())
+}
+
+pub fn read_workspace_tree(path: &Path) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
+    let mut stream = UnixStream::connect(path)?;
+    read_workspace_tree_from_stream(&mut stream)
+}
+
+pub fn read_workspace_tree_from_stream(
+    stream: &mut UnixStream,
+) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
+    let frame = wire::read_default_frame(stream)?;
+    workspace_summary_from_frame(&frame)
+}
+
+pub fn workspace_summary_from_frame(
+    frame: &[u8],
+) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::WorkspaceTreeSnapshot {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let snapshot = envelope
+        .body_as_workspace_tree_snapshot()
+        .ok_or("missing workspace tree body")?;
+    let tabs = snapshot.tabs().ok_or("workspace tree has no tabs")?;
+    let tab = tabs.get(0);
+    let pane = tab.root().ok_or("workspace tab has no root pane")?;
+
+    Ok(WorkspaceSummary {
+        session_id: snapshot.session_id().unwrap_or_default().to_owned(),
+        tab_id: tab.tab_id().unwrap_or_default().to_owned(),
+        pane_id: pane.pane_id().unwrap_or_default().to_owned(),
+        cols: pane.cols(),
+        rows: pane.rows(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSummary {
+    pub session_id: String,
+    pub tab_id: String,
+    pub pane_id: String,
+    pub cols: u32,
+    pub rows: u32,
+}
+
+impl WorkspaceSummary {
+    pub fn display_line(&self) -> String {
+        format!(
+            "session={} tab={} pane={} size={}x{}",
+            self.session_id, self.tab_id, self.pane_id, self.cols, self.rows
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::thread;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn test_socket_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_nanos();
+        PathBuf::from(format!("/tmp/nmux-{}-{nanos}.sock", std::process::id()))
+    }
+
+    #[test]
+    fn serves_initial_workspace_snapshot_over_unix_socket() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+
+        let server = thread::spawn(move || serve_one(&listener, &session).expect("serve one"));
+        let summary = read_workspace_tree(&socket_path).expect("read workspace tree");
+        server.join().expect("server thread");
+
+        assert_eq!(
+            summary,
+            WorkspaceSummary {
+                session_id: "local".to_owned(),
+                tab_id: "tab-1".to_owned(),
+                pane_id: "pane-1".to_owned(),
+                cols: 80,
+                rows: 24,
+            }
+        );
+        assert_eq!(
+            summary.display_line(),
+            "session=local tab=tab-1 pane=pane-1 size=80x24"
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+}

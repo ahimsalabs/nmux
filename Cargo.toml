@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/nmux-cli",
   "crates/nmux-core",
   "crates/nmux-proto",
 ]

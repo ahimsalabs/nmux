@@ -19,6 +19,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nmux-cli"
+version = "0.1.0"
+dependencies = [
+ "nmux-core",
+ "nmux-proto",
+]
+
+[[package]]
 name = "nmux-core"
 version = "0.1.0"
 dependencies = [
