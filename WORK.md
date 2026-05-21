@@ -325,10 +325,12 @@ But the protocol should not depend on QUIC. State sync is the real win. QUIC hel
 
 ## The first build target
 
-Do not start with a beautiful Ghostty fork. Start with this:
+Do not start with a beautiful Ghostty fork. Start with a local state-sync spine that can be used and tested end to end, then swap in libghostty-backed terminal state when that boundary is ready.
+
+Current implementation status:
 
 ```text
-M0: nmux.fbs
+M0: nmux.fbs [done]
   Envelope
   WorkspaceTreeSnapshot
   PaneSurfaceSnapshot
@@ -336,43 +338,50 @@ M0: nmux.fbs
   InputEvent
   ResizeIntent
 
-M1: nmuxd local
-  spawn PTY
-  feed bytes into libghostty
-  extract visible grid snapshot
-  accept input
+M1: nmuxd local [done for local skeleton]
+  spawn local PTY
+  feed bytes into interim backend-owned text surface
+  serve visible surface snapshots/patches
+  accept input over local Unix socket
   fixed pane size
 
-M2: dumb viewer
-  terminal/TUI or simple web canvas
+M2: dumb viewer [done for CLI text renderer]
+  terminal text renderer
   attach
   receive snapshots
   send keys
 
-M3: reconnect
+M3: reconnect [done]
   client drops
   reconnects with known versions
   server sends patch or full snapshot
 
-M4: scrollback object
+M4: scrollback object [done]
   lazy range fetch
   snapshot + scrollback consistency tests
 
-M5: multi-player
+M5: multi-player [done for sequential local clients]
   presence
   actor IDs
   read-only vs read-write attach
 
-M6: sandbox host
+M6: sandbox host [done for host abstraction and local PTY host]
   local/container/sandbox process host abstraction
 
-M7: Ghostty frontend
+M7: Ghostty frontend [done as boundary decision and upstream API tracker]
   either embed libghostty renderer if state injection is possible
   or fork/contribute API for external surface rendering
 
-M8: tmux adapter
+M8: tmux adapter [done for process boundary and pure mapping test]
 
-M9: herdr adapter in separate AGPL repo
+M9: herdr adapter in separate AGPL repo [done as boundary decision]
+
+M10: live local interactive attach [in progress]
+  one attached local connection can stream repeated input/output cycles
+  read-only live clients can observe output without forwarding input
+  live CLI can read one stdin line per bounded cycle
+  live updates render through client-side pane surface state
+  next: move from bounded line mode toward raw terminal input and continuous polling
 ```
 
 The crisp product phrase is:
