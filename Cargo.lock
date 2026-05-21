@@ -94,6 +94,7 @@ name = "nmux-cli"
 version = "0.1.0"
 dependencies = [
  "flatbuffers",
+ "libc",
  "nmux-core",
  "nmux-proto",
 ]

@@ -138,7 +138,7 @@ For byte-streamed live input, use `--stdin-bytes`:
 printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin-bytes --interval-ms 500
 ```
 
-`--stdin-bytes` reads stdin on a background thread and sends available chunks during the live polling loop as `InputKind.RawBytes`. This keeps output polling active even while no complete input line is available. It is a step toward raw terminal input, but the CLI still does not put the user's terminal into raw mode.
+`--stdin-bytes` reads stdin on a background thread and sends available chunks during the live polling loop as `InputKind.RawBytes`. This keeps output polling active even while no complete input line is available. When stdin is an interactive TTY, the client temporarily disables canonical input and echo for this mode; piped stdin is left untouched.
 
 For read-only live observation, use `--no-input`:
 

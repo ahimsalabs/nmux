@@ -57,7 +57,7 @@ Done:
 - `nmuxd --live` serves one live client until detach; `nmuxd --live-cycles` remains available for bounded smoke tests.
 - The CLI integration tests launch `nmuxd --live-cycles` and `nmux --live` against a command-backed PTY and assert repeated streamed output.
 - `nmux --live --stdin` streams stdin lines over one attached connection and exits cleanly on stdin EOF when no explicit iteration limit is set.
-- `nmux --live --stdin-bytes` sends stdin chunks as `InputKind.RawBytes` on a background thread so the client can keep polling output while input is absent or partial.
+- `nmux --live --stdin-bytes` sends stdin chunks as `InputKind.RawBytes` on a background thread and temporarily puts interactive TTY stdin into noncanonical no-echo mode.
 - `nmux --live --no-input` observes command output without forwarding input and, without `--iterations`, keeps polling until the daemon closes the live connection.
 - Live mode renders streamed snapshots and patches through the same client-side pane surface state used by reconnects, and can persist that state with `--state`.
 - `nmux --live --cols --rows` sends `ResizeIntent` through the live loop and the daemon forwards it through the process-host resize boundary.
@@ -66,7 +66,7 @@ Done:
 
 Next:
 
-- Add a terminal raw-mode guard around byte-streamed stdin so interactive keystrokes are not buffered by the local terminal.
+- Continue from stdin byte streaming toward a fuller terminal frontend loop: screen redraw policy, local echo choices, and signal handling.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -196,4 +196,4 @@ Exit evidence:
 - A read-only client can observe updates without forwarding input.
 - Tests cover repeated input/output, current-version no-update behavior, and read-only permission enforcement.
 
-Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work. The local library now has a live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, read-write clients can receive idle process output without sending input first, current-version cycles send no update frame, read-only clients can observe output without forwarding input, and client EOF during read-write polling is a clean detach. `nmuxd --live` serves one live client until detach, `nmuxd --live-cycles` remains available for bounded smoke tests, integration tests cover command-backed PTY smoke, `nmux --live --stdin` streams stdin lines over the attached connection and exits cleanly on stdin EOF when unbounded, `nmux --live --stdin-bytes` sends stdin chunks as `InputKind.RawBytes` while keeping output polling active when stdin input is absent or partial, `nmux --live --no-input` can poll until the daemon closes the live connection, live mode renders through the same client-side pane surface state used by reconnects, and `nmux --live --cols --rows` forwards `ResizeIntent` through the process-host resize boundary. The next step is adding a terminal raw-mode guard around byte-streamed stdin so interactive keystrokes are not buffered by the local terminal.
+Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work. The local library now has a live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, read-write clients can receive idle process output without sending input first, current-version cycles send no update frame, read-only clients can observe output without forwarding input, and client EOF during read-write polling is a clean detach. `nmuxd --live` serves one live client until detach, `nmuxd --live-cycles` remains available for bounded smoke tests, integration tests cover command-backed PTY smoke, `nmux --live --stdin` streams stdin lines over the attached connection and exits cleanly on stdin EOF when unbounded, `nmux --live --stdin-bytes` sends stdin chunks as `InputKind.RawBytes` while keeping output polling active when stdin input is absent or partial and temporarily puts interactive TTY stdin into noncanonical no-echo mode, `nmux --live --no-input` can poll until the daemon closes the live connection, live mode renders through the same client-side pane surface state used by reconnects, and `nmux --live --cols --rows` forwards `ResizeIntent` through the process-host resize boundary. The next step is continuing from stdin byte streaming toward a fuller terminal frontend loop: screen redraw policy, local echo choices, and signal handling.

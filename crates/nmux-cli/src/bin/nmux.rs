@@ -48,6 +48,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let _raw_terminal = RawTerminalGuard::enable_if_needed(args.stdin_bytes)?;
     let mut client_state = match args.state_path.as_deref() {
         Some(path) => local::ClientAttachState::load(path)?,
         None => local::ClientAttachState::default(),
@@ -195,6 +196,60 @@ enum StdinByteRead {
     Input(Vec<u8>),
     Closed,
     Error(String),
+}
+
+struct RawTerminalGuard {
+    original: libc::termios,
+}
+
+impl RawTerminalGuard {
+    fn enable_if_needed(stdin_bytes: bool) -> io::Result<Option<Self>> {
+        if !raw_terminal_mode_needed(stdin_bytes, stdin_is_tty()) {
+            return Ok(None);
+        }
+
+        let mut original = empty_termios();
+        // Safety: STDIN_FILENO is a valid process file descriptor when isatty
+        // succeeded, and original points to valid writable storage.
+        if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut original) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut raw = original;
+        raw.c_lflag &= !(libc::ICANON | libc::ECHO);
+        raw.c_cc[libc::VMIN] = 1;
+        raw.c_cc[libc::VTIME] = 0;
+
+        // Safety: raw was derived from a valid termios fetched from stdin.
+        if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok(Some(Self { original }))
+    }
+}
+
+impl Drop for RawTerminalGuard {
+    fn drop(&mut self) {
+        // Safety: original was captured from STDIN_FILENO by tcgetattr. Drop
+        // must not panic, so restoration errors are intentionally ignored.
+        let _ = unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.original) };
+    }
+}
+
+fn raw_terminal_mode_needed(stdin_bytes: bool, stdin_is_tty: bool) -> bool {
+    stdin_bytes && stdin_is_tty
+}
+
+fn stdin_is_tty() -> bool {
+    // Safety: isatty only inspects the file descriptor.
+    unsafe { libc::isatty(libc::STDIN_FILENO) == 1 }
+}
+
+fn empty_termios() -> libc::termios {
+    // Safety: termios is a plain C struct that is immediately initialized by
+    // tcgetattr before use.
+    unsafe { std::mem::zeroed() }
 }
 
 fn attach_once(
@@ -353,4 +408,17 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         interval_ms,
         iterations,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::raw_terminal_mode_needed;
+
+    #[test]
+    fn raw_terminal_mode_is_only_needed_for_stdin_bytes_on_tty() {
+        assert!(raw_terminal_mode_needed(true, true));
+        assert!(!raw_terminal_mode_needed(true, false));
+        assert!(!raw_terminal_mode_needed(false, true));
+        assert!(!raw_terminal_mode_needed(false, false));
+    }
 }
