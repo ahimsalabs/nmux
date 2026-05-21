@@ -389,6 +389,7 @@ M10: live local interactive attach [in progress]
   successful live resize intents commit pane size and republish workspace snapshot
   nmuxd --resize-policy can publish fixed, leader, active-client, or manual policy
   manual resize policy blocks frontend viewport resize intents
+  nmux and nmuxd --help document live attach, stdin, redraw, resize, and policy flags
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state
   next: terminal frontend polish

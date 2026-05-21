@@ -16,6 +16,11 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = args()?;
+    if args.help {
+        print!("{}", usage());
+        return Ok(());
+    }
+
     let listener = local::bind_listener(&args.socket_path)?;
     eprintln!("nmuxd: listening on {}", args.socket_path.display());
 
@@ -54,6 +59,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 struct Args {
+    help: bool,
     socket_path: PathBuf,
     one_shot: bool,
     live: bool,
@@ -63,6 +69,7 @@ struct Args {
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
+    let mut help = false;
     let mut socket_path = local::default_socket_path();
     let mut one_shot = false;
     let mut live = false;
@@ -73,6 +80,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--help" | "-h" => {
+                help = true;
+            }
             "--socket" => {
                 socket_path = args
                     .next()
@@ -103,6 +113,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     }
 
     Ok(Args {
+        help,
         socket_path,
         one_shot,
         live,
@@ -112,6 +123,25 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     })
 }
 
+fn usage() -> &'static str {
+    "\
+nmuxd - serve an nmux session over a local Unix socket
+
+Usage:
+  nmuxd [OPTIONS]
+
+Options:
+  --socket PATH                         Unix socket path
+  --one-shot                            Serve one attach client
+  --live                                Serve one live client until detach
+  --live-cycles COUNT                   Serve a bounded live client
+  --command SHELL                       Run a shell command in the pane PTY
+  --resize-policy fixed|leader|active-client|manual
+                                         Publish and enforce pane resize policy
+  -h, --help                            Show this help
+"
+}
+
 fn parse_resize_policy(value: &str) -> Result<protocol::ResizePolicy, &'static str> {
     match value {
         "fixed" => Ok(protocol::ResizePolicy::Fixed),
@@ -119,6 +149,41 @@ fn parse_resize_policy(value: &str) -> Result<protocol::ResizePolicy, &'static s
         "active-client" => Ok(protocol::ResizePolicy::ActiveClient),
         "manual" => Ok(protocol::ResizePolicy::Manual),
         _ => Err("requires fixed, leader, active-client, or manual"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_resize_policy, usage};
+    use nmux_proto::protocol;
+
+    #[test]
+    fn resize_policy_arg_accepts_documented_choices() {
+        assert_eq!(
+            parse_resize_policy("fixed"),
+            Ok(protocol::ResizePolicy::Fixed)
+        );
+        assert_eq!(
+            parse_resize_policy("leader"),
+            Ok(protocol::ResizePolicy::Leader)
+        );
+        assert_eq!(
+            parse_resize_policy("active-client"),
+            Ok(protocol::ResizePolicy::ActiveClient)
+        );
+        assert_eq!(
+            parse_resize_policy("manual"),
+            Ok(protocol::ResizePolicy::Manual)
+        );
+        assert!(parse_resize_policy("max").is_err());
+    }
+
+    #[test]
+    fn usage_mentions_live_and_resize_policy_flags() {
+        let usage = usage();
+        assert!(usage.contains("--live"));
+        assert!(usage.contains("--live-cycles COUNT"));
+        assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
     }
 }
 

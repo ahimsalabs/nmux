@@ -25,6 +25,13 @@ nix develop path:$PWD -c make check
 
 ## Quick Smoke
 
+Inspect the current CLI flags:
+
+```sh
+nix develop path:$PWD -c cargo run --bin nmux -- --help
+nix develop path:$PWD -c cargo run --bin nmuxd -- --help
+```
+
 One-shot attach:
 
 ```sh
@@ -58,6 +65,16 @@ printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socke
 ```
 
 For interactive `--stdin-bytes`, Ctrl-] detaches the client.
-Add `--redraw` to repaint the current pane surface in place on each live update.
+Add `--redraw` to repaint the current pane surface in place on each live update. Interactive byte mode uses noncanonical stdin, defaults local echo off, can preserve the TTY echo setting with `--local-echo tty`, and sends TTY-size resize intents on `SIGWINCH` unless explicit `--cols` and `--rows` are provided.
 
-This is still a prototype. It is not yet raw terminal mode, and the temporary text surface is not a VT-correct terminal emulator.
+Resize policy smoke:
+
+```sh
+rm -f /tmp/nmux.sock
+nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-cycles 1 --resize-policy active-client --command "printf 'ready\n'; sleep 1"
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --no-input --iterations 1
+```
+
+Expected output includes `resize=active-client`.
+
+This is still a prototype. It has an interactive byte-streamed live path, but the temporary text surface is not a VT-correct terminal emulator.

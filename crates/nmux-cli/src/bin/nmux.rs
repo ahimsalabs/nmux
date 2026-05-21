@@ -21,6 +21,11 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = args()?;
+    if args.help {
+        print!("{}", usage());
+        return Ok(());
+    }
+
     if args.live {
         return run_live(&args);
     }
@@ -467,6 +472,7 @@ fn print_scrollback(scrollback: local::ScrollbackChunkSummary) {
 }
 
 struct Args {
+    help: bool,
     socket_path: PathBuf,
     input_text: Option<String>,
     scrollback_start_line: u64,
@@ -484,6 +490,7 @@ struct Args {
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
+    let mut help = false;
     let mut socket_path = local::default_socket_path();
     let mut input_text = Some("a".to_owned());
     let mut scrollback_start_line = 1;
@@ -503,6 +510,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--help" | "-h" => {
+                help = true;
+            }
             "--socket" => {
                 socket_path = args
                     .next()
@@ -587,6 +597,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     }
 
     Ok(Args {
+        help,
         socket_path,
         input_text,
         scrollback_start_line,
@@ -602,6 +613,34 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         interval_ms,
         iterations,
     })
+}
+
+fn usage() -> &'static str {
+    "\
+nmux - attach to an nmux daemon over a local Unix socket
+
+Usage:
+  nmux [OPTIONS]
+
+Options:
+  --socket PATH              Unix socket path
+  --key TEXT                 Text input to send for read-write attach
+  --no-input                 Attach read-only
+  --scrollback-start LINE    First scrollback line to request
+  --scrollback-count COUNT   Number of scrollback lines to request
+  --state PATH               Persist client-side pane surface cache
+  --follow                   Reconnect in a polling loop
+  --live                     Keep one attach connection open
+  --stdin                    Stream newline-delimited stdin in live mode
+  --stdin-bytes              Stream raw stdin chunks in live mode
+  --local-echo off|tty       Local TTY echo policy for --stdin-bytes
+  --redraw                   Repaint the current live surface in place
+  --cols COUNT               Desired live pane columns
+  --rows COUNT               Desired live pane rows
+  --interval-ms MS           Poll/read timeout in milliseconds
+  --iterations COUNT         Bounded follow/live cycle count
+  -h, --help                 Show this help
+"
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -622,7 +661,7 @@ fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
 mod tests {
     use super::{
         LocalEcho, parse_local_echo, raw_terminal_lflag, raw_terminal_mode_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
     };
 
     #[test]
@@ -678,6 +717,15 @@ mod tests {
         assert_eq!(parse_local_echo("off"), Ok(LocalEcho::Off));
         assert_eq!(parse_local_echo("tty"), Ok(LocalEcho::Tty));
         assert!(parse_local_echo("auto").is_err());
+    }
+
+    #[test]
+    fn usage_mentions_live_interactive_flags() {
+        let usage = usage();
+        assert!(usage.contains("--stdin-bytes"));
+        assert!(usage.contains("--local-echo off|tty"));
+        assert!(usage.contains("--redraw"));
+        assert!(usage.contains("--cols COUNT"));
     }
 
     #[test]
