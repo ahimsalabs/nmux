@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M3 is the current target: reconnect with known object versions and receive either patches or a fresh snapshot.
+M4 is the current target: introduce scrollback as a separate synchronized object with lazy range fetches.
 
 Done:
 
@@ -22,11 +22,12 @@ Done:
 - Basic key `InputEvent` sent from `nmux` back to `nmuxd`.
 - Local-only attach prelude with known pane surface versions.
 - Current-version reconnect test and stale-version full snapshot test.
+- Patchable reconnect response using `PaneSurfacePatch`.
 
 Next:
 
-- Introduce a `PaneSurfacePatch` path for state changes after the initial snapshot.
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
+- Add the scrollback object model and range-fetch tests.
 
 ## Milestones
 
@@ -74,7 +75,7 @@ Exit evidence:
 - A test demonstrates reconnect from a current version.
 - A test demonstrates stale reconnect falling back to a full snapshot.
 
-Status: Partial. The local Unix-socket prelude proves current-version and stale-version behavior for pane surfaces. Patch replay is next.
+Status: Done for the local skeleton. The local Unix-socket prelude proves current-version, patchable-version, and stale-version behavior for pane surfaces. Public schema promotion remains a later protocol hardening step.
 
 ### M4: Scrollback Object
 

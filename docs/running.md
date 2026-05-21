@@ -1,6 +1,6 @@
 # Running nmux
 
-The current prototype is an M3 local attach skeleton. `nmuxd` owns one static workspace tree and one static pane surface. The client sends a local-only attach prelude with known pane surface versions, then the daemon sends a `WorkspaceTreeSnapshot` and, when needed, a `PaneSurfaceSnapshot`. After rendering those snapshots, `nmux` sends one basic `InputEvent` back to the daemon.
+The current prototype is an M3 local attach skeleton. `nmuxd` owns one static workspace tree and one static pane surface. The client sends a local-only attach prelude with known pane surface versions, then the daemon sends a `WorkspaceTreeSnapshot` and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. After rendering those state objects, `nmux` sends one basic `InputEvent` back to the daemon.
 
 Run all checks:
 
@@ -40,6 +40,7 @@ Current behavior:
 
 - no known surface version: daemon sends a full `PaneSurfaceSnapshot`
 - known `pane-1` surface version is current: daemon sends no surface frame
+- known `pane-1` surface version is patchable: daemon sends a `PaneSurfacePatch`
 - known `pane-1` surface version is stale: daemon sends a full `PaneSurfaceSnapshot`
 
 This proves the reconnect decision before promoting attach metadata into the public FlatBuffers schema.
