@@ -7,19 +7,47 @@ This file is the operating guide for agents working in this repository.
 nmux is a portable Ghostty-style terminal workspace. The current direction is documented in:
 
 - [README.md](README.md) for the seed idea.
-- [WORK.md](WORK.md) for evolving product and architecture notes.
+- [docs/roadmap.md](docs/roadmap.md) for current milestone status and next steps.
+- [WORK.md](WORK.md) for background product and architecture garden notes.
+- [docs/running.md](docs/running.md) for runnable local smoke tests.
+- [docs/protocol.md](docs/protocol.md) for the FlatBuffers state-sync contract.
 - [docs/adr](docs/adr) for durable architecture decisions.
 
-Treat `WORK.md` as the active garden. Promote stable decisions into ADRs when they affect protocol shape, process boundaries, terminal-state ownership, adapter boundaries, or licensing posture.
+Use `docs/roadmap.md` as the current implementation tracker and next-step source. Treat `WORK.md` as background garden notes. Promote stable decisions into ADRs when they affect protocol shape, process boundaries, terminal-state ownership, adapter boundaries, or licensing posture.
+
+The current implementation is a Rust workspace:
+
+- `crates/nmux-proto` owns FlatBuffers wire helpers and generated schema bindings.
+- `crates/nmux-core` owns session state, process hosts, interim text-surface logic, and adapter mapping helpers.
+- `crates/nmux-cli` owns the `nmuxd` daemon, `nmux` client, Unix-socket local transport, and CLI integration tests.
 
 ## Working Rules
 
 - Work sequentially. Do not parallelize implementation or documentation steps.
-- Commit with `jj` between completed steps.
+- Check `jj status` before starting a step.
+- Commit with `jj` after each coherent implementation or documentation step, after relevant checks pass.
 - Keep commits small enough that each one has a clear review purpose.
 - Preserve user or agent work already present in the worktree unless explicitly told to change it.
 - Prefer documentation under `docs/` once a note needs to outlive the current scratch plan.
 - Update this file when repo workflow expectations change.
+- Use subagents only for bounded read-only review, research synthesis, or implementation advice. Do not use them for parallel file edits or competing implementation tracks.
+- Keep generated protocol bindings in `crates/nmux-proto/src/generated` derived from `schema/nmux.fbs`; do not hand-edit generated files.
+
+## Checks
+
+Use the Nix development shell for repo checks:
+
+```sh
+nix develop path:$PWD -c make check
+```
+
+`make check` runs FlatBuffers schema validation and `cargo test --workspace`. For narrower iteration, prefer targeted `cargo test` commands inside the same `nix develop path:$PWD -c ...` wrapper, then run full `make check` before committing implementation changes.
+
+If `schema/nmux.fbs` changes, regenerate bindings with:
+
+```sh
+nix develop path:$PWD -c make generate-schema
+```
 
 ## Licensing Rules
 
@@ -29,9 +57,7 @@ Treat `WORK.md` as the active garden. Promote stable decisions into ADRs when th
 
 ## Research Rules
 
-Use `oracle --prompt '...'` when a question needs deep research about protocols, architecture, or other facts that should not be guessed from local context.
-
-Do not use outside code as implementation source material unless its license is compatible with the intended nmux core licensing posture.
+Use `oracle --prompt '...'` for deep protocol, architecture, licensing, or upstream-fact questions that should not be guessed. If oracle or external research is unavailable, keep moving on repo-local work that does not depend on the unanswered question. Do not use outside code as implementation source material unless its license is compatible with the intended nmux core licensing posture.
 
 ## Documentation Rules
 
