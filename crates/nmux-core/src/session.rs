@@ -50,6 +50,7 @@ pub struct Pane {
     pub host: HostSpec,
     pub surface_version: u64,
     pub last_patch_kind: protocol::PatchKind,
+    pub scrollback_version: u64,
     pub cols: u32,
     pub rows: u32,
     pub resize_policy: protocol::ResizePolicy,
@@ -100,6 +101,7 @@ impl Session {
                     host: HostSpec::local("local", CommandSpec::new("sh")),
                     surface_version: 2,
                     last_patch_kind: protocol::PatchKind::ReplaceRows,
+                    scrollback_version: 1,
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
@@ -334,7 +336,7 @@ impl Session {
         let pane = &self.tabs[0].root;
         PaneScrollback {
             pane_id: pane.id.clone(),
-            version: 1,
+            version: pane.scrollback_version,
             lines: pane.scrollback_lines.clone(),
         }
     }
@@ -858,6 +860,10 @@ fn apply_terminal_update(
     pane.surface = update.surface;
     pane.surface_lines = update.surface_lines;
     pane.cursor = cursor;
+
+    if scrollback_changed {
+        pane.scrollback_version = pane.scrollback_version.saturating_add(1);
+    }
 
     if surface_changed {
         pane.surface_version = pane.surface_version.saturating_add(1);
@@ -1559,6 +1565,7 @@ mod tests {
         let surface = session.initial_pane_surface();
         let scrollback = session.initial_scrollback();
         assert_eq!(surface.version, 2);
+        assert_eq!(scrollback.version, 2);
         assert_eq!(
             surface.lines,
             vec![

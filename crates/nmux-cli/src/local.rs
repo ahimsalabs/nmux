@@ -2387,7 +2387,7 @@ mod tests {
             snapshot.scrollback,
             Some(ScrollbackChunkSummary {
                 pane_id: "pane-1".to_owned(),
-                scrollback_version: 1,
+                scrollback_version: 2,
                 start_line: 1,
                 total_lines: 1,
                 lines: Vec::new(),
@@ -2556,7 +2556,7 @@ mod tests {
             scrollback,
             ScrollbackChunkSummary {
                 pane_id: "pane-1".to_owned(),
-                scrollback_version: 1,
+                scrollback_version: 2,
                 start_line: 3,
                 total_lines: 4,
                 lines: vec![ScrollbackLine {
@@ -2597,7 +2597,7 @@ mod tests {
             snapshot.scrollback,
             Some(ScrollbackChunkSummary {
                 pane_id: "pane-1".to_owned(),
-                scrollback_version: 1,
+                scrollback_version: 2,
                 start_line: 3,
                 total_lines: 4,
                 lines: vec![ScrollbackLine {
