@@ -25,9 +25,11 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--redraw"));
     assert!(stdout.contains("interim text surface"));
     assert!(stdout.contains("not a VT-correct terminal emulator"));
+    assert!(stdout.contains("Default socket: $XDG_RUNTIME_DIR/nmux/nmuxd.sock"));
+    assert!(stdout.contains("else /tmp/nmux-$UID/nmuxd.sock"));
     assert!(stdout.contains("Examples:"));
-    assert!(stdout.contains("nmux --socket /tmp/nmux.sock --live --iterations 2"));
-    assert!(stdout.contains("nmux --socket /tmp/nmux.sock --live --stdin-bytes --redraw"));
+    assert!(stdout.contains("nmux --live --iterations 2"));
+    assert!(stdout.contains("nmux --live --stdin-bytes --redraw"));
 }
 
 #[test]
@@ -48,10 +50,12 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("--live-clients COUNT"));
     assert!(stdout.contains("--resize-policy fixed|leader|active-client|manual"));
     assert!(stdout.contains("--command SHELL"));
+    assert!(stdout.contains("Default socket: $XDG_RUNTIME_DIR/nmux/nmuxd.sock"));
+    assert!(stdout.contains("else /tmp/nmux-$UID/nmuxd.sock"));
     assert!(stdout.contains("Examples:"));
-    assert!(stdout.contains("nmuxd --socket /tmp/nmux.sock --one-shot"));
-    assert!(stdout.contains("nmuxd --socket /tmp/nmux.sock --live"));
-    assert!(stdout.contains("nmuxd --socket /tmp/nmux.sock --live-clients 2"));
+    assert!(stdout.contains("nmuxd --one-shot"));
+    assert!(stdout.contains("nmuxd --live"));
+    assert!(stdout.contains("nmuxd --live-clients 2"));
 }
 
 #[test]

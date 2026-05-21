@@ -885,12 +885,13 @@ Options:
   -h, --help                 Show this help
 
 Notes:
+  Default socket: $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   The current renderer uses an interim text surface, not a VT-correct terminal emulator.
 
 Examples:
-  nmux --socket /tmp/nmux.sock --no-input
-  nmux --socket /tmp/nmux.sock --live --iterations 2 --key 'ping\n'
-  nmux --socket /tmp/nmux.sock --live --stdin-bytes --redraw
+  nmux --no-input
+  nmux --live --iterations 2 --key 'ping\n'
+  nmux --live --stdin-bytes --redraw
 "
 }
 

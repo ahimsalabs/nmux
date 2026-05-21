@@ -95,8 +95,7 @@ By default, `nmuxd` and `nmux` use the same local socket path: `$XDG_RUNTIME_DIR
 Start a daemon that serves one live client for two input cycles:
 
 ```sh
-rm -f /tmp/nmux.sock
-nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+nix develop path:$PWD -c cargo run --bin nmuxd -- --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 ```
 
 Use `--live` instead of `--live-cycles` to keep serving that one live client until the client detaches:
@@ -120,7 +119,7 @@ The second live client attaches to the same backend-owned pane state and can obs
 Attach a bounded live client:
 
 ```sh
-nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --interval-ms 500
+nix develop path:$PWD -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' --interval-ms 500
 ```
 
 Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached. Bounded live and follow loops reject `--iterations 0` before connecting, and `--interval-ms` must be greater than zero.

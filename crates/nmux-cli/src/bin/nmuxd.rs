@@ -174,10 +174,13 @@ Options:
                                          Publish and enforce pane resize policy
   -h, --help                            Show this help
 
+Notes:
+  Default socket: $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+
 Examples:
-  nmuxd --socket /tmp/nmux.sock --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
-  nmuxd --socket /tmp/nmux.sock --live --command \"printf 'ready\\n'; cat\"
-  nmuxd --socket /tmp/nmux.sock --live-clients 2 --command \"printf 'ready\\n'; cat\"
+  nmuxd --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
+  nmuxd --live --command \"printf 'ready\\n'; cat\"
+  nmuxd --live-clients 2 --command \"printf 'ready\\n'; cat\"
 "
 }
 
