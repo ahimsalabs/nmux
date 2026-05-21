@@ -32,6 +32,8 @@ nix develop path:$PWD -c cargo run --bin nmux -- --help
 nix develop path:$PWD -c cargo run --bin nmuxd -- --help
 ```
 
+`nmux --help` also calls out the current renderer limitation: the prototype uses an interim text surface, not a VT-correct terminal emulator.
+
 One-shot attach:
 
 ```sh
@@ -77,4 +79,4 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 
 Expected output includes `resize=active-client`.
 
-This is still a prototype. It has an interactive byte-streamed live path, but the temporary text surface is not a VT-correct terminal emulator.
+This is still a prototype. It has an interactive byte-streamed live path, but the temporary text surface is not a VT-correct terminal emulator; ANSI styling, cursor motion, alternate screen, images, and grapheme/cell-width correctness are not complete.

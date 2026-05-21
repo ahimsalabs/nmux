@@ -18,6 +18,8 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--local-echo off|tty"));
     assert!(stdout.contains("--cols COUNT"));
     assert!(stdout.contains("--redraw"));
+    assert!(stdout.contains("interim text surface"));
+    assert!(stdout.contains("not a VT-correct terminal emulator"));
 }
 
 #[test]

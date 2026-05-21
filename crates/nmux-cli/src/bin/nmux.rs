@@ -60,6 +60,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let _raw_terminal = RawTerminalGuard::enable_if_needed(args.stdin_bytes, args.local_echo)?;
+    warn_if_interim_surface_fidelity_is_visible(args.stdin_bytes);
     let mut sigwinch_resize =
         SigwinchResize::enable_if_needed(args.stdin_bytes, args.live_resize.is_some())?;
     let mut client_state = match args.state_path.as_deref() {
@@ -201,6 +202,22 @@ fn warn_if_resize_intent_conflicts_with_policy(
     if let Some(message) = resize_policy_warning(live_resize, resize_policy) {
         eprintln!("{message}");
     }
+}
+
+fn warn_if_interim_surface_fidelity_is_visible(stdin_bytes: bool) {
+    if interim_surface_fidelity_warning_needed(stdin_bytes, stdin_is_tty(), stdout_is_tty()) {
+        eprintln!("{}", INTERIM_SURFACE_FIDELITY_WARNING);
+    }
+}
+
+const INTERIM_SURFACE_FIDELITY_WARNING: &str = "nmux: interim text surface; ANSI styles, alternate screen, cursor motion, images, and full VT fidelity are unsupported";
+
+fn interim_surface_fidelity_warning_needed(
+    stdin_bytes: bool,
+    stdin_is_tty: bool,
+    stdout_is_tty: bool,
+) -> bool {
+    stdin_bytes && stdin_is_tty && stdout_is_tty
 }
 
 fn resize_policy_warning(
@@ -424,6 +441,11 @@ fn raw_terminal_lflag(flags: libc::tcflag_t, local_echo: LocalEcho) -> libc::tcf
 fn stdin_is_tty() -> bool {
     // Safety: isatty only inspects the file descriptor.
     unsafe { libc::isatty(libc::STDIN_FILENO) == 1 }
+}
+
+fn stdout_is_tty() -> bool {
+    // Safety: isatty only inspects the file descriptor.
+    unsafe { libc::isatty(libc::STDOUT_FILENO) == 1 }
 }
 
 fn empty_termios() -> libc::termios {
@@ -675,6 +697,9 @@ Options:
   --interval-ms MS           Poll/read timeout in milliseconds
   --iterations COUNT         Bounded follow/live cycle count
   -h, --help                 Show this help
+
+Notes:
+  The current renderer uses an interim text surface, not a VT-correct terminal emulator.
 "
 }
 
@@ -695,9 +720,9 @@ fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        LocalEcho, parse_local_echo, raw_terminal_lflag, raw_terminal_mode_needed,
-        resize_policy_warning, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        LocalEcho, interim_surface_fidelity_warning_needed, parse_local_echo, raw_terminal_lflag,
+        raw_terminal_mode_needed, resize_policy_warning, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
     };
 
     #[test]
@@ -706,6 +731,14 @@ mod tests {
         assert!(!raw_terminal_mode_needed(true, false));
         assert!(!raw_terminal_mode_needed(false, true));
         assert!(!raw_terminal_mode_needed(false, false));
+    }
+
+    #[test]
+    fn interim_surface_fidelity_warning_is_only_for_interactive_byte_mode() {
+        assert!(interim_surface_fidelity_warning_needed(true, true, true));
+        assert!(!interim_surface_fidelity_warning_needed(true, true, false));
+        assert!(!interim_surface_fidelity_warning_needed(true, false, true));
+        assert!(!interim_surface_fidelity_warning_needed(false, true, true));
     }
 
     #[test]
@@ -762,6 +795,7 @@ mod tests {
         assert!(usage.contains("--local-echo off|tty"));
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));
+        assert!(usage.contains("interim text surface"));
     }
 
     #[test]

@@ -398,7 +398,7 @@ M11: terminal frontend polish [in progress]
   Ctrl-] detach reports a local detach status on stderr
   stdin EOF and live server socket close exits report status on stderr
   explicit live resize requests warn when daemon-published manual policy will ignore them
-  CLI output should avoid ambiguous unsupported-fidelity states
+  nmux --help and interactive TTY byte mode call out interim text surface / non-VT-correct renderer limitations
   runnable docs and help output should cover expected live attach workflows
   tests should cover changed user-visible terminal output behavior
 ```
