@@ -62,7 +62,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut sigwinch_resize =
         SigwinchResize::enable_if_needed(args.stdin_bytes, args.live_resize.is_some())?;
     let mut client_state = load_client_state(args.state_path.as_deref())?;
-    let mut stream = local::connect_to_daemon(&args.socket_path)?;
+    let mut stream = connect_to_daemon(args)?;
     stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
     let stdin = io::stdin();
     let mut stdin_lines = if args.stdin_input {
@@ -82,6 +82,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         input_text: args.input_text.clone(),
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
+        connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
     if args.stdin_input || args.stdin_bytes {
@@ -543,6 +544,17 @@ fn attach_once(
     local::attach_render_once(&args.socket_path, options, client_state)
 }
 
+fn connect_to_daemon(args: &Args) -> Result<UnixStream, Box<dyn std::error::Error>> {
+    match connect_timeout_duration(args) {
+        Some(timeout) => local::connect_to_daemon_with_timeout(&args.socket_path, timeout),
+        None => local::connect_to_daemon(&args.socket_path),
+    }
+}
+
+fn connect_timeout_duration(args: &Args) -> Option<Duration> {
+    args.connect_timeout_ms.map(Duration::from_millis)
+}
+
 fn print_rendered(rendered: local::RenderedAttach) {
     println!("{}", rendered.workspace.display_line());
     if let Some(surface_text) = rendered.surface_text {
@@ -635,6 +647,7 @@ struct Args {
     redraw: bool,
     live_resize: Option<(u32, u32)>,
     interval_ms: u64,
+    connect_timeout_ms: Option<u64>,
     iterations: Option<usize>,
 }
 
@@ -654,6 +667,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut live_cols = None;
     let mut live_rows = None;
     let mut interval_ms = 1000;
+    let mut connect_timeout_ms = None;
     let mut iterations = None;
     let mut local_echo_set = false;
     let mut key_set = false;
@@ -732,6 +746,13 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                     .ok_or("--interval-ms requires milliseconds")?
                     .parse()?;
             }
+            "--connect-timeout-ms" => {
+                connect_timeout_ms = Some(
+                    args.next()
+                        .ok_or("--connect-timeout-ms requires milliseconds")?
+                        .parse()?,
+                );
+            }
             "--iterations" => {
                 iterations = Some(
                     args.next()
@@ -755,6 +776,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         scrollback_line_count,
         live_resize,
         interval_ms,
+        connect_timeout_ms,
     )?;
     validate_explicit_input_modes(key_set, no_input_set, stdin_input, stdin_bytes)?;
     validate_mode_args(
@@ -783,6 +805,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         redraw,
         live_resize,
         interval_ms,
+        connect_timeout_ms,
         iterations,
     })
 }
@@ -792,6 +815,7 @@ fn validate_positive_numeric_args(
     scrollback_line_count: u32,
     live_resize: Option<(u32, u32)>,
     interval_ms: u64,
+    connect_timeout_ms: Option<u64>,
 ) -> Result<(), &'static str> {
     if scrollback_start_line == 0 {
         return Err("--scrollback-start must be greater than 0");
@@ -801,6 +825,9 @@ fn validate_positive_numeric_args(
     }
     if interval_ms == 0 {
         return Err("--interval-ms must be greater than 0");
+    }
+    if connect_timeout_ms == Some(0) {
+        return Err("--connect-timeout-ms must be greater than 0");
     }
     if live_resize.is_some_and(|(cols, rows)| {
         cols == 0 || rows == 0 || cols > u16::MAX as u32 || rows > u16::MAX as u32
@@ -880,6 +907,7 @@ Usage:
 
 Options:
   --socket PATH              Unix socket path
+  --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send for read-write attach
   --no-input                 Attach read-only
   --scrollback-start LINE    First scrollback line to request
@@ -1092,37 +1120,42 @@ mod tests {
     #[test]
     fn numeric_validation_rejects_zero_live_loop_values() {
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, 0),
+            validate_positive_numeric_args(1, 2, None, 0, None),
             Err("--interval-ms must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, Some((0, 24)), 1000),
+            validate_positive_numeric_args(1, 2, Some((0, 24)), 1000, None),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, Some((80, 0)), 1000),
+            validate_positive_numeric_args(1, 2, Some((80, 0)), 1000, None),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, Some((65536, 24)), 1000),
+            validate_positive_numeric_args(1, 2, Some((65536, 24)), 1000, None),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, Some((80, 65536)), 1000),
+            validate_positive_numeric_args(1, 2, Some((80, 65536)), 1000, None),
             Err("--cols and --rows must be between 1 and 65535")
         );
-        assert!(validate_positive_numeric_args(1, 2, None, 1000).is_ok());
-        assert!(validate_positive_numeric_args(1, 2, Some((65535, 65535)), 1000).is_ok());
+        assert_eq!(
+            validate_positive_numeric_args(1, 2, None, 1000, Some(0)),
+            Err("--connect-timeout-ms must be greater than 0")
+        );
+        assert!(validate_positive_numeric_args(1, 2, None, 1000, Some(1)).is_ok());
+        assert!(validate_positive_numeric_args(1, 2, None, 1000, None).is_ok());
+        assert!(validate_positive_numeric_args(1, 2, Some((65535, 65535)), 1000, None).is_ok());
     }
 
     #[test]
     fn numeric_validation_rejects_zero_scrollback_values() {
         assert_eq!(
-            validate_positive_numeric_args(0, 2, None, 1000),
+            validate_positive_numeric_args(0, 2, None, 1000, None),
             Err("--scrollback-start must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 0, None, 1000),
+            validate_positive_numeric_args(1, 0, None, 1000, None),
             Err("--scrollback-count must be greater than 0")
         );
     }
@@ -1131,6 +1164,7 @@ mod tests {
     fn usage_mentions_live_interactive_flags() {
         let usage = usage();
         assert!(usage.contains("--stdin-bytes"));
+        assert!(usage.contains("--connect-timeout-ms MS"));
         assert!(usage.contains("--local-echo off|tty"));
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));

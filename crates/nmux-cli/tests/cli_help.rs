@@ -19,6 +19,7 @@ fn nmux_help_lists_live_client_flags() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
+    assert!(stdout.contains("--connect-timeout-ms MS"));
     assert!(stdout.contains("--stdin-bytes"));
     assert!(stdout.contains("--local-echo off|tty"));
     assert!(stdout.contains("--cols COUNT"));
@@ -93,6 +94,10 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--live", "--interval-ms", "0"],
         "nmux: --interval-ms must be greater than 0",
+    );
+    assert_nmux_rejects(
+        &["--connect-timeout-ms", "0", "--no-input"],
+        "nmux: --connect-timeout-ms must be greater than 0",
     );
     assert_nmux_rejects(
         &["--scrollback-start", "0", "--no-input"],

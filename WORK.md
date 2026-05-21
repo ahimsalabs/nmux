@@ -428,6 +428,7 @@ M12: live workspace usability [next]
   nmuxd normal-exit cleanup only removes the original socket file if unchanged
   existing socket path errors include a recovery hint
   nmuxd bind failures include the socket path
+  nmux --connect-timeout-ms waits for daemon socket startup races across attach modes
   choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available

@@ -74,13 +74,53 @@ pub fn bind_listener(path: &Path) -> io::Result<UnixListener> {
 }
 
 pub fn connect_to_daemon(path: &Path) -> Result<UnixStream, Box<dyn std::error::Error>> {
-    UnixStream::connect(path).map_err(|err| {
-        format!(
-            "failed to connect to nmux daemon at {}: {err}",
-            path.display()
-        )
-        .into()
-    })
+    connect_once(path).map_err(|err| connect_error(path, err).into())
+}
+
+pub fn connect_to_daemon_with_timeout(
+    path: &Path,
+    timeout: Duration,
+) -> Result<UnixStream, Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + timeout;
+
+    let err = loop {
+        match connect_once(path) {
+            Ok(stream) => return Ok(stream),
+            Err(err) if connect_error_is_retryable(&err) && Instant::now() < deadline => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                thread::sleep(remaining.min(Duration::from_millis(25)));
+            }
+            Err(err) => break err,
+        }
+    };
+
+    Err(format!(
+        "failed to connect to nmux daemon at {} within {}ms: {err}",
+        path.display(),
+        timeout.as_millis()
+    )
+    .into())
+}
+
+fn connect_once(path: &Path) -> io::Result<UnixStream> {
+    UnixStream::connect(path)
+}
+
+fn connect_error(path: &Path, err: io::Error) -> String {
+    format!(
+        "failed to connect to nmux daemon at {}: {err}",
+        path.display()
+    )
+}
+
+fn connect_error_is_retryable(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::NotFound
+            | io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::WouldBlock
+    )
 }
 
 pub fn serve_one(
@@ -502,6 +542,7 @@ pub struct AttachOptions {
     pub input_text: Option<String>,
     pub scrollback_start_line: u64,
     pub scrollback_line_count: u32,
+    pub connect_timeout: Option<Duration>,
 }
 
 impl Default for AttachOptions {
@@ -518,6 +559,7 @@ impl Default for AttachOptions {
             input_text: Some("a".to_owned()),
             scrollback_start_line: 1,
             scrollback_line_count: 2,
+            connect_timeout: None,
         }
     }
 }
@@ -539,7 +581,10 @@ pub fn attach_with_client_options(
     path: &Path,
     options: AttachOptions,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
-    let mut stream = connect_to_daemon(path)?;
+    let mut stream = match options.connect_timeout {
+        Some(timeout) => connect_to_daemon_with_timeout(path, timeout)?,
+        None => connect_to_daemon(path)?,
+    };
     let mode = options.request.mode;
     write_attach_request(&mut stream, &options.request)?;
     let snapshot = attach_from_stream(&mut stream)?;
@@ -1940,6 +1985,7 @@ mod tests {
             input_text: None,
             scrollback_start_line: 1,
             scrollback_line_count: 2,
+            connect_timeout: None,
         }
     }
 
