@@ -11,6 +11,8 @@ use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
 
 const STDIN_BYTES_DETACH: u8 = 0x1d;
+const REDRAW_TERMINAL_ENTER: &str = "\x1b[?1049h\x1b[?25l";
+const REDRAW_TERMINAL_EXIT: &str = "\x1b[?25h\x1b[?1049l";
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
 
 fn main() {
@@ -60,6 +62,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let _raw_terminal = RawTerminalGuard::enable_if_needed(args.stdin_bytes, args.local_echo)?;
+    let _redraw_terminal = RedrawTerminalGuard::enable_if_needed(args.redraw, stdout_is_tty())?;
     warn_if_interim_surface_fidelity_is_visible(args.stdin_bytes);
     let mut sigwinch_resize =
         SigwinchResize::enable_if_needed(args.stdin_bytes, args.live_resize.is_some())?;
@@ -353,6 +356,31 @@ impl Drop for RawTerminalGuard {
 
 fn raw_terminal_mode_needed(stdin_bytes: bool, stdin_is_tty: bool) -> bool {
     stdin_bytes && stdin_is_tty
+}
+
+struct RedrawTerminalGuard;
+
+impl RedrawTerminalGuard {
+    fn enable_if_needed(redraw: bool, stdout_is_tty: bool) -> io::Result<Option<Self>> {
+        if !redraw_terminal_guard_needed(redraw, stdout_is_tty) {
+            return Ok(None);
+        }
+
+        print!("{REDRAW_TERMINAL_ENTER}");
+        flush_stdout()?;
+        Ok(Some(Self))
+    }
+}
+
+impl Drop for RedrawTerminalGuard {
+    fn drop(&mut self) {
+        print!("{REDRAW_TERMINAL_EXIT}");
+        let _ = flush_stdout();
+    }
+}
+
+fn redraw_terminal_guard_needed(redraw: bool, stdout_is_tty: bool) -> bool {
+    redraw && stdout_is_tty
 }
 
 struct SigwinchResize {
@@ -809,8 +837,9 @@ fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
 mod tests {
     use super::{
         LocalEcho, interim_surface_fidelity_warning_needed, parse_local_echo, raw_terminal_lflag,
-        raw_terminal_mode_needed, resize_policy_warning, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage, validate_mode_args,
+        raw_terminal_mode_needed, redraw_terminal_guard_needed, resize_policy_warning,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        validate_mode_args,
     };
 
     #[test]
@@ -819,6 +848,14 @@ mod tests {
         assert!(!raw_terminal_mode_needed(true, false));
         assert!(!raw_terminal_mode_needed(false, true));
         assert!(!raw_terminal_mode_needed(false, false));
+    }
+
+    #[test]
+    fn redraw_terminal_guard_is_only_needed_for_redraw_on_tty() {
+        assert!(redraw_terminal_guard_needed(true, true));
+        assert!(!redraw_terminal_guard_needed(true, false));
+        assert!(!redraw_terminal_guard_needed(false, true));
+        assert!(!redraw_terminal_guard_needed(false, false));
     }
 
     #[test]

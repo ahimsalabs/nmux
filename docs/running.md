@@ -114,7 +114,7 @@ Expected output includes the initial surface and two streamed updates ending in 
 
 Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache.
 
-By default, live mode prints each rendered update as plain text. Add `--redraw` to clear the terminal and repaint the current client-side pane surface on each update:
+By default, live mode prints each rendered update as plain text. Add `--redraw` to clear the terminal and repaint the current client-side pane surface on each update. When stdout is a TTY, `--redraw` uses the alternate screen and hides the cursor for the live session, then restores both on exit. Captured or piped stdout stays as plain clear/home escape output:
 
 ```sh
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --redraw --stdin-bytes --interval-ms 500
