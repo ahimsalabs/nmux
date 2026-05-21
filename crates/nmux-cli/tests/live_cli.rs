@@ -58,7 +58,7 @@ fn live_cli_streams_repeated_command_output() {
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
-    assert!(stdout.contains("session=local tab=tab-1 pane=pane-1"));
+    assert!(stdout.contains("session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"));
     assert!(
         stdout.matches("echo:ping").count() >= 2,
         "expected repeated streamed echo output, got:\n{stdout}"

@@ -586,6 +586,7 @@ pub fn workspace_summary_from_frame(
         pane_id: pane.pane_id().unwrap_or_default().to_owned(),
         cols: pane.cols(),
         rows: pane.rows(),
+        resize_policy: pane.resize_policy(),
     })
 }
 
@@ -1630,14 +1631,30 @@ pub struct WorkspaceSummary {
     pub pane_id: String,
     pub cols: u32,
     pub rows: u32,
+    pub resize_policy: protocol::ResizePolicy,
 }
 
 impl WorkspaceSummary {
     pub fn display_line(&self) -> String {
         format!(
-            "session={} tab={} pane={} size={}x{}",
-            self.session_id, self.tab_id, self.pane_id, self.cols, self.rows
+            "session={} tab={} pane={} size={}x{} resize={}",
+            self.session_id,
+            self.tab_id,
+            self.pane_id,
+            self.cols,
+            self.rows,
+            resize_policy_label(self.resize_policy)
         )
+    }
+}
+
+fn resize_policy_label(policy: protocol::ResizePolicy) -> &'static str {
+    match policy {
+        protocol::ResizePolicy::Fixed => "fixed",
+        protocol::ResizePolicy::Leader => "leader",
+        protocol::ResizePolicy::ActiveClient => "active-client",
+        protocol::ResizePolicy::Manual => "manual",
+        _ => "unknown",
     }
 }
 
@@ -1758,11 +1775,12 @@ mod tests {
                 pane_id: "pane-1".to_owned(),
                 cols: 80,
                 rows: 24,
+                resize_policy: protocol::ResizePolicy::Fixed,
             }
         );
         assert_eq!(
             snapshot.workspace.display_line(),
-            "session=local tab=tab-1 pane=pane-1 size=80x24"
+            "session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"
         );
         assert_eq!(
             snapshot.presence,
@@ -1868,6 +1886,7 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     cols: 80,
                     rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 surface: Some(snapshot_update),
@@ -1930,6 +1949,7 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     cols: 80,
                     rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 surface: Some(snapshot),

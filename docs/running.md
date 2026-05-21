@@ -23,7 +23,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock
 Expected output:
 
 ```text
-session=local tab=tab-1 pane=pane-1 size=80x24
+session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed
 nmux pane-1
 server-owned terminal state
 scrollback 1..3:
@@ -40,7 +40,7 @@ nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --one-
 Expected output after attaching the client:
 
 ```text
-session=local tab=tab-1 pane=pane-1 size=80x24
+session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed
 booting nmux workspace
 nmux pane-1
 server-owned terminal state
@@ -128,7 +128,7 @@ To send a resize intent before each live input cycle, pass both `--cols` and `--
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --cols 100 --rows 30 --interval-ms 500
 ```
 
-The daemon forwards that intent through the process-host resize boundary before forwarding the cycle input. This is still a prototype policy path; committed size publication is not a full layout protocol yet.
+The daemon forwards that intent through the process-host resize boundary before forwarding the cycle input. The initial workspace summary displays the daemon-published resize policy, currently `resize=fixed`; committed size publication is not a full layout protocol yet.
 
 For line-streamed live input, pipe lines through stdin:
 

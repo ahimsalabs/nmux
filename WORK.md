@@ -384,9 +384,10 @@ M10: live local interactive attach [in progress]
   interactive --stdin-bytes temporarily uses noncanonical no-echo stdin
   Ctrl-] detaches byte-streamed live clients
   --redraw clears and repaints the current client-side pane surface on each update
+  CLI workspace summary displays daemon-published resize policy
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state
-  next: local echo choices, resize policy publication, and signal handling
+  next: local echo choices, committed resize updates, and signal handling
 ```
 
 The crisp product phrase is:
