@@ -2,7 +2,7 @@ use flatbuffers::FlatBufferBuilder;
 use nmux_proto::{PROTOCOL_VERSION, protocol};
 
 use crate::host::{CommandSpec, HostSpec};
-use crate::terminal::{InterimTextTerminalEngine, TerminalEngine, TerminalInput};
+use crate::terminal::{InterimTextTerminalEngine, TerminalCursor, TerminalEngine, TerminalInput};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
@@ -52,6 +52,7 @@ pub struct Pane {
     pub cols: u32,
     pub rows: u32,
     pub resize_policy: protocol::ResizePolicy,
+    pub cursor: Cursor,
     pub surface_lines: Vec<String>,
     pub scrollback_lines: Vec<String>,
 }
@@ -97,6 +98,11 @@ impl Session {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    cursor: Cursor {
+                        row: 1,
+                        col: 0,
+                        visible: true,
+                    },
                     surface_lines: vec![
                         "nmux pane-1".to_owned(),
                         "server-owned terminal state".to_owned(),
@@ -140,6 +146,7 @@ impl Session {
             pane_id: &pane.id,
             cols: pane.cols,
             rows: pane.rows,
+            cursor: TerminalCursor::from(&pane.cursor),
             surface_lines: &pane.surface_lines,
             scrollback_lines: &pane.scrollback_lines,
         };
@@ -149,6 +156,7 @@ impl Session {
 
         pane.scrollback_lines = update.scrollback_lines;
         pane.surface_lines = update.surface_lines;
+        pane.cursor = Cursor::from(update.cursor);
         pane.surface_version = pane.surface_version.saturating_add(1);
         true
     }
@@ -168,6 +176,8 @@ impl Session {
             .len()
             .saturating_sub(pane.rows as usize);
         pane.surface_lines = pane.scrollback_lines[visible_start..].to_vec();
+        pane.cursor.row = pane.surface_lines.len().saturating_sub(1) as u32;
+        pane.cursor.col = 0;
         self.version = self.version.saturating_add(1);
         true
     }
@@ -292,11 +302,7 @@ impl Session {
             version: pane.surface_version,
             cols: pane.cols,
             rows: pane.rows,
-            cursor: Cursor {
-                row: pane.surface_lines.len().saturating_sub(1) as u32,
-                col: 0,
-                visible: true,
-            },
+            cursor: pane.cursor.clone(),
             lines: pane.surface_lines.clone(),
         }
     }
@@ -780,6 +786,26 @@ impl Session {
     }
 }
 
+impl From<&Cursor> for TerminalCursor {
+    fn from(cursor: &Cursor) -> Self {
+        Self {
+            row: cursor.row,
+            col: cursor.col,
+            visible: cursor.visible,
+        }
+    }
+}
+
+impl From<TerminalCursor> for Cursor {
+    fn from(cursor: TerminalCursor) -> Self {
+        Self {
+            row: cursor.row,
+            col: cursor.col,
+            visible: cursor.visible,
+        }
+    }
+}
+
 fn stable_row_hash(line: &str) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for byte in line.as_bytes() {
@@ -811,11 +837,11 @@ fn build_cell_run<'a>(
 #[cfg(test)]
 mod tests {
     use crate::host::HostKind;
-    use crate::terminal::{TerminalEngine, TerminalInput, TerminalUpdate};
+    use crate::terminal::{TerminalCursor, TerminalEngine, TerminalInput, TerminalUpdate};
 
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
-    use super::{AttachMode, Session};
+    use super::{AttachMode, Cursor, Session};
 
     #[test]
     fn initial_session_has_one_fixed_size_pane() {
@@ -1225,10 +1251,23 @@ mod tests {
                 assert_eq!(input.pane_id, "pane-1");
                 assert_eq!(input.cols, 80);
                 assert_eq!(input.rows, 24);
+                assert_eq!(
+                    input.cursor,
+                    TerminalCursor {
+                        row: 1,
+                        col: 0,
+                        visible: true
+                    }
+                );
                 assert_eq!(input.surface_lines.len(), 2);
                 assert_eq!(input.scrollback_lines.len(), 3);
                 assert_eq!(output, b"ignored by test engine");
                 Some(TerminalUpdate {
+                    cursor: TerminalCursor {
+                        row: 7,
+                        col: 8,
+                        visible: false,
+                    },
                     surface_lines: vec!["engine surface".to_owned()],
                     scrollback_lines: vec!["engine scrollback".to_owned()],
                 })
@@ -1248,6 +1287,14 @@ mod tests {
         let scrollback = session.initial_scrollback();
         assert_eq!(surface.version, 3);
         assert_eq!(surface.lines, vec!["engine surface".to_owned()]);
+        assert_eq!(
+            surface.cursor,
+            Cursor {
+                row: 7,
+                col: 8,
+                visible: false
+            }
+        );
         assert_eq!(scrollback.lines, vec!["engine scrollback".to_owned()]);
     }
 

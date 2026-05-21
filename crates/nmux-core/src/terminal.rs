@@ -3,12 +3,21 @@ pub struct TerminalInput<'a> {
     pub pane_id: &'a str,
     pub cols: u32,
     pub rows: u32,
+    pub cursor: TerminalCursor,
     pub surface_lines: &'a [String],
     pub scrollback_lines: &'a [String],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalCursor {
+    pub row: u32,
+    pub col: u32,
+    pub visible: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalUpdate {
+    pub cursor: TerminalCursor,
     pub surface_lines: Vec<String>,
     pub scrollback_lines: Vec<String>,
 }
@@ -79,8 +88,14 @@ impl TerminalEngine for InterimTextTerminalEngine {
 
         let visible_start = scrollback_lines.len().saturating_sub(input.rows as usize);
         let surface_lines = scrollback_lines[visible_start..].to_vec();
+        let cursor = TerminalCursor {
+            row: surface_lines.len().saturating_sub(1) as u32,
+            col: 0,
+            visible: input.cursor.visible,
+        };
 
         Some(TerminalUpdate {
+            cursor,
             surface_lines,
             scrollback_lines,
         })
@@ -109,8 +124,8 @@ fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        InterimTextTerminalEngine, PaneTerminalEngines, TerminalEngine, TerminalEngineKind,
-        TerminalInput,
+        InterimTextTerminalEngine, PaneTerminalEngines, TerminalCursor, TerminalEngine,
+        TerminalEngineKind, TerminalInput,
     };
 
     #[test]
@@ -121,6 +136,11 @@ mod tests {
             pane_id: "pane-1",
             cols: 80,
             rows: 24,
+            cursor: TerminalCursor {
+                row: 0,
+                col: 0,
+                visible: true,
+            },
             surface_lines: &[],
             scrollback_lines: &scrollback_lines,
         };
@@ -138,6 +158,14 @@ mod tests {
             ]
         );
         assert_eq!(update.surface_lines, update.scrollback_lines);
+        assert_eq!(
+            update.cursor,
+            TerminalCursor {
+                row: 2,
+                col: 0,
+                visible: true
+            }
+        );
     }
 
     #[test]
@@ -148,6 +176,11 @@ mod tests {
             pane_id: "pane-1",
             cols: 80,
             rows: 2,
+            cursor: TerminalCursor {
+                row: 0,
+                col: 0,
+                visible: false,
+            },
             surface_lines: &[],
             scrollback_lines: &scrollback_lines,
         };
@@ -163,6 +196,14 @@ mod tests {
         assert_eq!(
             update.surface_lines,
             vec!["two".to_owned(), "three".to_owned()]
+        );
+        assert_eq!(
+            update.cursor,
+            TerminalCursor {
+                row: 1,
+                col: 0,
+                visible: false
+            }
         );
     }
 

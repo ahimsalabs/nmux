@@ -14,7 +14,7 @@ M13 starts replacing that interim path with backend `libghostty-vt` extraction. 
 
 Represent daemon-owned terminal interpretation behind a core terminal engine boundary.
 
-The boundary accepts pane identity, size, current nmux surface/scrollback state, and newly read PTY bytes. It returns updated nmux-owned surface and scrollback objects. The current `InterimTextTerminalEngine` implements that boundary, while local daemon serving code keeps terminal engine instances alive per pane across output polls and sequential live clients.
+The boundary accepts pane identity, size, current cursor, current nmux surface/scrollback state, and newly read PTY bytes. It returns updated nmux-owned cursor, surface, and scrollback objects. The current `InterimTextTerminalEngine` implements that boundary, while local daemon serving code keeps terminal engine instances alive per pane across output polls and sequential live clients.
 
 Future backend `libghostty-vt` integration should implement this boundary inside `nmuxd`: PTY bytes enter the daemon-owned engine, and clients continue to receive nmux `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` objects.
 
@@ -26,7 +26,7 @@ The boundary keeps frontend rendering and backend terminal-state extraction sepa
 
 The first `libghostty-vt` integration can focus on extraction mapping and schema gaps rather than daemon/client lifecycle plumbing.
 
-The current boundary returns plain surface and scrollback lines. Backend `libghostty-vt` extraction may require explicit schema additions for cursor/mode fidelity, alternate screen, palette state, style runs, hyperlinks, images, grapheme details, and renderer metadata. Those additions should be documented before changing the public protocol.
+The current boundary returns cursor state plus plain surface and scrollback lines. Backend `libghostty-vt` extraction may require explicit schema additions for mode fidelity, alternate screen, palette state, style runs, hyperlinks, images, grapheme details, and renderer metadata. Those additions should be documented before changing the public protocol.
 
 ## Licensing
 
