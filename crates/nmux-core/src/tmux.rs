@@ -109,6 +109,7 @@ impl TmuxSession {
                     row: 0,
                     col: 0,
                     visible: true,
+                    shape: protocol::CursorShape::Block,
                 },
                 surface_lines: Vec::new(),
                 scrollback_lines: Vec::new(),

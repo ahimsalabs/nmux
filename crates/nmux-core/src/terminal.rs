@@ -1,3 +1,5 @@
+use nmux_proto::protocol;
+
 #[derive(Debug, Clone, Copy)]
 pub struct TerminalInput<'a> {
     pub pane_id: &'a str,
@@ -13,6 +15,7 @@ pub struct TerminalCursor {
     pub row: u32,
     pub col: u32,
     pub visible: bool,
+    pub shape: protocol::CursorShape,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +122,7 @@ fn interim_text_update(
         row: surface_lines.len().saturating_sub(1) as u32,
         col: 0,
         visible: previous_cursor.visible,
+        shape: previous_cursor.shape,
     };
 
     TerminalUpdate {
@@ -149,6 +153,8 @@ fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use nmux_proto::protocol;
+
     use super::{
         InterimTextTerminalEngine, PaneTerminalEngines, TerminalCursor, TerminalEngine,
         TerminalEngineKind, TerminalInput,
@@ -166,6 +172,7 @@ mod tests {
                 row: 0,
                 col: 0,
                 visible: true,
+                shape: protocol::CursorShape::Block,
             },
             surface_lines: &[],
             scrollback_lines: &scrollback_lines,
@@ -189,7 +196,8 @@ mod tests {
             TerminalCursor {
                 row: 2,
                 col: 0,
-                visible: true
+                visible: true,
+                shape: protocol::CursorShape::Block
             }
         );
     }
@@ -206,6 +214,7 @@ mod tests {
                 row: 0,
                 col: 0,
                 visible: false,
+                shape: protocol::CursorShape::Beam,
             },
             surface_lines: &[],
             scrollback_lines: &scrollback_lines,
@@ -228,7 +237,8 @@ mod tests {
             TerminalCursor {
                 row: 1,
                 col: 0,
-                visible: false
+                visible: false,
+                shape: protocol::CursorShape::Beam
             }
         );
     }
@@ -245,6 +255,7 @@ mod tests {
                 row: 2,
                 col: 0,
                 visible: true,
+                shape: protocol::CursorShape::Underline,
             },
             surface_lines: &scrollback_lines,
             scrollback_lines: &scrollback_lines,
@@ -262,7 +273,8 @@ mod tests {
             TerminalCursor {
                 row: 1,
                 col: 0,
-                visible: true
+                visible: true,
+                shape: protocol::CursorShape::Underline
             }
         );
     }

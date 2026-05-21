@@ -79,6 +79,7 @@ pub struct Cursor {
     pub row: u32,
     pub col: u32,
     pub visible: bool,
+    pub shape: protocol::CursorShape,
 }
 
 impl Session {
@@ -102,6 +103,7 @@ impl Session {
                         row: 1,
                         col: 0,
                         visible: true,
+                        shape: protocol::CursorShape::Block,
                     },
                     surface_lines: vec![
                         "nmux pane-1".to_owned(),
@@ -387,7 +389,7 @@ impl Session {
                 row: surface.cursor.row,
                 col: surface.cursor.col,
                 visible: surface.cursor.visible,
-                shape: protocol::CursorShape::Block,
+                shape: surface.cursor.shape,
             },
         );
         let pane_id = builder.create_string(&surface.pane_id);
@@ -456,7 +458,7 @@ impl Session {
                 row: surface.cursor.row,
                 col: surface.cursor.col,
                 visible: surface.cursor.visible,
-                shape: protocol::CursorShape::Block,
+                shape: surface.cursor.shape,
             },
         );
         let pane_id = builder.create_string(&surface.pane_id);
@@ -805,6 +807,7 @@ impl From<&Cursor> for TerminalCursor {
             row: cursor.row,
             col: cursor.col,
             visible: cursor.visible,
+            shape: cursor.shape,
         }
     }
 }
@@ -815,6 +818,7 @@ impl From<TerminalCursor> for Cursor {
             row: cursor.row,
             col: cursor.col,
             visible: cursor.visible,
+            shape: cursor.shape,
         }
     }
 }
@@ -1292,7 +1296,8 @@ mod tests {
                     TerminalCursor {
                         row: 1,
                         col: 0,
-                        visible: true
+                        visible: true,
+                        shape: protocol::CursorShape::Block
                     }
                 );
                 assert_eq!(input.surface_lines.len(), 2);
@@ -1303,6 +1308,7 @@ mod tests {
                         row: 7,
                         col: 8,
                         visible: false,
+                        shape: protocol::CursorShape::Beam,
                     },
                     surface_lines: vec!["engine surface".to_owned()],
                     scrollback_lines: vec!["engine scrollback".to_owned()],
@@ -1337,9 +1343,15 @@ mod tests {
             Cursor {
                 row: 7,
                 col: 8,
-                visible: false
+                visible: false,
+                shape: protocol::CursorShape::Beam
             }
         );
+        let frame = session.pane_surface_frame("conn-1", 1);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        let cursor = snapshot.cursor().expect("cursor");
+        assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
         assert_eq!(scrollback.lines, vec!["engine scrollback".to_owned()]);
     }
 
@@ -1372,6 +1384,7 @@ mod tests {
                         row: 3,
                         col: 4,
                         visible: true,
+                        shape: protocol::CursorShape::Underline,
                     },
                     surface_lines: vec!["resized surface".to_owned()],
                     scrollback_lines: vec!["resized scrollback".to_owned()],
@@ -1395,7 +1408,8 @@ mod tests {
             Cursor {
                 row: 3,
                 col: 4,
-                visible: true
+                visible: true,
+                shape: protocol::CursorShape::Underline
             }
         );
         assert_eq!(surface.lines, vec!["resized surface".to_owned()]);
