@@ -1,4 +1,5 @@
 pub mod generated;
+pub mod wire;
 
 pub use generated::nmux::protocol;
 
