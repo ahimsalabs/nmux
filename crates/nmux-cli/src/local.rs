@@ -1958,6 +1958,7 @@ mod tests {
         HostError, HostEvent, HostSpec, PaneProcess, PlanningHost, ProcessHost, ProcessOutput,
         ProcessStatus, RecordingOutput,
     };
+    use nmux_core::terminal::{TerminalEngine, TerminalInput, TerminalUpdate};
 
     use super::*;
 
@@ -3183,6 +3184,60 @@ mod tests {
         assert_eq!(surface.text, "nmux pane-1\nserver-owned terminal state");
 
         let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn surface_kind_transition_requires_full_snapshot_response() {
+        struct AlternateScreenEngine;
+
+        impl TerminalEngine for AlternateScreenEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"alternate");
+                Some(TerminalUpdate {
+                    patch_kind: protocol::PatchKind::CursorOnly,
+                    surface: protocol::SurfaceKind::Alternate,
+                    cursor: input.cursor,
+                    surface_lines: input.surface_lines.to_vec(),
+                    scrollback_lines: input.scrollback_lines.to_vec(),
+                })
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = AlternateScreenEngine;
+        assert!(session.apply_pane_output_with_engine("pane-1", b"alternate", &mut engine));
+
+        let request = AttachRequest {
+            known_surfaces: vec![KnownSurfaceVersion {
+                pane_id: "pane-1".to_owned(),
+                version: 2,
+            }],
+            ..AttachOptions::default().request
+        };
+
+        assert_eq!(
+            request.surface_response(&session, "pane-1"),
+            Some(SurfaceResponse::Snapshot)
+        );
+
+        let frame = surface_response_frame(&session, SurfaceResponse::Snapshot, 9);
+        let update = surface_update_from_frame(&frame).expect("surface update");
+        assert_eq!(update.kind, SurfaceUpdateKind::Snapshot);
+        assert_eq!(update.version, 3);
+        assert_eq!(update.surface, Some(protocol::SurfaceKind::Alternate));
     }
 
     #[test]

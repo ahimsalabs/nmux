@@ -90,6 +90,7 @@ Done:
 - Surface kind now flows from the terminal engine boundary into pane surface snapshots, preserving the existing schema path for future alternate-screen extraction.
 - Cursor-only terminal updates now use `PatchKind::CursorOnly`, while surface-kind transitions require a snapshot instead of being misrepresented as row replacement patches.
 - Scrollback now has pane-owned versioning, so backend-owned history changes are visible independently from pane surface versions.
+- Local attach response tests cover surface-kind transitions, proving alternate-screen style changes get a full snapshot when the current patch schema cannot express them.
 - `nmuxd --terminal-engine interim` exposes the current engine choice explicitly; backend `libghostty-vt` is not imported yet.
 
 Next:
