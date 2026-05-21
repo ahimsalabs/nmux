@@ -26,6 +26,7 @@
             packages = [
               pkgs.flatbuffers
               pkgs.gnumake
+              pkgs.go
             ];
           };
         }
