@@ -2,9 +2,12 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn live_cli_streams_repeated_command_output() {
@@ -206,13 +209,86 @@ fn live_read_only_cli_observes_output_without_input() {
     );
 }
 
+#[test]
+fn live_cli_persists_rendered_surface_state() {
+    let socket_path = test_socket_path();
+    let state_path = test_state_path();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--key",
+            "persist\n",
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let state = fs::read_to_string(&state_path).expect("read state");
+    let _ = fs::remove_file(&state_path);
+    assert!(
+        state.contains("surface 70616e652d31 4 "),
+        "expected pane-1 surface version 4 in state:\n{state}"
+    );
+    assert!(
+        state.contains("6563686f3a70657273697374"),
+        "expected rendered live output in state:\n{state}"
+    );
+}
+
 fn test_socket_path() -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock after epoch")
         .as_nanos();
+    let id = NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed);
     PathBuf::from(format!(
-        "/tmp/nmux-live-cli-{}-{nanos}.sock",
+        "/tmp/nmux-live-cli-{}-{nanos}-{id}.sock",
+        std::process::id()
+    ))
+}
+
+fn test_state_path() -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock after epoch")
+        .as_nanos();
+    let id = NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed);
+    PathBuf::from(format!(
+        "/tmp/nmux-live-cli-state-{}-{nanos}-{id}.state",
         std::process::id()
     ))
 }
