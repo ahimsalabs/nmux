@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::thread::{self, JoinHandle};
 
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
@@ -153,7 +155,9 @@ struct LocalPtyProcess {
     child: Box<dyn PtyChild + Send>,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
-    reader: Box<dyn Read + Send>,
+    output: Receiver<Vec<u8>>,
+    pump: Option<JoinHandle<()>>,
+    pending_output: VecDeque<u8>,
 }
 
 impl LocalProcessHost {
@@ -214,12 +218,26 @@ impl LocalPtyHost {
         }
     }
 
-    pub fn read_available(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
+    fn drain_pumped_output(process: &mut LocalPtyProcess, bytes: &mut [u8]) -> usize {
+        while let Ok(chunk) = process.output.try_recv() {
+            process.pending_output.extend(chunk);
+        }
+
+        let count = bytes.len().min(process.pending_output.len());
+        for byte in &mut bytes[..count] {
+            *byte = process
+                .pending_output
+                .pop_front()
+                .expect("pending output has count bytes");
+        }
+        count
+    }
+}
+
+impl ProcessOutput for LocalPtyHost {
+    fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
         let process = self.process_mut(pane_id)?;
-        process
-            .reader
-            .read(bytes)
-            .map_err(|error| Self::io_error(pane_id, "read_available", error))
+        Ok(Self::drain_pumped_output(process, bytes))
     }
 }
 
@@ -263,10 +281,25 @@ impl ProcessHost for LocalPtyHost {
             .master
             .take_writer()
             .map_err(|error| Self::io_error(pane_id, "take_writer", error))?;
-        let reader = pair
+        let mut reader = pair
             .master
             .try_clone_reader()
             .map_err(|error| Self::io_error(pane_id, "try_clone_reader", error))?;
+        let (output_sender, output) = mpsc::channel();
+        let pump = thread::spawn(move || {
+            let mut buffer = [0_u8; 4096];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        if output_sender.send(buffer[..count].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
         let process = PaneProcess {
             pane_id: pane_id.to_owned(),
             host_id: spec.id.clone(),
@@ -280,7 +313,9 @@ impl ProcessHost for LocalPtyHost {
                 child,
                 master: pair.master,
                 writer,
-                reader,
+                output,
+                pump: Some(pump),
+                pending_output: VecDeque::new(),
             },
         );
         Ok(process)
@@ -336,6 +371,9 @@ impl ProcessHost for LocalPtyHost {
             .child
             .wait()
             .map_err(|error| Self::io_error(pane_id, "stop", error))?;
+        if let Some(pump) = process.pump.take() {
+            let _ = pump.join();
+        }
 
         process.process.status = ProcessStatus::Exited;
         Ok(process.process)
@@ -759,6 +797,19 @@ mod tests {
         assert_eq!(stopped.status, ProcessStatus::Exited);
         assert_eq!(
             host.resize_pane("pane-1", 80, 24),
+            Err(HostError::NotRunning {
+                pane_id: "pane-1".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn local_pty_output_api_reports_missing_panes_without_blocking() {
+        let mut host = LocalPtyHost::default();
+        let mut buffer = [0_u8; 16];
+
+        assert_eq!(
+            host.try_read_output("pane-1", &mut buffer),
             Err(HostError::NotRunning {
                 pane_id: "pane-1".to_owned(),
             })
