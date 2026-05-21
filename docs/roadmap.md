@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M6 is the current target: isolate process hosting behind a local/container/sandbox host abstraction.
+M7 is the current target: prove the Ghostty/libghostty frontend boundary for server-owned terminal state.
 
 Done:
 
@@ -43,11 +43,13 @@ Done:
 - Read-write local input is forwarded to the process host, while read-only attaches do not forward input.
 - Local attach polls process output after forwarded input so echoed command output can update backend-owned scrollback.
 - Client flags can drive an interaction smoke across attaches with custom input and scrollback ranges.
+- ADR 0007 for the Ghostty/libghostty frontend boundary.
 
 Next:
 
+- Prototype a minimal native/frontend renderer that consumes `PaneSurfaceSnapshot` and `PaneSurfacePatch` as authoritative server-owned state.
+- Track upstream Ghostty/libghostty API work needed for external surface hydration.
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Start M7 research: document the Ghostty/libghostty frontend path and state-injection constraints.
 
 ## Milestones
 
@@ -139,6 +141,8 @@ Exit evidence:
 
 - The project has a documented answer for external surface rendering.
 - A prototype frontend can render server-owned state or the needed upstream/API work is documented.
+
+Status: In progress. ADR 0007 documents the boundary: backend libghostty/libghostty-vt is the primary correctness path, frontend libghostty rendering must not re-parse PTY bytes, and a temporary nmux renderer is the practical prototype path unless Ghostty/libghostty exposes external surface hydration.
 
 ### M8: tmux Adapter
 
