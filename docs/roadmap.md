@@ -90,6 +90,7 @@ Done:
 Next:
 
 - Map the current interim terminal output fields to the first backend `libghostty-vt` extraction requirements.
+- Use [the terminal state extraction checklist](terminal-state-extraction.md) as the gate for any `libghostty-vt` import or protocol expansion.
 - Keep client attach, reconnect, live streaming, and scrollback fetch semantics on nmux state objects.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
@@ -260,6 +261,7 @@ Exit evidence:
 
 - PTY bytes enter `libghostty-vt` inside `nmuxd`, and clients still receive nmux `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` objects.
 - The extraction boundary documents how cursor state, modes, alternate screen, palettes, hyperlinks, images, grapheme clusters, and cell widths map into current or future nmux schema.
+- [The terminal state extraction checklist](terminal-state-extraction.md) is kept current with the first backend mapping and schema gaps.
 - Existing live attach, reconnect, scrollback, and resize tests continue to assert backend-owned state-sync semantics.
 - The interim text surface remains explicitly labeled temporary until replaced.
 - No GPL or AGPL terminal parser code is copied into the core.
