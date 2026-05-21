@@ -1,6 +1,6 @@
 # Running nmux
 
-The current prototype is a local attach skeleton with a real local PTY host behind the daemon. `nmuxd` owns one workspace tree, one backend-owned pane surface, one scrollback object, and one attached actor. The client sends a local-only attach prelude with actor ID, attach mode, and known pane surface versions. The daemon starts the pane command in a local PTY, polls already-pumped PTY output into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`, a `PresenceUpdate`, and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. After rendering those state objects, `nmux` sends one basic `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
+The current prototype is a local attach skeleton with a real local PTY host behind the daemon. `nmuxd` owns one workspace tree, one backend-owned pane surface, one scrollback object, and one attached actor. The client sends a local-only attach prelude with actor ID, attach mode, and known pane surface versions. The daemon starts the pane command in a local PTY, polls already-pumped PTY output into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`, a `PresenceUpdate`, and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. `nmux` applies those state objects to a client-side pane surface render state before printing. After rendering, it sends one basic `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
 
 Run all checks:
 
@@ -105,7 +105,31 @@ Current behavior:
 - known `pane-1` surface version is patchable: daemon sends a `PaneSurfacePatch`
 - known `pane-1` surface version is stale: daemon sends a full `PaneSurfaceSnapshot`
 
-This proves the reconnect decision before promoting attach metadata into the public FlatBuffers schema.
+The CLI can persist its local render state with `--state`. This records the rendered pane surface and the last known server version, so a later process can request a patch and apply it to the cached surface instead of replaying raw PTY bytes.
+
+Start a long-running command-backed daemon:
+
+```sh
+rm -f /tmp/nmux.sock /tmp/nmux-client.state
+nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done"
+```
+
+Attach once and persist the rendered surface:
+
+```sh
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nmux-client.state --no-input --scrollback-start 1 --scrollback-count 1
+```
+
+Then attach again using the same state file after sending input from another client:
+
+```sh
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --key $'ping\n' --scrollback-start 1 --scrollback-count 1
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nmux-client.state --no-input --scrollback-start 1 --scrollback-count 4
+```
+
+The final attach sends the cached `pane-1` surface version in the local prelude. If the daemon has exactly one newer surface version, it sends `PaneSurfacePatch`; `nmux` applies that patch to the persisted client surface and updates `/tmp/nmux-client.state`.
+
+This proves the reconnect decision and client-side patch rendering before promoting attach metadata into the public FlatBuffers schema.
 
 ## Scrollback Behavior
 

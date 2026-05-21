@@ -12,21 +12,31 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = args()?;
+    let mut client_state = match args.state_path.as_deref() {
+        Some(path) => local::ClientAttachState::load(path)?,
+        None => local::ClientAttachState::default(),
+    };
     let mut options = local::AttachOptions {
         input_text: args.input_text,
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
         ..local::AttachOptions::default()
     };
+    options.request.known_surfaces = client_state.known_surfaces();
     if options.input_text.is_none() {
         options.request.mode = AttachMode::ReadOnly;
     }
     let snapshot = local::attach_with_client_options(&args.socket_path, options)?;
-    println!("{}", snapshot.workspace.display_line());
-    if let Some(surface) = snapshot.surface {
-        println!("{}", surface.text);
+    let rendered = client_state.render_attach(snapshot)?;
+    if let Some(path) = args.state_path.as_deref() {
+        client_state.save(path)?;
     }
-    if let Some(scrollback) = snapshot.scrollback {
+
+    println!("{}", rendered.workspace.display_line());
+    if let Some(surface_text) = rendered.surface_text {
+        println!("{surface_text}");
+    }
+    if let Some(scrollback) = rendered.scrollback {
         println!(
             "scrollback {}..{}:",
             scrollback.start_line, scrollback.total_lines
@@ -43,6 +53,7 @@ struct Args {
     input_text: Option<String>,
     scrollback_start_line: u64,
     scrollback_line_count: u32,
+    state_path: Option<PathBuf>,
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
@@ -50,6 +61,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut input_text = Some("a".to_owned());
     let mut scrollback_start_line = 1;
     let mut scrollback_line_count = 2;
+    let mut state_path = None;
     let mut args = std::env::args().skip(1);
 
     while let Some(arg) = args.next() {
@@ -78,6 +90,13 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                     .ok_or("--scrollback-count requires a count")?
                     .parse()?;
             }
+            "--state" => {
+                state_path = Some(
+                    args.next()
+                        .map(PathBuf::from)
+                        .ok_or("--state requires a path")?,
+                );
+            }
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
@@ -87,5 +106,6 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         input_text,
         scrollback_start_line,
         scrollback_line_count,
+        state_path,
     })
 }

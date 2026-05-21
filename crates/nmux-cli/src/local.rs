@@ -774,6 +774,13 @@ pub struct AttachSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedAttach {
+    pub workspace: WorkspaceSummary,
+    pub surface_text: Option<String>,
+    pub scrollback: Option<ScrollbackChunkSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceUpdate {
     pub kind: SurfaceUpdateKind,
     pub pane_id: String,
@@ -928,6 +935,295 @@ impl ClientPaneSurface {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClientAttachState {
+    surfaces: Vec<ClientPaneSurface>,
+}
+
+impl ClientAttachState {
+    pub fn load(path: &Path) -> io::Result<Self> {
+        match fs::read_to_string(path) {
+            Ok(encoded) => Self::decode(&encoded),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub fn save(&self, path: &Path) -> io::Result<()> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+        fs::write(path, self.encode())
+    }
+
+    pub fn known_surfaces(&self) -> Vec<KnownSurfaceVersion> {
+        self.surfaces
+            .iter()
+            .map(|surface| KnownSurfaceVersion {
+                pane_id: surface.pane_id.clone(),
+                version: surface.version,
+            })
+            .collect()
+    }
+
+    pub fn render_attach(
+        &mut self,
+        snapshot: AttachSnapshot,
+    ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
+        let surface_text = match snapshot.surface.as_ref() {
+            Some(update) => Some(self.apply_surface_update(update)?),
+            None => None,
+        };
+
+        Ok(RenderedAttach {
+            workspace: snapshot.workspace,
+            surface_text,
+            scrollback: snapshot.scrollback,
+        })
+    }
+
+    fn apply_surface_update(
+        &mut self,
+        update: &SurfaceUpdate,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        if let Some(surface) = self
+            .surfaces
+            .iter_mut()
+            .find(|surface| surface.pane_id == update.pane_id)
+        {
+            surface.apply_update(update)?;
+            return Ok(surface.render_text());
+        }
+
+        if update.kind != SurfaceUpdateKind::Snapshot {
+            return Err(format!(
+                "cannot apply pane {} patch without a cached snapshot",
+                update.pane_id
+            )
+            .into());
+        }
+
+        let surface = ClientPaneSurface::from_snapshot(update)?;
+        let rendered = surface.render_text();
+        self.surfaces.push(surface);
+        Ok(rendered)
+    }
+
+    fn encode(&self) -> String {
+        let mut encoded = String::from("NMUX_CLIENT_STATE 1\n");
+        for surface in &self.surfaces {
+            encoded.push_str("surface ");
+            encoded.push_str(&hex_encode(surface.pane_id.as_bytes()));
+            encoded.push(' ');
+            encoded.push_str(&surface.version.to_string());
+            encoded.push(' ');
+            encoded.push_str(&surface.cols.to_string());
+            encoded.push(' ');
+            encoded.push_str(&surface.rows.to_string());
+            encoded.push('\n');
+            match surface.cursor {
+                Some(cursor) => {
+                    encoded.push_str("cursor ");
+                    encoded.push_str(&cursor.row.to_string());
+                    encoded.push(' ');
+                    encoded.push_str(&cursor.col.to_string());
+                    encoded.push(' ');
+                    encoded.push_str(if cursor.visible { "1" } else { "0" });
+                    encoded.push(' ');
+                    encoded.push_str(&cursor.shape.0.to_string());
+                    encoded.push('\n');
+                }
+                None => encoded.push_str("cursor none\n"),
+            }
+            for (index, row) in surface.row_text.iter().enumerate() {
+                encoded.push_str("row ");
+                encoded.push_str(&index.to_string());
+                encoded.push(' ');
+                encoded.push_str(&hex_encode(row.as_bytes()));
+                encoded.push('\n');
+            }
+            encoded.push_str("end\n");
+        }
+        encoded
+    }
+
+    fn decode(encoded: &str) -> io::Result<Self> {
+        let mut lines = encoded.lines();
+        if lines.next() != Some("NMUX_CLIENT_STATE 1") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid nmux client state header",
+            ));
+        }
+
+        let mut surfaces = Vec::new();
+        while let Some(line) = lines.next() {
+            let mut parts = line.split(' ');
+            let (Some("surface"), Some(pane_id), Some(version), Some(cols), Some(rows), None) = (
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+                parts.next(),
+            ) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid nmux client state surface line",
+                ));
+            };
+
+            let pane_id = String::from_utf8(hex_decode(pane_id)?)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+            let version = parse_state_u64(version)?;
+            let cols = parse_state_u32(cols)?;
+            let rows = parse_state_u32(rows)?;
+            let row_count = usize::try_from(rows).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "surface rows too large")
+            })?;
+            let mut cursor = None;
+            let mut row_text = vec![String::new(); row_count];
+
+            loop {
+                let Some(line) = lines.next() else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "unterminated nmux client state surface",
+                    ));
+                };
+                if line == "end" {
+                    break;
+                }
+
+                let mut parts = line.split(' ');
+                match (
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                ) {
+                    (Some("cursor"), Some("none"), None, None, None, None) => cursor = None,
+                    (Some("cursor"), Some(row), Some(col), Some(visible), Some(shape), None) => {
+                        cursor = Some(CursorSummary {
+                            row: parse_state_u32(row)?,
+                            col: parse_state_u32(col)?,
+                            visible: parse_state_bool(visible)?,
+                            shape: protocol::CursorShape(parse_state_i8(shape)?),
+                        });
+                    }
+                    (Some("row"), Some(row), Some(text), None, None, None) => {
+                        let row = parse_state_usize(row)?;
+                        let Some(target) = row_text.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row index outside surface",
+                            ));
+                        };
+                        *target = String::from_utf8(hex_decode(text)?)
+                            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+                    }
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "invalid nmux client state surface body line",
+                        ));
+                    }
+                }
+            }
+
+            surfaces.push(ClientPaneSurface {
+                pane_id,
+                version,
+                cols,
+                rows,
+                cursor,
+                row_text,
+            });
+        }
+
+        Ok(Self { surfaces })
+    }
+}
+
+fn parse_state_u64(value: &str) -> io::Result<u64> {
+    value
+        .parse()
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn parse_state_u32(value: &str) -> io::Result<u32> {
+    value
+        .parse()
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn parse_state_i8(value: &str) -> io::Result<i8> {
+    value
+        .parse()
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn parse_state_bool(value: &str) -> io::Result<bool> {
+    match value {
+        "0" => Ok(false),
+        "1" => Ok(true),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid boolean in client state",
+        )),
+    }
+}
+
+fn parse_state_usize(value: &str) -> io::Result<usize> {
+    value
+        .parse()
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
+fn hex_decode(encoded: &str) -> io::Result<Vec<u8>> {
+    let bytes = encoded.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "hex string has odd length",
+        ));
+    }
+
+    let mut decoded = Vec::with_capacity(bytes.len() / 2);
+    for pair in bytes.chunks_exact(2) {
+        let high = hex_value(pair[0])?;
+        let low = hex_value(pair[1])?;
+        decoded.push((high << 4) | low);
+    }
+    Ok(decoded)
+}
+
+fn hex_value(byte: u8) -> io::Result<u8> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid hex digit",
+        )),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputSummary {
     pub pane_id: String,
@@ -1059,6 +1355,16 @@ mod tests {
         }
     }
 
+    fn presence_summary(mode: AttachMode) -> PresenceSummary {
+        PresenceSummary {
+            actor_id: "local-actor".to_owned(),
+            user_id: "local-user".to_owned(),
+            display_name: "local".to_owned(),
+            mode,
+            focused_pane_id: Some("pane-1".to_owned()),
+        }
+    }
+
     #[test]
     fn serves_initial_attach_snapshot_over_unix_socket() {
         let socket_path = test_socket_path();
@@ -1170,6 +1476,95 @@ mod tests {
         assert!(err.to_string().contains("base version mismatch"));
         assert_eq!(surface.version, 3);
         assert_eq!(surface.render_text(), "current");
+    }
+
+    #[test]
+    fn client_attach_state_tracks_known_surface_and_renders_patch() {
+        let mut state = ClientAttachState::default();
+        let mut session = Session::initial();
+        let snapshot_update =
+            surface_update_from_frame(&session.pane_surface_frame("local-client", 3))
+                .expect("snapshot update");
+        let rendered = state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                surface: Some(snapshot_update),
+                scrollback: None,
+            })
+            .expect("render snapshot");
+
+        assert_eq!(
+            rendered.surface_text.as_deref(),
+            Some("nmux pane-1\nserver-owned terminal state")
+        );
+        assert_eq!(
+            state.known_surfaces(),
+            vec![KnownSurfaceVersion {
+                pane_id: "pane-1".to_owned(),
+                version: 2,
+            }]
+        );
+
+        session.apply_pane_output("pane-1", b"new output\n");
+        let patch_update =
+            surface_update_from_frame(&session.pane_surface_patch_frame("local-client", 4, 2))
+                .expect("patch update");
+        let rendered = state
+            .render_attach(AttachSnapshot {
+                workspace: rendered.workspace,
+                presence: presence_summary(AttachMode::ReadWrite),
+                surface: Some(patch_update),
+                scrollback: None,
+            })
+            .expect("render patch");
+
+        assert_eq!(
+            rendered.surface_text.as_deref(),
+            Some("booting nmux workspace\nnmux pane-1\nserver-owned terminal state\nnew output")
+        );
+        assert_eq!(
+            state.known_surfaces(),
+            vec![KnownSurfaceVersion {
+                pane_id: "pane-1".to_owned(),
+                version: 3,
+            }]
+        );
+    }
+
+    #[test]
+    fn client_attach_state_round_trips_cached_surface() {
+        let mut state = ClientAttachState::default();
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            7,
+            None,
+            vec![surface_row(0, "cached"), surface_row(2, "tail")],
+        );
+        state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                surface: Some(snapshot),
+                scrollback: None,
+            })
+            .expect("render snapshot");
+
+        let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
+        assert_eq!(decoded.known_surfaces(), state.known_surfaces());
+        assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
     }
 
     #[test]
