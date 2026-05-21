@@ -32,11 +32,12 @@ Done:
 - Sequential two-client attach test against one local session.
 - ADR 0005 for the process host boundary.
 - Internal `nmux-core` process host abstraction with local/container/sandbox host choices and lifecycle tests.
+- Concrete local command host that starts, writes to, and stops local child processes behind the host interface.
 
 Next:
 
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Wire a concrete local PTY host through the process host boundary.
+- Choose and wire a real local PTY host through the process host boundary.
 
 ## Milestones
 
@@ -118,7 +119,7 @@ Exit evidence:
 - Pane process lifecycle is mediated by a host interface.
 - Local and sandbox host choices are represented without changing the protocol core.
 
-Status: Done for the internal boundary. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, and lifecycle tests without changing the FlatBuffers protocol.
+Status: Done for the internal boundary. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, lifecycle tests, and a concrete local command host without changing the FlatBuffers protocol. Real PTY wiring remains a follow-up.
 
 ### M7: Ghostty Frontend
 
