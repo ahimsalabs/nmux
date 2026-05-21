@@ -16,6 +16,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(surface) = snapshot.surface {
         println!("{}", surface.text);
     }
+    if let Some(scrollback) = snapshot.scrollback {
+        println!(
+            "scrollback {}..{}:",
+            scrollback.start_line, scrollback.total_lines
+        );
+        for line in scrollback.lines {
+            println!("{}", line.text);
+        }
+    }
     Ok(())
 }
 

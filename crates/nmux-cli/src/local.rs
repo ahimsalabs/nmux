@@ -47,6 +47,10 @@ pub fn serve_one(
         };
         wire::write_default_frame(&mut stream, &surface_frame)?;
         read_input_event_from_stream(&mut stream)?;
+        let fetch = read_scrollback_fetch_from_stream(&mut stream)?;
+        let chunk =
+            session.scrollback_chunk_frame("local-client", 4, fetch.start_line, fetch.line_count);
+        wire::write_default_frame(&mut stream, &chunk)?;
     }
     Ok(())
 }
@@ -64,6 +68,12 @@ pub fn attach_with_known_surfaces(
     let snapshot = attach_from_stream(&mut stream)?;
     if snapshot.surface.is_some() {
         send_key_input(&mut stream, "pane-1", "a")?;
+        send_scrollback_fetch(&mut stream, "pane-1", 1, 2)?;
+        let scrollback = read_scrollback_chunk_from_stream(&mut stream)?;
+        return Ok(AttachSnapshot {
+            scrollback: Some(scrollback),
+            ..snapshot
+        });
     }
     Ok(snapshot)
 }
@@ -80,7 +90,11 @@ pub fn attach_from_stream(
         Err(err) => return Err(err.into()),
     };
 
-    Ok(AttachSnapshot { workspace, surface })
+    Ok(AttachSnapshot {
+        workspace,
+        surface,
+        scrollback: None,
+    })
 }
 
 pub fn send_key_input(
@@ -90,6 +104,25 @@ pub fn send_key_input(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame =
         Session::initial().key_input_frame("local-client", 3, "local-actor", pane_id, 1, text);
+    wire::write_default_frame(stream, &frame)?;
+    Ok(())
+}
+
+pub fn send_scrollback_fetch(
+    stream: &mut UnixStream,
+    pane_id: &str,
+    start_line: u64,
+    line_count: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = Session::initial().scrollback_fetch_frame(
+        "local-client",
+        4,
+        "local-actor",
+        pane_id,
+        start_line,
+        line_count,
+        1,
+    );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
 }
@@ -197,6 +230,20 @@ pub fn read_input_event_from_stream(
     input_summary_from_frame(&frame)
 }
 
+pub fn read_scrollback_fetch_from_stream(
+    stream: &mut UnixStream,
+) -> Result<ScrollbackFetchSummary, Box<dyn std::error::Error>> {
+    let frame = wire::read_default_frame(stream)?;
+    scrollback_fetch_from_frame(&frame)
+}
+
+pub fn read_scrollback_chunk_from_stream(
+    stream: &mut UnixStream,
+) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
+    let frame = wire::read_default_frame(stream)?;
+    scrollback_chunk_from_frame(&frame)
+}
+
 pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     if envelope.body_type() != protocol::EnvelopeBody::InputEvent {
@@ -216,6 +263,56 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         actor_id: input.actor_id().unwrap_or_default().to_owned(),
         input_seq: input.input_seq(),
         text: key.text_utf8().unwrap_or_default().to_owned(),
+    })
+}
+
+pub fn scrollback_fetch_from_frame(
+    frame: &[u8],
+) -> Result<ScrollbackFetchSummary, Box<dyn std::error::Error>> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::ScrollbackFetch {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let fetch = envelope
+        .body_as_scrollback_fetch()
+        .ok_or("missing scrollback fetch body")?;
+    Ok(ScrollbackFetchSummary {
+        pane_id: fetch.pane_id().unwrap_or_default().to_owned(),
+        actor_id: fetch.actor_id().unwrap_or_default().to_owned(),
+        start_line: fetch.start_line(),
+        line_count: fetch.line_count(),
+        known_scrollback_version: fetch.known_scrollback_version(),
+    })
+}
+
+pub fn scrollback_chunk_from_frame(
+    frame: &[u8],
+) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::ScrollbackChunk {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let chunk = envelope
+        .body_as_scrollback_chunk()
+        .ok_or("missing scrollback chunk body")?;
+    let rows = chunk.rows().ok_or("scrollback chunk has no rows")?;
+    let mut lines = Vec::with_capacity(rows.len());
+    for index in 0..rows.len() {
+        let row = rows.get(index);
+        lines.push(ScrollbackLine {
+            line: row.line(),
+            text: row.runs().map(render_cell_runs).unwrap_or_default(),
+        });
+    }
+
+    Ok(ScrollbackChunkSummary {
+        pane_id: chunk.pane_id().unwrap_or_default().to_owned(),
+        scrollback_version: chunk.scrollback_version(),
+        start_line: chunk.start_line(),
+        total_lines: chunk.total_lines(),
+        lines,
     })
 }
 
@@ -341,6 +438,7 @@ pub struct KnownSurfaceVersion {
 pub struct AttachSnapshot {
     pub workspace: WorkspaceSummary,
     pub surface: Option<SurfaceUpdate>,
+    pub scrollback: Option<ScrollbackChunkSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -360,6 +458,30 @@ pub struct InputSummary {
     pub pane_id: String,
     pub actor_id: String,
     pub input_seq: u64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScrollbackFetchSummary {
+    pub pane_id: String,
+    pub actor_id: String,
+    pub start_line: u64,
+    pub line_count: u32,
+    pub known_scrollback_version: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScrollbackChunkSummary {
+    pub pane_id: String,
+    pub scrollback_version: u64,
+    pub start_line: u64,
+    pub total_lines: u64,
+    pub lines: Vec<ScrollbackLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScrollbackLine {
+    pub line: u64,
     pub text: String,
 }
 
@@ -434,6 +556,25 @@ mod tests {
                 text: "nmux pane-1\nserver-owned terminal state".to_owned(),
             })
         );
+        assert_eq!(
+            snapshot.scrollback,
+            Some(ScrollbackChunkSummary {
+                pane_id: "pane-1".to_owned(),
+                scrollback_version: 1,
+                start_line: 1,
+                total_lines: 3,
+                lines: vec![
+                    ScrollbackLine {
+                        line: 1,
+                        text: "nmux pane-1".to_owned(),
+                    },
+                    ScrollbackLine {
+                        line: 2,
+                        text: "server-owned terminal state".to_owned(),
+                    },
+                ],
+            })
+        );
 
         let _ = fs::remove_file(socket_path);
     }
@@ -457,6 +598,7 @@ mod tests {
 
         assert_eq!(snapshot.workspace.pane_id, "pane-1");
         assert_eq!(snapshot.surface, None);
+        assert_eq!(snapshot.scrollback, None);
 
         let _ = fs::remove_file(socket_path);
     }
@@ -531,6 +673,55 @@ mod tests {
                 input_seq: 2,
                 text: "x".to_owned(),
             }
+        );
+    }
+
+    #[test]
+    fn decodes_scrollback_fetch_from_client_frame() {
+        let frame = Session::initial().scrollback_fetch_frame(
+            "local-client",
+            4,
+            "actor-1",
+            "pane-1",
+            1,
+            2,
+            1,
+        );
+        let fetch = scrollback_fetch_from_frame(&frame).expect("scrollback fetch");
+
+        assert_eq!(
+            fetch,
+            ScrollbackFetchSummary {
+                pane_id: "pane-1".to_owned(),
+                actor_id: "actor-1".to_owned(),
+                start_line: 1,
+                line_count: 2,
+                known_scrollback_version: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_scrollback_chunk_from_server_frame() {
+        let frame = Session::initial().scrollback_chunk_frame("local-client", 4, 1, 2);
+        let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
+
+        assert_eq!(chunk.pane_id, "pane-1");
+        assert_eq!(chunk.scrollback_version, 1);
+        assert_eq!(chunk.start_line, 1);
+        assert_eq!(chunk.total_lines, 3);
+        assert_eq!(
+            chunk.lines,
+            vec![
+                ScrollbackLine {
+                    line: 1,
+                    text: "nmux pane-1".to_owned(),
+                },
+                ScrollbackLine {
+                    line: 2,
+                    text: "server-owned terminal state".to_owned(),
+                },
+            ]
         );
     }
 }
