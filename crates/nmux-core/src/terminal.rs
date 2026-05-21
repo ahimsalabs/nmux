@@ -13,29 +13,59 @@ pub struct TerminalUpdate {
     pub scrollback_lines: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalEngineKind {
+    InterimText,
+}
+
 pub trait TerminalEngine {
     fn apply_output(&mut self, input: TerminalInput<'_>, output: &[u8]) -> Option<TerminalUpdate>;
 }
 
 #[derive(Default)]
 pub struct PaneTerminalEngines {
+    kind: TerminalEngineKind,
     engines: HashMap<String, Box<dyn TerminalEngine>>,
 }
 
 impl PaneTerminalEngines {
     pub fn interim() -> Self {
-        Self::default()
+        Self::new(TerminalEngineKind::InterimText)
+    }
+
+    pub fn new(kind: TerminalEngineKind) -> Self {
+        Self {
+            kind,
+            engines: HashMap::new(),
+        }
     }
 
     pub fn engine_mut(&mut self, pane_id: &str) -> &mut dyn TerminalEngine {
+        let kind = self.kind;
         self.engines
             .entry(pane_id.to_owned())
-            .or_insert_with(|| Box::new(InterimTextTerminalEngine))
+            .or_insert_with(|| terminal_engine_for_kind(kind))
             .as_mut()
     }
 
     pub fn pane_count(&self) -> usize {
         self.engines.len()
+    }
+
+    pub fn kind(&self) -> TerminalEngineKind {
+        self.kind
+    }
+}
+
+impl Default for TerminalEngineKind {
+    fn default() -> Self {
+        Self::InterimText
+    }
+}
+
+fn terminal_engine_for_kind(kind: TerminalEngineKind) -> Box<dyn TerminalEngine> {
+    match kind {
+        TerminalEngineKind::InterimText => Box::new(InterimTextTerminalEngine),
     }
 }
 
@@ -78,7 +108,10 @@ fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{InterimTextTerminalEngine, PaneTerminalEngines, TerminalEngine, TerminalInput};
+    use super::{
+        InterimTextTerminalEngine, PaneTerminalEngines, TerminalEngine, TerminalEngineKind,
+        TerminalInput,
+    };
 
     #[test]
     fn interim_text_engine_normalizes_process_output() {
@@ -135,7 +168,8 @@ mod tests {
 
     #[test]
     fn pane_terminal_engines_reuses_engine_per_pane() {
-        let mut engines = PaneTerminalEngines::interim();
+        let mut engines = PaneTerminalEngines::new(TerminalEngineKind::InterimText);
+        assert_eq!(engines.kind(), TerminalEngineKind::InterimText);
 
         let _ = engines.engine_mut("pane-1");
         let _ = engines.engine_mut("pane-1");

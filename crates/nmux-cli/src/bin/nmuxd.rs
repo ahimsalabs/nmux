@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use nmux_cli::local;
 use nmux_core::host::{CommandSpec, LocalPtyHost, ProcessHost};
 use nmux_core::session::Session;
+use nmux_core::terminal::TerminalEngineKind;
 use nmux_proto::protocol;
 
 fn main() {
@@ -45,8 +46,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             args.live_clients.unwrap_or(1)
         };
-        let serve_result =
-            local::serve_live_n_with_host(&listener, &mut session, &mut pty_host, clients, cycles);
+        let serve_result = local::serve_live_n_with_host_and_terminal_engine_kind(
+            &listener,
+            &mut session,
+            &mut pty_host,
+            clients,
+            cycles,
+            args.terminal_engine_kind,
+        );
         let stop_result = pty_host.stop_pane(pane_id);
         serve_result?;
         stop_result?;
@@ -54,7 +61,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.one_shot {
-        let serve_result = local::serve_one_with_host(&listener, &mut session, &mut pty_host);
+        let serve_result = local::serve_n_with_host_and_terminal_engine_kind(
+            &listener,
+            &mut session,
+            &mut pty_host,
+            1,
+            args.terminal_engine_kind,
+        );
         let stop_result = pty_host.stop_pane(pane_id);
         serve_result?;
         stop_result?;
@@ -62,7 +75,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     loop {
-        local::serve_one_with_host(&listener, &mut session, &mut pty_host)?;
+        local::serve_n_with_host_and_terminal_engine_kind(
+            &listener,
+            &mut session,
+            &mut pty_host,
+            1,
+            args.terminal_engine_kind,
+        )?;
     }
 }
 
@@ -110,6 +129,7 @@ struct Args {
     live_clients: Option<usize>,
     command: Option<String>,
     resize_policy: protocol::ResizePolicy,
+    terminal_engine_kind: TerminalEngineKind,
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
@@ -122,6 +142,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut live_clients = None;
     let mut command = None;
     let mut resize_policy = protocol::ResizePolicy::Fixed;
+    let mut terminal_engine_kind = TerminalEngineKind::InterimText;
     let mut args = std::env::args().skip(1);
 
     while let Some(arg) = args.next() {
@@ -162,6 +183,12 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                     )?)
                     .map_err(|err| format!("--resize-policy {err}"))?;
             }
+            "--terminal-engine" => {
+                terminal_engine_kind = parse_terminal_engine_kind(
+                    &args.next().ok_or("--terminal-engine requires interim")?,
+                )
+                .map_err(|err| format!("--terminal-engine {err}"))?;
+            }
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
@@ -177,6 +204,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         live_clients,
         command,
         resize_policy,
+        terminal_engine_kind,
     })
 }
 
@@ -224,11 +252,13 @@ Options:
   --command SHELL                       Run a shell command in the pane PTY
   --resize-policy fixed|leader|active-client|manual
                                          Publish and enforce pane resize policy
+  --terminal-engine interim              Backend terminal engine implementation
   -h, --help                            Show this help
 
 Notes:
   Default socket: valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   Existing socket paths are not replaced automatically.
+  The only implemented terminal engine is the interim text surface.
 
 Examples:
   nmuxd --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
@@ -248,9 +278,19 @@ fn parse_resize_policy(value: &str) -> Result<protocol::ResizePolicy, &'static s
     }
 }
 
+fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'static str> {
+    match value {
+        "interim" => Ok(TerminalEngineKind::InterimText),
+        _ => Err("requires interim"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SocketCleanup, parse_resize_policy, usage, validate_mode_args};
+    use super::{
+        SocketCleanup, parse_resize_policy, parse_terminal_engine_kind, usage, validate_mode_args,
+    };
+    use nmux_core::terminal::TerminalEngineKind;
     use nmux_proto::protocol;
     use std::fs;
     use std::os::unix::net::UnixListener;
@@ -291,6 +331,15 @@ mod tests {
     }
 
     #[test]
+    fn terminal_engine_arg_accepts_documented_choice() {
+        assert_eq!(
+            parse_terminal_engine_kind("interim"),
+            Ok(TerminalEngineKind::InterimText)
+        );
+        assert!(parse_terminal_engine_kind("libghostty-vt").is_err());
+    }
+
+    #[test]
     fn usage_mentions_live_and_resize_policy_flags() {
         let usage = usage();
         assert!(usage.contains("--live"));
@@ -298,6 +347,8 @@ mod tests {
         assert!(usage.contains("--live-cycles COUNT"));
         assert!(usage.contains("--live-clients COUNT"));
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
+        assert!(usage.contains("--terminal-engine interim"));
+        assert!(usage.contains("only implemented terminal engine is the interim text surface"));
         assert!(usage.contains("Existing socket paths are not replaced automatically"));
     }
 

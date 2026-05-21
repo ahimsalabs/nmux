@@ -85,6 +85,7 @@ Done:
 - ADR 0012 documents the backend terminal engine boundary.
 - `nmux-core` routes pane output through a terminal engine trait, with the interim text engine as the current implementation.
 - Local daemon serving paths keep terminal engine instances alive per pane across output polls and sequential live clients.
+- `nmuxd --terminal-engine interim` exposes the current engine choice explicitly; backend `libghostty-vt` is not imported yet.
 
 Next:
 
@@ -263,6 +264,6 @@ Exit evidence:
 - The interim text surface remains explicitly labeled temporary until replaced.
 - No GPL or AGPL terminal parser code is copied into the core.
 
-Status: Started. ADR 0012 documents the terminal engine boundary. `nmux-core` exposes a terminal engine trait, the interim text behavior implements it, and local daemon serving paths keep engine instances alive per pane across output polls and sequential clients.
+Status: Started. ADR 0012 documents the terminal engine boundary. `nmux-core` exposes a terminal engine trait, the interim text behavior implements it, local daemon serving paths keep engine instances alive per pane across output polls and sequential clients, and `nmuxd --terminal-engine interim` exposes the current engine choice before backend `libghostty-vt` is available.
 
 Initial boundary slice: `nmux-core` now exposes a terminal engine boundary for daemon-owned pane output hydration. The existing interim text behavior lives behind that boundary, preserving current `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` semantics while creating the replacement point for backend `libghostty-vt` extraction. Local daemon serving paths keep terminal engine instances alive per pane across output polls and sequential clients, matching the stateful shape expected from a real VT engine.

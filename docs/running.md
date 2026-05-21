@@ -184,6 +184,7 @@ When an unbounded live client exits because the daemon closes the live socket, t
 The read-only client attaches once, sends no input, and prints streamed surface updates when the daemon observes process output. If `--iterations` is omitted, it keeps polling until the daemon closes the live connection.
 
 This is not a terminal emulator yet. The interim text surface only converts simple output bytes into backend-owned visible rows and scrollback. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state derived from a local PTY, server-owned scrollback ranges, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input forwarding.
+`nmuxd --terminal-engine interim` selects this current implementation explicitly. Backend `libghostty-vt` extraction is planned next, but it is not imported yet.
 
 ## Presence And Attach Modes
 

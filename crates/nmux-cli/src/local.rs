@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{Actor, AttachMode, Session};
-use nmux_core::terminal::PaneTerminalEngines;
+use nmux_core::terminal::{PaneTerminalEngines, TerminalEngineKind};
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 
 const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
@@ -159,7 +159,7 @@ pub fn serve_live_one_with_host<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
-    let mut engines = PaneTerminalEngines::interim();
+    let mut engines = PaneTerminalEngines::new(TerminalEngineKind::InterimText);
     serve_live_one_with_host_and_engines(listener, session, host, &mut engines, cycles)
 }
 
@@ -173,7 +173,28 @@ pub fn serve_live_n_with_host<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
-    let mut engines = PaneTerminalEngines::interim();
+    serve_live_n_with_host_and_terminal_engine_kind(
+        listener,
+        session,
+        host,
+        clients,
+        cycles_per_client,
+        TerminalEngineKind::InterimText,
+    )
+}
+
+pub fn serve_live_n_with_host_and_terminal_engine_kind<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+    clients: usize,
+    cycles_per_client: usize,
+    terminal_engine_kind: TerminalEngineKind,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    let mut engines = PaneTerminalEngines::new(terminal_engine_kind);
     for _ in 0..clients {
         serve_live_one_with_host_and_engines(
             listener,
@@ -191,7 +212,7 @@ pub fn serve_n(
     session: &mut Session,
     clients: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut engines = PaneTerminalEngines::interim();
+    let mut engines = PaneTerminalEngines::new(TerminalEngineKind::InterimText);
     for _ in 0..clients {
         serve_next(listener, session, &mut engines)?;
     }
@@ -204,7 +225,7 @@ pub fn serve_n_with_output<O: ProcessOutput>(
     output: &mut O,
     clients: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut engines = PaneTerminalEngines::interim();
+    let mut engines = PaneTerminalEngines::new(TerminalEngineKind::InterimText);
     for _ in 0..clients {
         serve_next_with_output(listener, session, Some(output), &mut engines)?;
     }
@@ -220,7 +241,26 @@ pub fn serve_n_with_host<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
-    let mut engines = PaneTerminalEngines::interim();
+    serve_n_with_host_and_terminal_engine_kind(
+        listener,
+        session,
+        host,
+        clients,
+        TerminalEngineKind::InterimText,
+    )
+}
+
+pub fn serve_n_with_host_and_terminal_engine_kind<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+    clients: usize,
+    terminal_engine_kind: TerminalEngineKind,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    let mut engines = PaneTerminalEngines::new(terminal_engine_kind);
     for _ in 0..clients {
         serve_next_with_host(listener, session, host, &mut engines)?;
     }
@@ -499,7 +539,7 @@ pub fn poll_pane_output(
     output: &mut dyn ProcessOutput,
     pane_id: &str,
 ) -> Result<bool, HostError> {
-    let mut engines = PaneTerminalEngines::interim();
+    let mut engines = PaneTerminalEngines::new(TerminalEngineKind::InterimText);
     poll_pane_output_with_engines(session, &mut engines, output, pane_id)
 }
 
