@@ -919,12 +919,184 @@ impl<'a> ::flatbuffers::Verifiable for ErrorCode {
 
 impl ::flatbuffers::SimpleToVerifyInSlice for ErrorCode {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MIN_ENVELOPE_BODY: u8 = 0;
+pub const ENUM_MIN_ATTACH_MODE: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_ENVELOPE_BODY: u8 = 8;
+pub const ENUM_MAX_ATTACH_MODE: i8 = 1;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 9] = [
+pub const ENUM_VALUES_ATTACH_MODE: [AttachMode; 2] = [
+  AttachMode::ReadOnly,
+  AttachMode::ReadWrite,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct AttachMode(pub i8);
+#[allow(non_upper_case_globals)]
+impl AttachMode {
+  pub const ReadOnly: Self = Self(0);
+  pub const ReadWrite: Self = Self(1);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 1;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::ReadOnly,
+    Self::ReadWrite,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::ReadOnly => Some("ReadOnly"),
+      Self::ReadWrite => Some("ReadWrite"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for AttachMode {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for AttachMode {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for AttachMode {
+    type Output = AttachMode;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for AttachMode {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for AttachMode {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for AttachMode {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_PRESENCE_KIND: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_PRESENCE_KIND: i8 = 2;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_PRESENCE_KIND: [PresenceKind; 3] = [
+  PresenceKind::Joined,
+  PresenceKind::Updated,
+  PresenceKind::Left,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct PresenceKind(pub i8);
+#[allow(non_upper_case_globals)]
+impl PresenceKind {
+  pub const Joined: Self = Self(0);
+  pub const Updated: Self = Self(1);
+  pub const Left: Self = Self(2);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 2;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Joined,
+    Self::Updated,
+    Self::Left,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Joined => Some("Joined"),
+      Self::Updated => Some("Updated"),
+      Self::Left => Some("Left"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for PresenceKind {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for PresenceKind {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for PresenceKind {
+    type Output = PresenceKind;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for PresenceKind {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for PresenceKind {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for PresenceKind {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ENVELOPE_BODY: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ENVELOPE_BODY: u8 = 9;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 10] = [
   EnvelopeBody::NONE,
   EnvelopeBody::WorkspaceTreeSnapshot,
   EnvelopeBody::PaneSurfaceSnapshot,
@@ -934,6 +1106,7 @@ pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 9] = [
   EnvelopeBody::Error,
   EnvelopeBody::ScrollbackFetch,
   EnvelopeBody::ScrollbackChunk,
+  EnvelopeBody::PresenceUpdate,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -950,9 +1123,10 @@ impl EnvelopeBody {
   pub const Error: Self = Self(6);
   pub const ScrollbackFetch: Self = Self(7);
   pub const ScrollbackChunk: Self = Self(8);
+  pub const PresenceUpdate: Self = Self(9);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 8;
+  pub const ENUM_MAX: u8 = 9;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::NONE,
     Self::WorkspaceTreeSnapshot,
@@ -963,6 +1137,7 @@ impl EnvelopeBody {
     Self::Error,
     Self::ScrollbackFetch,
     Self::ScrollbackChunk,
+    Self::PresenceUpdate,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -976,6 +1151,7 @@ impl EnvelopeBody {
       Self::Error => Some("Error"),
       Self::ScrollbackFetch => Some("ScrollbackFetch"),
       Self::ScrollbackChunk => Some("ScrollbackChunk"),
+      Self::PresenceUpdate => Some("PresenceUpdate"),
       _ => None,
     }
   }
@@ -3865,6 +4041,187 @@ impl ::core::fmt::Debug for ScrollbackRow<'_> {
       ds.finish()
   }
 }
+pub enum PresenceUpdateOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct PresenceUpdate<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for PresenceUpdate<'a> {
+  type Inner = PresenceUpdate<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> PresenceUpdate<'a> {
+  pub const VT_ACTOR_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_USER_ID: ::flatbuffers::VOffsetT = 6;
+  pub const VT_DISPLAY_NAME: ::flatbuffers::VOffsetT = 8;
+  pub const VT_MODE: ::flatbuffers::VOffsetT = 10;
+  pub const VT_KIND: ::flatbuffers::VOffsetT = 12;
+  pub const VT_FOCUSED_PANE_ID: ::flatbuffers::VOffsetT = 14;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    PresenceUpdate { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args PresenceUpdateArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<PresenceUpdate<'bldr>> {
+    let mut builder = PresenceUpdateBuilder::new(_fbb);
+    if let Some(x) = args.focused_pane_id { builder.add_focused_pane_id(x); }
+    if let Some(x) = args.display_name { builder.add_display_name(x); }
+    if let Some(x) = args.user_id { builder.add_user_id(x); }
+    if let Some(x) = args.actor_id { builder.add_actor_id(x); }
+    builder.add_kind(args.kind);
+    builder.add_mode(args.mode);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn actor_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(PresenceUpdate::VT_ACTOR_ID, None)}
+  }
+  #[inline]
+  pub fn user_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(PresenceUpdate::VT_USER_ID, None)}
+  }
+  #[inline]
+  pub fn display_name(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(PresenceUpdate::VT_DISPLAY_NAME, None)}
+  }
+  #[inline]
+  pub fn mode(&self) -> AttachMode {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<AttachMode>(PresenceUpdate::VT_MODE, Some(AttachMode::ReadOnly)).unwrap()}
+  }
+  #[inline]
+  pub fn kind(&self) -> PresenceKind {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<PresenceKind>(PresenceUpdate::VT_KIND, Some(PresenceKind::Joined)).unwrap()}
+  }
+  #[inline]
+  pub fn focused_pane_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(PresenceUpdate::VT_FOCUSED_PANE_ID, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for PresenceUpdate<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("actor_id", Self::VT_ACTOR_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("user_id", Self::VT_USER_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("display_name", Self::VT_DISPLAY_NAME, false)?
+     .visit_field::<AttachMode>("mode", Self::VT_MODE, false)?
+     .visit_field::<PresenceKind>("kind", Self::VT_KIND, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("focused_pane_id", Self::VT_FOCUSED_PANE_ID, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct PresenceUpdateArgs<'a> {
+    pub actor_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub user_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub display_name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub mode: AttachMode,
+    pub kind: PresenceKind,
+    pub focused_pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for PresenceUpdateArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    PresenceUpdateArgs {
+      actor_id: None,
+      user_id: None,
+      display_name: None,
+      mode: AttachMode::ReadOnly,
+      kind: PresenceKind::Joined,
+      focused_pane_id: None,
+    }
+  }
+}
+
+pub struct PresenceUpdateBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PresenceUpdateBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_actor_id(&mut self, actor_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PresenceUpdate::VT_ACTOR_ID, actor_id);
+  }
+  #[inline]
+  pub fn add_user_id(&mut self, user_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PresenceUpdate::VT_USER_ID, user_id);
+  }
+  #[inline]
+  pub fn add_display_name(&mut self, display_name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PresenceUpdate::VT_DISPLAY_NAME, display_name);
+  }
+  #[inline]
+  pub fn add_mode(&mut self, mode: AttachMode) {
+    self.fbb_.push_slot::<AttachMode>(PresenceUpdate::VT_MODE, mode, AttachMode::ReadOnly);
+  }
+  #[inline]
+  pub fn add_kind(&mut self, kind: PresenceKind) {
+    self.fbb_.push_slot::<PresenceKind>(PresenceUpdate::VT_KIND, kind, PresenceKind::Joined);
+  }
+  #[inline]
+  pub fn add_focused_pane_id(&mut self, focused_pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PresenceUpdate::VT_FOCUSED_PANE_ID, focused_pane_id);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PresenceUpdateBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    PresenceUpdateBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<PresenceUpdate<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for PresenceUpdate<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("PresenceUpdate");
+      ds.field("actor_id", &self.actor_id());
+      ds.field("user_id", &self.user_id());
+      ds.field("display_name", &self.display_name());
+      ds.field("mode", &self.mode());
+      ds.field("kind", &self.kind());
+      ds.field("focused_pane_id", &self.focused_pane_id());
+      ds.finish()
+  }
+}
 pub enum ErrorOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -4218,6 +4575,21 @@ impl<'a> Envelope<'a> {
     }
   }
 
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_presence_update(&self) -> Option<PresenceUpdate<'a>> {
+    if self.body_type() == EnvelopeBody::PresenceUpdate {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { PresenceUpdate::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
 }
 
 impl ::flatbuffers::Verifiable for Envelope<'_> {
@@ -4242,6 +4614,7 @@ impl ::flatbuffers::Verifiable for Envelope<'_> {
           EnvelopeBody::Error => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<Error>>("EnvelopeBody::Error", pos),
           EnvelopeBody::ScrollbackFetch => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ScrollbackFetch>>("EnvelopeBody::ScrollbackFetch", pos),
           EnvelopeBody::ScrollbackChunk => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ScrollbackChunk>>("EnvelopeBody::ScrollbackChunk", pos),
+          EnvelopeBody::PresenceUpdate => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<PresenceUpdate>>("EnvelopeBody::PresenceUpdate", pos),
           _ => Ok(()),
         }
      })?
@@ -4389,6 +4762,13 @@ impl ::core::fmt::Debug for Envelope<'_> {
         },
         EnvelopeBody::ScrollbackChunk => {
           if let Some(x) = self.body_as_scrollback_chunk() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::PresenceUpdate => {
+          if let Some(x) = self.body_as_presence_update() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")

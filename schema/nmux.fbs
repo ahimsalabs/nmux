@@ -67,6 +67,17 @@ enum ErrorCode : ushort {
   StaleVersion = 5,
 }
 
+enum AttachMode : byte {
+  ReadOnly = 0,
+  ReadWrite = 1,
+}
+
+enum PresenceKind : byte {
+  Joined = 0,
+  Updated = 1,
+  Left = 2,
+}
+
 table WorkspaceTreeSnapshot {
   version:ulong;
   session_id:string;
@@ -204,6 +215,15 @@ table ScrollbackRow {
   dirty_hash:ulong;
 }
 
+table PresenceUpdate {
+  actor_id:string;
+  user_id:string;
+  display_name:string;
+  mode:AttachMode = ReadOnly;
+  kind:PresenceKind = Joined;
+  focused_pane_id:string;
+}
+
 table Error {
   code:ErrorCode = Unknown;
   message:string;
@@ -219,6 +239,7 @@ union EnvelopeBody {
   Error,
   ScrollbackFetch,
   ScrollbackChunk,
+  PresenceUpdate,
 }
 
 table Envelope {
