@@ -76,6 +76,26 @@ fn nmux_rejects_conflicting_frontend_modes() {
     );
 }
 
+#[test]
+fn nmuxd_rejects_conflicting_server_modes() {
+    assert_nmuxd_rejects(
+        &["--one-shot", "--live-clients", "2"],
+        "nmuxd: --one-shot cannot be combined with live daemon modes",
+    );
+    assert_nmuxd_rejects(
+        &["--live", "--live-cycles", "1"],
+        "nmuxd: --live cannot be combined with --live-cycles or --live-clients",
+    );
+    assert_nmuxd_rejects(
+        &["--live-cycles", "0"],
+        "nmuxd: --live-cycles must be greater than 0",
+    );
+    assert_nmuxd_rejects(
+        &["--live-clients", "0"],
+        "nmuxd: --live-clients must be greater than 0",
+    );
+}
+
 fn assert_nmux_rejects(args: &[&str], expected_stderr: &str) {
     let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args(args)
@@ -85,6 +105,23 @@ fn assert_nmux_rejects(args: &[&str], expected_stderr: &str) {
     assert!(
         !output.status.success(),
         "nmux unexpectedly succeeded for args {args:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(expected_stderr),
+        "missing expected error {expected_stderr:?} for args {args:?}:\n{stderr}"
+    );
+}
+
+fn assert_nmuxd_rejects(args: &[&str], expected_stderr: &str) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args(args)
+        .output()
+        .expect("run nmuxd");
+
+    assert!(
+        !output.status.success(),
+        "nmuxd unexpectedly succeeded for args {args:?}"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

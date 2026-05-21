@@ -121,6 +121,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
+    validate_mode_args(one_shot, live, live_cycles, live_clients)?;
 
     Ok(Args {
         help,
@@ -132,6 +133,27 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         command,
         resize_policy,
     })
+}
+
+fn validate_mode_args(
+    one_shot: bool,
+    live: bool,
+    live_cycles: Option<usize>,
+    live_clients: Option<usize>,
+) -> Result<(), &'static str> {
+    if one_shot && (live || live_cycles.is_some() || live_clients.is_some()) {
+        return Err("--one-shot cannot be combined with live daemon modes");
+    }
+    if live && (live_cycles.is_some() || live_clients.is_some()) {
+        return Err("--live cannot be combined with --live-cycles or --live-clients");
+    }
+    if live_cycles == Some(0) {
+        return Err("--live-cycles must be greater than 0");
+    }
+    if live_clients == Some(0) {
+        return Err("--live-clients must be greater than 0");
+    }
+    Ok(())
 }
 
 fn usage() -> &'static str {
@@ -171,7 +193,7 @@ fn parse_resize_policy(value: &str) -> Result<protocol::ResizePolicy, &'static s
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_resize_policy, usage};
+    use super::{parse_resize_policy, usage, validate_mode_args};
     use nmux_proto::protocol;
 
     #[test]
@@ -202,6 +224,27 @@ mod tests {
         assert!(usage.contains("--live-cycles COUNT"));
         assert!(usage.contains("--live-clients COUNT"));
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
+    }
+
+    #[test]
+    fn mode_validation_rejects_ambiguous_daemon_modes() {
+        assert_eq!(
+            validate_mode_args(true, false, None, Some(2)),
+            Err("--one-shot cannot be combined with live daemon modes")
+        );
+        assert_eq!(
+            validate_mode_args(false, true, Some(1), None),
+            Err("--live cannot be combined with --live-cycles or --live-clients")
+        );
+        assert_eq!(
+            validate_mode_args(false, false, Some(0), None),
+            Err("--live-cycles must be greater than 0")
+        );
+        assert_eq!(
+            validate_mode_args(false, false, None, Some(0)),
+            Err("--live-clients must be greater than 0")
+        );
+        assert!(validate_mode_args(false, false, Some(2), Some(3)).is_ok());
     }
 }
 

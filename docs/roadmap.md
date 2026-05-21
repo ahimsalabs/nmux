@@ -79,6 +79,7 @@ Done:
 - Read-write live clients no longer have to send input before receiving output; idle read-write cycles poll process output and stream updates when the backend-owned surface changes.
 - The live daemon treats a client EOF/disconnect during read-write polling as a clean detach, so piped stdin clients can finish without requiring a matching daemon cycle count.
 - `nmuxd --live-clients COUNT` keeps the same local workspace and PTY alive across bounded sequential live clients.
+- `nmuxd` rejects ambiguous live server mode combinations and zero live counts instead of silently choosing one mode.
 
 Next:
 
@@ -241,4 +242,4 @@ Exit evidence:
 
 Status: Next. Start with the smallest local live-workflow gap that makes the current prototype more usable without expanding licensing risk or pretending the interim text surface is VT-correct.
 
-Initial slice: `nmuxd --live-clients COUNT` keeps one daemon-owned local workspace and PTY alive across a bounded number of sequential live clients. This is intentionally not simultaneous multi-client attach; it is a small persistence step for live reattach workflows.
+Initial slice: `nmuxd --live-clients COUNT` keeps one daemon-owned local workspace and PTY alive across a bounded number of sequential live clients. This is intentionally not simultaneous multi-client attach; it is a small persistence step for live reattach workflows. The daemon also rejects ambiguous live server mode combinations and zero live counts so scripted workflows fail before binding a socket.
