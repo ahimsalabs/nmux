@@ -26,11 +26,14 @@ Done:
 - ADR 0003 for scrollback as a separate synchronized object.
 - `ScrollbackFetch` and `ScrollbackChunk` schema bodies.
 - Static scrollback object with range-fetch tests and local client rendering.
+- ADR 0004 for presence and attach modes.
+- `PresenceUpdate`, `AttachMode`, and `PresenceKind` schema objects.
+- Local attach prelude actor mode, presence update, and read-only input policy tests.
 
 Next:
 
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Add presence and actor attach mode modeling.
+- Expand the local daemon beyond `serve_one` so two clients can attach to one session.
 
 ## Milestones
 
@@ -100,6 +103,8 @@ Exit evidence:
 - Two clients can attach to one session.
 - Presence updates identify actors and capabilities.
 - Read-only clients cannot send pane input.
+
+Status: Partial. Presence and attach-mode semantics are implemented for the single-client local skeleton; simultaneous two-client attach remains next.
 
 ### M6: Sandbox Host
 

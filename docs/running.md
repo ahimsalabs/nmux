@@ -1,6 +1,6 @@
 # Running nmux
 
-The current prototype is an M4 local attach skeleton. `nmuxd` owns one static workspace tree, one static pane surface, and one static scrollback object. The client sends a local-only attach prelude with known pane surface versions, then the daemon sends a `WorkspaceTreeSnapshot` and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. After rendering those state objects, `nmux` sends one basic `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
+The current prototype is an M5 local attach skeleton. `nmuxd` owns one static workspace tree, one static pane surface, one static scrollback object, and one attached actor. The client sends a local-only attach prelude with actor ID, attach mode, and known pane surface versions. The daemon sends a `WorkspaceTreeSnapshot`, a `PresenceUpdate`, and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. After rendering those state objects, `nmux` sends one basic `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
 
 Run all checks:
 
@@ -34,6 +34,18 @@ server-owned terminal state
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 This is not a terminal emulator yet. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state, server-owned scrollback ranges, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input events.
+
+## Presence And Attach Modes
+
+The local attach prelude currently carries actor ID and attach mode. The daemon replies with `PresenceUpdate`.
+
+Current behavior:
+
+- read-write actors may send pane input
+- read-only actors may receive workspace, presence, surface, and scrollback state
+- read-only actors do not send pane input in the local client flow
+
+The local skeleton still serves one client at a time. Simultaneous multi-client attach is a later expansion.
 
 ## Reconnect Behavior
 
