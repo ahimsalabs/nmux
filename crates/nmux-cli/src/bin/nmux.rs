@@ -101,7 +101,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             }
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
                 match receiver.try_recv() {
-                    Ok(StdinByteRead::Input(input)) => Some(input),
+                    Ok(StdinByteRead::Input(input)) => {
+                        local::send_raw_input(&mut stream, "pane-1", &input)?;
+                        None
+                    }
                     Ok(StdinByteRead::Closed) => {
                         stdin_bytes_closed = true;
                         None
@@ -173,7 +176,7 @@ fn spawn_stdin_byte_reader() -> mpsc::Receiver<StdinByteRead> {
                     break;
                 }
                 Ok(count) => {
-                    let input = String::from_utf8_lossy(&buffer[..count]).into_owned();
+                    let input = buffer[..count].to_vec();
                     if tx.send(StdinByteRead::Input(input)).is_err() {
                         break;
                     }
@@ -189,7 +192,7 @@ fn spawn_stdin_byte_reader() -> mpsc::Receiver<StdinByteRead> {
 }
 
 enum StdinByteRead {
-    Input(String),
+    Input(Vec<u8>),
     Closed,
     Error(String),
 }

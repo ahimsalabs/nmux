@@ -579,6 +579,59 @@ impl Session {
                 key: Some(key),
                 mouse: None,
                 paste: None,
+                raw: None,
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::InputEvent,
+                body: Some(input.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+
+    pub fn raw_input_frame(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        actor_id: &str,
+        pane_id: &str,
+        input_seq: u64,
+        bytes: &[u8],
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+
+        let bytes = builder.create_vector(bytes);
+        let raw = protocol::RawInput::create(
+            &mut builder,
+            &protocol::RawInputArgs { bytes: Some(bytes) },
+        );
+        let pane_id = builder.create_string(pane_id);
+        let actor_id = builder.create_string(actor_id);
+        let input = protocol::InputEvent::create(
+            &mut builder,
+            &protocol::InputEventArgs {
+                pane_id: Some(pane_id),
+                actor_id: Some(actor_id),
+                input_seq,
+                kind: protocol::InputKind::RawBytes,
+                key: None,
+                mouse: None,
+                paste: None,
+                raw: Some(raw),
             },
         );
 
@@ -983,6 +1036,29 @@ mod tests {
         assert_eq!(key.text_utf8(), Some("a"));
         assert_eq!(key.key_name(), None);
         assert_eq!(key.modifiers(), 0);
+    }
+
+    #[test]
+    fn raw_input_frame_decodes_to_input_event() {
+        let frame =
+            Session::initial().raw_input_frame("conn-1", 9, "actor-1", "pane-1", 3, &[0, 3, 255]);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
+        assert_eq!(envelope.session_id(), Some("local"));
+        assert_eq!(envelope.connection_id(), Some("conn-1"));
+        assert_eq!(envelope.seq(), 9);
+        assert_eq!(envelope.body_type(), protocol::EnvelopeBody::InputEvent);
+
+        let input = envelope.body_as_input_event().expect("input event body");
+        assert_eq!(input.pane_id(), Some("pane-1"));
+        assert_eq!(input.actor_id(), Some("actor-1"));
+        assert_eq!(input.input_seq(), 3);
+        assert_eq!(input.kind(), protocol::InputKind::RawBytes);
+
+        let raw = input.raw().expect("raw input");
+        let bytes = raw.bytes().expect("raw input bytes");
+        assert_eq!(bytes.bytes(), &[0, 3, 255]);
     }
 
     #[test]

@@ -26,6 +26,7 @@ enum InputKind : byte {
   Key = 0,
   Mouse = 1,
   Paste = 2,
+  RawBytes = 3,
 }
 
 enum MouseButton : byte {
@@ -165,6 +166,7 @@ table InputEvent {
   key:KeyInput;
   mouse:MouseInput;
   paste:PasteInput;
+  raw:RawInput;
 }
 
 table KeyInput {
@@ -183,6 +185,10 @@ table MouseInput {
 table PasteInput {
   text_utf8:string;
   bracketed:bool = true;
+}
+
+table RawInput {
+  bytes:[ubyte];
 }
 
 table ResizeIntent {

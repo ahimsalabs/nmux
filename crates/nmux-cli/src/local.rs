@@ -195,7 +195,7 @@ fn serve_live_attached_client(
                 }
             };
             if let Some(input) = input {
-                host.write_input(&input.pane_id, input.text.as_bytes())?;
+                host.write_input(&input.pane_id, &input.bytes)?;
                 poll_pane_output_until_quiet(session, host, &input.pane_id)?;
             } else {
                 poll_pane_output_until_quiet(session, host, pane_id)?;
@@ -311,7 +311,7 @@ fn serve_attached_client(
         if Session::input_allowed(&actor) {
             let input = read_input_event_from_stream(stream)?;
             if let Some(host) = host.as_deref_mut() {
-                host.write_input(&input.pane_id, input.text.as_bytes())?;
+                host.write_input(&input.pane_id, &input.bytes)?;
                 poll_pane_output(session, host, &input.pane_id)?;
             }
         }
@@ -512,6 +512,17 @@ pub fn send_key_input(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame =
         Session::initial().key_input_frame("local-client", 3, "local-actor", pane_id, 1, text);
+    wire::write_default_frame(stream, &frame)?;
+    Ok(())
+}
+
+pub fn send_raw_input(
+    stream: &mut UnixStream,
+    pane_id: &str,
+    bytes: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame =
+        Session::initial().raw_input_frame("local-client", 3, "local-actor", pane_id, 1, bytes);
     wire::write_default_frame(stream, &frame)?;
     Ok(())
 }
@@ -787,16 +798,26 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
     let input = envelope
         .body_as_input_event()
         .ok_or("missing input event body")?;
-    if input.kind() != protocol::InputKind::Key {
-        return Err(format!("unexpected input kind: {:?}", input.kind()).into());
-    }
-
-    let key = input.key().ok_or("missing key input")?;
+    let bytes = match input.kind() {
+        protocol::InputKind::Key => input
+            .key()
+            .and_then(|key| key.text_utf8())
+            .unwrap_or_default()
+            .as_bytes()
+            .to_vec(),
+        protocol::InputKind::RawBytes => input
+            .raw()
+            .and_then(|raw| raw.bytes())
+            .map(|bytes| bytes.iter().collect())
+            .unwrap_or_default(),
+        other => return Err(format!("unexpected input kind: {other:?}").into()),
+    };
     Ok(InputSummary {
         pane_id: input.pane_id().unwrap_or_default().to_owned(),
         actor_id: input.actor_id().unwrap_or_default().to_owned(),
         input_seq: input.input_seq(),
-        text: key.text_utf8().unwrap_or_default().to_owned(),
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+        bytes,
     })
 }
 
@@ -1557,6 +1578,7 @@ pub struct InputSummary {
     pub actor_id: String,
     pub input_seq: u64,
     pub text: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2617,8 +2639,27 @@ mod tests {
                 actor_id: "actor-1".to_owned(),
                 input_seq: 2,
                 text: "x".to_owned(),
+                bytes: b"x".to_vec(),
             }
         );
+    }
+
+    #[test]
+    fn decodes_raw_input_from_client_frame() {
+        let frame = Session::initial().raw_input_frame(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            &[0, b'x', 255],
+        );
+        let input = input_summary_from_frame(&frame).expect("input summary");
+
+        assert_eq!(input.pane_id, "pane-1");
+        assert_eq!(input.actor_id, "actor-1");
+        assert_eq!(input.input_seq, 2);
+        assert_eq!(input.bytes, vec![0, b'x', 255]);
     }
 
     #[test]

@@ -88,7 +88,7 @@ For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 ## Live Attach Prototype
 
-The live attach prototype keeps one local connection open for repeated input/output cycles. It is not raw terminal mode yet; it sends the same `--key` text on each bounded client cycle or line-streams stdin, and renders streamed pane surface updates through the same client-side pane surface state used by reconnects.
+The live attach prototype keeps one local connection open for repeated input/output cycles. It is not a terminal UI yet; it sends the same `--key` text on each bounded client cycle, line-streams stdin, or forwards stdin byte chunks, and renders streamed pane surface updates through the same client-side pane surface state used by reconnects.
 
 Start a daemon that serves one live client for two input cycles:
 
@@ -138,7 +138,7 @@ For byte-streamed live input, use `--stdin-bytes`:
 printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin-bytes --interval-ms 500
 ```
 
-`--stdin-bytes` reads stdin on a background thread and sends available UTF-8-ish chunks during the live polling loop. This keeps output polling active even while no complete input line is available. It is a step toward raw terminal input, but the current protocol still carries input as UTF-8 text rather than arbitrary terminal bytes.
+`--stdin-bytes` reads stdin on a background thread and sends available chunks during the live polling loop as `InputKind.RawBytes`. This keeps output polling active even while no complete input line is available. It is a step toward raw terminal input, but the CLI still does not put the user's terminal into raw mode.
 
 For read-only live observation, use `--no-input`:
 

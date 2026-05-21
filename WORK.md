@@ -380,10 +380,10 @@ M10: live local interactive attach [in progress]
   one attached local connection can stream repeated input/output cycles
   read-only live clients can observe output without forwarding input until daemon close
   live CLI can stream stdin lines until EOF without default key fallback
-  live CLI can read stdin byte chunks without blocking output polling on full lines
+  live CLI can send stdin byte chunks as InputKind.RawBytes without blocking output polling on full lines
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state
-  next: move from UTF-8 text input toward raw terminal byte input and fully continuous polling
+  next: add terminal raw-mode guard so interactive keystrokes are not locally buffered
 ```
 
 The crisp product phrase is:

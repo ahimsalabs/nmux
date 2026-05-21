@@ -12,7 +12,7 @@ M0 defines the smallest useful state-sync envelope:
 - `WorkspaceTreeSnapshot` for sessions, tabs, panes, split layout, pane sizes, and resize policy.
 - `PaneSurfaceSnapshot` for a full visible or alternate screen surface.
 - `PaneSurfacePatch` for row, cursor, or mode updates against a known surface version.
-- `InputEvent` for key, mouse, and paste input from an actor to a pane.
+- `InputEvent` for key, raw byte, mouse, and paste input from an actor to a pane.
 - `ResizeIntent` for client-originated size requests.
 - `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time.
 - `Error` for protocol-level failures.
@@ -42,6 +42,10 @@ Clients should maintain a pane-surface render state keyed by pane ID and version
 Clients do not directly resize PTYs. They send `ResizeIntent` with desired columns, rows, actor, pane, and reason. The daemon applies policy and later publishes committed size through workspace or pane state.
 
 The policy is part of `PaneNode` so a pane can be fixed-size, leader-controlled, active-client-controlled, or manual.
+
+## Input Model
+
+`InputEvent` is still a client-to-daemon intent, not authoritative terminal state. Text-oriented commands can use `InputKind.Key` with `KeyInput.text_utf8`; byte-oriented live clients should use `InputKind.RawBytes` with `RawInput.bytes` so control bytes and non-UTF-8 input do not get lossy string conversion before they reach the process host.
 
 ## Validation
 
