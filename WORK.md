@@ -378,7 +378,7 @@ M9: herdr adapter in separate AGPL repo [done as boundary decision]
 
 M10: live local interactive attach [in progress]
   one attached local connection can stream repeated input/output cycles
-  read-only live clients can observe output without forwarding input
+  read-only live clients can observe output without forwarding input until daemon close
   live CLI can stream stdin lines until EOF without default key fallback
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state

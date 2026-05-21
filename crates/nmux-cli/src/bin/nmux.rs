@@ -78,7 +78,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let rendered = client_state.render_attach(snapshot)?;
     print_rendered(rendered);
 
-    let cycle_limit = args.iterations.or_else(|| (!args.stdin_input).then_some(1));
+    let cycle_limit = args.iterations.or_else(|| {
+        (!args.stdin_input && options.request.mode == AttachMode::ReadWrite).then_some(1)
+    });
     let mut cycles = 0;
     loop {
         if cycle_limit.is_some_and(|iterations| cycles >= iterations) {
@@ -104,8 +106,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        if let Some(update) = local::read_optional_surface_update_from_stream(&mut stream)? {
-            println!("{}", client_state.render_surface_update(&update)?);
+        match local::read_live_surface_update_from_stream(&mut stream)? {
+            local::LiveSurfaceRead::Update(update) => {
+                println!("{}", client_state.render_surface_update(&update)?);
+            }
+            local::LiveSurfaceRead::NoFrame => {}
+            local::LiveSurfaceRead::Closed => break,
         }
         cycles += 1;
     }

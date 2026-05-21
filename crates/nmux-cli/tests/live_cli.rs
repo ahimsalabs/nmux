@@ -199,6 +199,58 @@ fn live_read_only_cli_observes_output_without_input() {
 }
 
 #[test]
+fn live_read_only_cli_without_iterations_runs_until_server_closes() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "3",
+            "--command",
+            "printf 'ready\n'; sleep 0.05; printf 'tick-one\n'; sleep 0.05; printf 'tick-two\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--no-input",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("tick-one"),
+        "missing first observed tick:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("tick-two"),
+        "missing second observed tick:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_stdin_without_iterations_stops_on_eof_without_default_key() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

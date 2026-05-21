@@ -736,6 +736,33 @@ pub fn read_optional_surface_update_from_stream(
     }
 }
 
+pub fn read_live_surface_update_from_stream(
+    stream: &mut UnixStream,
+) -> Result<LiveSurfaceRead, Box<dyn std::error::Error>> {
+    match wire::read_default_frame(stream) {
+        Ok(frame) => Ok(LiveSurfaceRead::Update(surface_update_from_frame(&frame)?)),
+        Err(wire::WireError::Io(err))
+            if matches!(
+                err.kind(),
+                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ) =>
+        {
+            Ok(LiveSurfaceRead::NoFrame)
+        }
+        Err(wire::WireError::Io(err))
+            if matches!(
+                err.kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+            ) =>
+        {
+            Ok(LiveSurfaceRead::Closed)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     if envelope.body_type() != protocol::EnvelopeBody::InputEvent {
@@ -1063,6 +1090,13 @@ pub struct SurfaceUpdate {
     pub cursor: Option<CursorSummary>,
     pub row_updates: Vec<SurfaceRowUpdate>,
     pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LiveSurfaceRead {
+    Update(SurfaceUpdate),
+    NoFrame,
+    Closed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
