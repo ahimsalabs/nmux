@@ -50,7 +50,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    let _raw_terminal = RawTerminalGuard::enable_if_needed(args.stdin_bytes)?;
+    let _raw_terminal = RawTerminalGuard::enable_if_needed(args.stdin_bytes, args.local_echo)?;
     let mut client_state = match args.state_path.as_deref() {
         Some(path) => local::ClientAttachState::load(path)?,
         None => local::ClientAttachState::default(),
@@ -240,7 +240,7 @@ struct RawTerminalGuard {
 }
 
 impl RawTerminalGuard {
-    fn enable_if_needed(stdin_bytes: bool) -> io::Result<Option<Self>> {
+    fn enable_if_needed(stdin_bytes: bool, local_echo: LocalEcho) -> io::Result<Option<Self>> {
         if !raw_terminal_mode_needed(stdin_bytes, stdin_is_tty()) {
             return Ok(None);
         }
@@ -253,7 +253,7 @@ impl RawTerminalGuard {
         }
 
         let mut raw = original;
-        raw.c_lflag &= !(libc::ICANON | libc::ECHO);
+        raw.c_lflag = raw_terminal_lflag(raw.c_lflag, local_echo);
         raw.c_cc[libc::VMIN] = 1;
         raw.c_cc[libc::VTIME] = 0;
 
@@ -276,6 +276,14 @@ impl Drop for RawTerminalGuard {
 
 fn raw_terminal_mode_needed(stdin_bytes: bool, stdin_is_tty: bool) -> bool {
     stdin_bytes && stdin_is_tty
+}
+
+fn raw_terminal_lflag(flags: libc::tcflag_t, local_echo: LocalEcho) -> libc::tcflag_t {
+    let flags = flags & !libc::ICANON;
+    match local_echo {
+        LocalEcho::Off => flags & !libc::ECHO,
+        LocalEcho::Tty => flags,
+    }
 }
 
 fn stdin_is_tty() -> bool {
@@ -367,6 +375,7 @@ struct Args {
     live: bool,
     stdin_input: bool,
     stdin_bytes: bool,
+    local_echo: LocalEcho,
     redraw: bool,
     live_resize: Option<(u32, u32)>,
     interval_ms: u64,
@@ -383,6 +392,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut live = false;
     let mut stdin_input = false;
     let mut stdin_bytes = false;
+    let mut local_echo = LocalEcho::Off;
     let mut redraw = false;
     let mut live_cols = None;
     let mut live_rows = None;
@@ -436,6 +446,11 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             "--stdin-bytes" => {
                 stdin_bytes = true;
             }
+            "--local-echo" => {
+                local_echo =
+                    parse_local_echo(&args.next().ok_or("--local-echo requires off or tty")?)
+                        .map_err(|err| format!("--local-echo {err}"))?;
+            }
             "--redraw" => {
                 redraw = true;
             }
@@ -480,6 +495,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         live,
         stdin_input,
         stdin_bytes,
+        local_echo,
         redraw,
         live_resize,
         interval_ms,
@@ -487,9 +503,26 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     })
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LocalEcho {
+    Off,
+    Tty,
+}
+
+fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
+    match value {
+        "off" => Ok(LocalEcho::Off),
+        "tty" => Ok(LocalEcho::Tty),
+        _ => Err("requires off or tty"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{raw_terminal_mode_needed, split_stdin_bytes_for_detach};
+    use super::{
+        LocalEcho, parse_local_echo, raw_terminal_lflag, raw_terminal_mode_needed,
+        split_stdin_bytes_for_detach,
+    };
 
     #[test]
     fn raw_terminal_mode_is_only_needed_for_stdin_bytes_on_tty() {
@@ -497,6 +530,28 @@ mod tests {
         assert!(!raw_terminal_mode_needed(true, false));
         assert!(!raw_terminal_mode_needed(false, true));
         assert!(!raw_terminal_mode_needed(false, false));
+    }
+
+    #[test]
+    fn raw_terminal_echo_choice_controls_echo_flag() {
+        let flags = raw_terminal_lflag(libc::ICANON | libc::ECHO, LocalEcho::Off);
+        assert_eq!(flags & libc::ICANON, 0);
+        assert_eq!(flags & libc::ECHO, 0);
+
+        let flags = raw_terminal_lflag(libc::ICANON | libc::ECHO, LocalEcho::Tty);
+        assert_eq!(flags & libc::ICANON, 0);
+        assert_eq!(flags & libc::ECHO, libc::ECHO);
+
+        let flags = raw_terminal_lflag(libc::ICANON, LocalEcho::Tty);
+        assert_eq!(flags & libc::ICANON, 0);
+        assert_eq!(flags & libc::ECHO, 0);
+    }
+
+    #[test]
+    fn local_echo_arg_accepts_explicit_choices() {
+        assert_eq!(parse_local_echo("off"), Ok(LocalEcho::Off));
+        assert_eq!(parse_local_echo("tty"), Ok(LocalEcho::Tty));
+        assert!(parse_local_echo("auto").is_err());
     }
 
     #[test]

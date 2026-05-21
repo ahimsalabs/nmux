@@ -381,14 +381,14 @@ M10: live local interactive attach [in progress]
   read-only live clients can observe output without forwarding input until daemon close
   live CLI can stream stdin lines until EOF without default key fallback
   live CLI can send stdin byte chunks as InputKind.RawBytes without blocking output polling on full lines
-  interactive --stdin-bytes temporarily uses noncanonical no-echo stdin
+  interactive --stdin-bytes temporarily uses noncanonical stdin with local echo defaulting off and `--local-echo tty` available
   Ctrl-] detaches byte-streamed live clients
   --redraw clears and repaints the current client-side pane surface on each update
   CLI workspace summary displays daemon-published resize policy
   successful live resize intents commit pane size and republish workspace snapshot
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state
-  next: local echo choices, richer layout policy, and signal handling
+  next: richer layout policy and signal handling
 ```
 
 The crisp product phrase is:
