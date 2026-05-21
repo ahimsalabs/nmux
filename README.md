@@ -58,5 +58,6 @@ printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socke
 ```
 
 For interactive `--stdin-bytes`, Ctrl-] detaches the client.
+Add `--redraw` to repaint the current pane surface in place on each live update.
 
 This is still a prototype. It is not yet raw terminal mode, and the temporary text surface is not a VT-correct terminal emulator.

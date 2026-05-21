@@ -66,6 +66,62 @@ fn live_cli_streams_repeated_command_output() {
 }
 
 #[test]
+fn live_cli_redraw_repaints_surface_in_place() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--redraw",
+            "--iterations",
+            "1",
+            "--key",
+            "paint\n",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("\x1b[2J\x1b[H"),
+        "missing clear-and-home redraw sequence:\n{stdout:?}"
+    );
+    assert!(
+        stdout.contains("echo:paint"),
+        "missing rendered command output:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_cli_can_drive_distinct_input_lines_from_stdin() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

@@ -383,9 +383,10 @@ M10: live local interactive attach [in progress]
   live CLI can send stdin byte chunks as InputKind.RawBytes without blocking output polling on full lines
   interactive --stdin-bytes temporarily uses noncanonical no-echo stdin
   Ctrl-] detaches byte-streamed live clients
+  --redraw clears and repaints the current client-side pane surface on each update
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state
-  next: screen redraw policy, local echo choices, and signal handling
+  next: local echo choices, resize policy publication, and signal handling
 ```
 
 The crisp product phrase is:

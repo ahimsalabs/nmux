@@ -87,7 +87,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     local::write_attach_request(&mut stream, &options.request)?;
     let snapshot = local::attach_from_stream(&mut stream)?;
     let rendered = client_state.render_attach(snapshot)?;
-    print_rendered(rendered);
+    print_live_rendered(rendered, args.redraw);
 
     let cycle_limit = args.iterations.or_else(|| {
         (!args.stdin_input && !args.stdin_bytes && options.request.mode == AttachMode::ReadWrite)
@@ -141,7 +141,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
         match local::read_live_surface_update_from_stream(&mut stream)? {
             local::LiveSurfaceRead::Update(update) => {
-                println!("{}", client_state.render_surface_update(&update)?);
+                print_live_surface(&client_state.render_surface_update(&update)?, args.redraw);
             }
             local::LiveSurfaceRead::NoFrame => {}
             local::LiveSurfaceRead::Closed => break,
@@ -299,13 +299,47 @@ fn print_rendered(rendered: local::RenderedAttach) {
         println!("{surface_text}");
     }
     if let Some(scrollback) = rendered.scrollback {
-        println!(
-            "scrollback {}..{}:",
-            scrollback.start_line, scrollback.total_lines
-        );
-        for line in scrollback.lines {
-            println!("{}", line.text);
+        print_scrollback(scrollback);
+    }
+}
+
+fn print_live_rendered(rendered: local::RenderedAttach, redraw: bool) {
+    if redraw {
+        let surface_text = rendered
+            .surface_text
+            .unwrap_or_else(|| rendered.workspace.display_line());
+        redraw_terminal(&surface_text);
+        if let Some(scrollback) = rendered.scrollback {
+            print_scrollback(scrollback);
         }
+        return;
+    }
+
+    print_rendered(rendered);
+}
+
+fn print_live_surface(surface_text: &str, redraw: bool) {
+    if redraw {
+        redraw_terminal(surface_text);
+    } else {
+        println!("{surface_text}");
+    }
+}
+
+fn redraw_terminal(surface_text: &str) {
+    print!("\x1b[2J\x1b[H{surface_text}");
+    if !surface_text.ends_with('\n') {
+        println!();
+    }
+}
+
+fn print_scrollback(scrollback: local::ScrollbackChunkSummary) {
+    println!(
+        "scrollback {}..{}:",
+        scrollback.start_line, scrollback.total_lines
+    );
+    for line in scrollback.lines {
+        println!("{}", line.text);
     }
 }
 
@@ -319,6 +353,7 @@ struct Args {
     live: bool,
     stdin_input: bool,
     stdin_bytes: bool,
+    redraw: bool,
     live_resize: Option<(u32, u32)>,
     interval_ms: u64,
     iterations: Option<usize>,
@@ -334,6 +369,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut live = false;
     let mut stdin_input = false;
     let mut stdin_bytes = false;
+    let mut redraw = false;
     let mut live_cols = None;
     let mut live_rows = None;
     let mut interval_ms = 1000;
@@ -386,6 +422,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             "--stdin-bytes" => {
                 stdin_bytes = true;
             }
+            "--redraw" => {
+                redraw = true;
+            }
             "--cols" => {
                 live_cols = Some(args.next().ok_or("--cols requires a count")?.parse()?);
             }
@@ -427,6 +466,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         live,
         stdin_input,
         stdin_bytes,
+        redraw,
         live_resize,
         interval_ms,
         iterations,
