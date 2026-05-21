@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M7 is the current target: prove the Ghostty/libghostty frontend boundary for server-owned terminal state.
+M8 is the current target: document and prototype the tmux adapter boundary without making tmux the core model.
 
 Done:
 
@@ -52,6 +52,7 @@ Done:
 
 Next:
 
+- Add ADR 0009 for the tmux adapter process boundary, including licensing and ownership rules.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -100,7 +101,7 @@ Exit evidence:
 - A test demonstrates reconnect from a current version.
 - A test demonstrates stale reconnect falling back to a full snapshot.
 
-Status: Done for the local skeleton. The local Unix-socket prelude proves current-version, patchable-version, and stale-version behavior for pane surfaces. Public schema promotion remains a later protocol hardening step.
+Status: Done for the local skeleton. `AttachRequest` now carries known pane surface versions in the public FlatBuffers schema, and tests prove current-version, patchable-version, and stale-version behavior for pane surfaces.
 
 ### M4: Scrollback Object
 
@@ -145,7 +146,7 @@ Exit evidence:
 - The project has a documented answer for external surface rendering.
 - A prototype frontend can render server-owned state or the needed upstream/API work is documented.
 
-Status: In progress. ADR 0007 documents the boundary: backend libghostty/libghostty-vt is the primary correctness path, frontend libghostty rendering must not re-parse PTY bytes, and a temporary nmux renderer is the practical prototype path unless Ghostty/libghostty exposes external surface hydration. The local client library now has a small pane-surface render state that applies server-owned snapshots and patches by version, and the CLI uses the same state path for output rendering, persisted reconnect state, and a read-only follow loop.
+Status: Done. ADR 0007 documents the boundary: backend libghostty/libghostty-vt is the primary correctness path, frontend libghostty rendering must not re-parse PTY bytes, and a temporary nmux renderer is the practical prototype path unless Ghostty/libghostty exposes external surface hydration. The local client library has a small pane-surface render state that applies server-owned snapshots and patches by version, the CLI uses the same state path for output rendering, persisted reconnect state, and a read-only follow loop, and [the upstream tracker](upstream/ghostty-surface-hydration.md) records the external hydration API gap.
 
 ### M8: tmux Adapter
 
