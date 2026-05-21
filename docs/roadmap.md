@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M4 is the current target: introduce scrollback as a separate synchronized object with lazy range fetches.
+M5 is the current target: support multiple actors with presence and read-only vs read-write attach modes.
 
 Done:
 
@@ -23,11 +23,14 @@ Done:
 - Local-only attach prelude with known pane surface versions.
 - Current-version reconnect test and stale-version full snapshot test.
 - Patchable reconnect response using `PaneSurfacePatch`.
+- ADR 0003 for scrollback as a separate synchronized object.
+- `ScrollbackFetch` and `ScrollbackChunk` schema bodies.
+- Static scrollback object with range-fetch tests and local client rendering.
 
 Next:
 
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Add the scrollback object model and range-fetch tests.
+- Add presence and actor attach mode modeling.
 
 ## Milestones
 
@@ -85,6 +88,8 @@ Exit evidence:
 
 - Scrollback chunks are versioned separately from the visible surface.
 - Tests cover consistency between visible rows and scrollback ranges.
+
+Status: Done for the static local skeleton. The daemon serves a range-addressed `ScrollbackChunk`, and tests cover visible-surface consistency with the scrollback tail.
 
 ### M5: Multi-Player
 
