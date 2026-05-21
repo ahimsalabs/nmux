@@ -1,4 +1,9 @@
+use std::fs;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn nmux_help_lists_live_client_flags() {
@@ -140,6 +145,37 @@ fn nmuxd_rejects_conflicting_server_modes() {
     );
 }
 
+#[test]
+fn nmux_reports_state_load_path_before_connecting() {
+    let state_path = test_state_path();
+    fs::write(&state_path, "not nmux state\n").expect("write bad state");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--no-input",
+        ])
+        .output()
+        .expect("run nmux");
+    let _ = fs::remove_file(&state_path);
+
+    assert!(!output.status.success(), "nmux unexpectedly succeeded");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nmux: failed to load client state"),
+        "missing state-load context:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(state_path.to_str().expect("state path")),
+        "missing state path:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("invalid nmux client state header"),
+        "missing parser error:\n{stderr}"
+    );
+}
+
 fn assert_nmux_rejects(args: &[&str], expected_stderr: &str) {
     let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args(args)
@@ -172,4 +208,16 @@ fn assert_nmuxd_rejects(args: &[&str], expected_stderr: &str) {
         stderr.contains(expected_stderr),
         "missing expected error {expected_stderr:?} for args {args:?}:\n{stderr}"
     );
+}
+
+fn test_state_path() -> std::path::PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let id = NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "nmux-cli-help-state-{}-{nanos}-{id}.state",
+        std::process::id()
+    ))
 }

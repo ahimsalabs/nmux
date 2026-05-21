@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
@@ -33,10 +33,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return run_live(&args);
     }
 
-    let mut client_state = match args.state_path.as_deref() {
-        Some(path) => local::ClientAttachState::load(path)?,
-        None => local::ClientAttachState::default(),
-    };
+    let mut client_state = load_client_state(args.state_path.as_deref())?;
 
     let iterations = if args.follow {
         args.iterations.unwrap_or(usize::MAX)
@@ -46,9 +43,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     for iteration in 0..iterations {
         let rendered = attach_once(&args, &mut client_state)?;
-        if let Some(path) = args.state_path.as_deref() {
-            client_state.save(path)?;
-        }
+        save_client_state(args.state_path.as_deref(), &client_state)?;
         print_rendered(rendered);
         flush_stdout()?;
 
@@ -66,10 +61,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_interim_surface_fidelity_is_visible(args.stdin_bytes);
     let mut sigwinch_resize =
         SigwinchResize::enable_if_needed(args.stdin_bytes, args.live_resize.is_some())?;
-    let mut client_state = match args.state_path.as_deref() {
-        Some(path) => local::ClientAttachState::load(path)?,
-        None => local::ClientAttachState::default(),
-    };
+    let mut client_state = load_client_state(args.state_path.as_deref())?;
     let mut stream = UnixStream::connect(&args.socket_path)?;
     stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
     let stdin = io::stdin();
@@ -248,10 +240,29 @@ fn save_live_state(
     args: &Args,
     client_state: &local::ClientAttachState,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(path) = args.state_path.as_deref() {
-        client_state.save(path)?;
-    }
-    Ok(())
+    save_client_state(args.state_path.as_deref(), client_state)
+}
+
+fn load_client_state(
+    path: Option<&Path>,
+) -> Result<local::ClientAttachState, Box<dyn std::error::Error>> {
+    let Some(path) = path else {
+        return Ok(local::ClientAttachState::default());
+    };
+    local::ClientAttachState::load(path)
+        .map_err(|err| format!("failed to load client state {}: {err}", path.display()).into())
+}
+
+fn save_client_state(
+    path: Option<&Path>,
+    client_state: &local::ClientAttachState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    client_state
+        .save(path)
+        .map_err(|err| format!("failed to save client state {}: {err}", path.display()).into())
 }
 
 fn initial_live_scrollback(
