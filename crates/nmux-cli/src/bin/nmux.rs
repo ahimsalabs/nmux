@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use nmux_cli::local;
+use nmux_core::session::AttachMode;
 
 fn main() {
     if let Err(err) = run() {
@@ -11,15 +12,16 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = args()?;
-    let snapshot = local::attach_with_client_options(
-        &args.socket_path,
-        local::AttachOptions {
-            input_text: args.input_text,
-            scrollback_start_line: args.scrollback_start_line,
-            scrollback_line_count: args.scrollback_line_count,
-            ..local::AttachOptions::default()
-        },
-    )?;
+    let mut options = local::AttachOptions {
+        input_text: args.input_text,
+        scrollback_start_line: args.scrollback_start_line,
+        scrollback_line_count: args.scrollback_line_count,
+        ..local::AttachOptions::default()
+    };
+    if options.input_text.is_none() {
+        options.request.mode = AttachMode::ReadOnly;
+    }
+    let snapshot = local::attach_with_client_options(&args.socket_path, options)?;
     println!("{}", snapshot.workspace.display_line());
     if let Some(surface) = snapshot.surface {
         println!("{}", surface.text);
