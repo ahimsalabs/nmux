@@ -320,8 +320,12 @@ impl Session {
     }
 
     pub fn initial_pane_surface(&self) -> PaneSurface {
-        let pane = &self.tabs[0].root;
-        PaneSurface {
+        self.pane_surface("pane-1").expect("initial pane exists")
+    }
+
+    pub fn pane_surface(&self, pane_id: &str) -> Option<PaneSurface> {
+        let pane = self.pane(pane_id)?;
+        Some(PaneSurface {
             pane_id: pane.id.clone(),
             version: pane.surface_version,
             cols: pane.cols,
@@ -329,7 +333,7 @@ impl Session {
             surface: pane.surface,
             cursor: pane.cursor.clone(),
             lines: pane.surface_lines.clone(),
-        }
+        })
     }
 
     pub fn initial_scrollback(&self) -> PaneScrollback {
@@ -380,7 +384,17 @@ impl Session {
     }
 
     pub fn pane_surface_frame(&self, connection_id: &str, seq: u64) -> Vec<u8> {
-        let surface = self.initial_pane_surface();
+        self.pane_surface_frame_for_pane(connection_id, seq, "pane-1")
+            .expect("initial pane exists")
+    }
+
+    pub fn pane_surface_frame_for_pane(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        pane_id: &str,
+    ) -> Option<Vec<u8>> {
+        let surface = self.pane_surface(pane_id)?;
         let mut builder = FlatBufferBuilder::new();
 
         let mut row_offsets = Vec::with_capacity(surface.lines.len());
@@ -442,7 +456,7 @@ impl Session {
         );
 
         protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
-        builder.finished_data().to_vec()
+        Some(builder.finished_data().to_vec())
     }
 
     pub fn pane_surface_patch_frame(
@@ -451,7 +465,18 @@ impl Session {
         seq: u64,
         base_version: u64,
     ) -> Vec<u8> {
-        let surface = self.initial_pane_surface();
+        self.pane_surface_patch_frame_for_pane(connection_id, seq, "pane-1", base_version)
+            .expect("initial pane exists")
+    }
+
+    pub fn pane_surface_patch_frame_for_pane(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        pane_id: &str,
+        base_version: u64,
+    ) -> Option<Vec<u8>> {
+        let surface = self.pane_surface(pane_id)?;
         let patch_kind = self
             .pane(&surface.pane_id)
             .map(|pane| pane.last_patch_kind)
@@ -516,7 +541,7 @@ impl Session {
         );
 
         protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
-        builder.finished_data().to_vec()
+        Some(builder.finished_data().to_vec())
     }
 
     pub fn scrollback_chunk_frame(
@@ -1115,6 +1140,55 @@ mod tests {
     }
 
     #[test]
+    fn pane_surface_frame_is_pane_scoped() {
+        let mut session = Session::initial();
+        let mut second = session.tabs[0].clone();
+        second.id = "tab-2".to_owned();
+        second.active_pane_id = "pane-2".to_owned();
+        second.root.id = "pane-2".to_owned();
+        second.root.surface_version = 9;
+        second.root.cols = 100;
+        second.root.rows = 10;
+        second.root.surface = protocol::SurfaceKind::Alternate;
+        second.root.cursor = Cursor {
+            row: 3,
+            col: 4,
+            visible: false,
+            shape: protocol::CursorShape::Beam,
+        };
+        second.root.surface_lines = vec!["pane two".to_owned()];
+        session.tabs.push(second);
+
+        assert!(
+            session
+                .pane_surface_frame_for_pane("conn-1", 8, "missing")
+                .is_none()
+        );
+
+        let frame = session
+            .pane_surface_frame_for_pane("conn-1", 8, "pane-2")
+            .expect("pane surface");
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        assert_eq!(snapshot.pane_id(), Some("pane-2"));
+        assert_eq!(snapshot.version(), 9);
+        assert_eq!(snapshot.cols(), 100);
+        assert_eq!(snapshot.rows(), 10);
+        assert_eq!(snapshot.surface(), protocol::SurfaceKind::Alternate);
+        let cursor = snapshot.cursor().expect("cursor");
+        assert_eq!(cursor.row(), 3);
+        assert_eq!(cursor.col(), 4);
+        assert!(!cursor.visible());
+        assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
+        let rows = snapshot.rows_data().expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows.get(0).runs().expect("runs").get(0).text_utf8(),
+            Some("pane two")
+        );
+    }
+
+    #[test]
     fn pane_surface_patch_frame_decodes_to_replace_rows_patch() {
         let frame = Session::initial().pane_surface_patch_frame("conn-1", 10, 1);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
@@ -1147,6 +1221,45 @@ mod tests {
         assert_eq!(first_row.row(), 0);
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
+    }
+
+    #[test]
+    fn pane_surface_patch_frame_is_pane_scoped() {
+        let mut session = Session::initial();
+        let mut second = session.tabs[0].clone();
+        second.id = "tab-2".to_owned();
+        second.active_pane_id = "pane-2".to_owned();
+        second.root.id = "pane-2".to_owned();
+        second.root.surface_version = 4;
+        second.root.last_patch_kind = protocol::PatchKind::CursorOnly;
+        second.root.cursor = Cursor {
+            row: 1,
+            col: 8,
+            visible: true,
+            shape: protocol::CursorShape::Underline,
+        };
+        session.tabs.push(second);
+
+        assert!(
+            session
+                .pane_surface_patch_frame_for_pane("conn-1", 10, "missing", 3)
+                .is_none()
+        );
+
+        let frame = session
+            .pane_surface_patch_frame_for_pane("conn-1", 10, "pane-2", 3)
+            .expect("pane patch");
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.pane_id(), Some("pane-2"));
+        assert_eq!(patch.base_version(), 3);
+        assert_eq!(patch.version(), 4);
+        assert_eq!(patch.kind(), protocol::PatchKind::CursorOnly);
+        assert_eq!(patch.row_updates().expect("rows").len(), 0);
+        let cursor = patch.cursor().expect("cursor");
+        assert_eq!(cursor.row(), 1);
+        assert_eq!(cursor.col(), 8);
+        assert_eq!(cursor.shape(), protocol::CursorShape::Underline);
     }
 
     #[test]

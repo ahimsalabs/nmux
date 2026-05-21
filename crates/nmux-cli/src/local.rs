@@ -343,9 +343,10 @@ fn serve_live_attached_client(
 
     let mut known_surface_version =
         if let Some(response) = request.surface_response(session, pane_id) {
-            let surface_frame = surface_response_frame(session, response, seq);
-            wire::write_default_frame(stream, &surface_frame)?;
-            seq += 1;
+            if let Some(surface_frame) = surface_response_frame(session, pane_id, response, seq) {
+                wire::write_default_frame(stream, &surface_frame)?;
+                seq += 1;
+            }
             session.surface_version(pane_id).unwrap_or_default()
         } else {
             session.surface_version(pane_id).unwrap_or_default()
@@ -416,9 +417,10 @@ fn serve_live_attached_client(
         if let Some(response) =
             surface_response_for_known_version(current, known_surface_version, patch_kind)
         {
-            let surface_frame = surface_response_frame(session, response, seq);
-            wire::write_default_frame(stream, &surface_frame)?;
-            seq += 1;
+            if let Some(surface_frame) = surface_response_frame(session, pane_id, response, seq) {
+                wire::write_default_frame(stream, &surface_frame)?;
+                seq += 1;
+            }
             known_surface_version = current;
         }
     }
@@ -521,8 +523,9 @@ fn serve_attached_client(
     wire::write_default_frame(stream, &presence_frame)?;
 
     if let Some(response) = request.surface_response(session, "pane-1") {
-        let surface_frame = surface_response_frame(session, response, 3);
-        wire::write_default_frame(stream, &surface_frame)?;
+        if let Some(surface_frame) = surface_response_frame(session, "pane-1", response, 3) {
+            wire::write_default_frame(stream, &surface_frame)?;
+        }
         if Session::input_allowed(&actor) {
             let input = read_input_event_from_stream(stream)?;
             if let Some(host) = host.as_deref_mut() {
@@ -544,11 +547,18 @@ fn serve_attached_client(
     Ok(())
 }
 
-fn surface_response_frame(session: &Session, response: SurfaceResponse, seq: u64) -> Vec<u8> {
+fn surface_response_frame(
+    session: &Session,
+    pane_id: &str,
+    response: SurfaceResponse,
+    seq: u64,
+) -> Option<Vec<u8>> {
     match response {
-        SurfaceResponse::Snapshot => session.pane_surface_frame("local-client", seq),
+        SurfaceResponse::Snapshot => {
+            session.pane_surface_frame_for_pane("local-client", seq, pane_id)
+        }
         SurfaceResponse::Patch { base_version } => {
-            session.pane_surface_patch_frame("local-client", seq, base_version)
+            session.pane_surface_patch_frame_for_pane("local-client", seq, pane_id, base_version)
         }
     }
 }
@@ -3266,11 +3276,36 @@ mod tests {
             Some(SurfaceResponse::Snapshot)
         );
 
-        let frame = surface_response_frame(&session, SurfaceResponse::Snapshot, 9);
+        let frame = surface_response_frame(&session, "pane-1", SurfaceResponse::Snapshot, 9)
+            .expect("surface response");
         let update = surface_update_from_frame(&frame).expect("surface update");
         assert_eq!(update.kind, SurfaceUpdateKind::Snapshot);
         assert_eq!(update.version, 3);
         assert_eq!(update.surface, Some(protocol::SurfaceKind::Alternate));
+    }
+
+    #[test]
+    fn surface_response_frame_is_pane_scoped() {
+        let mut session = Session::initial();
+        let mut second = session.tabs[0].clone();
+        second.id = "tab-2".to_owned();
+        second.active_pane_id = "pane-2".to_owned();
+        second.root.id = "pane-2".to_owned();
+        second.root.surface_version = 5;
+        second.root.surface_lines = vec!["pane two".to_owned()];
+        session.tabs.push(second);
+
+        assert!(
+            surface_response_frame(&session, "missing", SurfaceResponse::Snapshot, 9).is_none()
+        );
+
+        let frame = surface_response_frame(&session, "pane-2", SurfaceResponse::Snapshot, 9)
+            .expect("surface response");
+        let update = surface_update_from_frame(&frame).expect("surface update");
+        assert_eq!(update.kind, SurfaceUpdateKind::Snapshot);
+        assert_eq!(update.pane_id, "pane-2");
+        assert_eq!(update.version, 5);
+        assert_eq!(update.text, "pane two");
     }
 
     #[test]

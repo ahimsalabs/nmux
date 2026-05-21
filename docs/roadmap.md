@@ -94,6 +94,7 @@ Done:
 - Scrollback chunk generation is pane-scoped, and attach/live fetch handling uses the requested pane ID rather than implicitly returning the initial pane.
 - Mode-only terminal updates are treated as full-refresh-required until nmux has explicit mode fields in the surface schema.
 - Client-side surface state rejects unsupported patch kinds instead of treating them as cursor-only updates.
+- Pane surface snapshot and patch serialization is pane-scoped, matching the per-pane terminal engine and scrollback boundaries.
 - `nmuxd --terminal-engine interim` exposes the current engine choice explicitly; backend `libghostty-vt` is not imported yet.
 
 Next:

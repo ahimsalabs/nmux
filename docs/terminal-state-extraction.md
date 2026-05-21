@@ -35,7 +35,8 @@ backend terminal state into the same nmux objects:
 - Surface kind: active main versus alternate screen state must come from the
   terminal engine and be present on full surface snapshots.
 - Visible rows: extract the active screen viewport as row text compatible with
-  the current `PaneSurfaceSnapshot` and `PaneSurfacePatch` fields.
+  the current `PaneSurfaceSnapshot` and `PaneSurfacePatch` fields. Snapshot and
+  patch serialization must stay pane-scoped.
 - Scrollback: expose historical rows through the existing `ScrollbackChunk`
   range model and advance scrollback versions when backend-owned history
   changes. Fetch handling must stay pane-scoped.
