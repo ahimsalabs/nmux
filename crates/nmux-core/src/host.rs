@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 
@@ -116,10 +116,19 @@ pub trait ProcessHost {
     fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError>;
 }
 
+pub trait ProcessOutput {
+    fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError>;
+}
+
 #[derive(Debug, Default)]
 pub struct PlanningHost {
     processes: HashMap<String, PaneProcess>,
     events: Vec<HostEvent>,
+}
+
+#[derive(Debug, Default)]
+pub struct RecordingOutput {
+    output: HashMap<String, VecDeque<u8>>,
 }
 
 #[derive(Debug, Default)]
@@ -163,6 +172,27 @@ impl LocalProcessHost {
             operation: operation.to_owned(),
             message: error.to_string(),
         }
+    }
+}
+
+impl RecordingOutput {
+    pub fn push_output(&mut self, pane_id: impl Into<String>, bytes: impl AsRef<[u8]>) {
+        let queue = self.output.entry(pane_id.into()).or_default();
+        queue.extend(bytes.as_ref());
+    }
+}
+
+impl ProcessOutput for RecordingOutput {
+    fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
+        let Some(queue) = self.output.get_mut(pane_id) else {
+            return Ok(0);
+        };
+
+        let count = bytes.len().min(queue.len());
+        for byte in &mut bytes[..count] {
+            *byte = queue.pop_front().expect("queue has count bytes");
+        }
+        Ok(count)
     }
 }
 
@@ -540,7 +570,8 @@ pub enum HostEvent {
 mod tests {
     use super::{
         CommandSpec, HostError, HostEvent, HostKind, HostSpec, LocalProcessHost, LocalPtyHost,
-        PlanningHost, ProcessHost, ProcessStatus, UnsupportedSandboxHost,
+        PlanningHost, ProcessHost, ProcessOutput, ProcessStatus, RecordingOutput,
+        UnsupportedSandboxHost,
     };
 
     #[test]
@@ -732,5 +763,21 @@ mod tests {
                 pane_id: "pane-1".to_owned(),
             })
         );
+    }
+
+    #[test]
+    fn recording_output_reads_queued_bytes_without_blocking() {
+        let mut output = RecordingOutput::default();
+        let mut buffer = [0_u8; 4];
+
+        assert_eq!(output.try_read_output("pane-1", &mut buffer), Ok(0));
+
+        output.push_output("pane-1", b"hello");
+
+        assert_eq!(output.try_read_output("pane-1", &mut buffer), Ok(4));
+        assert_eq!(&buffer, b"hell");
+        assert_eq!(output.try_read_output("pane-1", &mut buffer), Ok(1));
+        assert_eq!(&buffer[..1], b"o");
+        assert_eq!(output.try_read_output("pane-1", &mut buffer), Ok(0));
     }
 }
