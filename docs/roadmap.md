@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M10 is the current target: turn local attach from request/response smoke tests into a long-lived interactive PTY session.
+M11 is the current target: polish the temporary local terminal frontend enough that live attach is easier to use while the project continues toward a VT-correct libghostty-backed surface.
 
 Done:
 
@@ -71,7 +71,7 @@ Done:
 
 Next:
 
-- Continue from stdin byte streaming, opt-in redraw, committed resize display, explicit local echo choice, daemon-published resize policy, and SIGWINCH resize handling toward terminal frontend polish.
+- Improve the local CLI frontend without pretending the interim text surface is VT-correct.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -201,4 +201,17 @@ Exit evidence:
 - A read-only client can observe updates without forwarding input.
 - Tests cover repeated input/output, current-version no-update behavior, and read-only permission enforcement.
 
-Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work. The local library now has a live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, read-write clients can receive idle process output without sending input first, current-version cycles send no update frame, read-only clients can observe output without forwarding input, and client EOF during read-write polling is a clean detach. `nmuxd --live` serves one live client until detach, `nmuxd --live-cycles` remains available for bounded smoke tests, integration tests cover command-backed PTY smoke, `nmux --live --stdin` streams stdin lines over the attached connection and exits cleanly on stdin EOF when unbounded, `nmux --live --stdin-bytes` sends stdin chunks as `InputKind.RawBytes` while keeping output polling active when stdin input is absent or partial and temporarily puts interactive TTY stdin into noncanonical mode, local echo defaults off and can preserve the TTY setting with `--local-echo tty`, interactive byte-streamed clients listen for `SIGWINCH` and send resize intents from the current TTY size when explicit `--cols` and `--rows` are not set, Ctrl-] detaches a byte-streamed live client, `nmux --live --no-input` can poll until the daemon closes the live connection, `nmux --live --redraw` repaints the current client-side pane surface on each update, live mode renders through the same client-side pane surface state used by reconnects, `nmux --live --cols --rows` forwards `ResizeIntent` through the process-host resize boundary, successful live resizes are committed into the workspace tree and republished as `WorkspaceTreeSnapshot`, `nmuxd --resize-policy` can publish `fixed`, `leader`, `active-client`, or `manual`, `manual` blocks frontend viewport resize intents, the CLI workspace summary displays the daemon-published resize policy, and both binaries have `--help` output for the current prototype flags. The next step is terminal frontend polish.
+Status: Done. ADR 0011 documents why this came before live tmux or herdr adapter work. The local library now has a live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, read-write clients can receive idle process output without sending input first, current-version cycles send no update frame, read-only clients can observe output without forwarding input, and client EOF during read-write polling is a clean detach. `nmuxd --live` serves one live client until detach, `nmuxd --live-cycles` remains available for bounded smoke tests, integration tests cover command-backed PTY smoke, `nmux --live --stdin` streams stdin lines over the attached connection and exits cleanly on stdin EOF when unbounded, `nmux --live --stdin-bytes` sends stdin chunks as `InputKind.RawBytes` while keeping output polling active when stdin input is absent or partial and temporarily puts interactive TTY stdin into noncanonical mode, local echo defaults off and can preserve the TTY setting with `--local-echo tty`, interactive byte-streamed clients listen for `SIGWINCH` and send resize intents from the current TTY size when explicit `--cols` and `--rows` are not set, Ctrl-] detaches a byte-streamed live client, `nmux --live --no-input` can poll until the daemon closes the live connection, `nmux --live --redraw` repaints the current client-side pane surface on each update, live mode renders through the same client-side pane surface state used by reconnects, `nmux --live --cols --rows` forwards `ResizeIntent` through the process-host resize boundary, successful live resizes are committed into the workspace tree and republished as `WorkspaceTreeSnapshot`, `nmuxd --resize-policy` can publish `fixed`, `leader`, `active-client`, or `manual`, `manual` blocks frontend viewport resize intents, the CLI workspace summary displays the daemon-published resize policy, and both binaries have `--help` output for the current prototype flags.
+
+### M11: Terminal Frontend Polish
+
+Goal: make the temporary local CLI frontend more comfortable and explicit while preserving the longer-term direction toward a VT-correct libghostty-backed surface.
+
+Exit evidence:
+
+- Live redraw output is stable and intentionally flushed for interactive use.
+- The CLI clearly reports or avoids ambiguous states around detach, EOF, resize policy, and unsupported terminal-surface fidelity.
+- Runnable docs and help output cover the expected live attach workflows.
+- Tests cover any changed user-visible terminal output behavior.
+
+Status: In progress. M10 proved a long-lived local interactive attach path. M11 should improve the CLI frontend around that path without expanding the protocol or pretending the interim text surface is a complete terminal emulator.

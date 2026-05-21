@@ -376,7 +376,7 @@ M8: tmux adapter [done for process boundary and pure mapping test]
 
 M9: herdr adapter in separate AGPL repo [done as boundary decision]
 
-M10: live local interactive attach [in progress]
+M10: live local interactive attach [done]
   one attached local connection can stream repeated input/output cycles
   read-only live clients can observe output without forwarding input until daemon close
   live CLI can stream stdin lines until EOF without default key fallback
@@ -392,7 +392,12 @@ M10: live local interactive attach [in progress]
   nmux and nmuxd --help document live attach, stdin, redraw, resize, and policy flags
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state
-  next: terminal frontend polish
+
+M11: terminal frontend polish [in progress]
+  live redraw output should be stable and flushed for interactive use
+  CLI output should avoid ambiguous detach, EOF, resize-policy, and unsupported-fidelity states
+  runnable docs and help output should cover expected live attach workflows
+  tests should cover changed user-visible terminal output behavior
 ```
 
 The crisp product phrase is:
