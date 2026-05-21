@@ -816,6 +816,11 @@ Options:
 
 Notes:
   The current renderer uses an interim text surface, not a VT-correct terminal emulator.
+
+Examples:
+  nmux --socket /tmp/nmux.sock --no-input
+  nmux --socket /tmp/nmux.sock --live --iterations 2 --key 'ping\n'
+  nmux --socket /tmp/nmux.sock --live --stdin-bytes --redraw
 "
 }
 

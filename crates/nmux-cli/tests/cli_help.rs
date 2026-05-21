@@ -20,6 +20,9 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--redraw"));
     assert!(stdout.contains("interim text surface"));
     assert!(stdout.contains("not a VT-correct terminal emulator"));
+    assert!(stdout.contains("Examples:"));
+    assert!(stdout.contains("nmux --socket /tmp/nmux.sock --live --iterations 2"));
+    assert!(stdout.contains("nmux --socket /tmp/nmux.sock --live --stdin-bytes --redraw"));
 }
 
 #[test]
@@ -39,6 +42,9 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("--live-cycles COUNT"));
     assert!(stdout.contains("--resize-policy fixed|leader|active-client|manual"));
     assert!(stdout.contains("--command SHELL"));
+    assert!(stdout.contains("Examples:"));
+    assert!(stdout.contains("nmuxd --socket /tmp/nmux.sock --one-shot"));
+    assert!(stdout.contains("nmuxd --socket /tmp/nmux.sock --live"));
 }
 
 #[test]

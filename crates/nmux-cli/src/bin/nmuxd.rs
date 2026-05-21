@@ -139,6 +139,10 @@ Options:
   --resize-policy fixed|leader|active-client|manual
                                          Publish and enforce pane resize policy
   -h, --help                            Show this help
+
+Examples:
+  nmuxd --socket /tmp/nmux.sock --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
+  nmuxd --socket /tmp/nmux.sock --live --command \"printf 'ready\\n'; cat\"
 "
 }
 
