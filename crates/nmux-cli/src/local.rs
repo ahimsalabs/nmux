@@ -8,6 +8,10 @@ use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{Actor, AttachMode, Session};
 use nmux_proto::{protocol, wire};
 
+pub trait ProcessHostOutput: ProcessHost + ProcessOutput {}
+
+impl<T> ProcessHostOutput for T where T: ProcessHost + ProcessOutput {}
+
 pub fn default_socket_path() -> PathBuf {
     if let Some(runtime_dir) = env::var_os("XDG_RUNTIME_DIR") {
         return PathBuf::from(runtime_dir).join("nmux").join("nmuxd.sock");
@@ -134,7 +138,7 @@ fn serve_attached_client(
     stream: &mut UnixStream,
     request: AttachRequest,
     session: &mut Session,
-    mut host: Option<&mut dyn ProcessHost>,
+    mut host: Option<&mut dyn ProcessHostOutput>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workspace_frame = session.workspace_tree_frame("local-client", 1);
     wire::write_default_frame(stream, &workspace_frame)?;
@@ -155,6 +159,7 @@ fn serve_attached_client(
             let input = read_input_event_from_stream(stream)?;
             if let Some(host) = host.as_deref_mut() {
                 host.write_input(&input.pane_id, input.text.as_bytes())?;
+                poll_pane_output(session, host, &input.pane_id)?;
             }
         }
         let fetch = read_scrollback_fetch_from_stream(stream)?;
@@ -742,11 +747,15 @@ impl WorkspaceSummary {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use nmux_core::host::{HostEvent, PlanningHost, ProcessHost, RecordingOutput};
+    use nmux_core::host::{
+        HostError, HostEvent, HostSpec, PaneProcess, PlanningHost, ProcessHost, ProcessOutput,
+        ProcessStatus, RecordingOutput,
+    };
 
     use super::*;
 
@@ -977,6 +986,52 @@ mod tests {
                 .events()
                 .iter()
                 .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn serve_one_with_host_polls_after_forwarded_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = EchoHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start echo pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "local-actor".to_owned(),
+                mode: AttachMode::ReadWrite,
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write attach request");
+        let snapshot = attach_from_stream(&mut stream).expect("attach snapshot");
+        send_key_input(&mut stream, "pane-1", "z").expect("send key input");
+        send_scrollback_fetch(&mut stream, "pane-1", 3, 1).expect("send scrollback fetch");
+        let scrollback = read_scrollback_chunk_from_stream(&mut stream).expect("scrollback chunk");
+        server.join().expect("server thread");
+
+        assert!(snapshot.surface.is_some());
+        assert_eq!(
+            scrollback,
+            ScrollbackChunkSummary {
+                pane_id: "pane-1".to_owned(),
+                scrollback_version: 1,
+                start_line: 3,
+                total_lines: 4,
+                lines: vec![ScrollbackLine {
+                    line: 3,
+                    text: "z".to_owned(),
+                }],
+            }
         );
 
         let _ = fs::remove_file(socket_path);
@@ -1219,5 +1274,73 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[derive(Debug, Default)]
+    struct EchoHost {
+        running: bool,
+        output: VecDeque<u8>,
+    }
+
+    impl ProcessHost for EchoHost {
+        fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
+            self.running = true;
+            Ok(PaneProcess {
+                pane_id: pane_id.to_owned(),
+                host_id: spec.id.clone(),
+                status: ProcessStatus::Running,
+            })
+        }
+
+        fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            self.output.extend(bytes);
+            self.output.push_back(b'\n');
+            Ok(())
+        }
+
+        fn resize_pane(&mut self, pane_id: &str, _cols: u32, _rows: u32) -> Result<(), HostError> {
+            if self.running {
+                Ok(())
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
+        }
+
+        fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            self.running = false;
+            Ok(PaneProcess {
+                pane_id: pane_id.to_owned(),
+                host_id: "echo".to_owned(),
+                status: ProcessStatus::Exited,
+            })
+        }
+    }
+
+    impl ProcessOutput for EchoHost {
+        fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+
+            let count = bytes.len().min(self.output.len());
+            for byte in &mut bytes[..count] {
+                *byte = self.output.pop_front().expect("queued echo output");
+            }
+            Ok(count)
+        }
     }
 }
