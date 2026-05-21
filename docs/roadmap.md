@@ -20,12 +20,13 @@ Done:
 - Local `nmuxd` and `nmux` skeletons that exchange the initial workspace snapshot over a Unix socket.
 - Static server-owned `PaneSurfaceSnapshot` and dumb client text rendering.
 - Basic key `InputEvent` sent from `nmux` back to `nmuxd`.
+- Local-only attach prelude with known pane surface versions.
+- Current-version reconnect test and stale-version full snapshot test.
 
 Next:
 
-- Add attach/request metadata for known object versions.
-- Add stale/current version tests for reconnect behavior.
 - Introduce a `PaneSurfacePatch` path for state changes after the initial snapshot.
+- Promote attach/request metadata into the public schema once the local reconnect behavior settles.
 
 ## Milestones
 
@@ -72,6 +73,8 @@ Exit evidence:
 
 - A test demonstrates reconnect from a current version.
 - A test demonstrates stale reconnect falling back to a full snapshot.
+
+Status: Partial. The local Unix-socket prelude proves current-version and stale-version behavior for pane surfaces. Patch replay is next.
 
 ### M4: Scrollback Object
 

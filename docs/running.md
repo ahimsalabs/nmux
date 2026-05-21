@@ -1,6 +1,6 @@
 # Running nmux
 
-The current prototype is an M2 local attach skeleton. `nmuxd` owns one static workspace tree and one static pane surface, then sends a `WorkspaceTreeSnapshot` followed by a `PaneSurfaceSnapshot` to each local client that connects over a Unix socket. After rendering those snapshots, `nmux` sends one basic `InputEvent` back to the daemon.
+The current prototype is an M3 local attach skeleton. `nmuxd` owns one static workspace tree and one static pane surface. The client sends a local-only attach prelude with known pane surface versions, then the daemon sends a `WorkspaceTreeSnapshot` and, when needed, a `PaneSurfaceSnapshot`. After rendering those snapshots, `nmux` sends one basic `InputEvent` back to the daemon.
 
 Run all checks:
 
@@ -31,3 +31,15 @@ server-owned terminal state
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 This is not a terminal emulator yet. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input events.
+
+## Reconnect Behavior
+
+The reconnect request prelude is intentionally local-only and not part of [schema/nmux.fbs](../schema/nmux.fbs) yet.
+
+Current behavior:
+
+- no known surface version: daemon sends a full `PaneSurfaceSnapshot`
+- known `pane-1` surface version is current: daemon sends no surface frame
+- known `pane-1` surface version is stale: daemon sends a full `PaneSurfaceSnapshot`
+
+This proves the reconnect decision before promoting attach metadata into the public FlatBuffers schema.
