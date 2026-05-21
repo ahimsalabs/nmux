@@ -41,11 +41,12 @@ Done:
 - Local attach polls available process output before choosing snapshot, patch, or no surface response.
 - `nmuxd` starts a local PTY host and can run a command-backed PTY smoke through the local client.
 - Read-write local input is forwarded to the process host, while read-only attaches do not forward input.
+- Local attach polls process output after forwarded input so echoed command output can update backend-owned scrollback.
 
 Next:
 
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Poll PTY output again after forwarded input so echoed command output can update pane state.
+- Add a client-visible interaction smoke that proves input-driven output across attaches.
 
 ## Milestones
 
@@ -127,7 +128,7 @@ Exit evidence:
 - Pane process lifecycle is mediated by a host interface.
 - Local and sandbox host choices are represented without changing the protocol core.
 
-Status: Done for the internal boundary and first local PTY host. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, lifecycle tests, a concrete local command host, a local PTY host, an interim process-output text surface, and a nonblocking output polling seam without changing the FlatBuffers protocol. `nmuxd` starts the local PTY host, local attach can poll already-pumped output before responding, and read-write input is forwarded to the hosted process. Polling process output after forwarded input remains a follow-up.
+Status: Done for the internal boundary and first local PTY host. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, lifecycle tests, a concrete local command host, a local PTY host, an interim process-output text surface, and a nonblocking output polling seam without changing the FlatBuffers protocol. `nmuxd` starts the local PTY host, local attach can poll already-pumped output before responding, read-write input is forwarded to the hosted process, and output is polled again after forwarded input.
 
 ### M7: Ghostty Frontend
 

@@ -63,6 +63,7 @@ Current behavior:
 - read-write actors may send pane input
 - read-only actors may receive workspace, presence, surface, and scrollback state
 - read-write local input is forwarded to the process host
+- output is polled again after forwarded input so echoed text can update backend-owned scrollback
 - read-only actors do not send pane input in the local client flow
 
 The local skeleton currently accepts clients sequentially. Simultaneous multi-client attach is a later expansion.
