@@ -259,3 +259,5 @@ Exit evidence:
 - No GPL or AGPL terminal parser code is copied into the core.
 
 Status: Planned as the next correctness milestone after enough M12 live workflow is usable to validate snapshots, patches, scrollback ranges, reconnect behavior, and live attach against a real terminal-state engine.
+
+Initial boundary slice: `nmux-core` now exposes a terminal engine boundary for daemon-owned pane output hydration. The existing interim text behavior lives behind that boundary, preserving current `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` semantics while creating the replacement point for backend `libghostty-vt` extraction.

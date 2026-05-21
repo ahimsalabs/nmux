@@ -435,6 +435,7 @@ M12: live workspace usability [next]
   keep runnable docs, help output, and tests aligned with each user-visible behavior change
 
 M13: backend libghostty-vt extraction [next correctness milestone]
+  terminal engine boundary wraps current interim text surface behavior
   replace interim backend-owned text surface with backend libghostty-vt terminal-state extraction
   feed PTY bytes into the daemon-owned libghostty-vt state, not into clients
   map extracted terminal state into nmux PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk objects

@@ -2,6 +2,7 @@ use flatbuffers::FlatBufferBuilder;
 use nmux_proto::{PROTOCOL_VERSION, protocol};
 
 use crate::host::{CommandSpec, HostSpec};
+use crate::terminal::{InterimTextTerminalEngine, TerminalEngine, TerminalInput};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
@@ -121,17 +122,33 @@ impl Session {
     }
 
     pub fn apply_pane_output(&mut self, pane_id: &str, output: &[u8]) -> bool {
+        let mut engine = InterimTextTerminalEngine;
+        self.apply_pane_output_with_engine(pane_id, output, &mut engine)
+    }
+
+    pub fn apply_pane_output_with_engine(
+        &mut self,
+        pane_id: &str,
+        output: &[u8],
+        engine: &mut dyn TerminalEngine,
+    ) -> bool {
         let Some(pane) = self.pane_mut(pane_id) else {
             return false;
         };
 
-        let lines = text_lines_from_pty_output(output);
-        pane.scrollback_lines.extend(lines);
-        let visible_start = pane
-            .scrollback_lines
-            .len()
-            .saturating_sub(pane.rows as usize);
-        pane.surface_lines = pane.scrollback_lines[visible_start..].to_vec();
+        let input = TerminalInput {
+            pane_id: &pane.id,
+            cols: pane.cols,
+            rows: pane.rows,
+            surface_lines: &pane.surface_lines,
+            scrollback_lines: &pane.scrollback_lines,
+        };
+        let Some(update) = engine.apply_output(input, output) else {
+            return false;
+        };
+
+        pane.scrollback_lines = update.scrollback_lines;
+        pane.surface_lines = update.surface_lines;
         pane.surface_version = pane.surface_version.saturating_add(1);
         true
     }
@@ -791,28 +808,10 @@ fn build_cell_run<'a>(
     )
 }
 
-fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
-    let text = String::from_utf8_lossy(output);
-    let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let mut lines = text
-        .lines()
-        .map(|line| {
-            line.chars()
-                .filter(|ch| *ch == '\t' || !ch.is_control())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>();
-
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-
-    lines
-}
-
 #[cfg(test)]
 mod tests {
     use crate::host::HostKind;
+    use crate::terminal::{TerminalEngine, TerminalInput, TerminalUpdate};
 
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
@@ -1211,6 +1210,45 @@ mod tests {
 
         assert!(!session.apply_pane_output("missing", b"hello\n"));
         assert_eq!(session.surface_version("pane-1"), Some(2));
+    }
+
+    #[test]
+    fn pane_output_can_use_injected_terminal_engine() {
+        struct FixedEngine;
+
+        impl TerminalEngine for FixedEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(input.pane_id, "pane-1");
+                assert_eq!(input.cols, 80);
+                assert_eq!(input.rows, 24);
+                assert_eq!(input.surface_lines.len(), 2);
+                assert_eq!(input.scrollback_lines.len(), 3);
+                assert_eq!(output, b"ignored by test engine");
+                Some(TerminalUpdate {
+                    surface_lines: vec!["engine surface".to_owned()],
+                    scrollback_lines: vec!["engine scrollback".to_owned()],
+                })
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = FixedEngine;
+
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"ignored by test engine",
+            &mut engine
+        ));
+
+        let surface = session.initial_pane_surface();
+        let scrollback = session.initial_scrollback();
+        assert_eq!(surface.version, 3);
+        assert_eq!(surface.lines, vec!["engine surface".to_owned()]);
+        assert_eq!(scrollback.lines, vec!["engine scrollback".to_owned()]);
     }
 
     #[test]
