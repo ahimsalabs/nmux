@@ -104,6 +104,17 @@ rm -f /tmp/nmux.sock
 nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 ```
 
+Use `--live-clients COUNT` to keep the same daemon-owned workspace and PTY alive for a bounded number of sequential live clients:
+
+```sh
+rm -f /tmp/nmux.sock
+nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-clients 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 1 --key $'first\n'
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --no-input --iterations 1 --scrollback-start 1 --scrollback-count 8
+```
+
+The second live client attaches to the same backend-owned pane state and can observe output produced by the first live client.
+
 Attach a bounded live client:
 
 ```sh

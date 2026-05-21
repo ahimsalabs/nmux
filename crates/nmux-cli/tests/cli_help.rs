@@ -40,11 +40,13 @@ fn nmuxd_help_lists_live_server_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--live-cycles COUNT"));
+    assert!(stdout.contains("--live-clients COUNT"));
     assert!(stdout.contains("--resize-policy fixed|leader|active-client|manual"));
     assert!(stdout.contains("--command SHELL"));
     assert!(stdout.contains("Examples:"));
     assert!(stdout.contains("nmuxd --socket /tmp/nmux.sock --one-shot"));
     assert!(stdout.contains("nmuxd --socket /tmp/nmux.sock --live"));
+    assert!(stdout.contains("nmuxd --socket /tmp/nmux.sock --live-clients 2"));
 }
 
 #[test]

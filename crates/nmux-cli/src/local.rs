@@ -80,6 +80,22 @@ where
     serve_live_attached_client(&mut stream, request, session, host, cycles)
 }
 
+pub fn serve_live_n_with_host<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+    clients: usize,
+    cycles_per_client: usize,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    for _ in 0..clients {
+        serve_live_one_with_host(listener, session, host, cycles_per_client)?;
+    }
+    Ok(())
+}
+
 pub fn serve_n(
     listener: &UnixListener,
     session: &mut Session,

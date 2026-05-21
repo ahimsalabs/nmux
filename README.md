@@ -51,6 +51,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 ```
 
 Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled.
+Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients.
 
 Line-streamed live input:
 

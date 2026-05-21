@@ -78,10 +78,12 @@ Done:
 - Live-only frontend flags now fail fast outside `--live` instead of being silently ignored, and `--follow --live` is rejected as an ambiguous client mode.
 - Read-write live clients no longer have to send input before receiving output; idle read-write cycles poll process output and stream updates when the backend-owned surface changes.
 - The live daemon treats a client EOF/disconnect during read-write polling as a clean detach, so piped stdin clients can finish without requiring a matching daemon cycle count.
+- `nmuxd --live-clients COUNT` keeps the same local workspace and PTY alive across bounded sequential live clients.
 
 Next:
 
 - Choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence.
+- Preserve sequential live reattach behavior while moving toward more durable workspace lifetimes.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -238,3 +240,5 @@ Exit evidence:
 - Interim renderer limitations remain explicit until a libghostty-backed state/render integration replaces the temporary text surface.
 
 Status: Next. Start with the smallest local live-workflow gap that makes the current prototype more usable without expanding licensing risk or pretending the interim text surface is VT-correct.
+
+Initial slice: `nmuxd --live-clients COUNT` keeps one daemon-owned local workspace and PTY alive across a bounded number of sequential live clients. This is intentionally not simultaneous multi-client attach; it is a small persistence step for live reattach workflows.

@@ -407,6 +407,7 @@ M11: terminal frontend polish [done]
   tests cover changed user-visible terminal output behavior
 
 M12: live workspace usability [next]
+  nmuxd --live-clients COUNT keeps one workspace and PTY alive across bounded sequential live clients
   choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available
