@@ -83,7 +83,7 @@ fn serve_next_with_output(
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
     if let Some(output) = output.as_deref_mut() {
-        apply_pumped_output(session, output, "pane-1")?;
+        poll_pane_output(session, output, "pane-1")?;
     }
     let workspace_frame = session.workspace_tree_frame("local-client", 1);
     wire::write_default_frame(&mut stream, &workspace_frame)?;
@@ -111,7 +111,7 @@ fn serve_next_with_output(
     Ok(())
 }
 
-fn apply_pumped_output(
+pub fn poll_pane_output(
     session: &mut Session,
     output: &mut dyn ProcessOutput,
     pane_id: &str,
