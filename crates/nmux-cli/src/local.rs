@@ -44,7 +44,10 @@ pub fn bind_listener(path: &Path) -> io::Result<UnixListener> {
         Ok(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::AddrInUse,
-                format!("socket path already exists: {}", path.display()),
+                format!(
+                    "socket path already exists: {}; remove stale sockets deliberately or pass --socket PATH",
+                    path.display()
+                ),
             ));
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
@@ -1828,6 +1831,10 @@ mod tests {
         assert!(
             err.to_string().contains("socket path already exists"),
             "missing existing path context: {err}"
+        );
+        assert!(
+            err.to_string().contains("pass --socket PATH"),
+            "missing recovery hint: {err}"
         );
         let _ = fs::remove_file(socket_path);
     }

@@ -197,6 +197,10 @@ fn nmuxd_reports_existing_socket_path() {
         stderr.contains(socket_path.to_str().expect("socket path")),
         "missing socket path:\n{stderr}"
     );
+    assert!(
+        stderr.contains("pass --socket PATH"),
+        "missing recovery hint:\n{stderr}"
+    );
 }
 
 #[test]
