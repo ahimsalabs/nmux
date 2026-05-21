@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
@@ -395,10 +395,23 @@ impl ProcessHost for LocalPtyHost {
             .map_err(|error| Self::io_error(pane_id, "stop", error))?
             .is_none()
         {
-            process
-                .child
-                .kill()
-                .map_err(|error| Self::io_error(pane_id, "stop", error))?;
+            match process.child.kill() {
+                Ok(()) => {}
+                Err(error)
+                    if error.kind() == io::ErrorKind::InvalidInput
+                        || error.raw_os_error() == Some(22) =>
+                {
+                    if process
+                        .child
+                        .try_wait()
+                        .map_err(|error| Self::io_error(pane_id, "stop", error))?
+                        .is_none()
+                    {
+                        return Err(Self::io_error(pane_id, "stop", error));
+                    }
+                }
+                Err(error) => return Err(Self::io_error(pane_id, "stop", error)),
+            }
         }
         process
             .child

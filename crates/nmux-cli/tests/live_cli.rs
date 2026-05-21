@@ -208,7 +208,7 @@ fn live_stdin_without_iterations_stops_on_eof_without_default_key() {
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--live-cycles",
-            "2",
+            "3",
             "--command",
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])

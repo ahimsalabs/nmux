@@ -186,11 +186,12 @@ fn serve_live_attached_client(
         if Session::input_allowed(&actor) {
             let input = loop {
                 match read_optional_live_client_frame_from_stream(stream)? {
-                    Some(LiveClientFrame::Resize(resize)) => {
+                    LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                         host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
                     }
-                    Some(LiveClientFrame::Input(input)) => break Some(input),
-                    None => break None,
+                    LiveClientRead::Frame(LiveClientFrame::Input(input)) => break Some(input),
+                    LiveClientRead::NoFrame => break None,
+                    LiveClientRead::Closed => return Ok(()),
                 }
             };
             if let Some(input) = input {
@@ -217,19 +218,19 @@ fn serve_live_attached_client(
 
 fn read_optional_live_client_frame_from_stream(
     stream: &mut UnixStream,
-) -> Result<Option<LiveClientFrame>, Box<dyn std::error::Error>> {
+) -> Result<LiveClientRead, Box<dyn std::error::Error>> {
     let previous_timeout = stream.read_timeout()?;
     stream.set_read_timeout(Some(Duration::from_millis(20)))?;
-    let result = match wire::read_default_frame(stream) {
+    let read_result = match wire::read_default_frame(stream) {
         Ok(frame) => {
             let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
             match envelope.body_type() {
-                protocol::EnvelopeBody::ResizeIntent => Ok(Some(LiveClientFrame::Resize(
-                    resize_intent_from_frame(&frame)?,
-                ))),
-                protocol::EnvelopeBody::InputEvent => Ok(Some(LiveClientFrame::Input(
-                    input_summary_from_frame(&frame)?,
-                ))),
+                protocol::EnvelopeBody::ResizeIntent => Ok(LiveClientRead::Frame(
+                    LiveClientFrame::Resize(resize_intent_from_frame(&frame)?),
+                )),
+                protocol::EnvelopeBody::InputEvent => Ok(LiveClientRead::Frame(
+                    LiveClientFrame::Input(input_summary_from_frame(&frame)?),
+                )),
                 other => Err(format!("unexpected live client frame: {other:?}").into()),
             }
         }
@@ -239,12 +240,36 @@ fn read_optional_live_client_frame_from_stream(
                 io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
             ) =>
         {
-            Ok(None)
+            Ok(LiveClientRead::NoFrame)
+        }
+        Err(wire::WireError::Io(err))
+            if matches!(
+                err.kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+            ) =>
+        {
+            Ok(LiveClientRead::Closed)
         }
         Err(err) => Err(err.into()),
     };
-    stream.set_read_timeout(previous_timeout)?;
-    result
+    match (read_result, stream.set_read_timeout(previous_timeout)) {
+        (Err(err), _) => Err(err),
+        (Ok(read), Ok(())) => Ok(read),
+        (Ok(read), Err(err))
+            if err.kind() == io::ErrorKind::InvalidInput || err.raw_os_error() == Some(22) =>
+        {
+            Ok(read)
+        }
+        (Ok(_), Err(err)) => Err(err.into()),
+    }
+}
+
+enum LiveClientRead {
+    Frame(LiveClientFrame),
+    NoFrame,
+    Closed,
 }
 
 enum LiveClientFrame {
