@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -67,18 +68,36 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 struct SocketCleanup {
     path: PathBuf,
+    identity: Option<SocketIdentity>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SocketIdentity {
+    dev: u64,
+    ino: u64,
 }
 
 impl SocketCleanup {
     fn new(path: PathBuf) -> Self {
-        Self { path }
+        let identity = socket_identity(&path).ok();
+        Self { path, identity }
     }
 }
 
 impl Drop for SocketCleanup {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        if self.identity.is_some() && socket_identity(&self.path).ok() == self.identity {
+            let _ = fs::remove_file(&self.path);
+        }
     }
+}
+
+fn socket_identity(path: &PathBuf) -> std::io::Result<SocketIdentity> {
+    let metadata = fs::symlink_metadata(path)?;
+    Ok(SocketIdentity {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+    })
 }
 
 struct Args {
@@ -231,8 +250,24 @@ fn parse_resize_policy(value: &str) -> Result<protocol::ResizePolicy, &'static s
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_resize_policy, usage, validate_mode_args};
+    use super::{SocketCleanup, parse_resize_policy, usage, validate_mode_args};
     use nmux_proto::protocol;
+    use std::fs;
+    use std::os::unix::net::UnixListener;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_SOCKET_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn test_socket_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_nanos();
+        let id = NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("nmd-{}-{nanos:x}-{id}.sock", std::process::id()))
+    }
 
     #[test]
     fn resize_policy_arg_accepts_documented_choices() {
@@ -294,6 +329,39 @@ mod tests {
         );
         assert!(validate_mode_args(false, false, false, Some(2), Some(3)).is_ok());
         assert!(validate_mode_args(false, false, true, None, None).is_ok());
+    }
+
+    #[test]
+    fn socket_cleanup_removes_original_socket() {
+        let socket_path = test_socket_path();
+        let listener = UnixListener::bind(&socket_path).expect("bind socket");
+        let cleanup = SocketCleanup::new(socket_path.clone());
+
+        drop(cleanup);
+        drop(listener);
+
+        assert!(
+            !socket_path.exists(),
+            "socket cleanup should remove original socket path"
+        );
+    }
+
+    #[test]
+    fn socket_cleanup_keeps_replaced_path() {
+        let socket_path = test_socket_path();
+        let listener = UnixListener::bind(&socket_path).expect("bind socket");
+        let cleanup = SocketCleanup::new(socket_path.clone());
+
+        fs::remove_file(&socket_path).expect("remove original socket");
+        fs::write(&socket_path, "replacement").expect("write replacement");
+        drop(cleanup);
+        drop(listener);
+
+        assert_eq!(
+            fs::read_to_string(&socket_path).expect("read replacement"),
+            "replacement"
+        );
+        let _ = fs::remove_file(socket_path);
     }
 }
 
