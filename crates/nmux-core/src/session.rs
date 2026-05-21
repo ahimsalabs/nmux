@@ -197,6 +197,7 @@ impl Session {
         pane.scrollback_lines = update.scrollback_lines;
         pane.surface_lines = update.surface_lines;
         pane.cursor = Cursor::from(update.cursor);
+        pane.surface_version = pane.surface_version.saturating_add(1);
         self.version = self.version.saturating_add(1);
         true
     }
@@ -946,6 +947,7 @@ mod tests {
         let tabs = snapshot.tabs().expect("tabs");
         let tab = tabs.get(0);
         let pane = tab.root().expect("pane");
+        assert_eq!(pane.surface_version(), 3);
         assert_eq!(pane.cols(), 100);
         assert_eq!(pane.rows(), 30);
         assert_eq!(pane.resize_policy(), protocol::ResizePolicy::Fixed);
@@ -1370,6 +1372,7 @@ mod tests {
         let surface = session.initial_pane_surface();
         let scrollback = session.initial_scrollback();
         assert_eq!(session.version, 2);
+        assert_eq!(surface.version, 3);
         assert_eq!(surface.cols, 100);
         assert_eq!(surface.rows, 10);
         assert_eq!(

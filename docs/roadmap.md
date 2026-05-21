@@ -85,6 +85,7 @@ Done:
 - ADR 0012 documents the backend terminal engine boundary.
 - `nmux-core` routes pane output and cursor ownership through a terminal engine trait, with the interim text engine as the current implementation.
 - Local daemon serving paths keep terminal engine instances alive per pane across output polls, resize handling, and sequential live clients.
+- Resize-driven surface and cursor changes advance the pane surface version, so clients can synchronize them through the normal snapshot/patch path.
 - `nmuxd --terminal-engine interim` exposes the current engine choice explicitly; backend `libghostty-vt` is not imported yet.
 
 Next:

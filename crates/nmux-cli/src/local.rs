@@ -2670,7 +2670,23 @@ mod tests {
         );
         let update =
             read_optional_surface_update_from_stream(&mut stream).expect("optional surface update");
-        assert_eq!(update, None);
+        let update = update.expect("resize surface update");
+        assert_eq!(update.kind, SurfaceUpdateKind::Patch);
+        assert_eq!(update.version, 3);
+        assert_eq!(update.base_version, Some(2));
+        assert_eq!(
+            update.cursor,
+            Some(CursorSummary {
+                row: 2,
+                col: 0,
+                visible: true,
+                shape: protocol::CursorShape::Block,
+            })
+        );
+        assert_eq!(
+            update.text,
+            "booting nmux workspace\nnmux pane-1\nserver-owned terminal state"
+        );
 
         let host = server.join().expect("server thread");
         assert!(host.events().contains(&HostEvent::Resized {
