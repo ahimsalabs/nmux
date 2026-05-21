@@ -15,6 +15,12 @@ nmux is a portable Ghostty-style terminal workspace. The current direction is do
 
 Use `docs/roadmap.md` as the current implementation tracker and next-step source. Treat `WORK.md` as background garden notes. Promote stable decisions into ADRs when they affect protocol shape, process boundaries, terminal-state ownership, adapter boundaries, or licensing posture.
 
+Current sequencing:
+
+- M12 is live workspace usability for the local daemon/client workflow.
+- M13 is backend `libghostty-vt` extraction, the next terminal-state correctness milestone after the local state-sync spine is usable enough to validate.
+- Frontend Ghostty renderer hydration is a separate upstream/API question; do not reintroduce client-side raw PTY replay to get there.
+
 The current implementation is a Rust workspace:
 
 - `crates/nmux-proto` owns FlatBuffers wire helpers and generated schema bindings.
