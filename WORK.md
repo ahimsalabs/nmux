@@ -382,6 +382,7 @@ M10: live local interactive attach [in progress]
   live CLI can stream stdin lines until EOF without default key fallback
   live CLI can send stdin byte chunks as InputKind.RawBytes without blocking output polling on full lines
   interactive --stdin-bytes temporarily uses noncanonical no-echo stdin
+  Ctrl-] detaches byte-streamed live clients
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state
   next: screen redraw policy, local echo choices, and signal handling

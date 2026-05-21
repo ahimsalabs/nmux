@@ -57,4 +57,6 @@ nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live
 printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin-bytes --interval-ms 500
 ```
 
+For interactive `--stdin-bytes`, Ctrl-] detaches the client.
+
 This is still a prototype. It is not yet raw terminal mode, and the temporary text surface is not a VT-correct terminal emulator.

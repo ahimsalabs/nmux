@@ -8,6 +8,8 @@ use std::time::Duration;
 use nmux_cli::local;
 use nmux_core::session::AttachMode;
 
+const STDIN_BYTES_DETACH: u8 = 0x1d;
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("nmux: {err}");
@@ -67,6 +69,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     let mut stdin_bytes_closed = false;
+    let mut detach_requested = false;
 
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
@@ -103,7 +106,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
                 match receiver.try_recv() {
                     Ok(StdinByteRead::Input(input)) => {
-                        local::send_raw_input(&mut stream, "pane-1", &input)?;
+                        let (input, detach) = split_stdin_bytes_for_detach(&input);
+                        if let Some(input) = input {
+                            local::send_raw_input(&mut stream, "pane-1", &input)?;
+                        }
+                        detach_requested = detach;
                         None
                     }
                     Ok(StdinByteRead::Closed) => {
@@ -138,6 +145,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             }
             local::LiveSurfaceRead::NoFrame => {}
             local::LiveSurfaceRead::Closed => break,
+        }
+        if detach_requested {
+            break;
         }
         if stdin_bytes_closed && args.iterations.is_none() {
             break;
@@ -196,6 +206,19 @@ enum StdinByteRead {
     Input(Vec<u8>),
     Closed,
     Error(String),
+}
+
+fn split_stdin_bytes_for_detach(input: &[u8]) -> (Option<Vec<u8>>, bool) {
+    let Some(index) = input.iter().position(|byte| *byte == STDIN_BYTES_DETACH) else {
+        return (Some(input.to_vec()), false);
+    };
+
+    let before_detach = &input[..index];
+    if before_detach.is_empty() {
+        (None, true)
+    } else {
+        (Some(before_detach.to_vec()), true)
+    }
 }
 
 struct RawTerminalGuard {
@@ -412,7 +435,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::raw_terminal_mode_needed;
+    use super::{raw_terminal_mode_needed, split_stdin_bytes_for_detach};
 
     #[test]
     fn raw_terminal_mode_is_only_needed_for_stdin_bytes_on_tty() {
@@ -420,5 +443,18 @@ mod tests {
         assert!(!raw_terminal_mode_needed(true, false));
         assert!(!raw_terminal_mode_needed(false, true));
         assert!(!raw_terminal_mode_needed(false, false));
+    }
+
+    #[test]
+    fn stdin_bytes_detach_splits_before_ctrl_right_bracket() {
+        assert_eq!(
+            split_stdin_bytes_for_detach(b"ping\n"),
+            (Some(b"ping\n".to_vec()), false)
+        );
+        assert_eq!(
+            split_stdin_bytes_for_detach(b"ping\n\x1dignored"),
+            (Some(b"ping\n".to_vec()), true)
+        );
+        assert_eq!(split_stdin_bytes_for_detach(b"\x1d"), (None, true));
     }
 }
