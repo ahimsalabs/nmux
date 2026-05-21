@@ -921,10 +921,10 @@ impl ::flatbuffers::SimpleToVerifyInSlice for ErrorCode {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_ENVELOPE_BODY: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_ENVELOPE_BODY: u8 = 6;
+pub const ENUM_MAX_ENVELOPE_BODY: u8 = 8;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 7] = [
+pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 9] = [
   EnvelopeBody::NONE,
   EnvelopeBody::WorkspaceTreeSnapshot,
   EnvelopeBody::PaneSurfaceSnapshot,
@@ -932,6 +932,8 @@ pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 7] = [
   EnvelopeBody::InputEvent,
   EnvelopeBody::ResizeIntent,
   EnvelopeBody::Error,
+  EnvelopeBody::ScrollbackFetch,
+  EnvelopeBody::ScrollbackChunk,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -946,9 +948,11 @@ impl EnvelopeBody {
   pub const InputEvent: Self = Self(4);
   pub const ResizeIntent: Self = Self(5);
   pub const Error: Self = Self(6);
+  pub const ScrollbackFetch: Self = Self(7);
+  pub const ScrollbackChunk: Self = Self(8);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 6;
+  pub const ENUM_MAX: u8 = 8;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::NONE,
     Self::WorkspaceTreeSnapshot,
@@ -957,6 +961,8 @@ impl EnvelopeBody {
     Self::InputEvent,
     Self::ResizeIntent,
     Self::Error,
+    Self::ScrollbackFetch,
+    Self::ScrollbackChunk,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -968,6 +974,8 @@ impl EnvelopeBody {
       Self::InputEvent => Some("InputEvent"),
       Self::ResizeIntent => Some("ResizeIntent"),
       Self::Error => Some("Error"),
+      Self::ScrollbackFetch => Some("ScrollbackFetch"),
+      Self::ScrollbackChunk => Some("ScrollbackChunk"),
       _ => None,
     }
   }
@@ -3399,6 +3407,464 @@ impl ::core::fmt::Debug for ResizeIntent<'_> {
       ds.finish()
   }
 }
+pub enum ScrollbackFetchOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ScrollbackFetch<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ScrollbackFetch<'a> {
+  type Inner = ScrollbackFetch<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ScrollbackFetch<'a> {
+  pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_ACTOR_ID: ::flatbuffers::VOffsetT = 6;
+  pub const VT_START_LINE: ::flatbuffers::VOffsetT = 8;
+  pub const VT_LINE_COUNT: ::flatbuffers::VOffsetT = 10;
+  pub const VT_KNOWN_SCROLLBACK_VERSION: ::flatbuffers::VOffsetT = 12;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ScrollbackFetch { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ScrollbackFetchArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ScrollbackFetch<'bldr>> {
+    let mut builder = ScrollbackFetchBuilder::new(_fbb);
+    builder.add_known_scrollback_version(args.known_scrollback_version);
+    builder.add_start_line(args.start_line);
+    builder.add_line_count(args.line_count);
+    if let Some(x) = args.actor_id { builder.add_actor_id(x); }
+    if let Some(x) = args.pane_id { builder.add_pane_id(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn pane_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ScrollbackFetch::VT_PANE_ID, None)}
+  }
+  #[inline]
+  pub fn actor_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ScrollbackFetch::VT_ACTOR_ID, None)}
+  }
+  #[inline]
+  pub fn start_line(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ScrollbackFetch::VT_START_LINE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn line_count(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(ScrollbackFetch::VT_LINE_COUNT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn known_scrollback_version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ScrollbackFetch::VT_KNOWN_SCROLLBACK_VERSION, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ScrollbackFetch<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("actor_id", Self::VT_ACTOR_ID, false)?
+     .visit_field::<u64>("start_line", Self::VT_START_LINE, false)?
+     .visit_field::<u32>("line_count", Self::VT_LINE_COUNT, false)?
+     .visit_field::<u64>("known_scrollback_version", Self::VT_KNOWN_SCROLLBACK_VERSION, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ScrollbackFetchArgs<'a> {
+    pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub actor_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub start_line: u64,
+    pub line_count: u32,
+    pub known_scrollback_version: u64,
+}
+impl<'a> Default for ScrollbackFetchArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ScrollbackFetchArgs {
+      pane_id: None,
+      actor_id: None,
+      start_line: 0,
+      line_count: 0,
+      known_scrollback_version: 0,
+    }
+  }
+}
+
+pub struct ScrollbackFetchBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackFetchBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackFetch::VT_PANE_ID, pane_id);
+  }
+  #[inline]
+  pub fn add_actor_id(&mut self, actor_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackFetch::VT_ACTOR_ID, actor_id);
+  }
+  #[inline]
+  pub fn add_start_line(&mut self, start_line: u64) {
+    self.fbb_.push_slot::<u64>(ScrollbackFetch::VT_START_LINE, start_line, 0);
+  }
+  #[inline]
+  pub fn add_line_count(&mut self, line_count: u32) {
+    self.fbb_.push_slot::<u32>(ScrollbackFetch::VT_LINE_COUNT, line_count, 0);
+  }
+  #[inline]
+  pub fn add_known_scrollback_version(&mut self, known_scrollback_version: u64) {
+    self.fbb_.push_slot::<u64>(ScrollbackFetch::VT_KNOWN_SCROLLBACK_VERSION, known_scrollback_version, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackFetchBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ScrollbackFetchBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ScrollbackFetch<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ScrollbackFetch<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ScrollbackFetch");
+      ds.field("pane_id", &self.pane_id());
+      ds.field("actor_id", &self.actor_id());
+      ds.field("start_line", &self.start_line());
+      ds.field("line_count", &self.line_count());
+      ds.field("known_scrollback_version", &self.known_scrollback_version());
+      ds.finish()
+  }
+}
+pub enum ScrollbackChunkOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ScrollbackChunk<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ScrollbackChunk<'a> {
+  type Inner = ScrollbackChunk<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ScrollbackChunk<'a> {
+  pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_SCROLLBACK_VERSION: ::flatbuffers::VOffsetT = 6;
+  pub const VT_START_LINE: ::flatbuffers::VOffsetT = 8;
+  pub const VT_TOTAL_LINES: ::flatbuffers::VOffsetT = 10;
+  pub const VT_ROWS: ::flatbuffers::VOffsetT = 12;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ScrollbackChunk { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ScrollbackChunkArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ScrollbackChunk<'bldr>> {
+    let mut builder = ScrollbackChunkBuilder::new(_fbb);
+    builder.add_total_lines(args.total_lines);
+    builder.add_start_line(args.start_line);
+    builder.add_scrollback_version(args.scrollback_version);
+    if let Some(x) = args.rows { builder.add_rows(x); }
+    if let Some(x) = args.pane_id { builder.add_pane_id(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn pane_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ScrollbackChunk::VT_PANE_ID, None)}
+  }
+  #[inline]
+  pub fn scrollback_version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ScrollbackChunk::VT_SCROLLBACK_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn start_line(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ScrollbackChunk::VT_START_LINE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn total_lines(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ScrollbackChunk::VT_TOTAL_LINES, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn rows(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ScrollbackRow<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ScrollbackRow>>>>(ScrollbackChunk::VT_ROWS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ScrollbackChunk<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
+     .visit_field::<u64>("scrollback_version", Self::VT_SCROLLBACK_VERSION, false)?
+     .visit_field::<u64>("start_line", Self::VT_START_LINE, false)?
+     .visit_field::<u64>("total_lines", Self::VT_TOTAL_LINES, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ScrollbackRow>>>>("rows", Self::VT_ROWS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ScrollbackChunkArgs<'a> {
+    pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub scrollback_version: u64,
+    pub start_line: u64,
+    pub total_lines: u64,
+    pub rows: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ScrollbackRow<'a>>>>>,
+}
+impl<'a> Default for ScrollbackChunkArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ScrollbackChunkArgs {
+      pane_id: None,
+      scrollback_version: 0,
+      start_line: 0,
+      total_lines: 0,
+      rows: None,
+    }
+  }
+}
+
+pub struct ScrollbackChunkBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackChunkBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackChunk::VT_PANE_ID, pane_id);
+  }
+  #[inline]
+  pub fn add_scrollback_version(&mut self, scrollback_version: u64) {
+    self.fbb_.push_slot::<u64>(ScrollbackChunk::VT_SCROLLBACK_VERSION, scrollback_version, 0);
+  }
+  #[inline]
+  pub fn add_start_line(&mut self, start_line: u64) {
+    self.fbb_.push_slot::<u64>(ScrollbackChunk::VT_START_LINE, start_line, 0);
+  }
+  #[inline]
+  pub fn add_total_lines(&mut self, total_lines: u64) {
+    self.fbb_.push_slot::<u64>(ScrollbackChunk::VT_TOTAL_LINES, total_lines, 0);
+  }
+  #[inline]
+  pub fn add_rows(&mut self, rows: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<ScrollbackRow<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackChunk::VT_ROWS, rows);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackChunkBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ScrollbackChunkBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ScrollbackChunk<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ScrollbackChunk<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ScrollbackChunk");
+      ds.field("pane_id", &self.pane_id());
+      ds.field("scrollback_version", &self.scrollback_version());
+      ds.field("start_line", &self.start_line());
+      ds.field("total_lines", &self.total_lines());
+      ds.field("rows", &self.rows());
+      ds.finish()
+  }
+}
+pub enum ScrollbackRowOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ScrollbackRow<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ScrollbackRow<'a> {
+  type Inner = ScrollbackRow<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ScrollbackRow<'a> {
+  pub const VT_LINE: ::flatbuffers::VOffsetT = 4;
+  pub const VT_RUNS: ::flatbuffers::VOffsetT = 6;
+  pub const VT_DIRTY_HASH: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ScrollbackRow { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ScrollbackRowArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ScrollbackRow<'bldr>> {
+    let mut builder = ScrollbackRowBuilder::new(_fbb);
+    builder.add_dirty_hash(args.dirty_hash);
+    builder.add_line(args.line);
+    if let Some(x) = args.runs { builder.add_runs(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn line(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ScrollbackRow::VT_LINE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn runs(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun>>>>(ScrollbackRow::VT_RUNS, None)}
+  }
+  #[inline]
+  pub fn dirty_hash(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ScrollbackRow::VT_DIRTY_HASH, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ScrollbackRow<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("line", Self::VT_LINE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CellRun>>>>("runs", Self::VT_RUNS, false)?
+     .visit_field::<u64>("dirty_hash", Self::VT_DIRTY_HASH, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ScrollbackRowArgs<'a> {
+    pub line: u64,
+    pub runs: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun<'a>>>>>,
+    pub dirty_hash: u64,
+}
+impl<'a> Default for ScrollbackRowArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ScrollbackRowArgs {
+      line: 0,
+      runs: None,
+      dirty_hash: 0,
+    }
+  }
+}
+
+pub struct ScrollbackRowBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackRowBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_line(&mut self, line: u64) {
+    self.fbb_.push_slot::<u64>(ScrollbackRow::VT_LINE, line, 0);
+  }
+  #[inline]
+  pub fn add_runs(&mut self, runs: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<CellRun<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackRow::VT_RUNS, runs);
+  }
+  #[inline]
+  pub fn add_dirty_hash(&mut self, dirty_hash: u64) {
+    self.fbb_.push_slot::<u64>(ScrollbackRow::VT_DIRTY_HASH, dirty_hash, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackRowBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ScrollbackRowBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ScrollbackRow<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ScrollbackRow<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ScrollbackRow");
+      ds.field("line", &self.line());
+      ds.field("runs", &self.runs());
+      ds.field("dirty_hash", &self.dirty_hash());
+      ds.finish()
+  }
+}
 pub enum ErrorOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -3722,6 +4188,36 @@ impl<'a> Envelope<'a> {
     }
   }
 
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_scrollback_fetch(&self) -> Option<ScrollbackFetch<'a>> {
+    if self.body_type() == EnvelopeBody::ScrollbackFetch {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { ScrollbackFetch::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_scrollback_chunk(&self) -> Option<ScrollbackChunk<'a>> {
+    if self.body_type() == EnvelopeBody::ScrollbackChunk {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { ScrollbackChunk::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
 }
 
 impl ::flatbuffers::Verifiable for Envelope<'_> {
@@ -3744,6 +4240,8 @@ impl ::flatbuffers::Verifiable for Envelope<'_> {
           EnvelopeBody::InputEvent => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<InputEvent>>("EnvelopeBody::InputEvent", pos),
           EnvelopeBody::ResizeIntent => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ResizeIntent>>("EnvelopeBody::ResizeIntent", pos),
           EnvelopeBody::Error => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<Error>>("EnvelopeBody::Error", pos),
+          EnvelopeBody::ScrollbackFetch => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ScrollbackFetch>>("EnvelopeBody::ScrollbackFetch", pos),
+          EnvelopeBody::ScrollbackChunk => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ScrollbackChunk>>("EnvelopeBody::ScrollbackChunk", pos),
           _ => Ok(()),
         }
      })?
@@ -3877,6 +4375,20 @@ impl ::core::fmt::Debug for Envelope<'_> {
         },
         EnvelopeBody::Error => {
           if let Some(x) = self.body_as_error() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::ScrollbackFetch => {
+          if let Some(x) = self.body_as_scrollback_fetch() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::ScrollbackChunk => {
+          if let Some(x) = self.body_as_scrollback_chunk() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
