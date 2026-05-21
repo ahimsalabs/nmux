@@ -134,6 +134,25 @@ impl Session {
         true
     }
 
+    pub fn commit_pane_resize(&mut self, pane_id: &str, cols: u32, rows: u32) -> bool {
+        let Some(pane) = self.pane_mut(pane_id) else {
+            return false;
+        };
+        if pane.cols == cols && pane.rows == rows {
+            return false;
+        }
+
+        pane.cols = cols;
+        pane.rows = rows;
+        let visible_start = pane
+            .scrollback_lines
+            .len()
+            .saturating_sub(pane.rows as usize);
+        pane.surface_lines = pane.scrollback_lines[visible_start..].to_vec();
+        self.version = self.version.saturating_add(1);
+        true
+    }
+
     pub fn initial_actor(mode: AttachMode) -> Actor {
         Actor {
             id: "local-actor".to_owned(),
@@ -820,6 +839,28 @@ mod tests {
         assert_eq!(pane.surface_version(), 2);
         assert_eq!(pane.cols(), 80);
         assert_eq!(pane.rows(), 24);
+        assert_eq!(pane.resize_policy(), protocol::ResizePolicy::Fixed);
+    }
+
+    #[test]
+    fn committed_pane_resize_updates_workspace_snapshot() {
+        let mut session = Session::initial();
+
+        assert!(session.commit_pane_resize("pane-1", 100, 30));
+        assert_eq!(session.version, 2);
+
+        let frame = session.workspace_tree_frame("conn-1", 7);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope
+            .body_as_workspace_tree_snapshot()
+            .expect("snapshot");
+        assert_eq!(snapshot.version(), 2);
+
+        let tabs = snapshot.tabs().expect("tabs");
+        let tab = tabs.get(0);
+        let pane = tab.root().expect("pane");
+        assert_eq!(pane.cols(), 100);
+        assert_eq!(pane.rows(), 30);
         assert_eq!(pane.resize_policy(), protocol::ResizePolicy::Fixed);
     }
 

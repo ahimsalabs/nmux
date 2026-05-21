@@ -188,6 +188,11 @@ fn serve_live_attached_client(
                 match read_optional_live_client_frame_from_stream(stream)? {
                     LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                         host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
+                        if session.commit_pane_resize(&resize.pane_id, resize.cols, resize.rows) {
+                            let workspace_frame = session.workspace_tree_frame("local-client", seq);
+                            wire::write_default_frame(stream, &workspace_frame)?;
+                            seq += 1;
+                        }
                     }
                     LiveClientRead::Frame(LiveClientFrame::Input(input)) => break Some(input),
                     LiveClientRead::NoFrame => break None,
@@ -767,7 +772,19 @@ pub fn read_live_surface_update_from_stream(
     stream: &mut UnixStream,
 ) -> Result<LiveSurfaceRead, Box<dyn std::error::Error>> {
     match wire::read_default_frame(stream) {
-        Ok(frame) => Ok(LiveSurfaceRead::Update(surface_update_from_frame(&frame)?)),
+        Ok(frame) => {
+            let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+            match envelope.body_type() {
+                protocol::EnvelopeBody::WorkspaceTreeSnapshot => Ok(LiveSurfaceRead::Workspace(
+                    workspace_summary_from_frame(&frame)?,
+                )),
+                protocol::EnvelopeBody::PaneSurfaceSnapshot
+                | protocol::EnvelopeBody::PaneSurfacePatch => {
+                    Ok(LiveSurfaceRead::Update(surface_update_from_frame(&frame)?))
+                }
+                other => Err(format!("unexpected live server frame: {other:?}").into()),
+            }
+        }
         Err(wire::WireError::Io(err))
             if matches!(
                 err.kind(),
@@ -1131,6 +1148,7 @@ pub struct SurfaceUpdate {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveSurfaceRead {
+    Workspace(WorkspaceSummary),
     Update(SurfaceUpdate),
     NoFrame,
     Closed,
@@ -2337,6 +2355,19 @@ mod tests {
 
         send_resize_intent(&mut stream, "pane-1", 100, 30).expect("send resize intent");
         send_key_input(&mut stream, "pane-1", "after-resize").expect("send input");
+        let workspace =
+            read_live_surface_update_from_stream(&mut stream).expect("live workspace update");
+        assert_eq!(
+            workspace,
+            LiveSurfaceRead::Workspace(WorkspaceSummary {
+                session_id: "local".to_owned(),
+                tab_id: "tab-1".to_owned(),
+                pane_id: "pane-1".to_owned(),
+                cols: 100,
+                rows: 30,
+                resize_policy: protocol::ResizePolicy::Fixed,
+            })
+        );
         let update =
             read_optional_surface_update_from_stream(&mut stream).expect("optional surface update");
         assert_eq!(update, None);

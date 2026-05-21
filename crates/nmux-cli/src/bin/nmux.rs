@@ -139,12 +139,19 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        match local::read_live_surface_update_from_stream(&mut stream)? {
-            local::LiveSurfaceRead::Update(update) => {
-                print_live_surface(&client_state.render_surface_update(&update)?, args.redraw);
+        loop {
+            match local::read_live_surface_update_from_stream(&mut stream)? {
+                local::LiveSurfaceRead::Workspace(workspace) => {
+                    if !args.redraw {
+                        println!("{}", workspace.display_line());
+                    }
+                }
+                local::LiveSurfaceRead::Update(update) => {
+                    print_live_surface(&client_state.render_surface_update(&update)?, args.redraw);
+                }
+                local::LiveSurfaceRead::NoFrame => break,
+                local::LiveSurfaceRead::Closed => return save_live_state(args, &client_state),
             }
-            local::LiveSurfaceRead::NoFrame => {}
-            local::LiveSurfaceRead::Closed => break,
         }
         if detach_requested {
             break;
@@ -155,6 +162,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         cycles += 1;
     }
 
+    save_live_state(args, &client_state)
+}
+
+fn save_live_state(
+    args: &Args,
+    client_state: &local::ClientAttachState,
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = args.state_path.as_deref() {
         client_state.save(path)?;
     }

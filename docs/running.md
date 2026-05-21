@@ -128,7 +128,7 @@ To send a resize intent before each live input cycle, pass both `--cols` and `--
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --cols 100 --rows 30 --interval-ms 500
 ```
 
-The daemon forwards that intent through the process-host resize boundary before forwarding the cycle input. The initial workspace summary displays the daemon-published resize policy, currently `resize=fixed`; committed size publication is not a full layout protocol yet.
+After the process-host resize succeeds, the daemon commits the pane size into the workspace tree and republishes a `WorkspaceTreeSnapshot`. The CLI prints the updated workspace summary, including the committed size and daemon-published resize policy.
 
 For line-streamed live input, pipe lines through stdin:
 
