@@ -382,6 +382,7 @@ M10: live local interactive attach [in progress]
   live CLI can stream stdin lines until EOF without default key fallback
   live CLI can send stdin byte chunks as InputKind.RawBytes without blocking output polling on full lines
   interactive --stdin-bytes temporarily uses noncanonical stdin with local echo defaulting off and `--local-echo tty` available
+  interactive --stdin-bytes listens for SIGWINCH and sends TTY-size resize intents unless explicit --cols/--rows are set
   Ctrl-] detaches byte-streamed live clients
   --redraw clears and repaints the current client-side pane surface on each update
   CLI workspace summary displays daemon-published resize policy
@@ -390,7 +391,7 @@ M10: live local interactive attach [in progress]
   manual resize policy blocks frontend viewport resize intents
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state
-  next: signal handling
+  next: terminal frontend polish
 ```
 
 The crisp product phrase is:

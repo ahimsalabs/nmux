@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, Read};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
 use std::time::Duration;
@@ -9,6 +10,7 @@ use nmux_cli::local;
 use nmux_core::session::AttachMode;
 
 const STDIN_BYTES_DETACH: u8 = 0x1d;
+static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     if let Err(err) = run() {
@@ -51,6 +53,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let _raw_terminal = RawTerminalGuard::enable_if_needed(args.stdin_bytes, args.local_echo)?;
+    let mut sigwinch_resize =
+        SigwinchResize::enable_if_needed(args.stdin_bytes, args.live_resize.is_some())?;
     let mut client_state = match args.state_path.as_deref() {
         Some(path) => local::ClientAttachState::load(path)?,
         None => local::ClientAttachState::default(),
@@ -101,6 +105,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
         if options.request.mode == AttachMode::ReadWrite {
             if let Some((cols, rows)) = args.live_resize {
+                local::send_resize_intent(&mut stream, "pane-1", cols, rows)?;
+            } else if let Some((cols, rows)) = sigwinch_resize.next_resize()? {
                 local::send_resize_intent(&mut stream, "pane-1", cols, rows)?;
             }
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
@@ -278,6 +284,95 @@ fn raw_terminal_mode_needed(stdin_bytes: bool, stdin_is_tty: bool) -> bool {
     stdin_bytes && stdin_is_tty
 }
 
+struct SigwinchResize {
+    _guard: Option<SigwinchGuard>,
+    last_size: Option<(u32, u32)>,
+}
+
+impl SigwinchResize {
+    fn enable_if_needed(stdin_bytes: bool, explicit_resize: bool) -> io::Result<Self> {
+        if !sigwinch_resize_needed(stdin_bytes, explicit_resize, stdin_is_tty()) {
+            return Ok(Self {
+                _guard: None,
+                last_size: None,
+            });
+        }
+
+        let guard = SigwinchGuard::install()?;
+        SIGWINCH_RECEIVED.store(true, Ordering::SeqCst);
+        Ok(Self {
+            _guard: Some(guard),
+            last_size: None,
+        })
+    }
+
+    fn next_resize(&mut self) -> io::Result<Option<(u32, u32)>> {
+        if self._guard.is_none() || !SIGWINCH_RECEIVED.swap(false, Ordering::SeqCst) {
+            return Ok(None);
+        }
+
+        let Some(size) = stdin_terminal_size()? else {
+            return Ok(None);
+        };
+        if self.last_size == Some(size) {
+            return Ok(None);
+        }
+
+        self.last_size = Some(size);
+        Ok(Some(size))
+    }
+}
+
+struct SigwinchGuard {
+    previous: libc::sighandler_t,
+}
+
+impl SigwinchGuard {
+    fn install() -> io::Result<Self> {
+        // Safety: installing a process signal handler is inherently global.
+        // The handler only stores to an AtomicBool, which is signal-safe.
+        let handler = handle_sigwinch as *const () as libc::sighandler_t;
+        let previous = unsafe { libc::signal(libc::SIGWINCH, handler) };
+        if previous == libc::SIG_ERR {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self { previous })
+    }
+}
+
+impl Drop for SigwinchGuard {
+    fn drop(&mut self) {
+        // Safety: previous was returned by signal during install. Drop must not
+        // panic, so restoration errors are intentionally ignored.
+        let _ = unsafe { libc::signal(libc::SIGWINCH, self.previous) };
+    }
+}
+
+extern "C" fn handle_sigwinch(_: libc::c_int) {
+    SIGWINCH_RECEIVED.store(true, Ordering::SeqCst);
+}
+
+fn sigwinch_resize_needed(stdin_bytes: bool, explicit_resize: bool, stdin_is_tty: bool) -> bool {
+    stdin_bytes && !explicit_resize && stdin_is_tty
+}
+
+fn stdin_terminal_size() -> io::Result<Option<(u32, u32)>> {
+    let mut size = empty_winsize();
+    // Safety: STDIN_FILENO is a process file descriptor and size points to
+    // valid writable storage for TIOCGWINSZ.
+    if unsafe { libc::ioctl(libc::STDIN_FILENO, libc::TIOCGWINSZ, &mut size) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(terminal_size_from_winsize(size))
+}
+
+fn terminal_size_from_winsize(size: libc::winsize) -> Option<(u32, u32)> {
+    if size.ws_col == 0 || size.ws_row == 0 {
+        return None;
+    }
+    Some((u32::from(size.ws_col), u32::from(size.ws_row)))
+}
+
 fn raw_terminal_lflag(flags: libc::tcflag_t, local_echo: LocalEcho) -> libc::tcflag_t {
     let flags = flags & !libc::ICANON;
     match local_echo {
@@ -294,6 +389,12 @@ fn stdin_is_tty() -> bool {
 fn empty_termios() -> libc::termios {
     // Safety: termios is a plain C struct that is immediately initialized by
     // tcgetattr before use.
+    unsafe { std::mem::zeroed() }
+}
+
+fn empty_winsize() -> libc::winsize {
+    // Safety: winsize is a plain C struct that is immediately initialized by
+    // ioctl before use.
     unsafe { std::mem::zeroed() }
 }
 
@@ -521,7 +622,7 @@ fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
 mod tests {
     use super::{
         LocalEcho, parse_local_echo, raw_terminal_lflag, raw_terminal_mode_needed,
-        split_stdin_bytes_for_detach,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize,
     };
 
     #[test]
@@ -530,6 +631,31 @@ mod tests {
         assert!(!raw_terminal_mode_needed(true, false));
         assert!(!raw_terminal_mode_needed(false, true));
         assert!(!raw_terminal_mode_needed(false, false));
+    }
+
+    #[test]
+    fn sigwinch_resize_is_only_needed_for_interactive_byte_mode_without_explicit_size() {
+        assert!(sigwinch_resize_needed(true, false, true));
+        assert!(!sigwinch_resize_needed(true, true, true));
+        assert!(!sigwinch_resize_needed(true, false, false));
+        assert!(!sigwinch_resize_needed(false, false, true));
+    }
+
+    #[test]
+    fn terminal_size_from_winsize_rejects_zero_dimensions() {
+        let mut size = libc::winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        assert_eq!(terminal_size_from_winsize(size), Some((80, 24)));
+
+        size.ws_col = 0;
+        assert_eq!(terminal_size_from_winsize(size), None);
+        size.ws_col = 80;
+        size.ws_row = 0;
+        assert_eq!(terminal_size_from_winsize(size), None);
     }
 
     #[test]
