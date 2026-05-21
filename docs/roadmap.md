@@ -30,11 +30,13 @@ Done:
 - `PresenceUpdate`, `AttachMode`, and `PresenceKind` schema objects.
 - Local attach prelude actor mode, presence update, and read-only input policy tests.
 - Sequential two-client attach test against one local session.
+- ADR 0005 for the process host boundary.
+- Internal `nmux-core` process host abstraction with local/container/sandbox host choices and lifecycle tests.
 
 Next:
 
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Add process-host traits and lifecycle tests before wiring real PTYs.
+- Wire a concrete local PTY host through the process host boundary.
 
 ## Milestones
 
@@ -115,6 +117,8 @@ Exit evidence:
 
 - Pane process lifecycle is mediated by a host interface.
 - Local and sandbox host choices are represented without changing the protocol core.
+
+Status: Done for the internal boundary. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, and lifecycle tests without changing the FlatBuffers protocol.
 
 ### M7: Ghostty Frontend
 
