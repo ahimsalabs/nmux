@@ -88,7 +88,7 @@ For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 ## Bounded Live Attach Prototype
 
-The live attach prototype keeps one local connection open for a bounded number of input/output cycles. It is not raw terminal mode yet; it sends the same `--key` text on each cycle and prints any streamed pane surface update returned by the daemon.
+The live attach prototype keeps one local connection open for a bounded number of input/output cycles. It is not raw terminal mode yet; it sends the same `--key` text on each cycle and renders streamed pane surface updates through the same client-side pane surface state used by reconnects.
 
 Start a daemon that serves one live client for two input cycles:
 
@@ -104,6 +104,8 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 ```
 
 Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached.
+
+Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache.
 
 For line-streamed live input, pipe lines through stdin:
 

@@ -51,6 +51,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         return Err("--stdin requires --iterations while live mode is bounded".into());
     }
 
+    let mut client_state = match args.state_path.as_deref() {
+        Some(path) => local::ClientAttachState::load(path)?,
+        None => local::ClientAttachState::default(),
+    };
     let cycles = args.iterations.unwrap_or(1);
     let mut stream = UnixStream::connect(&args.socket_path)?;
     stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
@@ -73,9 +77,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         options.request.mode = AttachMode::ReadOnly;
     }
 
+    options.request.known_surfaces = client_state.known_surfaces();
     local::write_attach_request(&mut stream, &options.request)?;
     let snapshot = local::attach_from_stream(&mut stream)?;
-    print_snapshot(snapshot);
+    let rendered = client_state.render_attach(snapshot)?;
+    print_rendered(rendered);
 
     for _ in 0..cycles {
         if options.request.mode == AttachMode::ReadWrite {
@@ -86,10 +92,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if let Some(update) = local::read_optional_surface_update_from_stream(&mut stream)? {
-            println!("{}", update.text);
+            println!("{}", client_state.render_surface_update(&update)?);
         }
     }
 
+    if let Some(path) = args.state_path.as_deref() {
+        client_state.save(path)?;
+    }
     Ok(())
 }
 
@@ -138,13 +147,6 @@ fn print_rendered(rendered: local::RenderedAttach) {
         for line in scrollback.lines {
             println!("{}", line.text);
         }
-    }
-}
-
-fn print_snapshot(snapshot: local::AttachSnapshot) {
-    println!("{}", snapshot.workspace.display_line());
-    if let Some(surface) = snapshot.surface {
-        println!("{}", surface.text);
     }
 }
 

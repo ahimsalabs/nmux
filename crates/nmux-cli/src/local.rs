@@ -1142,6 +1142,13 @@ impl ClientAttachState {
         })
     }
 
+    pub fn render_surface_update(
+        &mut self,
+        update: &SurfaceUpdate,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        self.apply_surface_update(update)
+    }
+
     fn apply_surface_update(
         &mut self,
         update: &SurfaceUpdate,
