@@ -15,14 +15,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let listener = local::bind_listener(&socket_path)?;
     eprintln!("nmuxd: listening on {}", socket_path.display());
 
-    let session = Session::initial();
+    let mut session = Session::initial();
     if one_shot {
-        local::serve_one(&listener, &session)?;
+        local::serve_one(&listener, &mut session)?;
         return Ok(());
     }
 
     loop {
-        local::serve_one(&listener, &session)?;
+        local::serve_one(&listener, &mut session)?;
     }
 }
 

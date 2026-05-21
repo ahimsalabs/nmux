@@ -31,14 +31,14 @@ pub fn bind_listener(path: &Path) -> io::Result<UnixListener> {
 
 pub fn serve_one(
     listener: &UnixListener,
-    session: &Session,
+    session: &mut Session,
 ) -> Result<(), Box<dyn std::error::Error>> {
     serve_n(listener, session, 1)
 }
 
 pub fn serve_n(
     listener: &UnixListener,
-    session: &Session,
+    session: &mut Session,
     clients: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..clients {
@@ -49,7 +49,7 @@ pub fn serve_n(
 
 fn serve_next(
     listener: &UnixListener,
-    session: &Session,
+    session: &mut Session,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
@@ -658,9 +658,9 @@ mod tests {
     fn serves_initial_attach_snapshot_over_unix_socket() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
-        let session = Session::initial();
+        let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &session).expect("serve one"));
+        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
         let snapshot = attach(&socket_path).expect("attach snapshot");
         server.join().expect("server thread");
 
@@ -719,12 +719,43 @@ mod tests {
     }
 
     #[test]
+    fn serves_process_derived_surface_over_unix_socket() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::from_pane_output(b"real process output\n");
+
+        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let snapshot = attach(&socket_path).expect("attach snapshot");
+        server.join().expect("server thread");
+
+        assert_eq!(
+            snapshot.surface,
+            Some(SurfaceUpdate {
+                kind: SurfaceUpdateKind::Snapshot,
+                text: "real process output".to_owned(),
+            })
+        );
+        assert_eq!(
+            snapshot.scrollback,
+            Some(ScrollbackChunkSummary {
+                pane_id: "pane-1".to_owned(),
+                scrollback_version: 1,
+                start_line: 1,
+                total_lines: 1,
+                lines: Vec::new(),
+            })
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn serves_no_surface_when_client_has_current_surface_version() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
-        let session = Session::initial();
+        let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &session).expect("serve one"));
+        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
         let snapshot = attach_with_known_surfaces(
             &socket_path,
             vec![KnownSurfaceVersion {
@@ -765,9 +796,9 @@ mod tests {
     fn read_only_attach_receives_state_without_sending_input() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
-        let session = Session::initial();
+        let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &session).expect("serve one"));
+        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
         let snapshot = attach_with_options(
             &socket_path,
             AttachRequest {
@@ -791,9 +822,9 @@ mod tests {
     fn two_clients_can_attach_to_one_session_sequentially() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
-        let session = Session::initial();
+        let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_n(&listener, &session, 2).expect("serve two"));
+        let server = thread::spawn(move || serve_n(&listener, &mut session, 2).expect("serve two"));
         let first = attach(&socket_path).expect("first attach");
         let second = attach_with_options(
             &socket_path,
@@ -839,9 +870,9 @@ mod tests {
     fn serves_patch_when_client_surface_version_is_patchable() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
-        let session = Session::initial();
+        let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &session).expect("serve one"));
+        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
         let snapshot = attach_with_known_surfaces(
             &socket_path,
             vec![KnownSurfaceVersion {
@@ -867,9 +898,9 @@ mod tests {
     fn serves_full_surface_snapshot_when_client_surface_version_is_stale() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
-        let session = Session::initial();
+        let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &session).expect("serve one"));
+        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
         let snapshot = attach_with_known_surfaces(
             &socket_path,
             vec![KnownSurfaceVersion {
