@@ -1617,6 +1617,127 @@ mod tests {
     }
 
     #[test]
+    fn stateful_terminal_engine_can_span_output_resize_and_output() {
+        struct StatefulEngine {
+            step: u8,
+        }
+
+        impl TerminalEngine for StatefulEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                match self.step {
+                    0 => {
+                        assert_eq!(input.pane_id, "pane-1");
+                        assert_eq!(input.cols, 80);
+                        assert_eq!(input.rows, 24);
+                        assert_eq!(input.surface_lines.len(), 2);
+                        assert_eq!(input.scrollback_lines.len(), 3);
+                        assert_eq!(output, b"first");
+                        self.step = 1;
+                        Some(TerminalUpdate {
+                            patch_kind: protocol::PatchKind::ReplaceRows,
+                            surface: input.surface,
+                            cursor: TerminalCursor {
+                                row: 0,
+                                col: 5,
+                                visible: true,
+                                shape: input.cursor.shape,
+                            },
+                            surface_lines: vec!["first".to_owned()],
+                            scrollback_lines: vec!["first".to_owned()],
+                        })
+                    }
+                    2 => {
+                        assert_eq!(input.pane_id, "pane-1");
+                        assert_eq!(input.cols, 100);
+                        assert_eq!(input.rows, 10);
+                        assert_eq!(input.surface_lines, ["first resized"]);
+                        assert_eq!(input.scrollback_lines, ["first"]);
+                        assert_eq!(output, b"second");
+                        self.step = 3;
+                        Some(TerminalUpdate {
+                            patch_kind: protocol::PatchKind::ReplaceRows,
+                            surface: input.surface,
+                            cursor: TerminalCursor {
+                                row: 1,
+                                col: 6,
+                                visible: true,
+                                shape: protocol::CursorShape::Beam,
+                            },
+                            surface_lines: vec!["first resized".to_owned(), "second".to_owned()],
+                            scrollback_lines: vec!["first".to_owned(), "second".to_owned()],
+                        })
+                    }
+                    _ => panic!("unexpected output step {}", self.step),
+                }
+            }
+
+            fn resize(
+                &mut self,
+                input: TerminalInput<'_>,
+                cols: u32,
+                rows: u32,
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(self.step, 1);
+                assert_eq!(input.pane_id, "pane-1");
+                assert_eq!(input.cols, 80);
+                assert_eq!(input.rows, 24);
+                assert_eq!(input.surface_lines, ["first"]);
+                assert_eq!(input.scrollback_lines, ["first"]);
+                assert_eq!(cols, 100);
+                assert_eq!(rows, 10);
+                self.step = 2;
+                Some(TerminalUpdate {
+                    patch_kind: protocol::PatchKind::ReplaceRows,
+                    surface: input.surface,
+                    cursor: TerminalCursor {
+                        row: 0,
+                        col: 5,
+                        visible: true,
+                        shape: input.cursor.shape,
+                    },
+                    surface_lines: vec!["first resized".to_owned()],
+                    scrollback_lines: input.scrollback_lines.to_vec(),
+                })
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = StatefulEngine { step: 0 };
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"first", &mut engine));
+        assert!(session.commit_pane_resize_with_engine("pane-1", 100, 10, &mut engine));
+        assert!(session.apply_pane_output_with_engine("pane-1", b"second", &mut engine));
+        assert_eq!(engine.step, 3);
+
+        let surface = session.initial_pane_surface();
+        let scrollback = session.initial_scrollback();
+        assert_eq!(surface.version, 5);
+        assert_eq!(surface.cols, 100);
+        assert_eq!(surface.rows, 10);
+        assert_eq!(
+            surface.cursor,
+            Cursor {
+                row: 1,
+                col: 6,
+                visible: true,
+                shape: protocol::CursorShape::Beam
+            }
+        );
+        assert_eq!(
+            surface.lines,
+            vec!["first resized".to_owned(), "second".to_owned()]
+        );
+        assert_eq!(
+            scrollback.lines,
+            vec!["first".to_owned(), "second".to_owned()]
+        );
+    }
+
+    #[test]
     fn cursor_only_engine_update_emits_cursor_only_patch() {
         struct CursorOnlyEngine;
 
