@@ -11,8 +11,9 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let socket_path = socket_arg()?;
-    let summary = local::read_workspace_tree(&socket_path)?;
-    println!("{}", summary.display_line());
+    let snapshot = local::attach(&socket_path)?;
+    println!("{}", snapshot.workspace.display_line());
+    println!("{}", snapshot.surface);
     Ok(())
 }
 

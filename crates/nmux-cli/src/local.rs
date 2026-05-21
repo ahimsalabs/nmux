@@ -34,21 +34,29 @@ pub fn serve_one(
     session: &Session,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut stream, _) = listener.accept()?;
-    let frame = session.workspace_tree_frame("local-client", 1);
-    wire::write_default_frame(&mut stream, &frame)?;
+    let workspace_frame = session.workspace_tree_frame("local-client", 1);
+    wire::write_default_frame(&mut stream, &workspace_frame)?;
+
+    let surface_frame = session.pane_surface_frame("local-client", 2);
+    wire::write_default_frame(&mut stream, &surface_frame)?;
     Ok(())
 }
 
-pub fn read_workspace_tree(path: &Path) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
+pub fn attach(path: &Path) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
     let mut stream = UnixStream::connect(path)?;
-    read_workspace_tree_from_stream(&mut stream)
+    attach_from_stream(&mut stream)
 }
 
-pub fn read_workspace_tree_from_stream(
+pub fn attach_from_stream(
     stream: &mut UnixStream,
-) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
-    let frame = wire::read_default_frame(stream)?;
-    workspace_summary_from_frame(&frame)
+) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
+    let workspace_frame = wire::read_default_frame(stream)?;
+    let workspace = workspace_summary_from_frame(&workspace_frame)?;
+
+    let surface_frame = wire::read_default_frame(stream)?;
+    let surface = surface_text_from_frame(&surface_frame)?;
+
+    Ok(AttachSnapshot { workspace, surface })
 }
 
 pub fn workspace_summary_from_frame(
@@ -73,6 +81,42 @@ pub fn workspace_summary_from_frame(
         cols: pane.cols(),
         rows: pane.rows(),
     })
+}
+
+pub fn surface_text_from_frame(frame: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::PaneSurfaceSnapshot {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let snapshot = envelope
+        .body_as_pane_surface_snapshot()
+        .ok_or("missing pane surface body")?;
+    let rows = snapshot.rows_data().ok_or("pane surface has no rows")?;
+
+    let mut rendered = String::new();
+    for row_index in 0..rows.len() {
+        if row_index > 0 {
+            rendered.push('\n');
+        }
+
+        let row = rows.get(row_index);
+        if let Some(runs) = row.runs() {
+            for run_index in 0..runs.len() {
+                if let Some(text) = runs.get(run_index).text_utf8() {
+                    rendered.push_str(text);
+                }
+            }
+        }
+    }
+
+    Ok(rendered)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachSnapshot {
+    pub workspace: WorkspaceSummary,
+    pub surface: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,17 +153,17 @@ mod tests {
     }
 
     #[test]
-    fn serves_initial_workspace_snapshot_over_unix_socket() {
+    fn serves_initial_attach_snapshot_over_unix_socket() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
         let session = Session::initial();
 
         let server = thread::spawn(move || serve_one(&listener, &session).expect("serve one"));
-        let summary = read_workspace_tree(&socket_path).expect("read workspace tree");
+        let snapshot = attach(&socket_path).expect("attach snapshot");
         server.join().expect("server thread");
 
         assert_eq!(
-            summary,
+            snapshot.workspace,
             WorkspaceSummary {
                 session_id: "local".to_owned(),
                 tab_id: "tab-1".to_owned(),
@@ -129,9 +173,10 @@ mod tests {
             }
         );
         assert_eq!(
-            summary.display_line(),
+            snapshot.workspace.display_line(),
             "session=local tab=tab-1 pane=pane-1 size=80x24"
         );
+        assert_eq!(snapshot.surface, "nmux pane-1\nserver-owned terminal state");
 
         let _ = fs::remove_file(socket_path);
     }
