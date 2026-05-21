@@ -378,6 +378,51 @@ impl Session {
         builder.finished_data().to_vec()
     }
 
+    pub fn scrollback_fetch_frame(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        actor_id: &str,
+        pane_id: &str,
+        start_line: u64,
+        line_count: u32,
+        known_scrollback_version: u64,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+
+        let pane_id = builder.create_string(pane_id);
+        let actor_id = builder.create_string(actor_id);
+        let fetch = protocol::ScrollbackFetch::create(
+            &mut builder,
+            &protocol::ScrollbackFetchArgs {
+                pane_id: Some(pane_id),
+                actor_id: Some(actor_id),
+                start_line,
+                line_count,
+                known_scrollback_version,
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::ScrollbackFetch,
+                body: Some(fetch.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+
     pub fn key_input_frame(
         &self,
         connection_id: &str,
@@ -650,6 +695,31 @@ mod tests {
         let tail = &scrollback.lines[scrollback.lines.len() - surface.lines.len()..];
 
         assert_eq!(surface.lines, tail);
+    }
+
+    #[test]
+    fn scrollback_fetch_frame_decodes_requested_range() {
+        let frame =
+            Session::initial().scrollback_fetch_frame("conn-1", 12, "actor-1", "pane-1", 1, 2, 1);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
+        assert_eq!(envelope.session_id(), Some("local"));
+        assert_eq!(envelope.connection_id(), Some("conn-1"));
+        assert_eq!(envelope.seq(), 12);
+        assert_eq!(
+            envelope.body_type(),
+            protocol::EnvelopeBody::ScrollbackFetch
+        );
+
+        let fetch = envelope
+            .body_as_scrollback_fetch()
+            .expect("scrollback fetch body");
+        assert_eq!(fetch.pane_id(), Some("pane-1"));
+        assert_eq!(fetch.actor_id(), Some("actor-1"));
+        assert_eq!(fetch.start_line(), 1);
+        assert_eq!(fetch.line_count(), 2);
+        assert_eq!(fetch.known_scrollback_version(), 1);
     }
 
     #[test]
