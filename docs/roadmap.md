@@ -18,12 +18,13 @@ Done:
 - Bounded FlatBuffers envelope framing.
 - Initial Rust session model that encodes a `WorkspaceTreeSnapshot`.
 - Local `nmuxd` and `nmux` skeletons that exchange the initial workspace snapshot over a Unix socket.
+- Static server-owned `PaneSurfaceSnapshot` and dumb client text rendering.
 
 Next:
 
-- Add a minimal pane surface object.
-- Teach `nmuxd` to send an initial `PaneSurfaceSnapshot` after the workspace tree.
-- Teach `nmux` to render the received pane surface.
+- Send basic keyboard input from `nmux` back to `nmuxd`.
+- Let `nmuxd` update pane surface state in response to input.
+- Introduce a `PaneSurfacePatch` path for state changes after the initial snapshot.
 
 ## Milestones
 
@@ -59,6 +60,8 @@ Exit evidence:
 - A simple TUI or web viewer can attach locally.
 - The viewer renders a surface snapshot.
 - Input events reach the daemon with actor and pane IDs.
+
+Status: Partial. The local client renders a static server-owned `PaneSurfaceSnapshot`; input events are next.
 
 ### M3: Reconnect
 

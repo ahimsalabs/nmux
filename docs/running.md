@@ -1,6 +1,6 @@
 # Running nmux
 
-The current prototype is an M1 local attach skeleton. `nmuxd` owns one static workspace tree and sends a `WorkspaceTreeSnapshot` to each local client that connects over a Unix socket.
+The current prototype is an M2 local attach skeleton. `nmuxd` owns one static workspace tree and one static pane surface, then sends a `WorkspaceTreeSnapshot` followed by a `PaneSurfaceSnapshot` to each local client that connects over a Unix socket.
 
 Run all checks:
 
@@ -24,8 +24,10 @@ Expected output:
 
 ```text
 session=local tab=tab-1 pane=pane-1 size=80x24
+nmux pane-1
+server-owned terminal state
 ```
 
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
-This is not a terminal emulator yet. It proves the first local daemon/client path: server-owned workspace state, FlatBuffers envelope framing, and client-side decode of a workspace tree snapshot.
+This is not a terminal emulator yet. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state, FlatBuffers envelope framing, and client-side rendering from decoded state objects.
