@@ -4,7 +4,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
-use nmux_core::session::Session;
+use nmux_core::session::{Actor, AttachMode, Session};
 use nmux_proto::{protocol, wire};
 
 pub fn default_socket_path() -> PathBuf {
@@ -38,18 +38,24 @@ pub fn serve_one(
     let workspace_frame = session.workspace_tree_frame("local-client", 1);
     wire::write_default_frame(&mut stream, &workspace_frame)?;
 
+    let actor = request.actor();
+    let presence_frame = session.presence_update_frame("local-client", 2, &actor);
+    wire::write_default_frame(&mut stream, &presence_frame)?;
+
     if let Some(response) = request.surface_response(session, "pane-1") {
         let surface_frame = match response {
-            SurfaceResponse::Snapshot => session.pane_surface_frame("local-client", 2),
+            SurfaceResponse::Snapshot => session.pane_surface_frame("local-client", 3),
             SurfaceResponse::Patch { base_version } => {
-                session.pane_surface_patch_frame("local-client", 2, base_version)
+                session.pane_surface_patch_frame("local-client", 3, base_version)
             }
         };
         wire::write_default_frame(&mut stream, &surface_frame)?;
-        read_input_event_from_stream(&mut stream)?;
+        if Session::input_allowed(&actor) {
+            read_input_event_from_stream(&mut stream)?;
+        }
         let fetch = read_scrollback_fetch_from_stream(&mut stream)?;
         let chunk =
-            session.scrollback_chunk_frame("local-client", 4, fetch.start_line, fetch.line_count);
+            session.scrollback_chunk_frame("local-client", 5, fetch.start_line, fetch.line_count);
         wire::write_default_frame(&mut stream, &chunk)?;
     }
     Ok(())
@@ -63,11 +69,28 @@ pub fn attach_with_known_surfaces(
     path: &Path,
     known_surfaces: Vec<KnownSurfaceVersion>,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
+    attach_with_options(
+        path,
+        AttachRequest {
+            actor_id: "local-actor".to_owned(),
+            mode: AttachMode::ReadWrite,
+            known_surfaces,
+        },
+    )
+}
+
+pub fn attach_with_options(
+    path: &Path,
+    request: AttachRequest,
+) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
     let mut stream = UnixStream::connect(path)?;
-    write_attach_request(&mut stream, &AttachRequest { known_surfaces })?;
+    let mode = request.mode;
+    write_attach_request(&mut stream, &request)?;
     let snapshot = attach_from_stream(&mut stream)?;
     if snapshot.surface.is_some() {
-        send_key_input(&mut stream, "pane-1", "a")?;
+        if mode == AttachMode::ReadWrite {
+            send_key_input(&mut stream, "pane-1", "a")?;
+        }
         send_scrollback_fetch(&mut stream, "pane-1", 1, 2)?;
         let scrollback = read_scrollback_chunk_from_stream(&mut stream)?;
         return Ok(AttachSnapshot {
@@ -84,6 +107,9 @@ pub fn attach_from_stream(
     let workspace_frame = wire::read_default_frame(stream)?;
     let workspace = workspace_summary_from_frame(&workspace_frame)?;
 
+    let presence_frame = wire::read_default_frame(stream)?;
+    let presence = presence_from_frame(&presence_frame)?;
+
     let surface = match wire::read_default_frame(stream) {
         Ok(surface_frame) => Some(surface_update_from_frame(&surface_frame)?),
         Err(wire::WireError::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => None,
@@ -92,6 +118,7 @@ pub fn attach_from_stream(
 
     Ok(AttachSnapshot {
         workspace,
+        presence,
         surface,
         scrollback: None,
     })
@@ -266,6 +293,24 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
     })
 }
 
+pub fn presence_from_frame(frame: &[u8]) -> Result<PresenceSummary, Box<dyn std::error::Error>> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::PresenceUpdate {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let presence = envelope
+        .body_as_presence_update()
+        .ok_or("missing presence update body")?;
+    Ok(PresenceSummary {
+        actor_id: presence.actor_id().unwrap_or_default().to_owned(),
+        user_id: presence.user_id().unwrap_or_default().to_owned(),
+        display_name: presence.display_name().unwrap_or_default().to_owned(),
+        mode: attach_mode_from_protocol(presence.mode()),
+        focused_pane_id: presence.focused_pane_id().map(ToOwned::to_owned),
+    })
+}
+
 pub fn scrollback_fetch_from_frame(
     frame: &[u8],
 ) -> Result<ScrollbackFetchSummary, Box<dyn std::error::Error>> {
@@ -348,12 +393,20 @@ pub fn read_attach_request<R: Read>(reader: &mut R) -> io::Result<AttachRequest>
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachRequest {
+    pub actor_id: String,
+    pub mode: AttachMode,
     pub known_surfaces: Vec<KnownSurfaceVersion>,
 }
 
 impl AttachRequest {
     fn encode(&self) -> String {
         let mut payload = String::from("NMUX_LOCAL_ATTACH 1\n");
+        payload.push_str("actor ");
+        payload.push_str(&self.actor_id);
+        payload.push('\n');
+        payload.push_str("mode ");
+        payload.push_str(attach_mode_name(self.mode));
+        payload.push('\n');
         for surface in &self.known_surfaces {
             payload.push_str("surface ");
             payload.push_str(&surface.pane_id);
@@ -374,9 +427,17 @@ impl AttachRequest {
         }
 
         let mut known_surfaces = Vec::new();
+        let mut actor_id = None;
+        let mut mode = None;
         for line in lines {
             let mut parts = line.split(' ');
             match (parts.next(), parts.next(), parts.next(), parts.next()) {
+                (Some("actor"), Some(value), None, None) => {
+                    actor_id = Some(value.to_owned());
+                }
+                (Some("mode"), Some(value), None, None) => {
+                    mode = Some(parse_attach_mode(value)?);
+                }
                 (Some("surface"), Some(pane_id), Some(version), None) => {
                     let version = version
                         .parse::<u64>()
@@ -395,7 +456,21 @@ impl AttachRequest {
             }
         }
 
-        Ok(Self { known_surfaces })
+        Ok(Self {
+            actor_id: actor_id.unwrap_or_else(|| "local-actor".to_owned()),
+            mode: mode.unwrap_or(AttachMode::ReadWrite),
+            known_surfaces,
+        })
+    }
+
+    fn actor(&self) -> Actor {
+        Actor {
+            id: self.actor_id.clone(),
+            user_id: "local-user".to_owned(),
+            display_name: "local".to_owned(),
+            mode: self.mode,
+            focused_pane_id: Some("pane-1".to_owned()),
+        }
     }
 
     fn surface_response(&self, session: &Session, pane_id: &str) -> Option<SurfaceResponse> {
@@ -423,6 +498,32 @@ impl AttachRequest {
     }
 }
 
+fn attach_mode_name(mode: AttachMode) -> &'static str {
+    match mode {
+        AttachMode::ReadOnly => "read-only",
+        AttachMode::ReadWrite => "read-write",
+    }
+}
+
+fn parse_attach_mode(value: &str) -> io::Result<AttachMode> {
+    match value {
+        "read-only" => Ok(AttachMode::ReadOnly),
+        "read-write" => Ok(AttachMode::ReadWrite),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid local attach mode",
+        )),
+    }
+}
+
+fn attach_mode_from_protocol(mode: protocol::AttachMode) -> AttachMode {
+    if mode == protocol::AttachMode::ReadWrite {
+        AttachMode::ReadWrite
+    } else {
+        AttachMode::ReadOnly
+    }
+}
+
 enum SurfaceResponse {
     Snapshot,
     Patch { base_version: u64 },
@@ -437,6 +538,7 @@ pub struct KnownSurfaceVersion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachSnapshot {
     pub workspace: WorkspaceSummary,
+    pub presence: PresenceSummary,
     pub surface: Option<SurfaceUpdate>,
     pub scrollback: Option<ScrollbackChunkSummary>,
 }
@@ -459,6 +561,15 @@ pub struct InputSummary {
     pub actor_id: String,
     pub input_seq: u64,
     pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresenceSummary {
+    pub actor_id: String,
+    pub user_id: String,
+    pub display_name: String,
+    pub mode: AttachMode,
+    pub focused_pane_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -550,6 +661,16 @@ mod tests {
             "session=local tab=tab-1 pane=pane-1 size=80x24"
         );
         assert_eq!(
+            snapshot.presence,
+            PresenceSummary {
+                actor_id: "local-actor".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+            }
+        );
+        assert_eq!(
             snapshot.surface,
             Some(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Snapshot,
@@ -597,10 +718,73 @@ mod tests {
         server.join().expect("server thread");
 
         assert_eq!(snapshot.workspace.pane_id, "pane-1");
+        assert_eq!(snapshot.presence.mode, AttachMode::ReadWrite);
         assert_eq!(snapshot.surface, None);
         assert_eq!(snapshot.scrollback, None);
 
         let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_request_round_trips_read_only_mode() {
+        let request = AttachRequest {
+            actor_id: "spectator".to_owned(),
+            mode: AttachMode::ReadOnly,
+            known_surfaces: vec![KnownSurfaceVersion {
+                pane_id: "pane-1".to_owned(),
+                version: 2,
+            }],
+        };
+
+        let mut buffer = Vec::new();
+        write_attach_request(&mut buffer, &request).expect("write attach request");
+        let decoded = read_attach_request(&mut buffer.as_slice()).expect("read attach request");
+
+        assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn read_only_attach_receives_state_without_sending_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+
+        let server = thread::spawn(move || serve_one(&listener, &session).expect("serve one"));
+        let snapshot = attach_with_options(
+            &socket_path,
+            AttachRequest {
+                actor_id: "spectator".to_owned(),
+                mode: AttachMode::ReadOnly,
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("attach snapshot");
+        server.join().expect("server thread");
+
+        assert_eq!(snapshot.presence.actor_id, "spectator");
+        assert_eq!(snapshot.presence.mode, AttachMode::ReadOnly);
+        assert!(snapshot.surface.is_some());
+        assert!(snapshot.scrollback.is_some());
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn decodes_presence_update_from_server_frame() {
+        let actor = Session::initial_actor(AttachMode::ReadOnly);
+        let frame = Session::initial().presence_update_frame("local-client", 2, &actor);
+        let presence = presence_from_frame(&frame).expect("presence");
+
+        assert_eq!(
+            presence,
+            PresenceSummary {
+                actor_id: "local-actor".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+            }
+        );
     }
 
     #[test]
