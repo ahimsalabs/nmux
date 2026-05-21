@@ -40,11 +40,12 @@ Done:
 - Nonblocking process output seam and local PTY output queue for polling already-pumped bytes.
 - Local attach polls available process output before choosing snapshot, patch, or no surface response.
 - `nmuxd` starts a local PTY host and can run a command-backed PTY smoke through the local client.
+- Read-write local input is forwarded to the process host, while read-only attaches do not forward input.
 
 Next:
 
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Forward read-write client input into the hosted PTY.
+- Poll PTY output again after forwarded input so echoed command output can update pane state.
 
 ## Milestones
 
@@ -126,7 +127,7 @@ Exit evidence:
 - Pane process lifecycle is mediated by a host interface.
 - Local and sandbox host choices are represented without changing the protocol core.
 
-Status: Done for the internal boundary and first local PTY host. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, lifecycle tests, a concrete local command host, a local PTY host, an interim process-output text surface, and a nonblocking output polling seam without changing the FlatBuffers protocol. `nmuxd` starts the local PTY host and local attach can poll already-pumped output before responding. Forwarding client input to the hosted PTY remains a follow-up.
+Status: Done for the internal boundary and first local PTY host. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, lifecycle tests, a concrete local command host, a local PTY host, an interim process-output text surface, and a nonblocking output polling seam without changing the FlatBuffers protocol. `nmuxd` starts the local PTY host, local attach can poll already-pumped output before responding, and read-write input is forwarded to the hosted process. Polling process output after forwarded input remains a follow-up.
 
 ### M7: Ghostty Frontend
 

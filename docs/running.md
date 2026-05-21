@@ -52,7 +52,7 @@ server-owned terminal state
 
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
-This is not a terminal emulator yet. The interim text surface only converts simple output bytes into backend-owned visible rows and scrollback. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state derived from a local PTY, server-owned scrollback ranges, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input events.
+This is not a terminal emulator yet. The interim text surface only converts simple output bytes into backend-owned visible rows and scrollback. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state derived from a local PTY, server-owned scrollback ranges, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input forwarding.
 
 ## Presence And Attach Modes
 
@@ -62,6 +62,7 @@ Current behavior:
 
 - read-write actors may send pane input
 - read-only actors may receive workspace, presence, surface, and scrollback state
+- read-write local input is forwarded to the process host
 - read-only actors do not send pane input in the local client flow
 
 The local skeleton currently accepts clients sequentially. Simultaneous multi-client attach is a later expansion.
