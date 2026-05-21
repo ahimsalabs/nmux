@@ -49,7 +49,7 @@ nix develop path:$PWD -c cargo run --bin nmuxd -- --live-cycles 2 --command "pri
 nix develop path:$PWD -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' --scrollback-start 1 --scrollback-count 4 --interval-ms 500
 ```
 
-Both binaries share a stable default socket path for the current user. Pass `--socket` on both sides when you want an isolated smoke-test socket.
+Both binaries share a stable default socket path for the current user. They use `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` only when `XDG_RUNTIME_DIR` is a valid absolute path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Pass `--socket` on both sides when you want an isolated smoke-test socket.
 Connection failures include the socket path, which helps distinguish a missing daemon from an isolated test socket.
 `nmuxd` refuses to replace an existing socket path, so remove stale sockets deliberately or choose a different `--socket`.
 On normal bounded exits, `nmuxd` removes the socket path it created.

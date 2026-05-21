@@ -23,9 +23,11 @@ pub fn default_socket_path() -> PathBuf {
 }
 
 fn default_socket_path_from(runtime_dir: Option<OsString>, uid: u32) -> PathBuf {
-    match runtime_dir {
-        Some(runtime_dir) => PathBuf::from(runtime_dir).join("nmux").join("nmuxd.sock"),
-        None => PathBuf::from(format!("/tmp/nmux-{uid}")).join("nmuxd.sock"),
+    match runtime_dir.map(PathBuf::from) {
+        Some(runtime_dir) if !runtime_dir.as_os_str().is_empty() && runtime_dir.is_absolute() => {
+            runtime_dir.join("nmux").join("nmuxd.sock")
+        }
+        _ => PathBuf::from(format!("/tmp/nmux-{uid}")).join("nmuxd.sock"),
     }
 }
 
@@ -1802,6 +1804,18 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(first, PathBuf::from("/tmp/nmux-501").join("nmuxd.sock"));
+    }
+
+    #[test]
+    fn default_socket_path_falls_back_for_invalid_runtime_dir() {
+        assert_eq!(
+            default_socket_path_from(Some(OsString::from("")), 501),
+            PathBuf::from("/tmp/nmux-501").join("nmuxd.sock")
+        );
+        assert_eq!(
+            default_socket_path_from(Some(OsString::from("relative-runtime")), 501),
+            PathBuf::from("/tmp/nmux-501").join("nmuxd.sock")
+        );
     }
 
     #[test]

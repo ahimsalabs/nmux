@@ -898,7 +898,7 @@ Options:
   -h, --help                 Show this help
 
 Notes:
-  Default socket: $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+  Default socket: valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   The current renderer uses an interim text surface, not a VT-correct terminal emulator.
 
 Examples:

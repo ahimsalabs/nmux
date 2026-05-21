@@ -90,7 +90,7 @@ For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 The live attach prototype keeps one local connection open for repeated input/output cycles. It is not a terminal UI yet; it sends the same `--key` text on each bounded client cycle, line-streams stdin, or forwards stdin byte chunks, and renders streamed pane surface updates through the same client-side pane surface state used by reconnects. Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive. Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes fail before the client tries to connect.
 
-By default, `nmuxd` and `nmux` use the same local socket path: `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is set, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Pass `--socket` on both sides when you want an isolated smoke-test socket.
+By default, `nmuxd` and `nmux` use the same local socket path: `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Pass `--socket` on both sides when you want an isolated smoke-test socket.
 If the daemon is not running or the client points at the wrong socket, `nmux` reports the socket path in the connection error.
 If a socket path already exists, `nmuxd` refuses to replace it and reports the path. Remove a stale socket only after confirming no daemon is using it, or pass a different `--socket`.
 On normal bounded exits, `nmuxd` removes the socket path it created.
