@@ -54,10 +54,11 @@ Done:
 - ADR 0010 for the herdr integration boundary and AGPL membrane.
 - ADR 0011 for making live local interactive attach the next milestone before live adapter work.
 - The local library has a bounded long-lived attach loop helper with tests for repeated input/output patches, no-update behavior, and read-only observation without input forwarding.
+- `nmuxd --live-cycles` and `nmux --live` expose the bounded live attach loop for explicit local smoke testing.
 
 Next:
 
-- Wire the long-lived attach loop into `nmuxd`/`nmux` behind explicit flags before attempting raw terminal mode.
+- Add an automated command-backed smoke test for the `nmuxd --live-cycles` / `nmux --live` path, then iterate toward raw terminal input.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -187,4 +188,4 @@ Exit evidence:
 - A read-only client can observe updates without forwarding input.
 - Tests cover repeated input/output, current-version no-update behavior, and read-only permission enforcement.
 
-Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work. The local library now has a bounded live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, current-version cycles send no update frame, and read-only clients can observe output without forwarding input. The next step is wiring this path into `nmuxd`/`nmux` behind explicit flags before attempting raw terminal mode.
+Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work. The local library now has a bounded live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, current-version cycles send no update frame, and read-only clients can observe output without forwarding input. `nmuxd --live-cycles` and `nmux --live` expose that bounded loop for explicit local smoke testing. The next step is an automated command-backed smoke test before raw terminal input.

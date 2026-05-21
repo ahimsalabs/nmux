@@ -86,6 +86,25 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --follo
 
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
+## Bounded Live Attach Prototype
+
+The live attach prototype keeps one local connection open for a bounded number of input/output cycles. It is not raw terminal mode yet; it sends the same `--key` text on each cycle and prints any streamed pane surface update returned by the daemon.
+
+Start a daemon that serves one live client for two input cycles:
+
+```sh
+rm -f /tmp/nmux.sock
+nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+```
+
+Attach a bounded live client:
+
+```sh
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --interval-ms 500
+```
+
+Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached.
+
 This is not a terminal emulator yet. The interim text surface only converts simple output bytes into backend-owned visible rows and scrollback. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state derived from a local PTY, server-owned scrollback ranges, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input forwarding.
 
 ## Presence And Attach Modes

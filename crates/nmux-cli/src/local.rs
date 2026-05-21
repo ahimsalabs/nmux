@@ -3,6 +3,8 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
@@ -184,9 +186,9 @@ fn serve_live_attached_client(
         if Session::input_allowed(&actor) {
             let input = read_input_event_from_stream(stream)?;
             host.write_input(&input.pane_id, input.text.as_bytes())?;
-            poll_pane_output(session, host, &input.pane_id)?;
+            poll_pane_output_until_quiet(session, host, &input.pane_id)?;
         } else {
-            poll_pane_output(session, host, pane_id)?;
+            poll_pane_output_until_quiet(session, host, pane_id)?;
         }
 
         let current = session.surface_version(pane_id).unwrap_or_default();
@@ -261,6 +263,35 @@ pub fn poll_pane_output(
     }
 
     Ok(session.apply_pane_output(pane_id, &pumped))
+}
+
+fn poll_pane_output_until_quiet(
+    session: &mut Session,
+    output: &mut dyn ProcessOutput,
+    pane_id: &str,
+) -> Result<bool, HostError> {
+    let deadline = Instant::now() + Duration::from_millis(120);
+    let mut quiet_since = None;
+    let mut changed = false;
+
+    loop {
+        if poll_pane_output(session, output, pane_id)? {
+            changed = true;
+            quiet_since = None;
+        } else if changed {
+            let quiet_start = quiet_since.get_or_insert_with(Instant::now);
+            if quiet_start.elapsed() >= Duration::from_millis(20) {
+                return Ok(true);
+            }
+        } else if Instant::now() >= deadline {
+            return Ok(false);
+        }
+
+        if Instant::now() >= deadline {
+            return Ok(changed);
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 pub fn attach(path: &Path) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
@@ -593,6 +624,23 @@ pub fn read_surface_update_from_stream(
 ) -> Result<SurfaceUpdate, Box<dyn std::error::Error>> {
     let frame = wire::read_default_frame(stream)?;
     surface_update_from_frame(&frame)
+}
+
+pub fn read_optional_surface_update_from_stream(
+    stream: &mut UnixStream,
+) -> Result<Option<SurfaceUpdate>, Box<dyn std::error::Error>> {
+    match wire::read_default_frame(stream) {
+        Ok(frame) => Ok(Some(surface_update_from_frame(&frame)?)),
+        Err(wire::WireError::Io(err))
+            if matches!(
+                err.kind(),
+                io::ErrorKind::UnexpectedEof | io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err.into()),
+    }
 }
 
 pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn std::error::Error>> {
@@ -1998,8 +2046,9 @@ mod tests {
         );
 
         send_key_input(&mut stream, "pane-1", "silent").expect("send silent input");
-        let err = read_surface_update_from_stream(&mut stream).expect_err("no update frame");
-        assert!(err.to_string().contains("failed to fill whole buffer"));
+        let update =
+            read_optional_surface_update_from_stream(&mut stream).expect("optional surface update");
+        assert_eq!(update, None);
 
         server.join().expect("server thread");
         let _ = fs::remove_file(socket_path);

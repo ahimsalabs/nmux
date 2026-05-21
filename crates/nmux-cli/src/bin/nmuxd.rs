@@ -28,6 +28,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     pty_host.start_pane(pane_id, &host_spec)?;
     wait_for_pane_output(&mut session, &mut pty_host, pane_id)?;
 
+    if let Some(cycles) = args.live_cycles {
+        let serve_result =
+            local::serve_live_one_with_host(&listener, &mut session, &mut pty_host, cycles);
+        let stop_result = pty_host.stop_pane(pane_id);
+        serve_result?;
+        stop_result?;
+        return Ok(());
+    }
+
     if args.one_shot {
         let serve_result = local::serve_one_with_host(&listener, &mut session, &mut pty_host);
         let stop_result = pty_host.stop_pane(pane_id);
@@ -44,12 +53,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 struct Args {
     socket_path: PathBuf,
     one_shot: bool,
+    live_cycles: Option<usize>,
     command: Option<String>,
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut socket_path = local::default_socket_path();
     let mut one_shot = false;
+    let mut live_cycles = None;
     let mut command = None;
     let mut args = std::env::args().skip(1);
 
@@ -62,6 +73,13 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                     .ok_or("--socket requires a path")?;
             }
             "--one-shot" => one_shot = true,
+            "--live-cycles" => {
+                live_cycles = Some(
+                    args.next()
+                        .ok_or("--live-cycles requires a count")?
+                        .parse()?,
+                );
+            }
             "--command" => {
                 command = Some(args.next().ok_or("--command requires a shell command")?);
             }
@@ -72,6 +90,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     Ok(Args {
         socket_path,
         one_shot,
+        live_cycles,
         command,
     })
 }

@@ -1,3 +1,4 @@
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -14,6 +15,10 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = args()?;
+    if args.live {
+        return run_live(&args);
+    }
+
     let mut client_state = match args.state_path.as_deref() {
         Some(path) => local::ClientAttachState::load(path)?,
         None => local::ClientAttachState::default(),
@@ -34,6 +39,40 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
         if args.follow && iteration + 1 < iterations {
             thread::sleep(Duration::from_millis(args.interval_ms));
+        }
+    }
+
+    Ok(())
+}
+
+fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let cycles = args.iterations.unwrap_or(1);
+    let mut stream = UnixStream::connect(&args.socket_path)?;
+    stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
+
+    let mut options = local::AttachOptions {
+        input_text: args.input_text.clone(),
+        scrollback_start_line: args.scrollback_start_line,
+        scrollback_line_count: args.scrollback_line_count,
+        ..local::AttachOptions::default()
+    };
+    if options.input_text.is_none() {
+        options.request.mode = AttachMode::ReadOnly;
+    }
+
+    local::write_attach_request(&mut stream, &options.request)?;
+    let snapshot = local::attach_from_stream(&mut stream)?;
+    print_snapshot(snapshot);
+
+    for _ in 0..cycles {
+        if options.request.mode == AttachMode::ReadWrite {
+            if let Some(input_text) = options.input_text.as_deref() {
+                local::send_key_input(&mut stream, "pane-1", input_text)?;
+            }
+        }
+
+        if let Some(update) = local::read_optional_surface_update_from_stream(&mut stream)? {
+            println!("{}", update.text);
         }
     }
 
@@ -74,6 +113,13 @@ fn print_rendered(rendered: local::RenderedAttach) {
     }
 }
 
+fn print_snapshot(snapshot: local::AttachSnapshot) {
+    println!("{}", snapshot.workspace.display_line());
+    if let Some(surface) = snapshot.surface {
+        println!("{}", surface.text);
+    }
+}
+
 struct Args {
     socket_path: PathBuf,
     input_text: Option<String>,
@@ -81,6 +127,7 @@ struct Args {
     scrollback_line_count: u32,
     state_path: Option<PathBuf>,
     follow: bool,
+    live: bool,
     interval_ms: u64,
     iterations: Option<usize>,
 }
@@ -92,6 +139,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut scrollback_line_count = 2;
     let mut state_path = None;
     let mut follow = false;
+    let mut live = false;
     let mut interval_ms = 1000;
     let mut iterations = None;
     let mut args = std::env::args().skip(1);
@@ -133,6 +181,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                 follow = true;
                 input_text = None;
             }
+            "--live" => {
+                live = true;
+            }
             "--interval-ms" => {
                 interval_ms = args
                     .next()
@@ -157,6 +208,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         scrollback_line_count,
         state_path,
         follow,
+        live,
         interval_ms,
         iterations,
     })
