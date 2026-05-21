@@ -52,6 +52,7 @@ pub struct Pane {
     pub cols: u32,
     pub rows: u32,
     pub resize_policy: protocol::ResizePolicy,
+    pub surface: protocol::SurfaceKind,
     pub cursor: Cursor,
     pub surface_lines: Vec<String>,
     pub scrollback_lines: Vec<String>,
@@ -63,6 +64,7 @@ pub struct PaneSurface {
     pub version: u64,
     pub cols: u32,
     pub rows: u32,
+    pub surface: protocol::SurfaceKind,
     pub cursor: Cursor,
     pub lines: Vec<String>,
 }
@@ -99,6 +101,7 @@ impl Session {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    surface: protocol::SurfaceKind::Main,
                     cursor: Cursor {
                         row: 1,
                         col: 0,
@@ -148,6 +151,7 @@ impl Session {
             pane_id: &pane.id,
             cols: pane.cols,
             rows: pane.rows,
+            surface: pane.surface,
             cursor: TerminalCursor::from(&pane.cursor),
             surface_lines: &pane.surface_lines,
             scrollback_lines: &pane.scrollback_lines,
@@ -182,6 +186,7 @@ impl Session {
             pane_id: &pane.id,
             cols: pane.cols,
             rows: pane.rows,
+            surface: pane.surface,
             cursor: TerminalCursor::from(&pane.cursor),
             surface_lines: &pane.surface_lines,
             scrollback_lines: &pane.scrollback_lines,
@@ -317,6 +322,7 @@ impl Session {
             version: pane.surface_version,
             cols: pane.cols,
             rows: pane.rows,
+            surface: pane.surface,
             cursor: pane.cursor.clone(),
             lines: pane.surface_lines.clone(),
         }
@@ -398,7 +404,7 @@ impl Session {
             &protocol::PaneSurfaceSnapshotArgs {
                 pane_id: Some(pane_id),
                 version: surface.version,
-                surface: protocol::SurfaceKind::Main,
+                surface: surface.surface,
                 cols: surface.cols,
                 rows: surface.rows,
                 cursor: Some(cursor),
@@ -830,11 +836,13 @@ fn apply_terminal_update(
 ) -> bool {
     let cursor = Cursor::from(update.cursor);
     let surface_changed = force_surface_version
+        || pane.surface != update.surface
         || pane.surface_lines != update.surface_lines
         || pane.cursor != cursor;
     let scrollback_changed = pane.scrollback_lines != update.scrollback_lines;
 
     pane.scrollback_lines = update.scrollback_lines;
+    pane.surface = update.surface;
     pane.surface_lines = update.surface_lines;
     pane.cursor = cursor;
 
@@ -1291,6 +1299,7 @@ mod tests {
                 assert_eq!(input.pane_id, "pane-1");
                 assert_eq!(input.cols, 80);
                 assert_eq!(input.rows, 24);
+                assert_eq!(input.surface, protocol::SurfaceKind::Main);
                 assert_eq!(
                     input.cursor,
                     TerminalCursor {
@@ -1304,6 +1313,7 @@ mod tests {
                 assert_eq!(input.scrollback_lines.len(), 3);
                 assert_eq!(output, b"ignored by test engine");
                 Some(TerminalUpdate {
+                    surface: protocol::SurfaceKind::Alternate,
                     cursor: TerminalCursor {
                         row: 7,
                         col: 8,
@@ -1337,6 +1347,7 @@ mod tests {
         let surface = session.initial_pane_surface();
         let scrollback = session.initial_scrollback();
         assert_eq!(surface.version, 3);
+        assert_eq!(surface.surface, protocol::SurfaceKind::Alternate);
         assert_eq!(surface.lines, vec!["engine surface".to_owned()]);
         assert_eq!(
             surface.cursor,
@@ -1352,6 +1363,7 @@ mod tests {
         let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
         let cursor = snapshot.cursor().expect("cursor");
         assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
+        assert_eq!(snapshot.surface(), protocol::SurfaceKind::Alternate);
         assert_eq!(scrollback.lines, vec!["engine scrollback".to_owned()]);
     }
 
@@ -1377,9 +1389,11 @@ mod tests {
                 assert_eq!(input.pane_id, "pane-1");
                 assert_eq!(input.cols, 80);
                 assert_eq!(input.rows, 24);
+                assert_eq!(input.surface, protocol::SurfaceKind::Main);
                 assert_eq!(cols, 100);
                 assert_eq!(rows, 10);
                 Some(TerminalUpdate {
+                    surface: input.surface,
                     cursor: TerminalCursor {
                         row: 3,
                         col: 4,
@@ -1430,6 +1444,7 @@ mod tests {
                 let mut scrollback_lines = input.scrollback_lines.to_vec();
                 scrollback_lines.push("history only".to_owned());
                 Some(TerminalUpdate {
+                    surface: input.surface,
                     cursor: input.cursor,
                     surface_lines: input.surface_lines.to_vec(),
                     scrollback_lines,

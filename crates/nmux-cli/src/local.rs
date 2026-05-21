@@ -847,6 +847,7 @@ pub fn surface_update_from_frame(
                 patch_kind: None,
                 cols: Some(snapshot.cols()),
                 rows: Some(snapshot.rows()),
+                surface: Some(snapshot.surface()),
                 cursor: snapshot.cursor().map(CursorSummary::from_protocol),
                 row_updates,
                 text,
@@ -872,6 +873,7 @@ pub fn surface_update_from_frame(
                 patch_kind: Some(patch.kind()),
                 cols: None,
                 rows: None,
+                surface: None,
                 cursor: patch.cursor().map(CursorSummary::from_protocol),
                 row_updates,
                 text,
@@ -1366,6 +1368,7 @@ pub struct SurfaceUpdate {
     pub patch_kind: Option<protocol::PatchKind>,
     pub cols: Option<u32>,
     pub rows: Option<u32>,
+    pub surface: Option<protocol::SurfaceKind>,
     pub cursor: Option<CursorSummary>,
     pub row_updates: Vec<SurfaceRowUpdate>,
     pub text: String,
@@ -1427,6 +1430,7 @@ pub struct ClientPaneSurface {
     pub version: u64,
     pub cols: u32,
     pub rows: u32,
+    pub surface: protocol::SurfaceKind,
     pub cursor: Option<CursorSummary>,
     row_text: Vec<String>,
 }
@@ -1438,6 +1442,7 @@ impl ClientPaneSurface {
             version: update.version,
             cols: update.cols.ok_or("surface snapshot missing cols")?,
             rows: update.rows.ok_or("surface snapshot missing rows")?,
+            surface: update.surface.unwrap_or(protocol::SurfaceKind::Main),
             cursor: update.cursor,
             row_text: Vec::new(),
         };
@@ -1621,6 +1626,8 @@ impl ClientAttachState {
             encoded.push_str(&surface.cols.to_string());
             encoded.push(' ');
             encoded.push_str(&surface.rows.to_string());
+            encoded.push(' ');
+            encoded.push_str(&surface.surface.0.to_string());
             encoded.push('\n');
             match surface.cursor {
                 Some(cursor) => {
@@ -1660,14 +1667,24 @@ impl ClientAttachState {
         let mut surfaces = Vec::new();
         while let Some(line) = lines.next() {
             let mut parts = line.split(' ');
-            let (Some("surface"), Some(pane_id), Some(version), Some(cols), Some(rows), None) = (
+            let (
+                Some("surface"),
+                Some(pane_id),
+                Some(version),
+                Some(cols),
+                Some(rows),
+                surface,
+                None,
+            ) = (
                 parts.next(),
                 parts.next(),
                 parts.next(),
                 parts.next(),
                 parts.next(),
                 parts.next(),
-            ) else {
+                parts.next(),
+            )
+            else {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "invalid nmux client state surface line",
@@ -1679,6 +1696,11 @@ impl ClientAttachState {
             let version = parse_state_u64(version)?;
             let cols = parse_state_u32(cols)?;
             let rows = parse_state_u32(rows)?;
+            let surface = surface
+                .map(parse_state_i8)
+                .transpose()?
+                .map(protocol::SurfaceKind)
+                .unwrap_or(protocol::SurfaceKind::Main);
             let row_count = usize::try_from(rows).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "surface rows too large")
             })?;
@@ -1739,6 +1761,7 @@ impl ClientAttachState {
                 version,
                 cols,
                 rows,
+                surface,
                 cursor,
                 row_text,
             });
@@ -2027,6 +2050,10 @@ mod tests {
                 SurfaceUpdateKind::Snapshot => Some(3),
                 SurfaceUpdateKind::Patch => None,
             },
+            surface: match kind {
+                SurfaceUpdateKind::Snapshot => Some(protocol::SurfaceKind::Main),
+                SurfaceUpdateKind::Patch => None,
+            },
             cursor: None,
             text: render_decoded_rows(&rows),
             row_updates: rows,
@@ -2116,6 +2143,7 @@ mod tests {
         assert_eq!(surface.version, 2);
         assert_eq!(surface.cols, Some(80));
         assert_eq!(surface.rows, Some(24));
+        assert_eq!(surface.surface, Some(protocol::SurfaceKind::Main));
         assert_eq!(surface.text, "nmux pane-1\nserver-owned terminal state");
         assert_eq!(
             snapshot.scrollback,
@@ -2277,7 +2305,19 @@ mod tests {
 
         let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
         assert_eq!(decoded.known_surfaces(), state.known_surfaces());
+        assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
         assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
+    }
+
+    #[test]
+    fn client_attach_state_decodes_cached_surface_without_surface_kind() {
+        let decoded = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 1\nsurface 70616e652d31 7 80 24\ncursor none\nrow 0 636163686564\nend\n",
+        )
+        .expect("decode old state");
+
+        assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
+        assert_eq!(decoded.surfaces[0].render_text(), "cached");
     }
 
     #[test]

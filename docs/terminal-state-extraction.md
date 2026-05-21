@@ -32,6 +32,8 @@ backend terminal state into the same nmux objects:
 
 - Cursor: row, column, visibility, and shape must come from the VT engine, not
   from row-count heuristics or serializer defaults.
+- Surface kind: active main versus alternate screen state must come from the
+  terminal engine and be present on full surface snapshots.
 - Visible rows: extract the active screen viewport as row text compatible with
   the current `PaneSurfaceSnapshot` and `PaneSurfacePatch` fields.
 - Scrollback: expose historical rows through the existing `ScrollbackChunk`
@@ -53,8 +55,8 @@ only after the backend extraction proves the exact shape needed.
   zero-width continuations, and ambiguous-width policy.
 - Terminal modes: origin mode, wrap mode, bracketed paste, application cursor
   keys, keypad mode, and cursor blink.
-- Alternate screen: active screen selection, alternate scrollback behavior, and
-  transitions between primary and alternate buffers.
+- Alternate screen: alternate scrollback behavior and transitions between
+  primary and alternate buffers.
 - Palette and theme state: indexed palette overrides, default foreground and
   background, and dynamic color changes.
 - Hyperlinks: URI, identifier, range ownership, and lifetime.

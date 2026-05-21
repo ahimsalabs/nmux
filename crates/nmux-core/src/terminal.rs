@@ -5,6 +5,7 @@ pub struct TerminalInput<'a> {
     pub pane_id: &'a str,
     pub cols: u32,
     pub rows: u32,
+    pub surface: protocol::SurfaceKind,
     pub cursor: TerminalCursor,
     pub surface_lines: &'a [String],
     pub scrollback_lines: &'a [String],
@@ -20,6 +21,7 @@ pub struct TerminalCursor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalUpdate {
+    pub surface: protocol::SurfaceKind,
     pub cursor: TerminalCursor,
     pub surface_lines: Vec<String>,
     pub scrollback_lines: Vec<String>,
@@ -91,6 +93,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
         scrollback_lines.extend(text_lines_from_pty_output(output));
 
         Some(interim_text_update(
+            input.surface,
             input.cursor,
             input.rows,
             scrollback_lines,
@@ -104,6 +107,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
         rows: u32,
     ) -> Option<TerminalUpdate> {
         Some(interim_text_update(
+            input.surface,
             input.cursor,
             rows,
             input.scrollback_lines.to_vec(),
@@ -112,6 +116,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
 }
 
 fn interim_text_update(
+    surface: protocol::SurfaceKind,
     previous_cursor: TerminalCursor,
     rows: u32,
     scrollback_lines: Vec<String>,
@@ -126,6 +131,7 @@ fn interim_text_update(
     };
 
     TerminalUpdate {
+        surface,
         cursor,
         surface_lines,
         scrollback_lines,
@@ -168,6 +174,7 @@ mod tests {
             pane_id: "pane-1",
             cols: 80,
             rows: 24,
+            surface: protocol::SurfaceKind::Main,
             cursor: TerminalCursor {
                 row: 0,
                 col: 0,
@@ -200,6 +207,7 @@ mod tests {
                 shape: protocol::CursorShape::Block
             }
         );
+        assert_eq!(update.surface, protocol::SurfaceKind::Main);
     }
 
     #[test]
@@ -210,6 +218,7 @@ mod tests {
             pane_id: "pane-1",
             cols: 80,
             rows: 2,
+            surface: protocol::SurfaceKind::Main,
             cursor: TerminalCursor {
                 row: 0,
                 col: 0,
@@ -251,6 +260,7 @@ mod tests {
             pane_id: "pane-1",
             cols: 80,
             rows: 3,
+            surface: protocol::SurfaceKind::Alternate,
             cursor: TerminalCursor {
                 row: 2,
                 col: 0,
@@ -268,6 +278,7 @@ mod tests {
             vec!["two".to_owned(), "three".to_owned()]
         );
         assert_eq!(update.scrollback_lines, scrollback_lines);
+        assert_eq!(update.surface, protocol::SurfaceKind::Alternate);
         assert_eq!(
             update.cursor,
             TerminalCursor {

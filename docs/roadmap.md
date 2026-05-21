@@ -87,6 +87,7 @@ Done:
 - Local daemon serving paths keep terminal engine instances alive per pane across output polls, resize handling, and sequential live clients.
 - Resize-driven surface and cursor changes advance the pane surface version, so clients can synchronize them through the normal snapshot/patch path.
 - Cursor shape now flows from the terminal engine boundary into pane surface snapshots and patches instead of being hardcoded during serialization.
+- Surface kind now flows from the terminal engine boundary into pane surface snapshots, preserving the existing schema path for future alternate-screen extraction.
 - `nmuxd --terminal-engine interim` exposes the current engine choice explicitly; backend `libghostty-vt` is not imported yet.
 
 Next:

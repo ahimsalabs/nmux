@@ -105,6 +105,7 @@ impl TmuxSession {
                 cols: active_pane.cols,
                 rows: active_pane.rows,
                 resize_policy: protocol::ResizePolicy::Fixed,
+                surface: protocol::SurfaceKind::Main,
                 cursor: Cursor {
                     row: 0,
                     col: 0,
