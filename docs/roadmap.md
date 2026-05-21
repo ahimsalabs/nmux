@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M8 is the current target: document and prototype the tmux adapter boundary without making tmux the core model.
+M9 is the current target: keep any herdr integration outside the core repository and behind the nmux protocol.
 
 Done:
 
@@ -49,10 +49,12 @@ Done:
 - The `nmux --follow` local loop keeps one client render state across repeated reconnects, applies snapshots/patches, and treats current-version reconnects as no render update.
 - ADR 0008 for promoting the local attach prelude into a public FlatBuffers `AttachRequest`.
 - `AttachRequest` and known pane surface versions are public schema objects, and the local attach handshake uses a FlatBuffers envelope instead of the text prelude.
+- ADR 0009 for the tmux adapter process boundary, including licensing and ownership rules.
+- Internal tmux adapter inventory structs can map a tmux session/window/active-pane view into the existing nmux session model without launching tmux or changing the public schema.
 
 Next:
 
-- Add ADR 0009 for the tmux adapter process boundary, including licensing and ownership rules.
+- Add ADR 0010 for the herdr integration boundary, including the rule that AGPL code stays outside the nmux core.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -157,7 +159,7 @@ Exit evidence:
 - Adapter process boundary is documented.
 - Basic session/tree mapping is tested.
 
-Status: In progress. ADR 0009 documents the tmux adapter process boundary: tmux remains an external adapter target, clients continue to speak nmux FlatBuffers, and `nmuxd` keeps ownership of normalized workspace, pane, terminal-state, attach, reconnect, presence, and permission semantics. The next step is a pure tmux inventory-to-nmux workspace mapping layer and test without launching tmux.
+Status: Done. ADR 0009 documents the tmux adapter process boundary: tmux remains an external adapter target, clients continue to speak nmux FlatBuffers, and `nmuxd` keeps ownership of normalized workspace, pane, terminal-state, attach, reconnect, presence, and permission semantics. The core has a pure tmux inventory-to-nmux session mapping with tests for active window/pane focus hints, stable adapter-derived IDs, and invalid empty inventories, without launching tmux or changing the public schema.
 
 ### M9: herdr Adapter
 
