@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M9 is the current target: keep any herdr integration outside the core repository and behind the nmux protocol.
+The next implementation target is undecided after M9. Candidate directions are live tmux adapter scaffolding, external herdr adapter repo shape, or another frontend/runtime milestone.
 
 Done:
 
@@ -51,10 +51,11 @@ Done:
 - `AttachRequest` and known pane surface versions are public schema objects, and the local attach handshake uses a FlatBuffers envelope instead of the text prelude.
 - ADR 0009 for the tmux adapter process boundary, including licensing and ownership rules.
 - Internal tmux adapter inventory structs can map a tmux session/window/active-pane view into the existing nmux session model without launching tmux or changing the public schema.
+- ADR 0010 for the herdr integration boundary and AGPL membrane.
 
 Next:
 
-- Add ADR 0010 for the herdr integration boundary, including the rule that AGPL code stays outside the nmux core.
+- Decide the next implementation target after M9: live tmux adapter scaffolding, external herdr adapter repo shape, or another frontend/runtime milestone.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -169,3 +170,5 @@ Exit evidence:
 
 - Integration boundary is documented.
 - No AGPL code is copied into the nmux core.
+
+Status: Done. ADR 0010 documents the herdr integration boundary: any herdr work stays behind an `nmux-herdr-adapter` process and, if needed, a separate repository; clients continue to speak nmux FlatBuffers; and no GPL or AGPL implementation material is copied into the nmux core.
