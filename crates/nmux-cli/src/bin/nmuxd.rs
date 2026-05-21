@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use nmux_cli::local;
+use nmux_core::host::{LocalPtyHost, ProcessHost};
 use nmux_core::session::Session;
 
 fn main() {
@@ -16,13 +17,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("nmuxd: listening on {}", socket_path.display());
 
     let mut session = Session::initial();
+    let pane_id = "pane-1";
+    let host_spec = session.tabs[0].root.host.clone();
+    let mut pty_host = LocalPtyHost::default();
+    pty_host.start_pane(pane_id, &host_spec)?;
+
     if one_shot {
-        local::serve_one(&listener, &mut session)?;
+        let serve_result = local::serve_one_with_output(&listener, &mut session, &mut pty_host);
+        let stop_result = pty_host.stop_pane(pane_id);
+        serve_result?;
+        stop_result?;
         return Ok(());
     }
 
     loop {
-        local::serve_one(&listener, &mut session)?;
+        local::serve_one_with_output(&listener, &mut session, &mut pty_host)?;
     }
 }
 
