@@ -38,11 +38,12 @@ Done:
 - Core pane state can hydrate visible rows and scrollback from process output bytes.
 - Local attach can serve process-derived pane state over the Unix socket.
 - Nonblocking process output seam and local PTY output queue for polling already-pumped bytes.
+- Local attach polls available process output before choosing snapshot, patch, or no surface response.
 
 Next:
 
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Poll local PTY output into backend-owned pane state from the daemon.
+- Start a real local PTY lifecycle in `nmuxd` and poll it through the existing output seam.
 
 ## Milestones
 
@@ -124,7 +125,7 @@ Exit evidence:
 - Pane process lifecycle is mediated by a host interface.
 - Local and sandbox host choices are represented without changing the protocol core.
 
-Status: Done for the internal boundary and first local PTY host. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, lifecycle tests, a concrete local command host, a local PTY host, an interim process-output text surface, and a nonblocking output polling seam without changing the FlatBuffers protocol. Daemon-side PTY polling remains a follow-up.
+Status: Done for the internal boundary and first local PTY host. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, lifecycle tests, a concrete local command host, a local PTY host, an interim process-output text surface, and a nonblocking output polling seam without changing the FlatBuffers protocol. Local attach can poll already-pumped output before responding; starting and polling a real PTY from `nmuxd` remains a follow-up.
 
 ### M7: Ghostty Frontend
 
