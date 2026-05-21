@@ -52,7 +52,7 @@ Done:
 
 Next:
 
-- Track upstream Ghostty/libghostty API work needed for external surface hydration.
+- Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
 
