@@ -16,3 +16,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0008: FlatBuffers Attach Request](0008-flatbuffers-attach-request.md)
 - [0009: tmux Adapter Process Boundary](0009-tmux-adapter-process-boundary.md)
 - [0010: herdr Integration Boundary](0010-herdr-integration-boundary.md)
+- [0011: Live Local Interactive Attach](0011-live-local-interactive-attach.md)

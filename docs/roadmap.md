@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-The next implementation target is undecided after M9. Candidate directions are live tmux adapter scaffolding, external herdr adapter repo shape, or another frontend/runtime milestone.
+M10 is the current target: turn local attach from request/response smoke tests into a long-lived interactive PTY session.
 
 Done:
 
@@ -52,10 +52,11 @@ Done:
 - ADR 0009 for the tmux adapter process boundary, including licensing and ownership rules.
 - Internal tmux adapter inventory structs can map a tmux session/window/active-pane view into the existing nmux session model without launching tmux or changing the public schema.
 - ADR 0010 for the herdr integration boundary and AGPL membrane.
+- ADR 0011 for making live local interactive attach the next milestone before live adapter work.
 
 Next:
 
-- Decide the next implementation target after M9: live tmux adapter scaffolding, external herdr adapter repo shape, or another frontend/runtime milestone.
+- Add a library-level long-lived attach loop test that keeps one connection open across repeated input/output updates.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -172,3 +173,17 @@ Exit evidence:
 - No AGPL code is copied into the nmux core.
 
 Status: Done. ADR 0010 documents the herdr integration boundary: any herdr work stays behind an `nmux-herdr-adapter` process and, if needed, a separate repository; clients continue to speak nmux FlatBuffers; and no GPL or AGPL implementation material is copied into the nmux core.
+
+### M10: Live Local Interactive Attach
+
+Goal: turn local attach from request/response smoke tests into a long-lived interactive PTY session.
+
+Exit evidence:
+
+- `nmuxd` can keep serving one local PTY while at least one client stays attached.
+- A long-lived read-write client can send repeated input events over one connection.
+- Process output updates backend-owned pane state and reaches the client as patches or snapshots.
+- A read-only client can observe updates without forwarding input.
+- Tests cover repeated input/output, current-version no-update behavior, and read-only permission enforcement.
+
+Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work and scopes the first implementation to a library-level long-lived attach loop before raw terminal UX.
