@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use nmux_cli::local;
 use nmux_core::session::AttachMode;
+use nmux_proto::protocol;
 
 const STDIN_BYTES_DETACH: u8 = 0x1d;
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
@@ -97,6 +98,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     local::write_attach_request(&mut stream, &options.request)?;
     let snapshot = local::attach_from_stream(&mut stream)?;
     let rendered = client_state.render_attach(snapshot)?;
+    warn_if_resize_intent_conflicts_with_policy(args.live_resize, rendered.workspace.resize_policy);
     print_live_rendered(rendered, args.redraw);
     flush_stdout()?;
 
@@ -190,6 +192,23 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
 fn flush_stdout() -> io::Result<()> {
     io::stdout().flush()
+}
+
+fn warn_if_resize_intent_conflicts_with_policy(
+    live_resize: Option<(u32, u32)>,
+    resize_policy: protocol::ResizePolicy,
+) {
+    if let Some(message) = resize_policy_warning(live_resize, resize_policy) {
+        eprintln!("{message}");
+    }
+}
+
+fn resize_policy_warning(
+    live_resize: Option<(u32, u32)>,
+    resize_policy: protocol::ResizePolicy,
+) -> Option<&'static str> {
+    (live_resize.is_some() && resize_policy == protocol::ResizePolicy::Manual)
+        .then_some("nmux: resize request ignored by manual resize policy")
 }
 
 fn save_live_state(
@@ -677,7 +696,8 @@ fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
 mod tests {
     use super::{
         LocalEcho, parse_local_echo, raw_terminal_lflag, raw_terminal_mode_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        resize_policy_warning, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
     };
 
     #[test]
@@ -742,6 +762,22 @@ mod tests {
         assert!(usage.contains("--local-echo off|tty"));
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));
+    }
+
+    #[test]
+    fn resize_policy_warning_only_applies_to_manual_policy_with_resize_request() {
+        assert_eq!(
+            resize_policy_warning(None, nmux_proto::protocol::ResizePolicy::Manual),
+            None
+        );
+        assert_eq!(
+            resize_policy_warning(Some((100, 30)), nmux_proto::protocol::ResizePolicy::Fixed),
+            None
+        );
+        assert_eq!(
+            resize_policy_warning(Some((100, 30)), nmux_proto::protocol::ResizePolicy::Manual),
+            Some("nmux: resize request ignored by manual resize policy")
+        );
     }
 
     #[test]

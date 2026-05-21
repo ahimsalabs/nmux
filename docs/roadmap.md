@@ -68,6 +68,7 @@ Done:
 - `nmux --help` and `nmuxd --help` document the live attach, stdin, redraw, resize, and policy flags used by the current prototype.
 - The client flushes rendered output after live updates and reports local Ctrl-] detach on stderr.
 - The client reports stdin EOF and live server socket close reasons on stderr for unbounded live exits.
+- The client warns when an explicit live resize request conflicts with daemon-published `manual` resize policy.
 - Read-write live clients no longer have to send input before receiving output; idle read-write cycles poll process output and stream updates when the backend-owned surface changes.
 - The live daemon treats a client EOF/disconnect during read-write polling as a clean detach, so piped stdin clients can finish without requiring a matching daemon cycle count.
 

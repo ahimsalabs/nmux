@@ -397,7 +397,8 @@ M11: terminal frontend polish [in progress]
   live and redraw output is explicitly flushed after render updates
   Ctrl-] detach reports a local detach status on stderr
   stdin EOF and live server socket close exits report status on stderr
-  CLI output should avoid ambiguous resize-policy and unsupported-fidelity states
+  explicit live resize requests warn when daemon-published manual policy will ignore them
+  CLI output should avoid ambiguous unsupported-fidelity states
   runnable docs and help output should cover expected live attach workflows
   tests should cover changed user-visible terminal output behavior
 ```
