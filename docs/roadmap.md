@@ -53,7 +53,7 @@ Done:
 - Internal tmux adapter inventory structs can map a tmux session/window/active-pane view into the existing nmux session model without launching tmux or changing the public schema.
 - ADR 0010 for the herdr integration boundary and AGPL membrane.
 - ADR 0011 for making live local interactive attach the next milestone before live adapter work.
-- The local library has a bounded long-lived attach loop helper with tests for repeated input/output patches, no-update behavior, and read-only observation without input forwarding.
+- The local library has a long-lived attach loop helper with tests for repeated input/output patches, no-update behavior, read-only observation without input forwarding, and clean detach.
 - `nmuxd --live` serves one live client until detach; `nmuxd --live-cycles` remains available for bounded smoke tests.
 - The CLI integration tests launch `nmuxd --live-cycles` and `nmux --live` against a command-backed PTY and assert repeated streamed output.
 - `nmux --live --stdin` streams stdin lines over one attached connection and exits cleanly on stdin EOF when no explicit iteration limit is set.
@@ -61,11 +61,11 @@ Done:
 - Live mode renders streamed snapshots and patches through the same client-side pane surface state used by reconnects, and can persist that state with `--state`.
 - `nmux --live --cols --rows` sends `ResizeIntent` through the live loop and the daemon forwards it through the process-host resize boundary.
 - Read-write live clients no longer have to send input before receiving output; idle read-write cycles poll process output and stream updates when the backend-owned surface changes.
-- The live daemon treats a client EOF/disconnect during read-write polling as a clean detach, so piped stdin clients can finish before the daemon's bounded cycle count is exhausted.
+- The live daemon treats a client EOF/disconnect during read-write polling as a clean detach, so piped stdin clients can finish without requiring a matching daemon cycle count.
 
 Next:
 
-- Iterate from bounded `--key` replay toward raw terminal input and continuous output polling.
+- Iterate from repeated `--key` replay and line-streamed stdin toward raw terminal input and continuous output polling.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -195,4 +195,4 @@ Exit evidence:
 - A read-only client can observe updates without forwarding input.
 - Tests cover repeated input/output, current-version no-update behavior, and read-only permission enforcement.
 
-Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work. The local library now has a bounded live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, read-write clients can receive idle process output without sending input first, current-version cycles send no update frame, read-only clients can observe output without forwarding input, and client EOF during read-write polling is a clean detach. `nmuxd --live` serves one live client until detach, `nmuxd --live-cycles` remains available for bounded smoke tests, integration tests cover command-backed PTY smoke, `nmux --live --stdin` streams stdin lines over the attached connection and exits cleanly on stdin EOF when unbounded, `nmux --live --no-input` observes process output without forwarding input, live mode renders through the same client-side pane surface state used by reconnects, and `nmux --live --cols --rows` forwards `ResizeIntent` through the process-host resize boundary. The next step is moving from line input toward raw terminal input and fully continuous output polling.
+Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work. The local library now has a live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, read-write clients can receive idle process output without sending input first, current-version cycles send no update frame, read-only clients can observe output without forwarding input, and client EOF during read-write polling is a clean detach. `nmuxd --live` serves one live client until detach, `nmuxd --live-cycles` remains available for bounded smoke tests, integration tests cover command-backed PTY smoke, `nmux --live --stdin` streams stdin lines over the attached connection and exits cleanly on stdin EOF when unbounded, `nmux --live --no-input` observes process output without forwarding input, live mode renders through the same client-side pane surface state used by reconnects, and `nmux --live --cols --rows` forwards `ResizeIntent` through the process-host resize boundary. The next step is moving from line input toward raw terminal input and fully continuous output polling.

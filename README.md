@@ -11,7 +11,7 @@ nmux is an experimental portable terminal workspace protocol. The project direct
 The current implementation is a Rust workspace with:
 
 - `nmuxd`: a local daemon that owns one session, starts a local PTY, and serves nmux protocol frames over a Unix socket;
-- `nmux`: a local client that attaches, renders server-owned pane state, sends input, persists client render state, and can run a bounded live attach loop;
+- `nmux`: a local client that attaches, renders server-owned pane state, sends input, persists client render state, and can run a live attach loop;
 - `nmux-proto`, `nmux-core`, and `nmux-cli` crates;
 - ADRs under [docs/adr](docs/adr);
 - runnable notes in [docs/running.md](docs/running.md);
