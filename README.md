@@ -50,6 +50,7 @@ nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --scrollback-start 1 --scrollback-count 4 --interval-ms 500
 ```
 
+For a single local workspace, both binaries also share a stable default socket path, so `--socket` can be omitted on both sides.
 Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled.
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache when the daemon has no newer surface update to send.
 State load/save failures include the state path in the error.

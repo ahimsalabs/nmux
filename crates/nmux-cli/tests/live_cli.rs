@@ -245,6 +245,61 @@ fn live_cli_redraw_includes_initial_scrollback_range() {
 }
 
 #[test]
+fn live_cli_uses_shared_default_socket_from_runtime_dir() {
+    let runtime_dir = test_runtime_dir();
+    let socket_path = runtime_dir.join("nmux").join("nmuxd.sock");
+    let _ = fs::remove_dir_all(&runtime_dir);
+    fs::create_dir_all(&runtime_dir).expect("create runtime dir");
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .args([
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'ready\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .args([
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_dir_all(&runtime_dir);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("ready"),
+        "default-socket live attach missed daemon output:\n{stdout}"
+    );
+}
+
+fn test_runtime_dir() -> PathBuf {
+    let id = NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed);
+    PathBuf::from(format!("/tmp/nmuxrt{}-{id}", std::process::id()))
+}
+
+#[test]
 fn live_cli_warns_when_resize_request_conflicts_with_manual_policy() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

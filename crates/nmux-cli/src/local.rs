@@ -1,4 +1,5 @@
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -18,11 +19,18 @@ pub trait ProcessHostOutput: ProcessHost + ProcessOutput {}
 impl<T> ProcessHostOutput for T where T: ProcessHost + ProcessOutput {}
 
 pub fn default_socket_path() -> PathBuf {
-    if let Some(runtime_dir) = env::var_os("XDG_RUNTIME_DIR") {
-        return PathBuf::from(runtime_dir).join("nmux").join("nmuxd.sock");
-    }
+    default_socket_path_from(env::var_os("XDG_RUNTIME_DIR"), effective_uid())
+}
 
-    PathBuf::from(format!("/tmp/nmux-{}.sock", std::process::id()))
+fn default_socket_path_from(runtime_dir: Option<OsString>, uid: u32) -> PathBuf {
+    match runtime_dir {
+        Some(runtime_dir) => PathBuf::from(runtime_dir).join("nmux").join("nmuxd.sock"),
+        None => PathBuf::from(format!("/tmp/nmux-{uid}")).join("nmuxd.sock"),
+    }
+}
+
+fn effective_uid() -> u32 {
+    unsafe { libc::geteuid() }
 }
 
 pub fn bind_listener(path: &Path) -> io::Result<UnixListener> {
@@ -1760,6 +1768,25 @@ mod tests {
             "/tmp/nmux-{}-{nanos}-{id}.sock",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn default_socket_path_uses_runtime_dir_when_available() {
+        assert_eq!(
+            default_socket_path_from(Some(OsString::from("/run/user/1000")), 1000),
+            PathBuf::from("/run/user/1000")
+                .join("nmux")
+                .join("nmuxd.sock")
+        );
+    }
+
+    #[test]
+    fn default_socket_path_fallback_is_stable_for_user() {
+        let first = default_socket_path_from(None, 501);
+        let second = default_socket_path_from(None, 501);
+
+        assert_eq!(first, second);
+        assert_eq!(first, PathBuf::from("/tmp/nmux-501").join("nmuxd.sock"));
     }
 
     fn surface_update(

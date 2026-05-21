@@ -414,6 +414,7 @@ M12: live workspace usability [next]
   explicit nmux input modes fail fast on conflicting --key/--stdin/--stdin-bytes/--no-input combinations
   nmux live loop timing and explicit resize dimensions fail fast on zero or out-of-range values
   nmux --state load/save failures include the state path before socket connection work
+  nmuxd and nmux share a stable default socket path for local workflows without --socket
   choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available
