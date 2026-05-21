@@ -22,6 +22,8 @@ The FlatBuffers protocol remains unchanged. Clients continue receiving `PaneSurf
 
 This creates an end-to-end path for local process output while keeping the libghostty integration point clear. The interim text surface should be easy to replace with a libghostty-backed surface object later.
 
+The interim surface is a sequencing device, not a competing terminal engine. It should be retired by backend `libghostty-vt` extraction once the local state-sync path has enough live, reconnect, and scrollback behavior to validate the replacement.
+
 Tests should cover deterministic byte-to-surface behavior without using blocking PTY reads. PTY lifecycle tests remain in the host layer; terminal-state tests belong in the session/surface layer.
 
 The implementation must avoid copying terminal parser behavior or code from GPL or AGPL projects. Prior art can inform architecture only.

@@ -17,7 +17,7 @@ The M7 question is therefore not "can the frontend run Ghostty?" It is: can a fr
 
 ## Decision
 
-M7 treats backend libghostty/libghostty-vt integration as the primary correctness path and frontend libghostty rendering as an integration milestone, not as a prerequisite for nmux state sync.
+M7 treats backend libghostty/libghostty-vt integration as the primary correctness path and frontend libghostty rendering as an integration milestone, not as a prerequisite for nmux state sync. This ADR does not defer backend `libghostty-vt`; it defers only frontend Ghostty renderer hydration from externally supplied nmux state until the API shape is clear.
 
 The native frontend must render nmux's server-owned surface objects. It must not consume raw PTY bytes as its source of truth, even if a Ghostty-derived renderer is embedded. Raw PTY bytes belong at the process-host/backend terminal-engine boundary.
 

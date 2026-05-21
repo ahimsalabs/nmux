@@ -243,3 +243,19 @@ Exit evidence:
 Status: Next. Start with the smallest local live-workflow gap that makes the current prototype more usable without expanding licensing risk or pretending the interim text surface is VT-correct.
 
 Initial slice: `nmuxd --live-clients COUNT` keeps one daemon-owned local workspace and PTY alive across a bounded number of sequential live clients. This is intentionally not simultaneous multi-client attach; it is a small persistence step for live reattach workflows. The daemon also rejects ambiguous live server mode combinations and zero live counts so scripted workflows fail before binding a socket. A persisted live client state file can now reattach at the current pane surface version without waiting for a raw replay or requiring a redundant surface update. Client bounded live/follow loops reject `--iterations 0` before connecting so scripts cannot silently request a no-op loop. Explicit client input modes now reject conflicting `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` combinations before connecting. Live loop timing, explicit resize dimensions, and scrollback range flags reject zero or out-of-range values before connecting. Client state load/save failures report the state path so bad persisted live reattach state is actionable. `nmuxd` and `nmux` now share a stable default local socket path, so simple local workflows do not require spelling `--socket` on both sides; help output and quick-start docs show that path first and document how the default path is chosen, including fallback when `XDG_RUNTIME_DIR` is empty or relative. Client connection failures include the socket path so missing-daemon and wrong-socket mistakes are actionable. `nmuxd --live-forever` serves sequential live clients against one workspace and PTY until the daemon is stopped. `nmuxd` refuses to replace an existing socket path and reports that path with a recovery hint so users do not accidentally hide another local workspace, while normal bounded daemon exits remove their socket path only when that path still points at the socket file the daemon created.
+
+### M13: Backend libghostty-vt Extraction
+
+Goal: replace the interim byte-to-text surface with daemon-owned `libghostty-vt` terminal-state extraction while preserving nmux state sync.
+
+Non-goal: frontend Ghostty renderer hydration. That remains tracked separately because it depends on an API that can render externally supplied nmux state without client-side PTY replay.
+
+Exit evidence:
+
+- PTY bytes enter `libghostty-vt` inside `nmuxd`, and clients still receive nmux `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` objects.
+- The extraction boundary documents how cursor state, modes, alternate screen, palettes, hyperlinks, images, grapheme clusters, and cell widths map into current or future nmux schema.
+- Existing live attach, reconnect, scrollback, and resize tests continue to assert backend-owned state-sync semantics.
+- The interim text surface remains explicitly labeled temporary until replaced.
+- No GPL or AGPL terminal parser code is copied into the core.
+
+Status: Planned as the next correctness milestone after enough M12 live workflow is usable to validate snapshots, patches, scrollback ranges, reconnect behavior, and live attach against a real terminal-state engine.

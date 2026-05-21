@@ -10,6 +10,8 @@ nmux frontends render backend-owned terminal state. The specific M7 question is 
 
 ADR 0007 decides that backend libghostty/libghostty-vt integration is the primary correctness path. Frontend Ghostty/libghostty rendering is an integration milestone, and nmux should use a temporary renderer until upstream exposes a clear external surface hydration API.
 
+Backend `libghostty-vt` extraction can proceed independently of this frontend hydration question: `nmuxd` can feed PTY bytes into libghostty-vt, own the resulting terminal state, and emit nmux snapshots and patches without asking clients to parse raw PTY bytes.
+
 ## Current Upstream Evidence
 
 - Ghostty's public documentation describes `libghostty` as a cross-platform C-ABI library that provides terminal emulation, font handling, and rendering, while noting that the API is not yet a stable standalone library: <https://ghostty.org/docs/about>

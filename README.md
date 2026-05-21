@@ -5,7 +5,7 @@ nmux is an experimental portable terminal workspace protocol. The project direct
 - backend-owned terminal state, not client-side PTY replay;
 - FlatBuffers state-sync messages for sessions, tabs, panes, surfaces, scrollback, presence, input, and resize intent;
 - local, sandbox, and adapter process boundaries;
-- Ghostty/libghostty as the intended terminal-state engine, with a temporary text surface in the current prototype;
+- backend Ghostty/libghostty-vt as the planned terminal-state correctness path, with a temporary text surface in the current prototype;
 - adapters such as tmux or herdr kept outside the core model.
 
 The current implementation is a Rust workspace with:
@@ -32,7 +32,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --help
 nix develop path:$PWD -c cargo run --bin nmuxd -- --help
 ```
 
-`nmux --help` also calls out the current renderer limitation: the prototype uses an interim text surface, not a VT-correct terminal emulator.
+`nmux --help` also calls out the current renderer limitation: the prototype uses an interim text surface, not a VT-correct terminal emulator. That is a sequencing device while the local state-sync/live workflow stabilizes; backend `libghostty-vt` extraction is the planned replacement, separate from the later question of hydrating a frontend Ghostty renderer from nmux-owned state.
 
 One-shot attach:
 
@@ -92,4 +92,4 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 
 Expected output includes `resize=active-client`.
 
-This is still a prototype. It has an interactive byte-streamed live path, but the temporary text surface is not a VT-correct terminal emulator; ANSI styling, cursor motion, alternate screen, images, and grapheme/cell-width correctness are not complete.
+This is still a prototype. It has an interactive byte-streamed live path, but the temporary text surface is not a VT-correct terminal emulator; ANSI styling, cursor motion, alternate screen, images, and grapheme/cell-width correctness are not complete. Backend `libghostty-vt` extraction is the next correctness step once the local state-sync spine has enough snapshots, patches, scrollback, and reconnect behavior to validate against.

@@ -327,6 +327,8 @@ But the protocol should not depend on QUIC. State sync is the real win. QUIC hel
 
 Do not start with a beautiful Ghostty fork. Start with a local state-sync spine that can be used and tested end to end, then swap in libghostty-backed terminal state when that boundary is ready.
 
+Backend `libghostty-vt` is not indefinitely deferred. It follows the usable local state-sync spine so extraction can be validated against real nmux snapshots, patches, scrollback ranges, reconnect behavior, and live attach workflows. Frontend Ghostty rendering remains a separate integration milestone because it depends on whether Ghostty/libghostty can hydrate a renderer from nmux-owned state without replaying raw PTY bytes on the client.
+
 Current implementation status:
 
 ```text
@@ -429,6 +431,15 @@ M12: live workspace usability [next]
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available
   keep runnable docs, help output, and tests aligned with each user-visible behavior change
+
+M13: backend libghostty-vt extraction [next correctness milestone]
+  replace interim backend-owned text surface with backend libghostty-vt terminal-state extraction
+  feed PTY bytes into the daemon-owned libghostty-vt state, not into clients
+  map extracted terminal state into nmux PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk objects
+  document cursor, mode, alternate-screen, palette, hyperlink, image, grapheme, and cell-width gaps before schema changes
+  preserve frontend state-sync semantics; do not introduce client-side raw PTY replay
+  keep frontend Ghostty renderer hydration as a separate upstream/API question
+  do not copy code from GPL or AGPL terminal parsers
 ```
 
 The crisp product phrase is:
