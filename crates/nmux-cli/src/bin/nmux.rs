@@ -100,10 +100,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = local::attach_from_stream(&mut stream)?;
     let rendered = client_state.render_attach(snapshot)?;
     warn_if_resize_intent_conflicts_with_policy(args.live_resize, rendered.workspace.resize_policy);
-    print_live_rendered(rendered, args.redraw);
-    if let Some(scrollback) = initial_live_scrollback(args, &mut stream)? {
-        print_scrollback(scrollback);
-    }
+    let scrollback = initial_live_scrollback(args, &mut stream)?;
+    print_live_rendered(rendered, args.redraw, scrollback);
     flush_stdout()?;
 
     let cycle_limit = args.iterations.or_else(|| {
@@ -245,9 +243,6 @@ fn initial_live_scrollback(
     args: &Args,
     stream: &mut UnixStream,
 ) -> Result<Option<local::ScrollbackChunkSummary>, Box<dyn std::error::Error>> {
-    if args.redraw {
-        return Ok(None);
-    }
     local::send_scrollback_fetch(
         stream,
         "pane-1",
@@ -507,19 +502,24 @@ fn print_rendered(rendered: local::RenderedAttach) {
     }
 }
 
-fn print_live_rendered(rendered: local::RenderedAttach, redraw: bool) {
+fn print_live_rendered(
+    rendered: local::RenderedAttach,
+    redraw: bool,
+    initial_scrollback: Option<local::ScrollbackChunkSummary>,
+) {
     if redraw {
         let surface_text = rendered
             .surface_text
             .unwrap_or_else(|| rendered.workspace.display_line());
-        redraw_terminal(&surface_text);
-        if let Some(scrollback) = rendered.scrollback {
-            print_scrollback(scrollback);
-        }
+        let redraw_text = redraw_text_with_context(&surface_text, initial_scrollback);
+        redraw_terminal(&redraw_text);
         return;
     }
 
     print_rendered(rendered);
+    if let Some(scrollback) = initial_scrollback {
+        print_scrollback(scrollback);
+    }
 }
 
 fn print_live_surface(surface_text: &str, redraw: bool) {
@@ -538,13 +538,36 @@ fn redraw_terminal(surface_text: &str) {
 }
 
 fn print_scrollback(scrollback: local::ScrollbackChunkSummary) {
-    println!(
+    print!("{}", format_scrollback(&scrollback));
+}
+
+fn redraw_text_with_context(
+    surface_text: &str,
+    scrollback: Option<local::ScrollbackChunkSummary>,
+) -> String {
+    let Some(scrollback) = scrollback else {
+        return surface_text.to_owned();
+    };
+
+    let mut text = format_scrollback(&scrollback);
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(surface_text);
+    text
+}
+
+fn format_scrollback(scrollback: &local::ScrollbackChunkSummary) -> String {
+    let mut text = format!(
         "scrollback {}..{}:",
         scrollback.start_line, scrollback.total_lines
     );
-    for line in scrollback.lines {
-        println!("{}", line.text);
+    text.push('\n');
+    for line in &scrollback.lines {
+        text.push_str(&line.text);
+        text.push('\n');
     }
+    text
 }
 
 struct Args {

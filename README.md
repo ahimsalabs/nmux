@@ -50,7 +50,7 @@ nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --scrollback-start 1 --scrollback-count 4 --interval-ms 500
 ```
 
-Live attach renders the requested initial scrollback range before streaming updates.
+Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled.
 
 Line-streamed live input:
 
