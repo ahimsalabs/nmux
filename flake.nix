@@ -24,9 +24,11 @@
         {
           default = pkgs.mkShell {
             packages = [
+              pkgs.cargo
               pkgs.flatbuffers
               pkgs.gnumake
-              pkgs.go
+              pkgs.rustc
+              pkgs.rustfmt
             ];
           };
         }

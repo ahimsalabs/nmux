@@ -1,17 +1,17 @@
 SCHEMA := schema/nmux.fbs
-GEN_DIR := internal/protocol/flat
+GEN_DIR := crates/nmux-proto/src/generated
 
-.PHONY: check check-schema generate-schema go-test
+.PHONY: check check-schema generate-schema rust-test
 
-check: check-schema go-test
+check: check-schema rust-test
 
 check-schema:
 	flatc --json --strict-json --no-warnings -o /tmp $(SCHEMA)
 
 generate-schema:
-	rm -rf $(GEN_DIR)/protocol
+	rm -rf $(GEN_DIR)
 	mkdir -p $(GEN_DIR)
-	flatc --go --go-namespace protocol -o $(GEN_DIR) $(SCHEMA)
+	flatc --rust -o $(GEN_DIR) $(SCHEMA)
 
-go-test:
-	go test ./...
+rust-test:
+	cargo test --workspace

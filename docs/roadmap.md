@@ -10,13 +10,14 @@ Done:
 
 - Initial architecture notes in [WORK.md](../WORK.md).
 - ADR 0001 for backend-owned terminal state.
+- ADR 0002 for Rust as the core runtime.
 - Initial M0 schema in [schema/nmux.fbs](../schema/nmux.fbs).
 - M0 protocol notes in [docs/protocol.md](protocol.md).
 - Reproducible schema validation through `nix develop path:$PWD -c make check-schema`.
+- Rust workspace and generated protocol crate for core implementation.
 
 Next:
 
-- Add a minimal codegen/build path for the chosen implementation language.
 - Add the first local daemon/client skeleton around the M0 envelope.
 
 ## Milestones
