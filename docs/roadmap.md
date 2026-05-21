@@ -157,6 +157,8 @@ Exit evidence:
 - Adapter process boundary is documented.
 - Basic session/tree mapping is tested.
 
+Status: In progress. ADR 0009 documents the tmux adapter process boundary: tmux remains an external adapter target, clients continue to speak nmux FlatBuffers, and `nmuxd` keeps ownership of normalized workspace, pane, terminal-state, attach, reconnect, presence, and permission semantics. The next step is a pure tmux inventory-to-nmux workspace mapping layer and test without launching tmux.
+
 ### M9: herdr Adapter
 
 Goal: keep any herdr integration outside the core repository and behind the nmux protocol.
