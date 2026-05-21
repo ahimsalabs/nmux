@@ -427,6 +427,7 @@ M12: live workspace usability [next]
   default socket selection falls back when XDG_RUNTIME_DIR is empty or relative
   nmuxd normal-exit cleanup only removes the original socket file if unchanged
   existing socket path errors include a recovery hint
+  nmuxd bind failures include the socket path
   choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available

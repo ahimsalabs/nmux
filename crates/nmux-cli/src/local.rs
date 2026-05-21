@@ -37,7 +37,15 @@ fn effective_uid() -> u32 {
 
 pub fn bind_listener(path: &Path) -> io::Result<UnixListener> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!(
+                    "failed to create socket directory {}: {err}",
+                    parent.display()
+                ),
+            )
+        })?;
     }
 
     match fs::symlink_metadata(path) {
@@ -54,7 +62,15 @@ pub fn bind_listener(path: &Path) -> io::Result<UnixListener> {
         Err(err) => return Err(err),
     }
 
-    UnixListener::bind(path)
+    UnixListener::bind(path).map_err(|err| {
+        io::Error::new(
+            err.kind(),
+            format!(
+                "failed to bind nmux daemon socket at {}: {err}",
+                path.display()
+            ),
+        )
+    })
 }
 
 pub fn connect_to_daemon(path: &Path) -> Result<UnixStream, Box<dyn std::error::Error>> {
@@ -1837,6 +1853,24 @@ mod tests {
             "missing recovery hint: {err}"
         );
         let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn bind_listener_includes_path_in_bind_errors() {
+        let long_name = format!("nmux-{}.sock", "x".repeat(160));
+        let socket_path = std::env::temp_dir().join(long_name);
+        let err = bind_listener(&socket_path).expect_err("overlong socket should fail");
+
+        assert!(
+            err.to_string()
+                .contains("failed to bind nmux daemon socket at"),
+            "missing bind context: {err}"
+        );
+        assert!(
+            err.to_string()
+                .contains(socket_path.to_str().expect("socket path")),
+            "missing socket path: {err}"
+        );
     }
 
     fn surface_update(

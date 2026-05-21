@@ -204,6 +204,31 @@ fn nmuxd_reports_existing_socket_path() {
 }
 
 #[test]
+fn nmuxd_reports_socket_path_when_bind_fails() {
+    let socket_path = std::env::temp_dir().join(format!("nmux-{}.sock", "x".repeat(160)));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+        ])
+        .output()
+        .expect("run nmuxd");
+
+    assert!(!output.status.success(), "nmuxd unexpectedly succeeded");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nmuxd: failed to bind nmux daemon socket at"),
+        "missing bind context:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(socket_path.to_str().expect("socket path")),
+        "missing socket path:\n{stderr}"
+    );
+}
+
+#[test]
 fn nmux_reports_state_load_path_before_connecting() {
     let state_path = test_state_path();
     fs::write(&state_path, "not nmux state\n").expect("write bad state");
