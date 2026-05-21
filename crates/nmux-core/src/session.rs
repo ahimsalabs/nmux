@@ -25,6 +25,23 @@ pub struct Pane {
     pub rows: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneSurface {
+    pub pane_id: String,
+    pub version: u64,
+    pub cols: u32,
+    pub rows: u32,
+    pub cursor: Cursor,
+    pub lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cursor {
+    pub row: u32,
+    pub col: u32,
+    pub visible: bool,
+}
+
 impl Session {
     pub fn initial() -> Self {
         Self {
@@ -37,7 +54,7 @@ impl Session {
                 active_pane_id: "pane-1".to_owned(),
                 root: Pane {
                     id: "pane-1".to_owned(),
-                    surface_version: 0,
+                    surface_version: 1,
                     cols: 80,
                     rows: 24,
                 },
@@ -112,6 +129,112 @@ impl Session {
         protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
         builder.finished_data().to_vec()
     }
+
+    pub fn initial_pane_surface(&self) -> PaneSurface {
+        let pane = &self.tabs[0].root;
+        PaneSurface {
+            pane_id: pane.id.clone(),
+            version: pane.surface_version,
+            cols: pane.cols,
+            rows: pane.rows,
+            cursor: Cursor {
+                row: 1,
+                col: 0,
+                visible: true,
+            },
+            lines: vec![
+                "nmux pane-1".to_owned(),
+                "server-owned terminal state".to_owned(),
+            ],
+        }
+    }
+
+    pub fn pane_surface_frame(&self, connection_id: &str, seq: u64) -> Vec<u8> {
+        let surface = self.initial_pane_surface();
+        let mut builder = FlatBufferBuilder::new();
+
+        let mut row_offsets = Vec::with_capacity(surface.lines.len());
+        for (row, line) in surface.lines.iter().enumerate() {
+            let text = builder.create_string(line);
+            let widths = vec![1_u8; line.chars().count()];
+            let widths = builder.create_vector(&widths);
+            let run = protocol::CellRun::create(
+                &mut builder,
+                &protocol::CellRunArgs {
+                    text_utf8: Some(text),
+                    cell_widths: Some(widths),
+                    style_id: 0,
+                    flags: 0,
+                    hyperlink_id: 0,
+                },
+            );
+            let runs = builder.create_vector(&[run]);
+            let row = protocol::SurfaceRow::create(
+                &mut builder,
+                &protocol::SurfaceRowArgs {
+                    row: row as u32,
+                    runs: Some(runs),
+                    dirty_hash: stable_row_hash(line),
+                },
+            );
+            row_offsets.push(row);
+        }
+
+        let rows_data = builder.create_vector(&row_offsets);
+        let style = protocol::Style::create(&mut builder, &protocol::StyleArgs::default());
+        let styles = builder.create_vector(&[style]);
+        let cursor = protocol::CursorState::create(
+            &mut builder,
+            &protocol::CursorStateArgs {
+                row: surface.cursor.row,
+                col: surface.cursor.col,
+                visible: surface.cursor.visible,
+                shape: protocol::CursorShape::Block,
+            },
+        );
+        let pane_id = builder.create_string(&surface.pane_id);
+        let snapshot = protocol::PaneSurfaceSnapshot::create(
+            &mut builder,
+            &protocol::PaneSurfaceSnapshotArgs {
+                pane_id: Some(pane_id),
+                version: surface.version,
+                surface: protocol::SurfaceKind::Main,
+                cols: surface.cols,
+                rows: surface.rows,
+                cursor: Some(cursor),
+                styles: Some(styles),
+                rows_data: Some(rows_data),
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::PaneSurfaceSnapshot,
+                body: Some(snapshot.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+}
+
+fn stable_row_hash(line: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in line.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 #[cfg(test)]
@@ -133,6 +256,7 @@ mod tests {
         assert_eq!(tab.id, "tab-1");
         assert_eq!(tab.active_pane_id, "pane-1");
         assert_eq!(tab.root.id, "pane-1");
+        assert_eq!(tab.root.surface_version, 1);
         assert_eq!(tab.root.cols, 80);
         assert_eq!(tab.root.rows, 24);
     }
@@ -170,9 +294,52 @@ mod tests {
         assert_eq!(pane.pane_id(), Some("pane-1"));
         assert_eq!(pane.kind(), protocol::PaneKind::Pty);
         assert_eq!(pane.split_axis(), protocol::SplitAxis::None);
-        assert_eq!(pane.surface_version(), 0);
+        assert_eq!(pane.surface_version(), 1);
         assert_eq!(pane.cols(), 80);
         assert_eq!(pane.rows(), 24);
         assert_eq!(pane.resize_policy(), protocol::ResizePolicy::Fixed);
+    }
+
+    #[test]
+    fn pane_surface_frame_decodes_to_initial_surface() {
+        let frame = Session::initial().pane_surface_frame("conn-1", 8);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
+        assert_eq!(envelope.session_id(), Some("local"));
+        assert_eq!(envelope.connection_id(), Some("conn-1"));
+        assert_eq!(envelope.seq(), 8);
+        assert_eq!(
+            envelope.body_type(),
+            protocol::EnvelopeBody::PaneSurfaceSnapshot
+        );
+
+        let snapshot = envelope
+            .body_as_pane_surface_snapshot()
+            .expect("pane surface body");
+        assert_eq!(snapshot.pane_id(), Some("pane-1"));
+        assert_eq!(snapshot.version(), 1);
+        assert_eq!(snapshot.surface(), protocol::SurfaceKind::Main);
+        assert_eq!(snapshot.cols(), 80);
+        assert_eq!(snapshot.rows(), 24);
+
+        let cursor = snapshot.cursor().expect("cursor");
+        assert_eq!(cursor.row(), 1);
+        assert_eq!(cursor.col(), 0);
+        assert!(cursor.visible());
+        assert_eq!(cursor.shape(), protocol::CursorShape::Block);
+
+        let styles = snapshot.styles().expect("styles");
+        assert_eq!(styles.len(), 1);
+
+        let rows = snapshot.rows_data().expect("rows");
+        assert_eq!(rows.len(), 2);
+
+        let first_row = rows.get(0);
+        assert_eq!(first_row.row(), 0);
+        assert_ne!(first_row.dirty_hash(), 0);
+        let first_runs = first_row.runs().expect("runs");
+        assert_eq!(first_runs.len(), 1);
+        assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
     }
 }
