@@ -76,6 +76,14 @@ ping
 echo:ping
 ```
 
+To keep one local frontend process polling for server-owned surface updates, run a bounded follow loop:
+
+```sh
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --follow --iterations 3 --interval-ms 500 --state /tmp/nmux-follow.state --scrollback-start 1 --scrollback-count 1
+```
+
+`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and treats current-version reconnects as no render update. Follow mode is read-only for now, so it does not repeatedly send default input.
+
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 This is not a terminal emulator yet. The interim text surface only converts simple output bytes into backend-owned visible rows and scrollback. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state derived from a local PTY, server-owned scrollback ranges, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input forwarding.

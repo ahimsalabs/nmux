@@ -275,6 +275,16 @@ pub fn attach_with_client_options(
     Ok(snapshot)
 }
 
+pub fn attach_render_once(
+    path: &Path,
+    mut options: AttachOptions,
+    client_state: &mut ClientAttachState,
+) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
+    options.request.known_surfaces = client_state.known_surfaces();
+    let snapshot = attach_with_client_options(path, options)?;
+    client_state.render_attach(snapshot)
+}
+
 pub fn attach_from_stream(
     stream: &mut UnixStream,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
@@ -1287,6 +1297,7 @@ impl WorkspaceSummary {
 mod tests {
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1362,6 +1373,19 @@ mod tests {
             display_name: "local".to_owned(),
             mode,
             focused_pane_id: Some("pane-1".to_owned()),
+        }
+    }
+
+    fn read_only_attach_options() -> AttachOptions {
+        AttachOptions {
+            request: AttachRequest {
+                actor_id: "local-actor".to_owned(),
+                mode: AttachMode::ReadOnly,
+                known_surfaces: Vec::new(),
+            },
+            input_text: None,
+            scrollback_start_line: 1,
+            scrollback_line_count: 2,
         }
     }
 
@@ -1903,6 +1927,53 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_loop_renders_snapshot_patch_then_no_update() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let output = Arc::new(Mutex::new(RecordingOutput::default()));
+        let mut server_output = SharedOutput {
+            inner: Arc::clone(&output),
+        };
+
+        let server = thread::spawn(move || {
+            serve_n_with_output(&listener, &mut session, &mut server_output, 3)
+                .expect("serve three")
+        });
+        let mut state = ClientAttachState::default();
+        let first = attach_render_once(&socket_path, read_only_attach_options(), &mut state)
+            .expect("first render");
+        output
+            .lock()
+            .expect("output lock")
+            .push_output("pane-1", b"loop update\n");
+        let second = attach_render_once(&socket_path, read_only_attach_options(), &mut state)
+            .expect("second render");
+        let third = attach_render_once(&socket_path, read_only_attach_options(), &mut state)
+            .expect("third render");
+        server.join().expect("server thread");
+
+        assert_eq!(
+            first.surface_text.as_deref(),
+            Some("nmux pane-1\nserver-owned terminal state")
+        );
+        assert_eq!(
+            second.surface_text.as_deref(),
+            Some("booting nmux workspace\nnmux pane-1\nserver-owned terminal state\nloop update")
+        );
+        assert_eq!(third.surface_text, None);
+        assert_eq!(
+            state.known_surfaces(),
+            vec![KnownSurfaceVersion {
+                pane_id: "pane-1".to_owned(),
+                version: 3,
+            }]
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn decodes_presence_update_from_server_frame() {
         let actor = Session::initial_actor(AttachMode::ReadOnly);
         let frame = Session::initial().presence_update_frame("local-client", 2, &actor);
@@ -2105,6 +2176,19 @@ mod tests {
                 *byte = self.output.pop_front().expect("queued echo output");
             }
             Ok(count)
+        }
+    }
+
+    struct SharedOutput {
+        inner: Arc<Mutex<RecordingOutput>>,
+    }
+
+    impl ProcessOutput for SharedOutput {
+        fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
+            self.inner
+                .lock()
+                .expect("shared output lock")
+                .try_read_output(pane_id, bytes)
         }
     }
 }
