@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M11 is the current target: polish the temporary local terminal frontend enough that live attach is easier to use while the project continues toward a VT-correct libghostty-backed surface.
+M12 is the current target: continue improving live workspace usability from the local CLI while preserving the backend-owned state-sync model and keeping interim renderer limitations explicit.
 
 Done:
 
@@ -81,7 +81,7 @@ Done:
 
 Next:
 
-- Improve the local CLI frontend without pretending the interim text surface is VT-correct.
+- Choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
 ## Milestones
@@ -224,4 +224,17 @@ Exit evidence:
 - Runnable docs and help output cover the expected live attach workflows.
 - Tests cover any changed user-visible terminal output behavior.
 
-Status: In progress. M10 proved a long-lived local interactive attach path. M11 should improve the CLI frontend around that path without expanding the protocol or pretending the interim text surface is a complete terminal emulator.
+Status: Done. M11 kept the local frontend prototype honest while making live attach easier to use. The client now flushes live and redraw output after render updates; reports Ctrl-] detach, stdin EOF, and live server close reasons on stderr; warns when explicit live resize requests conflict with daemon-published `manual` resize policy; calls out interim text-surface and non-VT-correct renderer limitations in help and interactive byte mode; rejects live-only flags outside `--live`; renders requested initial scrollback context before streaming updates, including the initial redraw paint; uses the alternate screen for interactive TTY redraw and restores it on exit; keeps the current workspace summary visible in redraw mode; and includes runnable one-shot and live examples in help output. Unit and CLI integration tests cover the changed user-visible terminal output behavior, and `nix develop path:$PWD -c make check` is the full verification gate.
+
+### M12: Live Workspace Usability
+
+Goal: continue moving the local prototype toward a usable live workspace while preserving backend-owned terminal state and avoiding raw PTY replay shortcuts.
+
+Exit evidence:
+
+- The next live-workflow improvement is selected from current CLI behavior and documented before or as it lands.
+- Any user-visible behavior change is covered by focused tests and `nix develop path:$PWD -c make check`.
+- README, running docs, help output, and WORK.md stay aligned with the implemented behavior.
+- Interim renderer limitations remain explicit until a libghostty-backed state/render integration replaces the temporary text surface.
+
+Status: Next. Start with the smallest local live-workflow gap that makes the current prototype more usable without expanding licensing risk or pretending the interim text surface is VT-correct.

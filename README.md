@@ -15,7 +15,7 @@ The current implementation is a Rust workspace with:
 - `nmux-proto`, `nmux-core`, and `nmux-cli` crates;
 - ADRs under [docs/adr](docs/adr);
 - runnable notes in [docs/running.md](docs/running.md);
-- the implementation roadmap in [docs/roadmap.md](docs/roadmap.md).
+- the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on live workspace usability.
 
 ## Check
 

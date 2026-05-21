@@ -393,7 +393,7 @@ M10: live local interactive attach [done]
   nmuxd --live serves one live client until detach
   live updates render through client-side pane surface state
 
-M11: terminal frontend polish [in progress]
+M11: terminal frontend polish [done]
   live and redraw output is explicitly flushed after render updates
   Ctrl-] detach reports a local detach status on stderr
   stdin EOF and live server socket close exits report status on stderr
@@ -404,7 +404,13 @@ M11: terminal frontend polish [in progress]
   interactive TTY --redraw uses alternate screen and restores it on exit
   redraw mode keeps current workspace summary visible and updates it on live workspace snapshots
   runnable docs and help output cover expected live attach workflows
-  tests should cover changed user-visible terminal output behavior
+  tests cover changed user-visible terminal output behavior
+
+M12: live workspace usability [next]
+  choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence
+  preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
+  keep interim renderer limitations explicit until libghostty-backed state/render integration is available
+  keep runnable docs, help output, and tests aligned with each user-visible behavior change
 ```
 
 The crisp product phrase is:
