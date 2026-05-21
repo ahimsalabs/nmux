@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M2 is the current target: render a pane surface from server-owned state and send basic keyboard input back to the daemon.
+M3 is the current target: reconnect with known object versions and receive either patches or a fresh snapshot.
 
 Done:
 
@@ -19,11 +19,12 @@ Done:
 - Initial Rust session model that encodes a `WorkspaceTreeSnapshot`.
 - Local `nmuxd` and `nmux` skeletons that exchange the initial workspace snapshot over a Unix socket.
 - Static server-owned `PaneSurfaceSnapshot` and dumb client text rendering.
+- Basic key `InputEvent` sent from `nmux` back to `nmuxd`.
 
 Next:
 
-- Send basic keyboard input from `nmux` back to `nmuxd`.
-- Let `nmuxd` update pane surface state in response to input.
+- Add attach/request metadata for known object versions.
+- Add stale/current version tests for reconnect behavior.
 - Introduce a `PaneSurfacePatch` path for state changes after the initial snapshot.
 
 ## Milestones
@@ -61,7 +62,7 @@ Exit evidence:
 - The viewer renders a surface snapshot.
 - Input events reach the daemon with actor and pane IDs.
 
-Status: Partial. The local client renders a static server-owned `PaneSurfaceSnapshot`; input events are next.
+Status: Done for the static local skeleton. The local client renders a server-owned `PaneSurfaceSnapshot` and sends a basic key `InputEvent` back to the daemon.
 
 ### M3: Reconnect
 
