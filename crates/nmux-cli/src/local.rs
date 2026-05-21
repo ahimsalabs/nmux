@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{Actor, AttachMode, Session};
+use nmux_core::terminal::PaneTerminalEngines;
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 
 const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
@@ -158,10 +159,8 @@ pub fn serve_live_one_with_host<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
-    let (mut stream, _) = listener.accept()?;
-    let request = read_attach_request(&mut stream)?;
-    poll_pane_output(session, host, "pane-1")?;
-    serve_live_attached_client(&mut stream, request, session, host, cycles)
+    let mut engines = PaneTerminalEngines::interim();
+    serve_live_one_with_host_and_engines(listener, session, host, &mut engines, cycles)
 }
 
 pub fn serve_live_n_with_host<H>(
@@ -174,8 +173,15 @@ pub fn serve_live_n_with_host<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
+    let mut engines = PaneTerminalEngines::interim();
     for _ in 0..clients {
-        serve_live_one_with_host(listener, session, host, cycles_per_client)?;
+        serve_live_one_with_host_and_engines(
+            listener,
+            session,
+            host,
+            &mut engines,
+            cycles_per_client,
+        )?;
     }
     Ok(())
 }
@@ -185,8 +191,9 @@ pub fn serve_n(
     session: &mut Session,
     clients: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut engines = PaneTerminalEngines::interim();
     for _ in 0..clients {
-        serve_next(listener, session)?;
+        serve_next(listener, session, &mut engines)?;
     }
     Ok(())
 }
@@ -197,8 +204,9 @@ pub fn serve_n_with_output<O: ProcessOutput>(
     output: &mut O,
     clients: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut engines = PaneTerminalEngines::interim();
     for _ in 0..clients {
-        serve_next_with_output(listener, session, Some(output))?;
+        serve_next_with_output(listener, session, Some(output), &mut engines)?;
     }
     Ok(())
 }
@@ -212,8 +220,9 @@ pub fn serve_n_with_host<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
+    let mut engines = PaneTerminalEngines::interim();
     for _ in 0..clients {
-        serve_next_with_host(listener, session, host)?;
+        serve_next_with_host(listener, session, host, &mut engines)?;
     }
     Ok(())
 }
@@ -221,37 +230,56 @@ where
 fn serve_next(
     listener: &UnixListener,
     session: &mut Session,
+    engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
-    serve_attached_client(&mut stream, request, session, None)
+    serve_attached_client(&mut stream, request, session, None, engines)
 }
 
 fn serve_next_with_output(
     listener: &UnixListener,
     session: &mut Session,
     mut output: Option<&mut dyn ProcessOutput>,
+    engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
     if let Some(output) = output.as_deref_mut() {
-        poll_pane_output(session, output, "pane-1")?;
+        poll_pane_output_with_engines(session, engines, output, "pane-1")?;
     }
-    serve_attached_client(&mut stream, request, session, None)
+    serve_attached_client(&mut stream, request, session, None, engines)
 }
 
 fn serve_next_with_host<H>(
     listener: &UnixListener,
     session: &mut Session,
     host: &mut H,
+    engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     H: ProcessHost + ProcessOutput,
 {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
-    poll_pane_output(session, host, "pane-1")?;
-    serve_attached_client(&mut stream, request, session, Some(host))
+    poll_pane_output_with_engines(session, engines, host, "pane-1")?;
+    serve_attached_client(&mut stream, request, session, Some(host), engines)
+}
+
+fn serve_live_one_with_host_and_engines<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+    engines: &mut PaneTerminalEngines,
+    cycles: usize,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    let (mut stream, _) = listener.accept()?;
+    let request = read_attach_request(&mut stream)?;
+    poll_pane_output_with_engines(session, engines, host, "pane-1")?;
+    serve_live_attached_client(&mut stream, request, session, host, engines, cycles)
 }
 
 fn serve_live_attached_client(
@@ -259,6 +287,7 @@ fn serve_live_attached_client(
     request: AttachRequest,
     session: &mut Session,
     host: &mut dyn ProcessHostOutput,
+    engines: &mut PaneTerminalEngines,
     cycles: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pane_id = "pane-1";
@@ -324,12 +353,12 @@ fn serve_live_attached_client(
         if Session::input_allowed(&actor) {
             if let Some(input) = input {
                 host.write_input(&input.pane_id, &input.bytes)?;
-                poll_pane_output_until_quiet(session, host, &input.pane_id)?;
+                poll_pane_output_until_quiet(session, engines, host, &input.pane_id)?;
             } else {
-                poll_pane_output_until_quiet(session, host, pane_id)?;
+                poll_pane_output_until_quiet(session, engines, host, pane_id)?;
             }
         } else {
-            poll_pane_output_until_quiet(session, host, pane_id)?;
+            poll_pane_output_until_quiet(session, engines, host, pane_id)?;
         }
 
         let current = session.surface_version(pane_id).unwrap_or_default();
@@ -429,6 +458,7 @@ fn serve_attached_client(
     request: AttachRequest,
     session: &mut Session,
     mut host: Option<&mut dyn ProcessHostOutput>,
+    engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workspace_frame = session.workspace_tree_frame("local-client", 1);
     wire::write_default_frame(stream, &workspace_frame)?;
@@ -444,7 +474,7 @@ fn serve_attached_client(
             let input = read_input_event_from_stream(stream)?;
             if let Some(host) = host.as_deref_mut() {
                 host.write_input(&input.pane_id, &input.bytes)?;
-                poll_pane_output(session, host, &input.pane_id)?;
+                poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
             }
         }
         let fetch = read_scrollback_fetch_from_stream(stream)?;
@@ -469,6 +499,16 @@ pub fn poll_pane_output(
     output: &mut dyn ProcessOutput,
     pane_id: &str,
 ) -> Result<bool, HostError> {
+    let mut engines = PaneTerminalEngines::interim();
+    poll_pane_output_with_engines(session, &mut engines, output, pane_id)
+}
+
+pub fn poll_pane_output_with_engines(
+    session: &mut Session,
+    engines: &mut PaneTerminalEngines,
+    output: &mut dyn ProcessOutput,
+    pane_id: &str,
+) -> Result<bool, HostError> {
     let mut buffer = [0_u8; 4096];
     let mut pumped = Vec::new();
     loop {
@@ -483,11 +523,12 @@ pub fn poll_pane_output(
         return Ok(false);
     }
 
-    Ok(session.apply_pane_output(pane_id, &pumped))
+    Ok(session.apply_pane_output_with_engine(pane_id, &pumped, engines.engine_mut(pane_id)))
 }
 
 fn poll_pane_output_until_quiet(
     session: &mut Session,
+    engines: &mut PaneTerminalEngines,
     output: &mut dyn ProcessOutput,
     pane_id: &str,
 ) -> Result<bool, HostError> {
@@ -496,7 +537,7 @@ fn poll_pane_output_until_quiet(
     let mut changed = false;
 
     loop {
-        if poll_pane_output(session, output, pane_id)? {
+        if poll_pane_output_with_engines(session, engines, output, pane_id)? {
             changed = true;
             quiet_since = None;
         } else if changed {

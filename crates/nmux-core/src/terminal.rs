@@ -17,6 +17,28 @@ pub trait TerminalEngine {
     fn apply_output(&mut self, input: TerminalInput<'_>, output: &[u8]) -> Option<TerminalUpdate>;
 }
 
+#[derive(Default)]
+pub struct PaneTerminalEngines {
+    engines: HashMap<String, Box<dyn TerminalEngine>>,
+}
+
+impl PaneTerminalEngines {
+    pub fn interim() -> Self {
+        Self::default()
+    }
+
+    pub fn engine_mut(&mut self, pane_id: &str) -> &mut dyn TerminalEngine {
+        self.engines
+            .entry(pane_id.to_owned())
+            .or_insert_with(|| Box::new(InterimTextTerminalEngine))
+            .as_mut()
+    }
+
+    pub fn pane_count(&self) -> usize {
+        self.engines.len()
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct InterimTextTerminalEngine;
 
@@ -56,7 +78,7 @@ fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{InterimTextTerminalEngine, TerminalEngine, TerminalInput};
+    use super::{InterimTextTerminalEngine, PaneTerminalEngines, TerminalEngine, TerminalInput};
 
     #[test]
     fn interim_text_engine_normalizes_process_output() {
@@ -110,4 +132,17 @@ mod tests {
             vec!["two".to_owned(), "three".to_owned()]
         );
     }
+
+    #[test]
+    fn pane_terminal_engines_reuses_engine_per_pane() {
+        let mut engines = PaneTerminalEngines::interim();
+
+        let _ = engines.engine_mut("pane-1");
+        let _ = engines.engine_mut("pane-1");
+        assert_eq!(engines.pane_count(), 1);
+
+        let _ = engines.engine_mut("pane-2");
+        assert_eq!(engines.pane_count(), 2);
+    }
 }
+use std::collections::HashMap;

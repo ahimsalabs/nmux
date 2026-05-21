@@ -260,4 +260,4 @@ Exit evidence:
 
 Status: Planned as the next correctness milestone after enough M12 live workflow is usable to validate snapshots, patches, scrollback ranges, reconnect behavior, and live attach against a real terminal-state engine.
 
-Initial boundary slice: `nmux-core` now exposes a terminal engine boundary for daemon-owned pane output hydration. The existing interim text behavior lives behind that boundary, preserving current `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` semantics while creating the replacement point for backend `libghostty-vt` extraction.
+Initial boundary slice: `nmux-core` now exposes a terminal engine boundary for daemon-owned pane output hydration. The existing interim text behavior lives behind that boundary, preserving current `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` semantics while creating the replacement point for backend `libghostty-vt` extraction. Local daemon serving paths keep terminal engine instances alive per pane across output polls and sequential clients, matching the stateful shape expected from a real VT engine.

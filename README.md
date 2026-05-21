@@ -94,4 +94,4 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 Expected output includes `resize=active-client`.
 
 This is still a prototype. It has an interactive byte-streamed live path, but the temporary text surface is not a VT-correct terminal emulator; ANSI styling, cursor motion, alternate screen, images, and grapheme/cell-width correctness are not complete. Backend `libghostty-vt` extraction is the next correctness step once the local state-sync spine has enough snapshots, patches, scrollback, and reconnect behavior to validate against.
-The core now routes pane output through a terminal engine boundary so that interim behavior can be replaced without changing client-side state-sync semantics.
+The core now routes pane output through a daemon-owned terminal engine boundary so that interim behavior can be replaced without changing client-side state-sync semantics.
