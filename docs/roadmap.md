@@ -64,6 +64,7 @@ Done:
 - `nmux --live` renders the requested initial scrollback range before streaming live surface updates, including in the first `--redraw` repaint buffer.
 - `nmux --live --redraw` clears and repaints the current client-side pane surface on each streamed update instead of appending every render.
 - Interactive TTY `--redraw` uses the alternate screen and restores it on exit; captured/piped redraw output remains plain clear/home escape output.
+- Redraw mode includes the current workspace summary in every repaint and updates it when live workspace snapshots arrive.
 - Live mode renders streamed snapshots and patches through the same client-side pane surface state used by reconnects, and can persist that state with `--state`.
 - `nmux --live --cols --rows` sends `ResizeIntent` through the live loop; after process-host resize succeeds, the daemon commits the pane size and republishes a `WorkspaceTreeSnapshot`.
 - The CLI workspace summary displays the daemon-published pane resize policy; `nmuxd --resize-policy` can publish `fixed`, `leader`, `active-client`, or `manual`, and `manual` blocks frontend viewport resize intents.

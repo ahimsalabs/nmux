@@ -229,7 +229,9 @@ fn live_cli_redraw_includes_initial_scrollback_range() {
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stdout.contains("\x1b[2J\x1b[Hscrollback 1..5:"),
+        stdout.contains(
+            "\x1b[2J\x1b[Hsession=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed\nscrollback 1..5:"
+        ),
         "missing redraw scrollback context:\n{stdout:?}"
     );
     assert!(
@@ -336,6 +338,10 @@ fn live_cli_redraw_repaints_surface_in_place() {
             "1",
             "--key",
             "paint\n",
+            "--cols",
+            "100",
+            "--rows",
+            "30",
             "--interval-ms",
             "1000",
         ])
@@ -360,6 +366,10 @@ fn live_cli_redraw_repaints_surface_in_place() {
     assert!(
         stdout.contains("echo:paint"),
         "missing rendered command output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("session=local tab=tab-1 pane=pane-1 size=100x30 resize=fixed"),
+        "missing redraw workspace status after resize:\n{stdout:?}"
     );
 }
 

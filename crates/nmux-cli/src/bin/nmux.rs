@@ -103,6 +103,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = local::attach_from_stream(&mut stream)?;
     let rendered = client_state.render_attach(snapshot)?;
     warn_if_resize_intent_conflicts_with_policy(args.live_resize, rendered.workspace.resize_policy);
+    let mut current_workspace = rendered.workspace.clone();
+    let mut current_surface_text = rendered
+        .surface_text
+        .clone()
+        .unwrap_or_else(|| current_workspace.display_line());
     let scrollback = initial_live_scrollback(args, &mut stream)?;
     print_live_rendered(rendered, args.redraw, scrollback);
     flush_stdout()?;
@@ -165,13 +170,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         loop {
             match local::read_live_surface_update_from_stream(&mut stream)? {
                 local::LiveSurfaceRead::Workspace(workspace) => {
-                    if !args.redraw {
-                        println!("{}", workspace.display_line());
-                        flush_stdout()?;
+                    current_workspace = workspace;
+                    if args.redraw {
+                        print_live_surface(&current_workspace, &current_surface_text, args.redraw);
+                    } else {
+                        println!("{}", current_workspace.display_line());
                     }
+                    flush_stdout()?;
                 }
                 local::LiveSurfaceRead::Update(update) => {
-                    print_live_surface(&client_state.render_surface_update(&update)?, args.redraw);
+                    current_surface_text = client_state.render_surface_update(&update)?;
+                    print_live_surface(&current_workspace, &current_surface_text, args.redraw);
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::NoFrame => break,
@@ -539,7 +548,8 @@ fn print_live_rendered(
         let surface_text = rendered
             .surface_text
             .unwrap_or_else(|| rendered.workspace.display_line());
-        let redraw_text = redraw_text_with_context(&surface_text, initial_scrollback);
+        let redraw_text =
+            redraw_text_with_context(&rendered.workspace, &surface_text, initial_scrollback);
         redraw_terminal(&redraw_text);
         return;
     }
@@ -550,9 +560,9 @@ fn print_live_rendered(
     }
 }
 
-fn print_live_surface(surface_text: &str, redraw: bool) {
+fn print_live_surface(workspace: &local::WorkspaceSummary, surface_text: &str, redraw: bool) {
     if redraw {
-        redraw_terminal(surface_text);
+        redraw_terminal(&redraw_text_with_context(workspace, surface_text, None));
     } else {
         println!("{surface_text}");
     }
@@ -570,16 +580,14 @@ fn print_scrollback(scrollback: local::ScrollbackChunkSummary) {
 }
 
 fn redraw_text_with_context(
+    workspace: &local::WorkspaceSummary,
     surface_text: &str,
     scrollback: Option<local::ScrollbackChunkSummary>,
 ) -> String {
-    let Some(scrollback) = scrollback else {
-        return surface_text.to_owned();
-    };
-
-    let mut text = format_scrollback(&scrollback);
-    if !text.ends_with('\n') {
-        text.push('\n');
+    let mut text = workspace.display_line();
+    text.push('\n');
+    if let Some(scrollback) = scrollback {
+        text.push_str(&format_scrollback(&scrollback));
     }
     text.push_str(surface_text);
     text
