@@ -226,6 +226,61 @@ impl Session {
         protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
         builder.finished_data().to_vec()
     }
+
+    pub fn key_input_frame(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        actor_id: &str,
+        pane_id: &str,
+        input_seq: u64,
+        text: &str,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+
+        let text = builder.create_string(text);
+        let key = protocol::KeyInput::create(
+            &mut builder,
+            &protocol::KeyInputArgs {
+                text_utf8: Some(text),
+                key_name: None,
+                modifiers: 0,
+            },
+        );
+        let pane_id = builder.create_string(pane_id);
+        let actor_id = builder.create_string(actor_id);
+        let input = protocol::InputEvent::create(
+            &mut builder,
+            &protocol::InputEventArgs {
+                pane_id: Some(pane_id),
+                actor_id: Some(actor_id),
+                input_seq,
+                kind: protocol::InputKind::Key,
+                key: Some(key),
+                mouse: None,
+                paste: None,
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::InputEvent,
+                body: Some(input.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
 }
 
 fn stable_row_hash(line: &str) -> u64 {
@@ -341,5 +396,28 @@ mod tests {
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.len(), 1);
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
+    }
+
+    #[test]
+    fn key_input_frame_decodes_to_input_event() {
+        let frame = Session::initial().key_input_frame("conn-1", 9, "actor-1", "pane-1", 3, "a");
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
+        assert_eq!(envelope.session_id(), Some("local"));
+        assert_eq!(envelope.connection_id(), Some("conn-1"));
+        assert_eq!(envelope.seq(), 9);
+        assert_eq!(envelope.body_type(), protocol::EnvelopeBody::InputEvent);
+
+        let input = envelope.body_as_input_event().expect("input event body");
+        assert_eq!(input.pane_id(), Some("pane-1"));
+        assert_eq!(input.actor_id(), Some("actor-1"));
+        assert_eq!(input.input_seq(), 3);
+        assert_eq!(input.kind(), protocol::InputKind::Key);
+
+        let key = input.key().expect("key input");
+        assert_eq!(key.text_utf8(), Some("a"));
+        assert_eq!(key.key_name(), None);
+        assert_eq!(key.modifiers(), 0);
     }
 }
