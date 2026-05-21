@@ -105,13 +105,13 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 
 Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached.
 
-For script-driven live input, pipe lines through stdin:
+For line-streamed live input, pipe lines through stdin:
 
 ```sh
-printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin --interval-ms 500
+printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin --iterations 2 --interval-ms 500
 ```
 
-With `--stdin`, each input line becomes one live input cycle. Use `--iterations` to cap the number of stdin lines consumed.
+With `--stdin`, each input line is read and sent during its live input cycle, after the client has attached. Because the prototype is still bounded, `--stdin` currently requires `--iterations`.
 
 This is not a terminal emulator yet. The interim text surface only converts simple output bytes into backend-owned visible rows and scrollback. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state derived from a local PTY, server-owned scrollback ranges, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input forwarding.
 

@@ -56,7 +56,7 @@ Done:
 - The local library has a bounded long-lived attach loop helper with tests for repeated input/output patches, no-update behavior, and read-only observation without input forwarding.
 - `nmuxd --live-cycles` and `nmux --live` expose the bounded live attach loop for explicit local smoke testing.
 - The CLI integration tests launch `nmuxd --live-cycles` and `nmux --live` against a command-backed PTY and assert repeated streamed output.
-- `nmux --live --stdin` can drive distinct scripted input lines over one attached connection.
+- `nmux --live --stdin --iterations` streams one stdin line per live cycle over one attached connection.
 
 Next:
 
@@ -190,4 +190,4 @@ Exit evidence:
 - A read-only client can observe updates without forwarding input.
 - Tests cover repeated input/output, current-version no-update behavior, and read-only permission enforcement.
 
-Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work. The local library now has a bounded live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, current-version cycles send no update frame, and read-only clients can observe output without forwarding input. `nmuxd --live-cycles` and `nmux --live` expose that bounded loop, integration tests cover command-backed PTY smoke, and `nmux --live --stdin` can drive distinct scripted input lines over one connection. The next step is moving from scripted input toward raw terminal input and continuous output polling.
+Status: In progress. ADR 0011 documents why this comes before live tmux or herdr adapter work. The local library now has a bounded live attach loop helper and tests proving repeated read-write input can stream pane surface patches over one connection, current-version cycles send no update frame, and read-only clients can observe output without forwarding input. `nmuxd --live-cycles` and `nmux --live` expose that bounded loop, integration tests cover command-backed PTY smoke, and `nmux --live --stdin --iterations` streams one stdin line per live cycle over one connection. The next step is moving from line-streamed input toward raw terminal input and continuous output polling.

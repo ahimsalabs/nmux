@@ -47,16 +47,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    let input_lines = if args.stdin_input {
-        Some(read_stdin_lines()?)
+    if args.stdin_input && args.iterations.is_none() {
+        return Err("--stdin requires --iterations while live mode is bounded".into());
+    }
+
+    let cycles = args.iterations.unwrap_or(1);
+    let mut stream = UnixStream::connect(&args.socket_path)?;
+    stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
+    let stdin = io::stdin();
+    let mut stdin_lines = if args.stdin_input {
+        Some(stdin.lock().lines())
     } else {
         None
     };
-    let cycles = args
-        .iterations
-        .unwrap_or_else(|| input_lines.as_ref().map(Vec::len).unwrap_or(1));
-    let mut stream = UnixStream::connect(&args.socket_path)?;
-    stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
 
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
@@ -64,7 +67,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         scrollback_line_count: args.scrollback_line_count,
         ..local::AttachOptions::default()
     };
-    if options.input_text.is_none() {
+    if args.stdin_input {
+        options.request.mode = AttachMode::ReadWrite;
+    } else if options.input_text.is_none() {
         options.request.mode = AttachMode::ReadOnly;
     }
 
@@ -72,11 +77,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = local::attach_from_stream(&mut stream)?;
     print_snapshot(snapshot);
 
-    for cycle in 0..cycles {
+    for _ in 0..cycles {
         if options.request.mode == AttachMode::ReadWrite {
-            if let Some(input_text) =
-                live_input_for_cycle(input_lines.as_deref(), cycle, options.input_text.as_deref())
-            {
+            let stdin_line = next_stdin_line(stdin_lines.as_mut())?;
+            if let Some(input_text) = stdin_line.as_deref().or(options.input_text.as_deref()) {
                 local::send_key_input(&mut stream, "pane-1", input_text)?;
             }
         }
@@ -89,26 +93,18 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn read_stdin_lines() -> io::Result<Vec<String>> {
-    let mut lines = Vec::new();
-    for line in io::stdin().lock().lines() {
-        let mut line = line?;
-        line.push('\n');
-        lines.push(line);
-    }
-    Ok(lines)
-}
-
-fn live_input_for_cycle<'a>(
-    stdin_lines: Option<&'a [String]>,
-    cycle: usize,
-    fallback: Option<&'a str>,
-) -> Option<&'a str> {
-    if let Some(lines) = stdin_lines {
-        let line = lines.get(cycle)?;
-        return Some(line);
-    }
-    fallback
+fn next_stdin_line(
+    stdin_lines: Option<&mut io::Lines<io::StdinLock<'_>>>,
+) -> io::Result<Option<String>> {
+    let Some(stdin_lines) = stdin_lines else {
+        return Ok(None);
+    };
+    let Some(line) = stdin_lines.next() else {
+        return Ok(None);
+    };
+    let mut line = line?;
+    line.push('\n');
+    Ok(Some(line))
 }
 
 fn attach_once(
