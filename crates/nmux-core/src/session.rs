@@ -10,6 +10,30 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Actor {
+    pub id: String,
+    pub user_id: String,
+    pub display_name: String,
+    pub mode: AttachMode,
+    pub focused_pane_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachMode {
+    ReadOnly,
+    ReadWrite,
+}
+
+impl AttachMode {
+    fn as_protocol(self) -> protocol::AttachMode {
+        match self {
+            Self::ReadOnly => protocol::AttachMode::ReadOnly,
+            Self::ReadWrite => protocol::AttachMode::ReadWrite,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tab {
     pub id: String,
     pub title: String,
@@ -67,6 +91,20 @@ impl Session {
                 },
             }],
         }
+    }
+
+    pub fn initial_actor(mode: AttachMode) -> Actor {
+        Actor {
+            id: "local-actor".to_owned(),
+            user_id: "local-user".to_owned(),
+            display_name: "local".to_owned(),
+            mode,
+            focused_pane_id: Some("pane-1".to_owned()),
+        }
+    }
+
+    pub fn input_allowed(actor: &Actor) -> bool {
+        actor.mode == AttachMode::ReadWrite
     }
 
     pub fn workspace_tree_frame(&self, connection_id: &str, seq: u64) -> Vec<u8> {
@@ -423,6 +461,48 @@ impl Session {
         builder.finished_data().to_vec()
     }
 
+    pub fn presence_update_frame(&self, connection_id: &str, seq: u64, actor: &Actor) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+
+        let actor_id = builder.create_string(&actor.id);
+        let user_id = builder.create_string(&actor.user_id);
+        let display_name = builder.create_string(&actor.display_name);
+        let focused_pane_id = actor
+            .focused_pane_id
+            .as_ref()
+            .map(|pane_id| builder.create_string(pane_id));
+        let presence = protocol::PresenceUpdate::create(
+            &mut builder,
+            &protocol::PresenceUpdateArgs {
+                actor_id: Some(actor_id),
+                user_id: Some(user_id),
+                display_name: Some(display_name),
+                mode: actor.mode.as_protocol(),
+                kind: protocol::PresenceKind::Joined,
+                focused_pane_id,
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::PresenceUpdate,
+                body: Some(presence.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+
     pub fn key_input_frame(
         &self,
         connection_id: &str,
@@ -511,7 +591,7 @@ fn build_cell_run<'a>(
 mod tests {
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
-    use super::Session;
+    use super::{AttachMode, Session};
 
     #[test]
     fn initial_session_has_one_fixed_size_pane() {
@@ -720,6 +800,38 @@ mod tests {
         assert_eq!(fetch.start_line(), 1);
         assert_eq!(fetch.line_count(), 2);
         assert_eq!(fetch.known_scrollback_version(), 1);
+    }
+
+    #[test]
+    fn presence_update_frame_decodes_actor_mode() {
+        let actor = Session::initial_actor(AttachMode::ReadWrite);
+        let frame = Session::initial().presence_update_frame("conn-1", 13, &actor);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
+        assert_eq!(envelope.session_id(), Some("local"));
+        assert_eq!(envelope.connection_id(), Some("conn-1"));
+        assert_eq!(envelope.seq(), 13);
+        assert_eq!(envelope.body_type(), protocol::EnvelopeBody::PresenceUpdate);
+
+        let presence = envelope
+            .body_as_presence_update()
+            .expect("presence update body");
+        assert_eq!(presence.actor_id(), Some("local-actor"));
+        assert_eq!(presence.user_id(), Some("local-user"));
+        assert_eq!(presence.display_name(), Some("local"));
+        assert_eq!(presence.mode(), protocol::AttachMode::ReadWrite);
+        assert_eq!(presence.kind(), protocol::PresenceKind::Joined);
+        assert_eq!(presence.focused_pane_id(), Some("pane-1"));
+    }
+
+    #[test]
+    fn read_only_actor_is_not_allowed_to_send_input() {
+        let read_only = Session::initial_actor(AttachMode::ReadOnly);
+        let read_write = Session::initial_actor(AttachMode::ReadWrite);
+
+        assert!(!Session::input_allowed(&read_only));
+        assert!(Session::input_allowed(&read_write));
     }
 
     #[test]
