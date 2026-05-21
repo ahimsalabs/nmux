@@ -13,7 +13,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let socket_path = socket_arg()?;
     let snapshot = local::attach(&socket_path)?;
     println!("{}", snapshot.workspace.display_line());
-    println!("{}", snapshot.surface);
+    if let Some(surface) = snapshot.surface {
+        println!("{surface}");
+    }
     Ok(())
 }
 
