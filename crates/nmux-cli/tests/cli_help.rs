@@ -79,6 +79,26 @@ fn nmux_rejects_conflicting_frontend_modes() {
         "nmux: --iterations must be greater than 0",
     );
     assert_nmux_rejects(
+        &["--live", "--interval-ms", "0"],
+        "nmux: --interval-ms must be greater than 0",
+    );
+    assert_nmux_rejects(
+        &["--live", "--cols", "0", "--rows", "24"],
+        "nmux: --cols and --rows must be between 1 and 65535",
+    );
+    assert_nmux_rejects(
+        &["--live", "--cols", "80", "--rows", "0"],
+        "nmux: --cols and --rows must be between 1 and 65535",
+    );
+    assert_nmux_rejects(
+        &["--live", "--cols", "65536", "--rows", "24"],
+        "nmux: --cols and --rows must be between 1 and 65535",
+    );
+    assert_nmux_rejects(
+        &["--live", "--cols", "80", "--rows", "65536"],
+        "nmux: --cols and --rows must be between 1 and 65535",
+    );
+    assert_nmux_rejects(
         &["--live", "--key", "ping", "--stdin"],
         "nmux: --key cannot be combined with --stdin",
     );

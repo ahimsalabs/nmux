@@ -121,7 +121,7 @@ Attach a bounded live client:
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --interval-ms 500
 ```
 
-Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached. Bounded live and follow loops reject `--iterations 0` before connecting.
+Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached. Bounded live and follow loops reject `--iterations 0` before connecting, and `--interval-ms` must be greater than zero.
 
 Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay.
 
@@ -141,7 +141,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 
 After the process-host resize succeeds, the daemon commits the pane size into the workspace tree and republishes a `WorkspaceTreeSnapshot`. The CLI prints the updated workspace summary, including the committed size and daemon-published resize policy.
 
-The local daemon publishes `resize=fixed` by default. Use `nmuxd --resize-policy fixed|leader|active-client|manual` to advertise a different pane resize policy. `manual` ignores frontend viewport resize intents; explicit user-command resize intents remain eligible. If a live client supplies `--cols` and `--rows` while the daemon publishes `manual`, the client reports `nmux: resize request ignored by manual resize policy` on stderr.
+The local daemon publishes `resize=fixed` by default. Use `nmuxd --resize-policy fixed|leader|active-client|manual` to advertise a different pane resize policy. `manual` ignores frontend viewport resize intents; explicit user-command resize intents remain eligible. Explicit `--cols` and `--rows` values must both be in the local PTY range, 1 through 65535. If a live client supplies `--cols` and `--rows` while the daemon publishes `manual`, the client reports `nmux: resize request ignored by manual resize policy` on stderr.
 
 For line-streamed live input, pipe lines through stdin:
 

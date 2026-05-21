@@ -54,6 +54,7 @@ Live attach renders the requested initial scrollback range before streaming upda
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache when the daemon has no newer surface update to send.
 Bounded client loops require `--iterations` greater than zero.
 Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.
+Live polling intervals must be greater than zero, and explicit resize dimensions must be between 1 and 65535.
 
 Line-streamed live input:
 

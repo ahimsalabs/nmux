@@ -739,6 +739,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     if stdin_input && stdin_bytes {
         return Err("--stdin and --stdin-bytes cannot be used together".into());
     }
+    validate_positive_numeric_args(live_resize, interval_ms)?;
     validate_explicit_input_modes(key_set, no_input_set, stdin_input, stdin_bytes)?;
     validate_mode_args(
         live,
@@ -768,6 +769,21 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         interval_ms,
         iterations,
     })
+}
+
+fn validate_positive_numeric_args(
+    live_resize: Option<(u32, u32)>,
+    interval_ms: u64,
+) -> Result<(), &'static str> {
+    if interval_ms == 0 {
+        return Err("--interval-ms must be greater than 0");
+    }
+    if live_resize.is_some_and(|(cols, rows)| {
+        cols == 0 || rows == 0 || cols > u16::MAX as u32 || rows > u16::MAX as u32
+    }) {
+        return Err("--cols and --rows must be between 1 and 65535");
+    }
+    Ok(())
 }
 
 fn validate_explicit_input_modes(
@@ -887,7 +903,7 @@ mod tests {
         LocalEcho, interim_surface_fidelity_warning_needed, parse_local_echo, raw_terminal_lflag,
         raw_terminal_mode_needed, redraw_terminal_guard_needed, resize_policy_warning,
         sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
-        validate_explicit_input_modes, validate_mode_args,
+        validate_explicit_input_modes, validate_mode_args, validate_positive_numeric_args,
     };
 
     #[test]
@@ -1046,6 +1062,32 @@ mod tests {
         assert!(validate_explicit_input_modes(false, false, false, true).is_ok());
         assert!(validate_explicit_input_modes(true, false, false, false).is_ok());
         assert!(validate_explicit_input_modes(false, true, false, false).is_ok());
+    }
+
+    #[test]
+    fn numeric_validation_rejects_zero_live_loop_values() {
+        assert_eq!(
+            validate_positive_numeric_args(None, 0),
+            Err("--interval-ms must be greater than 0")
+        );
+        assert_eq!(
+            validate_positive_numeric_args(Some((0, 24)), 1000),
+            Err("--cols and --rows must be between 1 and 65535")
+        );
+        assert_eq!(
+            validate_positive_numeric_args(Some((80, 0)), 1000),
+            Err("--cols and --rows must be between 1 and 65535")
+        );
+        assert_eq!(
+            validate_positive_numeric_args(Some((65536, 24)), 1000),
+            Err("--cols and --rows must be between 1 and 65535")
+        );
+        assert_eq!(
+            validate_positive_numeric_args(Some((80, 65536)), 1000),
+            Err("--cols and --rows must be between 1 and 65535")
+        );
+        assert!(validate_positive_numeric_args(None, 1000).is_ok());
+        assert!(validate_positive_numeric_args(Some((65535, 65535)), 1000).is_ok());
     }
 
     #[test]

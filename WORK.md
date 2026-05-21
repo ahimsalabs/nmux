@@ -412,6 +412,7 @@ M12: live workspace usability [next]
   live reattach with --state renders cached current surfaces instead of waiting for raw replay
   nmux client bounded live/follow iterations fail fast on zero counts
   explicit nmux input modes fail fast on conflicting --key/--stdin/--stdin-bytes/--no-input combinations
+  nmux live loop timing and explicit resize dimensions fail fast on zero or out-of-range values
   choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available
