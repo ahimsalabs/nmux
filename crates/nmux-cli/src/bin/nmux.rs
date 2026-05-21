@@ -750,7 +750,12 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     if stdin_input && stdin_bytes {
         return Err("--stdin and --stdin-bytes cannot be used together".into());
     }
-    validate_positive_numeric_args(live_resize, interval_ms)?;
+    validate_positive_numeric_args(
+        scrollback_start_line,
+        scrollback_line_count,
+        live_resize,
+        interval_ms,
+    )?;
     validate_explicit_input_modes(key_set, no_input_set, stdin_input, stdin_bytes)?;
     validate_mode_args(
         live,
@@ -783,9 +788,17 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
 }
 
 fn validate_positive_numeric_args(
+    scrollback_start_line: u64,
+    scrollback_line_count: u32,
     live_resize: Option<(u32, u32)>,
     interval_ms: u64,
 ) -> Result<(), &'static str> {
+    if scrollback_start_line == 0 {
+        return Err("--scrollback-start must be greater than 0");
+    }
+    if scrollback_line_count == 0 {
+        return Err("--scrollback-count must be greater than 0");
+    }
     if interval_ms == 0 {
         return Err("--interval-ms must be greater than 0");
     }
@@ -1079,27 +1092,39 @@ mod tests {
     #[test]
     fn numeric_validation_rejects_zero_live_loop_values() {
         assert_eq!(
-            validate_positive_numeric_args(None, 0),
+            validate_positive_numeric_args(1, 2, None, 0),
             Err("--interval-ms must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(Some((0, 24)), 1000),
+            validate_positive_numeric_args(1, 2, Some((0, 24)), 1000),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(Some((80, 0)), 1000),
+            validate_positive_numeric_args(1, 2, Some((80, 0)), 1000),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(Some((65536, 24)), 1000),
+            validate_positive_numeric_args(1, 2, Some((65536, 24)), 1000),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(Some((80, 65536)), 1000),
+            validate_positive_numeric_args(1, 2, Some((80, 65536)), 1000),
             Err("--cols and --rows must be between 1 and 65535")
         );
-        assert!(validate_positive_numeric_args(None, 1000).is_ok());
-        assert!(validate_positive_numeric_args(Some((65535, 65535)), 1000).is_ok());
+        assert!(validate_positive_numeric_args(1, 2, None, 1000).is_ok());
+        assert!(validate_positive_numeric_args(1, 2, Some((65535, 65535)), 1000).is_ok());
+    }
+
+    #[test]
+    fn numeric_validation_rejects_zero_scrollback_values() {
+        assert_eq!(
+            validate_positive_numeric_args(0, 2, None, 1000),
+            Err("--scrollback-start must be greater than 0")
+        );
+        assert_eq!(
+            validate_positive_numeric_args(1, 0, None, 1000),
+            Err("--scrollback-count must be greater than 0")
+        );
     }
 
     #[test]

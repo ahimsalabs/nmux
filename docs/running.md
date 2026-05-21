@@ -94,6 +94,7 @@ By default, `nmuxd` and `nmux` use the same local socket path: `$XDG_RUNTIME_DIR
 If the daemon is not running or the client points at the wrong socket, `nmux` reports the socket path in the connection error.
 If a socket path already exists, `nmuxd` refuses to replace it and reports the path. Remove a stale socket only after confirming no daemon is using it, or pass a different `--socket`.
 On normal bounded exits, `nmuxd` removes the socket path it created.
+Scrollback ranges are 1-based, and the client rejects zero `--scrollback-start` or `--scrollback-count` values before connecting.
 
 Start a daemon that serves one live client for two input cycles:
 

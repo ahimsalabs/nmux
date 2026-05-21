@@ -58,6 +58,7 @@ Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that survives repeated live client detach and reattach until the daemon is stopped.
 State load/save failures include the state path in the error.
 Bounded client loops require `--iterations` greater than zero.
+Scrollback ranges are 1-based and require positive `--scrollback-start` and `--scrollback-count` values.
 Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.
 Live polling intervals must be greater than zero, and explicit resize dimensions must be between 1 and 65535.
 

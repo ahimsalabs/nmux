@@ -95,6 +95,14 @@ fn nmux_rejects_conflicting_frontend_modes() {
         "nmux: --interval-ms must be greater than 0",
     );
     assert_nmux_rejects(
+        &["--scrollback-start", "0", "--no-input"],
+        "nmux: --scrollback-start must be greater than 0",
+    );
+    assert_nmux_rejects(
+        &["--scrollback-count", "0", "--no-input"],
+        "nmux: --scrollback-count must be greater than 0",
+    );
+    assert_nmux_rejects(
         &["--live", "--cols", "0", "--rows", "24"],
         "nmux: --cols and --rows must be between 1 and 65535",
     );
