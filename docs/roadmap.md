@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M0 is the current target: define the protocol contract and make it easy to validate.
+M2 is the current target: render a pane surface from server-owned state and send basic keyboard input back to the daemon.
 
 Done:
 
@@ -15,10 +15,15 @@ Done:
 - M0 protocol notes in [docs/protocol.md](protocol.md).
 - Reproducible schema validation through `nix develop path:$PWD -c make check-schema`.
 - Rust workspace and generated protocol crate for core implementation.
+- Bounded FlatBuffers envelope framing.
+- Initial Rust session model that encodes a `WorkspaceTreeSnapshot`.
+- Local `nmuxd` and `nmux` skeletons that exchange the initial workspace snapshot over a Unix socket.
 
 Next:
 
-- Add the first local daemon/client skeleton around the M0 envelope.
+- Add a minimal pane surface object.
+- Teach `nmuxd` to send an initial `PaneSurfaceSnapshot` after the workspace tree.
+- Teach `nmux` to render the received pane surface.
 
 ## Milestones
 
@@ -42,6 +47,8 @@ Exit evidence:
 - A local client command attaches.
 - The client receives a `WorkspaceTreeSnapshot`.
 - Tests cover envelope encode/decode and initial session creation.
+
+Status: Done for the static local skeleton. See [docs/running.md](running.md).
 
 ### M2: Dumb Viewer
 
