@@ -4,7 +4,7 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M5 is the current target: support multiple actors with presence and read-only vs read-write attach modes.
+M6 is the current target: isolate process hosting behind a local/container/sandbox host abstraction.
 
 Done:
 
@@ -29,11 +29,12 @@ Done:
 - ADR 0004 for presence and attach modes.
 - `PresenceUpdate`, `AttachMode`, and `PresenceKind` schema objects.
 - Local attach prelude actor mode, presence update, and read-only input policy tests.
+- Sequential two-client attach test against one local session.
 
 Next:
 
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Expand the local daemon beyond `serve_one` so two clients can attach to one session.
+- Add process-host traits and lifecycle tests before wiring real PTYs.
 
 ## Milestones
 
@@ -104,7 +105,7 @@ Exit evidence:
 - Presence updates identify actors and capabilities.
 - Read-only clients cannot send pane input.
 
-Status: Partial. Presence and attach-mode semantics are implemented for the single-client local skeleton; simultaneous two-client attach remains next.
+Status: Done for the local skeleton. Two clients can attach sequentially to one session, presence identifies actor capabilities, and read-only actors do not send pane input.
 
 ### M6: Sandbox Host
 
