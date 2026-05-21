@@ -50,6 +50,8 @@ pub struct Pane {
     pub surface_version: u64,
     pub cols: u32,
     pub rows: u32,
+    pub surface_lines: Vec<String>,
+    pub scrollback_lines: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,9 +94,29 @@ impl Session {
                     surface_version: 2,
                     cols: 80,
                     rows: 24,
+                    surface_lines: vec![
+                        "nmux pane-1".to_owned(),
+                        "server-owned terminal state".to_owned(),
+                    ],
+                    scrollback_lines: vec![
+                        "booting nmux workspace".to_owned(),
+                        "nmux pane-1".to_owned(),
+                        "server-owned terminal state".to_owned(),
+                    ],
                 },
             }],
         }
+    }
+
+    pub fn from_pane_output(output: &[u8]) -> Self {
+        let mut session = Self::initial();
+        let pane = &mut session.tabs[0].root;
+        let scrollback_lines = text_lines_from_pty_output(output);
+        let visible_start = scrollback_lines.len().saturating_sub(pane.rows as usize);
+        pane.scrollback_lines = scrollback_lines;
+        pane.surface_lines = pane.scrollback_lines[visible_start..].to_vec();
+        pane.surface_version = pane.surface_version.saturating_add(1);
+        session
     }
 
     pub fn initial_actor(mode: AttachMode) -> Actor {
@@ -187,27 +209,20 @@ impl Session {
             cols: pane.cols,
             rows: pane.rows,
             cursor: Cursor {
-                row: 1,
+                row: pane.surface_lines.len().saturating_sub(1) as u32,
                 col: 0,
                 visible: true,
             },
-            lines: vec![
-                "nmux pane-1".to_owned(),
-                "server-owned terminal state".to_owned(),
-            ],
+            lines: pane.surface_lines.clone(),
         }
     }
 
     pub fn initial_scrollback(&self) -> PaneScrollback {
-        let surface = self.initial_pane_surface();
+        let pane = &self.tabs[0].root;
         PaneScrollback {
-            pane_id: surface.pane_id,
+            pane_id: pane.id.clone(),
             version: 1,
-            lines: vec![
-                "booting nmux workspace".to_owned(),
-                "nmux pane-1".to_owned(),
-                "server-owned terminal state".to_owned(),
-            ],
+            lines: pane.scrollback_lines.clone(),
         }
     }
 
@@ -591,6 +606,25 @@ fn build_cell_run<'a>(
     )
 }
 
+fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(output);
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut lines = text
+        .lines()
+        .map(|line| {
+            line.chars()
+                .filter(|ch| *ch == '\t' || !ch.is_control())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use crate::host::HostKind;
@@ -618,6 +652,13 @@ mod tests {
         assert_eq!(tab.root.surface_version, 2);
         assert_eq!(tab.root.cols, 80);
         assert_eq!(tab.root.rows, 24);
+        assert_eq!(
+            tab.root.surface_lines,
+            vec![
+                "nmux pane-1".to_owned(),
+                "server-owned terminal state".to_owned(),
+            ]
+        );
     }
 
     #[test]
@@ -872,5 +913,33 @@ mod tests {
         assert_eq!(key.text_utf8(), Some("a"));
         assert_eq!(key.key_name(), None);
         assert_eq!(key.modifiers(), 0);
+    }
+
+    #[test]
+    fn pane_output_hydrates_backend_owned_surface() {
+        let session = Session::from_pane_output(b"hello from pty\r\nsecond line\n");
+        let surface = session.initial_pane_surface();
+        let scrollback = session.initial_scrollback();
+
+        assert_eq!(surface.version, 3);
+        assert_eq!(surface.lines, vec!["hello from pty", "second line"]);
+        assert_eq!(surface.cursor.row, 1);
+        assert_eq!(scrollback.lines, surface.lines);
+    }
+
+    #[test]
+    fn pane_output_surface_frame_uses_process_derived_lines() {
+        let frame = Session::from_pane_output(b"pty says hi\n").pane_surface_frame("conn-1", 14);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        let snapshot = envelope
+            .body_as_pane_surface_snapshot()
+            .expect("pane surface body");
+        assert_eq!(snapshot.version(), 3);
+
+        let rows = snapshot.rows_data().expect("rows");
+        assert_eq!(rows.len(), 1);
+        let runs = rows.get(0).runs().expect("runs");
+        assert_eq!(runs.get(0).text_utf8(), Some("pty says hi"));
     }
 }
