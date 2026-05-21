@@ -42,11 +42,12 @@ Done:
 - `nmuxd` starts a local PTY host and can run a command-backed PTY smoke through the local client.
 - Read-write local input is forwarded to the process host, while read-only attaches do not forward input.
 - Local attach polls process output after forwarded input so echoed command output can update backend-owned scrollback.
+- Client flags can drive an interaction smoke across attaches with custom input and scrollback ranges.
 
 Next:
 
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Add a client-visible interaction smoke that proves input-driven output across attaches.
+- Start M7 research: document the Ghostty/libghostty frontend path and state-injection constraints.
 
 ## Milestones
 

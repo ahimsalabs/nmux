@@ -50,6 +50,32 @@ nmux pane-1
 server-owned terminal state
 ```
 
+To prove input-driven output across attaches, keep the daemon running with a command that echoes each submitted line:
+
+```sh
+nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done"
+```
+
+Then send input from one client:
+
+```sh
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --key $'ping\n' --scrollback-start 3 --scrollback-count 3
+```
+
+Attach a second passive client and fetch the same range plus the echoed line:
+
+```sh
+nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --no-input --scrollback-start 3 --scrollback-count 4
+```
+
+Expected second attach output includes:
+
+```text
+ready
+ping
+echo:ping
+```
+
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 This is not a terminal emulator yet. The interim text surface only converts simple output bytes into backend-owned visible rows and scrollback. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state derived from a local PTY, server-owned scrollback ranges, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input forwarding.
