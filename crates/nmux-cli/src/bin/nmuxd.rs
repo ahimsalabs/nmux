@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -22,6 +23,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let listener = local::bind_listener(&args.socket_path)?;
+    let _socket_cleanup = SocketCleanup::new(args.socket_path.clone());
     eprintln!("nmuxd: listening on {}", args.socket_path.display());
 
     let mut session = Session::initial();
@@ -60,6 +62,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         local::serve_one_with_host(&listener, &mut session, &mut pty_host)?;
+    }
+}
+
+struct SocketCleanup {
+    path: PathBuf,
+}
+
+impl SocketCleanup {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for SocketCleanup {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
     }
 }
 

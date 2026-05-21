@@ -118,6 +118,54 @@ fn live_cli_displays_daemon_resize_policy() {
 }
 
 #[test]
+fn live_daemon_removes_socket_after_bounded_exit() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'ready\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(
+        !socket_path.exists(),
+        "nmuxd left socket after bounded exit: {}",
+        socket_path.display()
+    );
+}
+
+#[test]
 fn live_cli_renders_initial_scrollback_range() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

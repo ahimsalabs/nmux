@@ -52,6 +52,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --live --iterations 2 --key $'p
 Both binaries share a stable default socket path for the current user. Pass `--socket` on both sides when you want an isolated smoke-test socket.
 Connection failures include the socket path, which helps distinguish a missing daemon from an isolated test socket.
 `nmuxd` refuses to replace an existing socket path, so remove stale sockets deliberately or choose a different `--socket`.
+On normal bounded exits, `nmuxd` removes the socket path it created.
 Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled.
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache when the daemon has no newer surface update to send.
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that survives repeated live client detach and reattach until the daemon is stopped.
