@@ -375,7 +375,12 @@ fn serve_live_attached_client(
                         continue;
                     }
                     host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
-                    if session.commit_pane_resize(&resize.pane_id, resize.cols, resize.rows) {
+                    if session.commit_pane_resize_with_engine(
+                        &resize.pane_id,
+                        resize.cols,
+                        resize.rows,
+                        engines.engine_mut(&resize.pane_id),
+                    ) {
                         let workspace_frame = session.workspace_tree_frame("local-client", seq);
                         wire::write_default_frame(stream, &workspace_frame)?;
                         seq += 1;

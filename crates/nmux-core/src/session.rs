@@ -162,6 +162,17 @@ impl Session {
     }
 
     pub fn commit_pane_resize(&mut self, pane_id: &str, cols: u32, rows: u32) -> bool {
+        let mut engine = InterimTextTerminalEngine;
+        self.commit_pane_resize_with_engine(pane_id, cols, rows, &mut engine)
+    }
+
+    pub fn commit_pane_resize_with_engine(
+        &mut self,
+        pane_id: &str,
+        cols: u32,
+        rows: u32,
+        engine: &mut dyn TerminalEngine,
+    ) -> bool {
         let Some(pane) = self.pane_mut(pane_id) else {
             return false;
         };
@@ -169,15 +180,23 @@ impl Session {
             return false;
         }
 
+        let input = TerminalInput {
+            pane_id: &pane.id,
+            cols: pane.cols,
+            rows: pane.rows,
+            cursor: TerminalCursor::from(&pane.cursor),
+            surface_lines: &pane.surface_lines,
+            scrollback_lines: &pane.scrollback_lines,
+        };
+        let Some(update) = engine.resize(input, cols, rows) else {
+            return false;
+        };
+
         pane.cols = cols;
         pane.rows = rows;
-        let visible_start = pane
-            .scrollback_lines
-            .len()
-            .saturating_sub(pane.rows as usize);
-        pane.surface_lines = pane.scrollback_lines[visible_start..].to_vec();
-        pane.cursor.row = pane.surface_lines.len().saturating_sub(1) as u32;
-        pane.cursor.col = 0;
+        pane.scrollback_lines = update.scrollback_lines;
+        pane.surface_lines = update.surface_lines;
+        pane.cursor = Cursor::from(update.cursor);
         self.version = self.version.saturating_add(1);
         true
     }
@@ -1272,6 +1291,15 @@ mod tests {
                     scrollback_lines: vec!["engine scrollback".to_owned()],
                 })
             }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
         }
 
         let mut session = Session::initial();
@@ -1296,6 +1324,64 @@ mod tests {
             }
         );
         assert_eq!(scrollback.lines, vec!["engine scrollback".to_owned()]);
+    }
+
+    #[test]
+    fn pane_resize_can_use_injected_terminal_engine() {
+        struct ResizeEngine;
+
+        impl TerminalEngine for ResizeEngine {
+            fn apply_output(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                panic!("output is not used by this test")
+            }
+
+            fn resize(
+                &mut self,
+                input: TerminalInput<'_>,
+                cols: u32,
+                rows: u32,
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(input.pane_id, "pane-1");
+                assert_eq!(input.cols, 80);
+                assert_eq!(input.rows, 24);
+                assert_eq!(cols, 100);
+                assert_eq!(rows, 10);
+                Some(TerminalUpdate {
+                    cursor: TerminalCursor {
+                        row: 3,
+                        col: 4,
+                        visible: true,
+                    },
+                    surface_lines: vec!["resized surface".to_owned()],
+                    scrollback_lines: vec!["resized scrollback".to_owned()],
+                })
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = ResizeEngine;
+
+        assert!(session.commit_pane_resize_with_engine("pane-1", 100, 10, &mut engine));
+
+        let surface = session.initial_pane_surface();
+        let scrollback = session.initial_scrollback();
+        assert_eq!(session.version, 2);
+        assert_eq!(surface.cols, 100);
+        assert_eq!(surface.rows, 10);
+        assert_eq!(
+            surface.cursor,
+            Cursor {
+                row: 3,
+                col: 4,
+                visible: true
+            }
+        );
+        assert_eq!(surface.lines, vec!["resized surface".to_owned()]);
+        assert_eq!(scrollback.lines, vec!["resized scrollback".to_owned()]);
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub enum TerminalEngineKind {
 
 pub trait TerminalEngine {
     fn apply_output(&mut self, input: TerminalInput<'_>, output: &[u8]) -> Option<TerminalUpdate>;
+    fn resize(&mut self, input: TerminalInput<'_>, cols: u32, rows: u32) -> Option<TerminalUpdate>;
 }
 
 #[derive(Default)]
@@ -86,19 +87,44 @@ impl TerminalEngine for InterimTextTerminalEngine {
         let mut scrollback_lines = input.scrollback_lines.to_vec();
         scrollback_lines.extend(text_lines_from_pty_output(output));
 
-        let visible_start = scrollback_lines.len().saturating_sub(input.rows as usize);
-        let surface_lines = scrollback_lines[visible_start..].to_vec();
-        let cursor = TerminalCursor {
-            row: surface_lines.len().saturating_sub(1) as u32,
-            col: 0,
-            visible: input.cursor.visible,
-        };
-
-        Some(TerminalUpdate {
-            cursor,
-            surface_lines,
+        Some(interim_text_update(
+            input.cursor,
+            input.rows,
             scrollback_lines,
-        })
+        ))
+    }
+
+    fn resize(
+        &mut self,
+        input: TerminalInput<'_>,
+        _cols: u32,
+        rows: u32,
+    ) -> Option<TerminalUpdate> {
+        Some(interim_text_update(
+            input.cursor,
+            rows,
+            input.scrollback_lines.to_vec(),
+        ))
+    }
+}
+
+fn interim_text_update(
+    previous_cursor: TerminalCursor,
+    rows: u32,
+    scrollback_lines: Vec<String>,
+) -> TerminalUpdate {
+    let visible_start = scrollback_lines.len().saturating_sub(rows as usize);
+    let surface_lines = scrollback_lines[visible_start..].to_vec();
+    let cursor = TerminalCursor {
+        row: surface_lines.len().saturating_sub(1) as u32,
+        col: 0,
+        visible: previous_cursor.visible,
+    };
+
+    TerminalUpdate {
+        cursor,
+        surface_lines,
+        scrollback_lines,
     }
 }
 
@@ -203,6 +229,40 @@ mod tests {
                 row: 1,
                 col: 0,
                 visible: false
+            }
+        );
+    }
+
+    #[test]
+    fn interim_text_engine_resizes_visible_tail() {
+        let mut engine = InterimTextTerminalEngine;
+        let scrollback_lines = vec!["one".to_owned(), "two".to_owned(), "three".to_owned()];
+        let input = TerminalInput {
+            pane_id: "pane-1",
+            cols: 80,
+            rows: 3,
+            cursor: TerminalCursor {
+                row: 2,
+                col: 0,
+                visible: true,
+            },
+            surface_lines: &scrollback_lines,
+            scrollback_lines: &scrollback_lines,
+        };
+
+        let update = engine.resize(input, 100, 2).expect("terminal update");
+
+        assert_eq!(
+            update.surface_lines,
+            vec!["two".to_owned(), "three".to_owned()]
+        );
+        assert_eq!(update.scrollback_lines, scrollback_lines);
+        assert_eq!(
+            update.cursor,
+            TerminalCursor {
+                row: 1,
+                col: 0,
+                visible: true
             }
         );
     }

@@ -14,7 +14,7 @@ M13 starts replacing that interim path with backend `libghostty-vt` extraction. 
 
 Represent daemon-owned terminal interpretation behind a core terminal engine boundary.
 
-The boundary accepts pane identity, size, current cursor, current nmux surface/scrollback state, and newly read PTY bytes. It returns updated nmux-owned cursor, surface, and scrollback objects. The current `InterimTextTerminalEngine` implements that boundary, while local daemon serving code keeps terminal engine instances alive per pane across output polls and sequential live clients.
+The boundary accepts pane identity, size, current cursor, current nmux surface/scrollback state, and newly read PTY bytes or resize events. It returns updated nmux-owned cursor, surface, and scrollback objects. The current `InterimTextTerminalEngine` implements that boundary, while local daemon serving code keeps terminal engine instances alive per pane across output polls, resize handling, and sequential live clients.
 
 Future backend `libghostty-vt` integration should implement this boundary inside `nmuxd`: PTY bytes enter the daemon-owned engine, and clients continue to receive nmux `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` objects.
 
