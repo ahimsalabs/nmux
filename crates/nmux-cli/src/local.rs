@@ -33,6 +33,24 @@ pub fn serve_one(
     listener: &UnixListener,
     session: &Session,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    serve_n(listener, session, 1)
+}
+
+pub fn serve_n(
+    listener: &UnixListener,
+    session: &Session,
+    clients: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for _ in 0..clients {
+        serve_next(listener, session)?;
+    }
+    Ok(())
+}
+
+fn serve_next(
+    listener: &UnixListener,
+    session: &Session,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
     let workspace_frame = session.workspace_tree_frame("local-client", 1);
@@ -765,6 +783,36 @@ mod tests {
         assert_eq!(snapshot.presence.mode, AttachMode::ReadOnly);
         assert!(snapshot.surface.is_some());
         assert!(snapshot.scrollback.is_some());
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn two_clients_can_attach_to_one_session_sequentially() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+
+        let server = thread::spawn(move || serve_n(&listener, &session, 2).expect("serve two"));
+        let first = attach(&socket_path).expect("first attach");
+        let second = attach_with_options(
+            &socket_path,
+            AttachRequest {
+                actor_id: "spectator".to_owned(),
+                mode: AttachMode::ReadOnly,
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("second attach");
+        server.join().expect("server thread");
+
+        assert_eq!(first.presence.actor_id, "local-actor");
+        assert_eq!(first.presence.mode, AttachMode::ReadWrite);
+        assert_eq!(second.presence.actor_id, "spectator");
+        assert_eq!(second.presence.mode, AttachMode::ReadOnly);
+        assert_eq!(first.workspace.session_id, second.workspace.session_id);
+        assert!(first.surface.is_some());
+        assert!(second.surface.is_some());
 
         let _ = fs::remove_file(socket_path);
     }
