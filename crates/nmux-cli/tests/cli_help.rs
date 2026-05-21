@@ -180,6 +180,32 @@ fn nmux_reports_state_load_path_before_connecting() {
     );
 }
 
+#[test]
+fn nmux_reports_socket_path_when_daemon_is_missing() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--no-input",
+        ])
+        .output()
+        .expect("run nmux");
+
+    assert!(!output.status.success(), "nmux unexpectedly succeeded");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nmux: failed to connect to nmux daemon at"),
+        "missing connect context:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(socket_path.to_str().expect("socket path")),
+        "missing socket path:\n{stderr}"
+    );
+}
+
 fn assert_nmux_rejects(args: &[&str], expected_stderr: &str) {
     let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args(args)
@@ -222,6 +248,18 @@ fn test_state_path() -> std::path::PathBuf {
     let id = NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
         "nmux-cli-help-state-{}-{nanos}-{id}.state",
+        std::process::id()
+    ))
+}
+
+fn test_socket_path() -> std::path::PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let id = NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "nmux-cli-help-socket-{}-{nanos}-{id}.sock",
         std::process::id()
     ))
 }

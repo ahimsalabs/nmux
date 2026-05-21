@@ -62,7 +62,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut sigwinch_resize =
         SigwinchResize::enable_if_needed(args.stdin_bytes, args.live_resize.is_some())?;
     let mut client_state = load_client_state(args.state_path.as_deref())?;
-    let mut stream = UnixStream::connect(&args.socket_path)?;
+    let mut stream = local::connect_to_daemon(&args.socket_path)?;
     stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
     let stdin = io::stdin();
     let mut stdin_lines = if args.stdin_input {

@@ -47,6 +47,16 @@ pub fn bind_listener(path: &Path) -> io::Result<UnixListener> {
     UnixListener::bind(path)
 }
 
+pub fn connect_to_daemon(path: &Path) -> Result<UnixStream, Box<dyn std::error::Error>> {
+    UnixStream::connect(path).map_err(|err| {
+        format!(
+            "failed to connect to nmux daemon at {}: {err}",
+            path.display()
+        )
+        .into()
+    })
+}
+
 pub fn serve_one(
     listener: &UnixListener,
     session: &mut Session,
@@ -503,7 +513,7 @@ pub fn attach_with_client_options(
     path: &Path,
     options: AttachOptions,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
-    let mut stream = UnixStream::connect(path)?;
+    let mut stream = connect_to_daemon(path)?;
     let mode = options.request.mode;
     write_attach_request(&mut stream, &options.request)?;
     let snapshot = attach_from_stream(&mut stream)?;
