@@ -165,19 +165,7 @@ impl Session {
 
         let mut row_offsets = Vec::with_capacity(surface.lines.len());
         for (row, line) in surface.lines.iter().enumerate() {
-            let text = builder.create_string(line);
-            let widths = vec![1_u8; line.chars().count()];
-            let widths = builder.create_vector(&widths);
-            let run = protocol::CellRun::create(
-                &mut builder,
-                &protocol::CellRunArgs {
-                    text_utf8: Some(text),
-                    cell_widths: Some(widths),
-                    style_id: 0,
-                    flags: 0,
-                    hyperlink_id: 0,
-                },
-            );
+            let run = build_cell_run(&mut builder, line);
             let runs = builder.create_vector(&[run]);
             let row = protocol::SurfaceRow::create(
                 &mut builder,
@@ -230,6 +218,73 @@ impl Session {
                 sent_at_mono_ms: 0,
                 body_type: protocol::EnvelopeBody::PaneSurfaceSnapshot,
                 body: Some(snapshot.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+
+    pub fn pane_surface_patch_frame(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        base_version: u64,
+    ) -> Vec<u8> {
+        let surface = self.initial_pane_surface();
+        let mut builder = FlatBufferBuilder::new();
+
+        let mut row_offsets = Vec::with_capacity(surface.lines.len());
+        for (row, line) in surface.lines.iter().enumerate() {
+            let run = build_cell_run(&mut builder, line);
+            let runs = builder.create_vector(&[run]);
+            let row = protocol::RowUpdate::create(
+                &mut builder,
+                &protocol::RowUpdateArgs {
+                    row: row as u32,
+                    runs: Some(runs),
+                    dirty_hash: stable_row_hash(line),
+                },
+            );
+            row_offsets.push(row);
+        }
+
+        let row_updates = builder.create_vector(&row_offsets);
+        let cursor = protocol::CursorState::create(
+            &mut builder,
+            &protocol::CursorStateArgs {
+                row: surface.cursor.row,
+                col: surface.cursor.col,
+                visible: surface.cursor.visible,
+                shape: protocol::CursorShape::Block,
+            },
+        );
+        let pane_id = builder.create_string(&surface.pane_id);
+        let patch = protocol::PaneSurfacePatch::create(
+            &mut builder,
+            &protocol::PaneSurfacePatchArgs {
+                pane_id: Some(pane_id),
+                base_version,
+                version: surface.version,
+                kind: protocol::PatchKind::ReplaceRows,
+                row_updates: Some(row_updates),
+                cursor: Some(cursor),
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::PaneSurfacePatch,
+                body: Some(patch.as_union_value()),
             },
         );
 
@@ -300,6 +355,25 @@ fn stable_row_hash(line: &str) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+fn build_cell_run<'a>(
+    builder: &mut FlatBufferBuilder<'a>,
+    line: &str,
+) -> flatbuffers::WIPOffset<protocol::CellRun<'a>> {
+    let text = builder.create_string(line);
+    let widths = vec![1_u8; line.chars().count()];
+    let widths = builder.create_vector(&widths);
+    protocol::CellRun::create(
+        builder,
+        &protocol::CellRunArgs {
+            text_utf8: Some(text),
+            cell_widths: Some(widths),
+            style_id: 0,
+            flags: 0,
+            hyperlink_id: 0,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -405,6 +479,41 @@ mod tests {
         assert_ne!(first_row.dirty_hash(), 0);
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.len(), 1);
+        assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
+    }
+
+    #[test]
+    fn pane_surface_patch_frame_decodes_to_replace_rows_patch() {
+        let frame = Session::initial().pane_surface_patch_frame("conn-1", 10, 0);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
+        assert_eq!(envelope.session_id(), Some("local"));
+        assert_eq!(envelope.connection_id(), Some("conn-1"));
+        assert_eq!(envelope.seq(), 10);
+        assert_eq!(
+            envelope.body_type(),
+            protocol::EnvelopeBody::PaneSurfacePatch
+        );
+
+        let patch = envelope
+            .body_as_pane_surface_patch()
+            .expect("pane surface patch body");
+        assert_eq!(patch.pane_id(), Some("pane-1"));
+        assert_eq!(patch.base_version(), 0);
+        assert_eq!(patch.version(), 1);
+        assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
+
+        let cursor = patch.cursor().expect("cursor");
+        assert_eq!(cursor.row(), 1);
+        assert_eq!(cursor.col(), 0);
+
+        let rows = patch.row_updates().expect("row updates");
+        assert_eq!(rows.len(), 2);
+
+        let first_row = rows.get(0);
+        assert_eq!(first_row.row(), 0);
+        let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
     }
 
