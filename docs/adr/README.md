@@ -9,3 +9,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0001: Backend-Owned Terminal State](0001-backend-owned-terminal-state.md)
 - [0002: Rust Core Runtime](0002-rust-core-runtime.md)
 - [0003: Scrollback As A Separate Object](0003-scrollback-as-separate-object.md)
+- [0004: Presence And Attach Modes](0004-presence-and-attach-modes.md)
