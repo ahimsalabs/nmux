@@ -54,7 +54,7 @@ impl Session {
                 active_pane_id: "pane-1".to_owned(),
                 root: Pane {
                     id: "pane-1".to_owned(),
-                    surface_version: 1,
+                    surface_version: 2,
                     cols: 80,
                     rows: 24,
                 },
@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(tab.id, "tab-1");
         assert_eq!(tab.active_pane_id, "pane-1");
         assert_eq!(tab.root.id, "pane-1");
-        assert_eq!(tab.root.surface_version, 1);
+        assert_eq!(tab.root.surface_version, 2);
         assert_eq!(tab.root.cols, 80);
         assert_eq!(tab.root.rows, 24);
     }
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(pane.pane_id(), Some("pane-1"));
         assert_eq!(pane.kind(), protocol::PaneKind::Pty);
         assert_eq!(pane.split_axis(), protocol::SplitAxis::None);
-        assert_eq!(pane.surface_version(), 1);
+        assert_eq!(pane.surface_version(), 2);
         assert_eq!(pane.cols(), 80);
         assert_eq!(pane.rows(), 24);
         assert_eq!(pane.resize_policy(), protocol::ResizePolicy::Fixed);
@@ -457,7 +457,7 @@ mod tests {
             .body_as_pane_surface_snapshot()
             .expect("pane surface body");
         assert_eq!(snapshot.pane_id(), Some("pane-1"));
-        assert_eq!(snapshot.version(), 1);
+        assert_eq!(snapshot.version(), 2);
         assert_eq!(snapshot.surface(), protocol::SurfaceKind::Main);
         assert_eq!(snapshot.cols(), 80);
         assert_eq!(snapshot.rows(), 24);
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn pane_surface_patch_frame_decodes_to_replace_rows_patch() {
-        let frame = Session::initial().pane_surface_patch_frame("conn-1", 10, 0);
+        let frame = Session::initial().pane_surface_patch_frame("conn-1", 10, 1);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
 
         assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
@@ -500,8 +500,8 @@ mod tests {
             .body_as_pane_surface_patch()
             .expect("pane surface patch body");
         assert_eq!(patch.pane_id(), Some("pane-1"));
-        assert_eq!(patch.base_version(), 0);
-        assert_eq!(patch.version(), 1);
+        assert_eq!(patch.base_version(), 1);
+        assert_eq!(patch.version(), 2);
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
 
         let cursor = patch.cursor().expect("cursor");
@@ -521,7 +521,7 @@ mod tests {
     fn finds_initial_pane_surface_version() {
         let session = Session::initial();
 
-        assert_eq!(session.surface_version("pane-1"), Some(1));
+        assert_eq!(session.surface_version("pane-1"), Some(2));
         assert_eq!(session.surface_version("missing"), None);
     }
 

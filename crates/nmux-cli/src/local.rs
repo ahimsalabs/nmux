@@ -38,8 +38,13 @@ pub fn serve_one(
     let workspace_frame = session.workspace_tree_frame("local-client", 1);
     wire::write_default_frame(&mut stream, &workspace_frame)?;
 
-    if request.needs_surface_snapshot(session, "pane-1") {
-        let surface_frame = session.pane_surface_frame("local-client", 2);
+    if let Some(response) = request.surface_response(session, "pane-1") {
+        let surface_frame = match response {
+            SurfaceResponse::Snapshot => session.pane_surface_frame("local-client", 2),
+            SurfaceResponse::Patch { base_version } => {
+                session.pane_surface_patch_frame("local-client", 2, base_version)
+            }
+        };
         wire::write_default_frame(&mut stream, &surface_frame)?;
         read_input_event_from_stream(&mut stream)?;
     }
@@ -70,7 +75,7 @@ pub fn attach_from_stream(
     let workspace = workspace_summary_from_frame(&workspace_frame)?;
 
     let surface = match wire::read_default_frame(stream) {
-        Ok(surface_frame) => Some(surface_text_from_frame(&surface_frame)?),
+        Ok(surface_frame) => Some(surface_update_from_frame(&surface_frame)?),
         Err(wire::WireError::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => None,
         Err(err) => return Err(err.into()),
     };
@@ -114,33 +119,75 @@ pub fn workspace_summary_from_frame(
 }
 
 pub fn surface_text_from_frame(frame: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(surface_update_from_frame(frame)?.text)
+}
+
+pub fn surface_update_from_frame(
+    frame: &[u8],
+) -> Result<SurfaceUpdate, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
-    if envelope.body_type() != protocol::EnvelopeBody::PaneSurfaceSnapshot {
-        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    match envelope.body_type() {
+        protocol::EnvelopeBody::PaneSurfaceSnapshot => {
+            let snapshot = envelope
+                .body_as_pane_surface_snapshot()
+                .ok_or("missing pane surface body")?;
+            let rows = snapshot.rows_data().ok_or("pane surface has no rows")?;
+            Ok(SurfaceUpdate {
+                kind: SurfaceUpdateKind::Snapshot,
+                text: render_surface_rows(rows.len(), |index| {
+                    rows.get(index)
+                        .runs()
+                        .map(render_cell_runs)
+                        .unwrap_or_default()
+                }),
+            })
+        }
+        protocol::EnvelopeBody::PaneSurfacePatch => {
+            let patch = envelope
+                .body_as_pane_surface_patch()
+                .ok_or("missing pane surface patch body")?;
+            let rows = patch
+                .row_updates()
+                .ok_or("pane surface patch has no rows")?;
+            Ok(SurfaceUpdate {
+                kind: SurfaceUpdateKind::Patch,
+                text: render_surface_rows(rows.len(), |index| {
+                    rows.get(index)
+                        .runs()
+                        .map(render_cell_runs)
+                        .unwrap_or_default()
+                }),
+            })
+        }
+        other => Err(format!("unexpected envelope body: {other:?}").into()),
     }
+}
 
-    let snapshot = envelope
-        .body_as_pane_surface_snapshot()
-        .ok_or("missing pane surface body")?;
-    let rows = snapshot.rows_data().ok_or("pane surface has no rows")?;
-
+fn render_surface_rows<F>(len: usize, mut row_text: F) -> String
+where
+    F: FnMut(usize) -> String,
+{
     let mut rendered = String::new();
-    for row_index in 0..rows.len() {
+    for row_index in 0..len {
         if row_index > 0 {
             rendered.push('\n');
         }
-
-        let row = rows.get(row_index);
-        if let Some(runs) = row.runs() {
-            for run_index in 0..runs.len() {
-                if let Some(text) = runs.get(run_index).text_utf8() {
-                    rendered.push_str(text);
-                }
-            }
-        }
+        rendered.push_str(&row_text(row_index));
     }
 
-    Ok(rendered)
+    rendered
+}
+
+fn render_cell_runs(
+    runs: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<protocol::CellRun<'_>>>,
+) -> String {
+    let mut rendered = String::new();
+    for run_index in 0..runs.len() {
+        if let Some(text) = runs.get(run_index).text_utf8() {
+            rendered.push_str(text);
+        }
+    }
+    rendered
 }
 
 pub fn read_input_event_from_stream(
@@ -254,16 +301,34 @@ impl AttachRequest {
         Ok(Self { known_surfaces })
     }
 
-    fn needs_surface_snapshot(&self, session: &Session, pane_id: &str) -> bool {
+    fn surface_response(&self, session: &Session, pane_id: &str) -> Option<SurfaceResponse> {
         let Some(current) = session.surface_version(pane_id) else {
-            return false;
+            return None;
         };
 
-        self.known_surfaces
+        let Some(known) = self
+            .known_surfaces
             .iter()
             .find(|known| known.pane_id == pane_id)
-            .is_none_or(|known| known.version != current)
+        else {
+            return Some(SurfaceResponse::Snapshot);
+        };
+
+        if known.version == current {
+            None
+        } else if known.version.checked_add(1) == Some(current) {
+            Some(SurfaceResponse::Patch {
+                base_version: known.version,
+            })
+        } else {
+            Some(SurfaceResponse::Snapshot)
+        }
     }
+}
+
+enum SurfaceResponse {
+    Snapshot,
+    Patch { base_version: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,7 +340,19 @@ pub struct KnownSurfaceVersion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachSnapshot {
     pub workspace: WorkspaceSummary,
-    pub surface: Option<String>,
+    pub surface: Option<SurfaceUpdate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SurfaceUpdate {
+    pub kind: SurfaceUpdateKind,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceUpdateKind {
+    Snapshot,
+    Patch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,17 +383,24 @@ impl WorkspaceSummary {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    static NEXT_SOCKET_ID: AtomicU64 = AtomicU64::new(0);
 
     fn test_socket_path() -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock after epoch")
             .as_nanos();
-        PathBuf::from(format!("/tmp/nmux-{}-{nanos}.sock", std::process::id()))
+        let id = NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed);
+        PathBuf::from(format!(
+            "/tmp/nmux-{}-{nanos}-{id}.sock",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -344,8 +428,11 @@ mod tests {
             "session=local tab=tab-1 pane=pane-1 size=80x24"
         );
         assert_eq!(
-            snapshot.surface.as_deref(),
-            Some("nmux pane-1\nserver-owned terminal state")
+            snapshot.surface,
+            Some(SurfaceUpdate {
+                kind: SurfaceUpdateKind::Snapshot,
+                text: "nmux pane-1\nserver-owned terminal state".to_owned(),
+            })
         );
 
         let _ = fs::remove_file(socket_path);
@@ -362,7 +449,7 @@ mod tests {
             &socket_path,
             vec![KnownSurfaceVersion {
                 pane_id: "pane-1".to_owned(),
-                version: 1,
+                version: 2,
             }],
         )
         .expect("attach snapshot");
@@ -370,6 +457,34 @@ mod tests {
 
         assert_eq!(snapshot.workspace.pane_id, "pane-1");
         assert_eq!(snapshot.surface, None);
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn serves_patch_when_client_surface_version_is_patchable() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+
+        let server = thread::spawn(move || serve_one(&listener, &session).expect("serve one"));
+        let snapshot = attach_with_known_surfaces(
+            &socket_path,
+            vec![KnownSurfaceVersion {
+                pane_id: "pane-1".to_owned(),
+                version: 1,
+            }],
+        )
+        .expect("attach snapshot");
+        server.join().expect("server thread");
+
+        assert_eq!(
+            snapshot.surface,
+            Some(SurfaceUpdate {
+                kind: SurfaceUpdateKind::Patch,
+                text: "nmux pane-1\nserver-owned terminal state".to_owned(),
+            })
+        );
 
         let _ = fs::remove_file(socket_path);
     }
@@ -392,8 +507,11 @@ mod tests {
         server.join().expect("server thread");
 
         assert_eq!(
-            snapshot.surface.as_deref(),
-            Some("nmux pane-1\nserver-owned terminal state")
+            snapshot.surface,
+            Some(SurfaceUpdate {
+                kind: SurfaceUpdateKind::Snapshot,
+                text: "nmux pane-1\nserver-owned terminal state".to_owned(),
+            })
         );
 
         let _ = fs::remove_file(socket_path);

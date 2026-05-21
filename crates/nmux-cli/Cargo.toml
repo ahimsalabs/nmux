@@ -14,5 +14,6 @@ name = "nmuxd"
 path = "src/bin/nmuxd.rs"
 
 [dependencies]
+flatbuffers = "=25.12.19"
 nmux-core = { path = "../nmux-core" }
 nmux-proto = { path = "../nmux-proto" }
