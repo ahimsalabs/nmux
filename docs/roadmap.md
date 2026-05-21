@@ -34,11 +34,14 @@ Done:
 - Internal `nmux-core` process host abstraction with local/container/sandbox host choices and lifecycle tests.
 - Concrete local command host that starts, writes to, and stops local child processes behind the host interface.
 - Local PTY host behind the same process host boundary, using `portable-pty` for start, write, resize, and stop lifecycle coverage.
+- ADR 0006 for the interim PTY text surface.
+- Core pane state can hydrate visible rows and scrollback from process output bytes.
+- Local attach can serve process-derived pane state over the Unix socket.
 
 Next:
 
 - Promote attach/request metadata into the public schema once the local reconnect behavior settles.
-- Feed local PTY output into backend-owned pane state instead of the current static surface.
+- Add a nonblocking PTY output pump boundary before reading live PTY output in the daemon.
 
 ## Milestones
 
@@ -120,7 +123,7 @@ Exit evidence:
 - Pane process lifecycle is mediated by a host interface.
 - Local and sandbox host choices are represented without changing the protocol core.
 
-Status: Done for the internal boundary and first local PTY host. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, lifecycle tests, a concrete local command host, and a local PTY host without changing the FlatBuffers protocol. Feeding PTY output into pane state remains a follow-up.
+Status: Done for the internal boundary and first local PTY host. `nmux-core` now models host specs, local/container/sandbox host kinds, a `ProcessHost` lifecycle interface, lifecycle tests, a concrete local command host, a local PTY host, and an interim process-output text surface without changing the FlatBuffers protocol. Live PTY output pumping remains a follow-up.
 
 ### M7: Ghostty Frontend
 
