@@ -39,12 +39,16 @@ pub fn serve_one(
 
     let surface_frame = session.pane_surface_frame("local-client", 2);
     wire::write_default_frame(&mut stream, &surface_frame)?;
+
+    read_input_event_from_stream(&mut stream)?;
     Ok(())
 }
 
 pub fn attach(path: &Path) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
     let mut stream = UnixStream::connect(path)?;
-    attach_from_stream(&mut stream)
+    let snapshot = attach_from_stream(&mut stream)?;
+    send_key_input(&mut stream, "pane-1", "a")?;
+    Ok(snapshot)
 }
 
 pub fn attach_from_stream(
@@ -57,6 +61,17 @@ pub fn attach_from_stream(
     let surface = surface_text_from_frame(&surface_frame)?;
 
     Ok(AttachSnapshot { workspace, surface })
+}
+
+pub fn send_key_input(
+    stream: &mut UnixStream,
+    pane_id: &str,
+    text: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame =
+        Session::initial().key_input_frame("local-client", 3, "local-actor", pane_id, 1, text);
+    wire::write_default_frame(stream, &frame)?;
+    Ok(())
 }
 
 pub fn workspace_summary_from_frame(
@@ -113,10 +128,47 @@ pub fn surface_text_from_frame(frame: &[u8]) -> Result<String, Box<dyn std::erro
     Ok(rendered)
 }
 
+pub fn read_input_event_from_stream(
+    stream: &mut UnixStream,
+) -> Result<InputSummary, Box<dyn std::error::Error>> {
+    let frame = wire::read_default_frame(stream)?;
+    input_summary_from_frame(&frame)
+}
+
+pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn std::error::Error>> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::InputEvent {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let input = envelope
+        .body_as_input_event()
+        .ok_or("missing input event body")?;
+    if input.kind() != protocol::InputKind::Key {
+        return Err(format!("unexpected input kind: {:?}", input.kind()).into());
+    }
+
+    let key = input.key().ok_or("missing key input")?;
+    Ok(InputSummary {
+        pane_id: input.pane_id().unwrap_or_default().to_owned(),
+        actor_id: input.actor_id().unwrap_or_default().to_owned(),
+        input_seq: input.input_seq(),
+        text: key.text_utf8().unwrap_or_default().to_owned(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachSnapshot {
     pub workspace: WorkspaceSummary,
     pub surface: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputSummary {
+    pub pane_id: String,
+    pub actor_id: String,
+    pub input_seq: u64,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,5 +231,22 @@ mod tests {
         assert_eq!(snapshot.surface, "nmux pane-1\nserver-owned terminal state");
 
         let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn decodes_key_input_from_client_frame() {
+        let frame =
+            Session::initial().key_input_frame("local-client", 3, "actor-1", "pane-1", 2, "x");
+        let input = input_summary_from_frame(&frame).expect("input summary");
+
+        assert_eq!(
+            input,
+            InputSummary {
+                pane_id: "pane-1".to_owned(),
+                actor_id: "actor-1".to_owned(),
+                input_seq: 2,
+                text: "x".to_owned(),
+            }
+        );
     }
 }
