@@ -948,6 +948,41 @@ mod tests {
     }
 
     #[test]
+    fn serve_one_with_host_does_not_forward_read_only_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let snapshot = attach_with_options(
+            &socket_path,
+            AttachRequest {
+                actor_id: "spectator".to_owned(),
+                mode: AttachMode::ReadOnly,
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("attach snapshot");
+        let host = server.join().expect("server thread");
+
+        assert_eq!(snapshot.presence.mode, AttachMode::ReadOnly);
+        assert!(
+            !host
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn serves_no_surface_when_client_has_current_surface_version() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");

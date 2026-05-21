@@ -29,7 +29,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     wait_for_pane_output(&mut session, &mut pty_host, pane_id)?;
 
     if args.one_shot {
-        let serve_result = local::serve_one_with_output(&listener, &mut session, &mut pty_host);
+        let serve_result = local::serve_one_with_host(&listener, &mut session, &mut pty_host);
         let stop_result = pty_host.stop_pane(pane_id);
         serve_result?;
         stop_result?;
@@ -37,7 +37,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     loop {
-        local::serve_one_with_output(&listener, &mut session, &mut pty_host)?;
+        local::serve_one_with_host(&listener, &mut session, &mut pty_host)?;
     }
 }
 
