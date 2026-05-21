@@ -333,12 +333,16 @@ impl Session {
     }
 
     pub fn initial_scrollback(&self) -> PaneScrollback {
-        let pane = &self.tabs[0].root;
-        PaneScrollback {
+        self.pane_scrollback("pane-1").expect("initial pane exists")
+    }
+
+    pub fn pane_scrollback(&self, pane_id: &str) -> Option<PaneScrollback> {
+        let pane = self.pane(pane_id)?;
+        Some(PaneScrollback {
             pane_id: pane.id.clone(),
             version: pane.scrollback_version,
             lines: pane.scrollback_lines.clone(),
-        }
+        })
     }
 
     pub fn surface_version(&self, pane_id: &str) -> Option<u64> {
@@ -522,7 +526,19 @@ impl Session {
         start_line: u64,
         line_count: u32,
     ) -> Vec<u8> {
-        let scrollback = self.initial_scrollback();
+        self.scrollback_chunk_frame_for_pane(connection_id, seq, "pane-1", start_line, line_count)
+            .expect("initial pane exists")
+    }
+
+    pub fn scrollback_chunk_frame_for_pane(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        pane_id: &str,
+        start_line: u64,
+        line_count: u32,
+    ) -> Option<Vec<u8>> {
+        let scrollback = self.pane_scrollback(pane_id)?;
         let mut builder = FlatBufferBuilder::new();
 
         let start = usize::try_from(start_line).unwrap_or(usize::MAX);
@@ -578,7 +594,7 @@ impl Session {
         );
 
         protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
-        builder.finished_data().to_vec()
+        Some(builder.finished_data().to_vec())
     }
 
     pub fn scrollback_fetch_frame(
@@ -1168,6 +1184,24 @@ mod tests {
             second_runs.get(0).text_utf8(),
             Some("server-owned terminal state")
         );
+    }
+
+    #[test]
+    fn scrollback_chunk_frame_is_pane_scoped() {
+        let session = Session::initial();
+
+        assert!(
+            session
+                .scrollback_chunk_frame_for_pane("conn-1", 11, "missing", 0, 2)
+                .is_none()
+        );
+
+        let frame = session
+            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 0, 1)
+            .expect("pane scrollback");
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+        assert_eq!(chunk.pane_id(), Some("pane-1"));
     }
 
     #[test]

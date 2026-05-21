@@ -355,12 +355,15 @@ fn serve_live_attached_client(
         let input = loop {
             match read_optional_live_client_frame_from_stream(stream)? {
                 LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
-                    let chunk = session.scrollback_chunk_frame(
+                    let Some(chunk) = session.scrollback_chunk_frame_for_pane(
                         "local-client",
                         seq,
+                        &fetch.pane_id,
                         fetch.start_line,
                         fetch.line_count,
-                    );
+                    ) else {
+                        continue;
+                    };
                     wire::write_default_frame(stream, &chunk)?;
                     seq += 1;
                 }
@@ -528,9 +531,15 @@ fn serve_attached_client(
             }
         }
         let fetch = read_scrollback_fetch_from_stream(stream)?;
-        let chunk =
-            session.scrollback_chunk_frame("local-client", 5, fetch.start_line, fetch.line_count);
-        wire::write_default_frame(stream, &chunk)?;
+        if let Some(chunk) = session.scrollback_chunk_frame_for_pane(
+            "local-client",
+            5,
+            &fetch.pane_id,
+            fetch.start_line,
+            fetch.line_count,
+        ) {
+            wire::write_default_frame(stream, &chunk)?;
+        }
     }
     Ok(())
 }

@@ -38,7 +38,7 @@ backend terminal state into the same nmux objects:
   the current `PaneSurfaceSnapshot` and `PaneSurfacePatch` fields.
 - Scrollback: expose historical rows through the existing `ScrollbackChunk`
   range model and advance scrollback versions when backend-owned history
-  changes.
+  changes. Fetch handling must stay pane-scoped.
 - Resize: feed resize events into the VT engine and publish the resulting pane
   size, cursor, visible rows, and scrollback state.
 - Versions: bump surface versions when the nmux-visible surface, cursor, or
