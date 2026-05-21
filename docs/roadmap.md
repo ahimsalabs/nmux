@@ -66,6 +66,7 @@ Done:
 - `nmux --live --cols --rows` sends `ResizeIntent` through the live loop; after process-host resize succeeds, the daemon commits the pane size and republishes a `WorkspaceTreeSnapshot`.
 - The CLI workspace summary displays the daemon-published pane resize policy; `nmuxd --resize-policy` can publish `fixed`, `leader`, `active-client`, or `manual`, and `manual` blocks frontend viewport resize intents.
 - `nmux --help` and `nmuxd --help` document the live attach, stdin, redraw, resize, and policy flags used by the current prototype.
+- The client flushes rendered output after live updates and reports local Ctrl-] detach on stderr.
 - Read-write live clients no longer have to send input before receiving output; idle read-write cycles poll process output and stream updates when the backend-owned surface changes.
 - The live daemon treats a client EOF/disconnect during read-write polling as a clean detach, so piped stdin clients can finish without requiring a matching daemon cycle count.
 

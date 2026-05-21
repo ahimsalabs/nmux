@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Read};
+use std::io::{self, BufRead, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,6 +47,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             client_state.save(path)?;
         }
         print_rendered(rendered);
+        flush_stdout()?;
 
         if args.follow && iteration + 1 < iterations {
             thread::sleep(Duration::from_millis(args.interval_ms));
@@ -97,6 +98,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = local::attach_from_stream(&mut stream)?;
     let rendered = client_state.render_attach(snapshot)?;
     print_live_rendered(rendered, args.redraw);
+    flush_stdout()?;
 
     let cycle_limit = args.iterations.or_else(|| {
         (!args.stdin_input && !args.stdin_bytes && options.request.mode == AttachMode::ReadWrite)
@@ -155,16 +157,19 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::LiveSurfaceRead::Workspace(workspace) => {
                     if !args.redraw {
                         println!("{}", workspace.display_line());
+                        flush_stdout()?;
                     }
                 }
                 local::LiveSurfaceRead::Update(update) => {
                     print_live_surface(&client_state.render_surface_update(&update)?, args.redraw);
+                    flush_stdout()?;
                 }
                 local::LiveSurfaceRead::NoFrame => break,
                 local::LiveSurfaceRead::Closed => return save_live_state(args, &client_state),
             }
         }
         if detach_requested {
+            eprintln!("nmux: detached by local Ctrl-]");
             break;
         }
         if stdin_bytes_closed && args.iterations.is_none() {
@@ -174,6 +179,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     save_live_state(args, &client_state)
+}
+
+fn flush_stdout() -> io::Result<()> {
+    io::stdout().flush()
 }
 
 fn save_live_state(

@@ -434,6 +434,11 @@ fn live_stdin_bytes_ctrl_right_bracket_detaches() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains("nmux: detached by local Ctrl-]"),
+        "missing detach status:\n{stderr}"
+    );
     assert!(server_status.success(), "nmuxd failed: {server_status}");
     assert!(
         lines.iter().any(|line| line.contains("echo:ping")),
