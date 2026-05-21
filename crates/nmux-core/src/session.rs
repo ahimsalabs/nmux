@@ -110,13 +110,28 @@ impl Session {
 
     pub fn from_pane_output(output: &[u8]) -> Self {
         let mut session = Self::initial();
-        let pane = &mut session.tabs[0].root;
-        let scrollback_lines = text_lines_from_pty_output(output);
-        let visible_start = scrollback_lines.len().saturating_sub(pane.rows as usize);
-        pane.scrollback_lines = scrollback_lines;
+        if let Some(pane) = session.pane_mut("pane-1") {
+            pane.surface_lines.clear();
+            pane.scrollback_lines.clear();
+        }
+        session.apply_pane_output("pane-1", output);
+        session
+    }
+
+    pub fn apply_pane_output(&mut self, pane_id: &str, output: &[u8]) -> bool {
+        let Some(pane) = self.pane_mut(pane_id) else {
+            return false;
+        };
+
+        let lines = text_lines_from_pty_output(output);
+        pane.scrollback_lines.extend(lines);
+        let visible_start = pane
+            .scrollback_lines
+            .len()
+            .saturating_sub(pane.rows as usize);
         pane.surface_lines = pane.scrollback_lines[visible_start..].to_vec();
         pane.surface_version = pane.surface_version.saturating_add(1);
-        session
+        true
     }
 
     pub fn initial_actor(mode: AttachMode) -> Actor {
@@ -230,6 +245,16 @@ impl Session {
         self.tabs.iter().find_map(|tab| {
             if tab.root.id == pane_id {
                 Some(tab.root.surface_version)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn pane_mut(&mut self, pane_id: &str) -> Option<&mut Pane> {
+        self.tabs.iter_mut().find_map(|tab| {
+            if tab.root.id == pane_id {
+                Some(&mut tab.root)
             } else {
                 None
             }
@@ -917,14 +942,32 @@ mod tests {
 
     #[test]
     fn pane_output_hydrates_backend_owned_surface() {
-        let session = Session::from_pane_output(b"hello from pty\r\nsecond line\n");
+        let mut session = Session::initial();
+        assert!(session.apply_pane_output("pane-1", b"hello from pty\r\nsecond line\n"));
         let surface = session.initial_pane_surface();
         let scrollback = session.initial_scrollback();
 
         assert_eq!(surface.version, 3);
-        assert_eq!(surface.lines, vec!["hello from pty", "second line"]);
-        assert_eq!(surface.cursor.row, 1);
+        assert_eq!(
+            surface.lines,
+            vec![
+                "booting nmux workspace",
+                "nmux pane-1",
+                "server-owned terminal state",
+                "hello from pty",
+                "second line"
+            ]
+        );
+        assert_eq!(surface.cursor.row, 4);
         assert_eq!(scrollback.lines, surface.lines);
+    }
+
+    #[test]
+    fn pane_output_ignores_missing_pane() {
+        let mut session = Session::initial();
+
+        assert!(!session.apply_pane_output("missing", b"hello\n"));
+        assert_eq!(session.surface_version("pane-1"), Some(2));
     }
 
     #[test]
