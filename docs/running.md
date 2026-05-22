@@ -194,15 +194,15 @@ feature. The dev shell pins Zig 0.15 because the Ghostty commit used by
 
 The opt-in engine keeps PTY bytes in `nmuxd` and maps Ghostty state back into
 nmux snapshots, patches, and scrollback chunks. Current coverage includes cursor
-position/visibility/shape, alternate-screen entry/restoration, resize/reflow,
-style-separated visible rows, styled scrollback rows, cell widths, combining
-marks, emoji ZWJ clusters, basic SGR style flags, underline color,
-palette-indexed colors, render-state default colors/palette, palette overrides,
-explicit cursor color, title metadata, OSC 133 semantic prompt state, bracketed
-paste, mouse tracking, application keypad, origin, wraparound mode state,
-row-level dirty state, and mode-aware key encoding. OSC 7 working-directory
-metadata remains intentionally withheld until the expected backend behavior and
-nmux protocol shape are clear.
+position/visibility/shape, alternate-screen entry/restoration with alternate
+scrollback omission, resize/reflow, style-separated visible rows, styled
+scrollback rows, cell widths, combining marks, emoji ZWJ clusters, basic SGR
+style flags, underline color, palette-indexed colors, render-state default
+colors/palette, palette overrides, explicit cursor color, title metadata, OSC
+133 semantic prompt state, bracketed paste, mouse tracking, application keypad,
+origin, wraparound mode state, row-level dirty state, and mode-aware key
+encoding. OSC 7 working-directory metadata remains intentionally withheld until
+the expected backend behavior and nmux protocol shape are clear.
 
 ```sh
 nix develop path:$PWD -c make check-ghostty-vt
