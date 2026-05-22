@@ -3217,6 +3217,8 @@ impl<'a> TerminalColorState<'a> {
   pub const VT_CURSOR_RGBA: ::flatbuffers::VOffsetT = 8;
   pub const VT_CURSOR_RGBA_SET: ::flatbuffers::VOffsetT = 10;
   pub const VT_PALETTE_RGBA: ::flatbuffers::VOffsetT = 12;
+  pub const VT_PALETTE_DIFF_START: ::flatbuffers::VOffsetT = 14;
+  pub const VT_PALETTE_DIFF_RGBA: ::flatbuffers::VOffsetT = 16;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -3228,6 +3230,8 @@ impl<'a> TerminalColorState<'a> {
     args: &'args TerminalColorStateArgs<'args>
   ) -> ::flatbuffers::WIPOffset<TerminalColorState<'bldr>> {
     let mut builder = TerminalColorStateBuilder::new(_fbb);
+    if let Some(x) = args.palette_diff_rgba { builder.add_palette_diff_rgba(x); }
+    builder.add_palette_diff_start(args.palette_diff_start);
     if let Some(x) = args.palette_rgba { builder.add_palette_rgba(x); }
     builder.add_cursor_rgba(args.cursor_rgba);
     builder.add_default_bg_rgba(args.default_bg_rgba);
@@ -3272,6 +3276,20 @@ impl<'a> TerminalColorState<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u32>>>(TerminalColorState::VT_PALETTE_RGBA, None)}
   }
+  #[inline]
+  pub fn palette_diff_start(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(TerminalColorState::VT_PALETTE_DIFF_START, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn palette_diff_rgba(&self) -> Option<::flatbuffers::Vector<'a, u32>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u32>>>(TerminalColorState::VT_PALETTE_DIFF_RGBA, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for TerminalColorState<'_> {
@@ -3285,6 +3303,8 @@ impl ::flatbuffers::Verifiable for TerminalColorState<'_> {
      .visit_field::<u32>("cursor_rgba", Self::VT_CURSOR_RGBA, false)?
      .visit_field::<bool>("cursor_rgba_set", Self::VT_CURSOR_RGBA_SET, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u32>>>("palette_rgba", Self::VT_PALETTE_RGBA, false)?
+     .visit_field::<u32>("palette_diff_start", Self::VT_PALETTE_DIFF_START, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u32>>>("palette_diff_rgba", Self::VT_PALETTE_DIFF_RGBA, false)?
      .finish();
     Ok(())
   }
@@ -3295,6 +3315,8 @@ pub struct TerminalColorStateArgs<'a> {
     pub cursor_rgba: u32,
     pub cursor_rgba_set: bool,
     pub palette_rgba: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u32>>>,
+    pub palette_diff_start: u32,
+    pub palette_diff_rgba: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u32>>>,
 }
 impl<'a> Default for TerminalColorStateArgs<'a> {
   #[inline]
@@ -3305,6 +3327,8 @@ impl<'a> Default for TerminalColorStateArgs<'a> {
       cursor_rgba: 0,
       cursor_rgba_set: false,
       palette_rgba: None,
+      palette_diff_start: 0,
+      palette_diff_rgba: None,
     }
   }
 }
@@ -3335,6 +3359,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> TerminalColorStateBuilder<'a,
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(TerminalColorState::VT_PALETTE_RGBA, palette_rgba);
   }
   #[inline]
+  pub fn add_palette_diff_start(&mut self, palette_diff_start: u32) {
+    self.fbb_.push_slot::<u32>(TerminalColorState::VT_PALETTE_DIFF_START, palette_diff_start, 0);
+  }
+  #[inline]
+  pub fn add_palette_diff_rgba(&mut self, palette_diff_rgba: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , u32>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(TerminalColorState::VT_PALETTE_DIFF_RGBA, palette_diff_rgba);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> TerminalColorStateBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     TerminalColorStateBuilder {
@@ -3357,6 +3389,8 @@ impl ::core::fmt::Debug for TerminalColorState<'_> {
       ds.field("cursor_rgba", &self.cursor_rgba());
       ds.field("cursor_rgba_set", &self.cursor_rgba_set());
       ds.field("palette_rgba", &self.palette_rgba());
+      ds.field("palette_diff_start", &self.palette_diff_start());
+      ds.field("palette_diff_rgba", &self.palette_diff_rgba());
       ds.finish()
   }
 }

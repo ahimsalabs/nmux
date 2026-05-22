@@ -66,6 +66,7 @@ pub struct Pane {
     pub terminal_title: String,
     pub terminal_working_directory: String,
     pub colors: TerminalColors,
+    pub last_palette_diff: Option<PaletteDiff>,
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
@@ -77,6 +78,12 @@ pub struct Pane {
     pub scrollback_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
     pub scrollback_dirty_rows: Vec<bool>,
     pub scrollback_kitty_placeholders: Vec<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteDiff {
+    pub start: u32,
+    pub colors: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +160,7 @@ impl Session {
                     terminal_title: String::new(),
                     terminal_working_directory: String::new(),
                     colors: TerminalColors::default(),
+                    last_palette_diff: None,
                     styles: vec![PaneStyle::default()],
                     surface_lines: vec![
                         "nmux pane-1".to_owned(),
@@ -634,7 +642,7 @@ impl Session {
         let modes = build_terminal_modes(&mut builder, surface.modes);
         let metadata =
             build_terminal_metadata(&mut builder, &surface.title, &surface.working_directory);
-        let colors = build_terminal_colors(&mut builder, &surface.colors);
+        let colors = build_terminal_colors(&mut builder, &surface.colors, None, true);
         let pane_id = builder.create_string(&surface.pane_id);
         let snapshot = protocol::PaneSurfaceSnapshot::create(
             &mut builder,
@@ -764,7 +772,17 @@ impl Session {
         let modes = build_terminal_modes(&mut builder, surface.modes);
         let metadata =
             build_terminal_metadata(&mut builder, &surface.title, &surface.working_directory);
-        let colors = build_terminal_colors(&mut builder, &surface.colors);
+        let palette_diff = self
+            .pane(&surface.pane_id)
+            .and_then(|pane| pane.last_palette_diff.as_ref())
+            .filter(|_| patch_kind == protocol::PatchKind::ColorOnly);
+        let include_full_palette = patch_kind != protocol::PatchKind::ColorOnly;
+        let colors = build_terminal_colors(
+            &mut builder,
+            &surface.colors,
+            palette_diff,
+            include_full_palette,
+        );
         let pane_id = builder.create_string(&surface.pane_id);
         let patch = protocol::PaneSurfacePatch::create(
             &mut builder,
@@ -895,7 +913,7 @@ impl Session {
             ));
         }
         let styles = builder.create_vector(&style_offsets);
-        let colors = build_terminal_colors(&mut builder, &scrollback.colors);
+        let colors = build_terminal_colors(&mut builder, &scrollback.colors, None, true);
         let pane_id = builder.create_string(&scrollback.pane_id);
         let chunk = protocol::ScrollbackChunk::create(
             &mut builder,
@@ -1523,8 +1541,12 @@ fn build_terminal_metadata<'a>(
 fn build_terminal_colors<'a>(
     builder: &mut FlatBufferBuilder<'a>,
     colors: &TerminalColors,
+    palette_diff: Option<&PaletteDiff>,
+    include_full_palette: bool,
 ) -> flatbuffers::WIPOffset<protocol::TerminalColorState<'a>> {
-    let palette_rgba = builder.create_vector(&colors.palette_rgba);
+    let palette_rgba = include_full_palette.then(|| builder.create_vector(&colors.palette_rgba));
+    let palette_diff_rgba =
+        palette_diff.map(|palette_diff| builder.create_vector(&palette_diff.colors));
     protocol::TerminalColorState::create(
         builder,
         &protocol::TerminalColorStateArgs {
@@ -1532,7 +1554,9 @@ fn build_terminal_colors<'a>(
             default_bg_rgba: colors.default_bg_rgba,
             cursor_rgba: colors.cursor_rgba,
             cursor_rgba_set: colors.cursor_rgba_set,
-            palette_rgba: Some(palette_rgba),
+            palette_rgba,
+            palette_diff_start: palette_diff.map_or(0, |palette_diff| palette_diff.start),
+            palette_diff_rgba,
         },
     )
 }
@@ -1566,6 +1590,7 @@ fn apply_terminal_update(
     let title_changed = pane.terminal_title != update.title;
     let working_directory_changed = pane.terminal_working_directory != update.working_directory;
     let colors_changed = pane.colors != update.colors;
+    let palette_diff = palette_diff(&pane.colors.palette_rgba, &update.colors.palette_rgba);
     let rows_changed = pane.surface_lines != update.surface_lines;
     let surface_kind_changed = pane.surface != update.surface;
     let styles_changed = pane.styles != update.styles;
@@ -1626,7 +1651,7 @@ fn apply_terminal_update(
 
     if surface_changed {
         pane.surface_version = pane.surface_version.saturating_add(1);
-        pane.last_patch_kind = terminal_patch_kind(
+        let patch_kind = terminal_patch_kind(
             update.patch_kind,
             rows_changed,
             row_runs_changed,
@@ -1641,14 +1666,37 @@ fn apply_terminal_update(
             working_directory_changed,
             colors_changed,
         );
+        pane.last_patch_kind = patch_kind;
+        pane.last_palette_diff = if patch_kind == protocol::PatchKind::ColorOnly {
+            palette_diff
+        } else {
+            None
+        };
         pane.last_row_update_indices = if pane.last_patch_kind == protocol::PatchKind::ReplaceRows {
             row_update_indices
         } else {
             Vec::new()
         };
+    } else {
+        pane.last_palette_diff = None;
     }
 
     surface_changed || scrollback_changed
+}
+
+fn palette_diff(old: &[u32], new: &[u32]) -> Option<PaletteDiff> {
+    if old == new {
+        return None;
+    }
+    let start = old
+        .iter()
+        .zip(new.iter())
+        .position(|(old, new)| old != new)
+        .unwrap_or_else(|| old.len().min(new.len()));
+    Some(PaletteDiff {
+        start: start as u32,
+        colors: new[start..].to_vec(),
+    })
 }
 
 fn terminal_patch_kind(
@@ -3582,6 +3630,11 @@ mod tests {
         assert_eq!(colors.default_bg_rgba(), 0x111111ff);
         assert_eq!(colors.cursor_rgba(), 0xff00ffff);
         assert!(colors.cursor_rgba_set());
+        assert!(colors.palette_rgba().is_none());
+        assert_eq!(colors.palette_diff_start(), 0);
+        let palette_diff = colors.palette_diff_rgba().expect("palette diff");
+        assert_eq!(palette_diff.get(0), 0x000000ff);
+        assert_eq!(palette_diff.get(1), 0x112233ff);
     }
 
     #[cfg(feature = "libghostty-vt")]
@@ -3614,8 +3667,10 @@ mod tests {
         let patch = envelope.body_as_pane_surface_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::ColorOnly);
         let colors = patch.colors().expect("colors");
-        let palette = colors.palette_rgba().expect("palette");
-        assert_eq!(palette.get(1), 0x112233ff);
+        assert!(colors.palette_rgba().is_none());
+        assert_eq!(colors.palette_diff_start(), 1);
+        let palette_diff = colors.palette_diff_rgba().expect("palette diff");
+        assert_eq!(palette_diff.get(0), 0x112233ff);
     }
 
     #[cfg(feature = "libghostty-vt")]

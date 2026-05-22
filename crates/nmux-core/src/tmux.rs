@@ -121,6 +121,7 @@ impl TmuxSession {
                 terminal_title: String::new(),
                 terminal_working_directory: String::new(),
                 colors: TerminalColors::default(),
+                last_palette_diff: None,
                 styles: vec![PaneStyle::default()],
                 surface_lines: Vec::new(),
                 surface_row_runs: Vec::<Vec<CellRun>>::new(),

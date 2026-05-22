@@ -33,6 +33,10 @@ default missing color state to zero/empty values.
 Color changes require `PatchKind::FullRefreshRequired`. This avoids freezing a
 partial palette-diff protocol before renderer requirements are clearer.
 
+ADR 0019 later narrows that restriction: color-only patches may carry palette
+entry diffs, while color changes coupled to row or style-table changes still
+require full refreshes.
+
 ## Consequences
 
 Clients can preserve backend-observed default colors and palettes alongside

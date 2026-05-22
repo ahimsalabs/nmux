@@ -56,8 +56,8 @@ The current nmux prototype can supply:
 This schema is not frozen as the final Ghostty-compatible terminal model. ADR
 0007 already calls out likely future additions for externally hydrating a
 Ghostty renderer, and later M13 decisions still withhold hyperlink tables,
-image placement/pixel data, incremental palette diffs, richer damage objects,
-and broader semantic command metadata until their protocol shape is explicit.
+image placement/pixel data, richer damage objects, and broader semantic command
+metadata until their protocol shape is explicit.
 
 ## Gaps And Open Questions
 

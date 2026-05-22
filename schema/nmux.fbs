@@ -197,6 +197,8 @@ table TerminalColorState {
   cursor_rgba:uint;
   cursor_rgba_set:bool;
   palette_rgba:[uint];
+  palette_diff_start:uint;
+  palette_diff_rgba:[uint];
 }
 
 table SurfaceRow {

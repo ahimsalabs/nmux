@@ -237,9 +237,9 @@ Current coverage includes:
   forwarding, engine-backed key encoding with modifier preservation, explicit
   encoder output, origin mode, wraparound mode, and mode-aware key encoding.
 
-Image placement data, hyperlink IDs, incremental palette diffs, and broader
-shell command metadata remain intentionally withheld until the expected backend
-behavior and nmux protocol shape are clear.
+Image placement data, hyperlink IDs, and broader shell command metadata remain
+intentionally withheld until the expected backend behavior and nmux protocol
+shape are clear.
 
 ```sh
 nix develop path:$PWD -c make check-ghostty-vt

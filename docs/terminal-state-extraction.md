@@ -141,10 +141,12 @@ only after the backend extraction proves the exact shape needed.
   entries during `libghostty-vt` extraction. `TerminalColorState` carries
   backend-observed default foreground/background colors, the active palette,
   palette overrides, and explicit cursor color state through surface snapshots,
-  color-only surface patches, scrollback chunks, and cached client state.
+  color-only surface patches, scrollback chunks, and cached client state. ADR
+  0019 scopes incremental palette diffs to color-only patches, while snapshots
+  and scrollback chunks remain self-contained with full palettes.
   Palette overrides that alter existing row style-table entries force full
-  surface refreshes because incremental palette diffs remain withheld until
-  renderer requirements are clearer.
+  surface refreshes because current style-table entries store resolved RGBA
+  values.
 - Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, and
   backend row/cell hyperlink presence is carried as bit 0 in `CellRun.flags`.
   nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
@@ -200,8 +202,8 @@ application cursor mode, origin, and wraparound.
 The nmux state-sync path now has coverage for snapshot/patch cursor blink,
 libghostty-vt live cursor-only patch cache persistence through real `--state`
 reattach, terminal query PTY reply routing through a real live PTY, title and working-directory
-metadata, terminal color state and color-only patches and live color-only patch
-cache persistence, row semantic prompt metadata, per-run semantic content,
+metadata, terminal color state, color-only palette diffs, and live color-only
+patch cache persistence, row semantic prompt metadata, per-run semantic content,
 live ReplaceRows row-metadata cache persistence, live ReplaceRows hyperlink
 run-flag cache persistence, row dirty metadata, row state hashes, Kitty
 placeholder row metadata, mode payloads, mode-only patch application, sparse

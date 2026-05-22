@@ -51,9 +51,12 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
   working-directory value carried by snapshots, patches, and cached client
   state.
 - `TerminalColorState` stores backend-observed default foreground/background,
-  optional explicit cursor color, and the active palette. Color-only changes
-  use `PatchKind::ColorOnly`; row, style-table, or surface-kind changes that
-  also affect colors still require a full surface refresh.
+  optional explicit cursor color, and the active palette. Snapshots and
+  scrollback chunks carry full palettes. Color-only patches may carry a
+  palette diff using `palette_diff_start` and `palette_diff_rgba` against the
+  patch base version instead of a full `palette_rgba` vector. Row,
+  style-table, or surface-kind changes that also affect colors still require a
+  full surface refresh.
 - `RowSemanticPrompt` stores OSC 133 prompt-line metadata on surface rows,
   row updates, and scrollback rows. `CellSemanticContent` stores the
   backend-observed OSC 133 content class for each run: output, input, or
@@ -73,9 +76,11 @@ Clients should maintain a pane-surface render state keyed by pane ID and version
 Cursor-only, mode-only, and color-only patches can also update
 `TerminalMetadataState` without row updates. Mode-only patches update
 `TerminalModeState` without row updates, and color-only patches update
-`TerminalColorState` without row updates. These are versioned surface changes
-because future input encoding, renderer behavior, and pane chrome can depend on
-terminal state even when visible text does not change.
+`TerminalColorState` without row updates. If a color-only patch carries a
+palette diff, clients apply it to their cached palette for the matching
+`base_version`; the diff is not an absolute palette. These are versioned surface
+changes because future input encoding, renderer behavior, and pane chrome can
+depend on terminal state even when visible text does not change.
 
 `PaneSurfacePatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, if color changes are coupled to row/style changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired` and the client must request or wait for a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
 

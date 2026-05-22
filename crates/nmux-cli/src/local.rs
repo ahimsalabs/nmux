@@ -1660,6 +1660,13 @@ fn decoded_terminal_colors(
             .palette_rgba()
             .map(|palette| (0..palette.len()).map(|index| palette.get(index)).collect())
             .unwrap_or_default(),
+        palette_diff_start: colors
+            .palette_diff_rgba()
+            .map(|_| colors.palette_diff_start()),
+        palette_diff_rgba: colors
+            .palette_diff_rgba()
+            .map(|palette| (0..palette.len()).map(|index| palette.get(index)).collect())
+            .unwrap_or_default(),
     })
 }
 
@@ -2508,6 +2515,33 @@ pub struct TerminalColorSummary {
     pub cursor_rgba: u32,
     pub cursor_rgba_set: bool,
     pub palette_rgba: Vec<u32>,
+    pub palette_diff_start: Option<u32>,
+    pub palette_diff_rgba: Vec<u32>,
+}
+
+impl TerminalColorSummary {
+    fn materialize(&self, base: &Self) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut colors = self.clone();
+        if let Some(start) = self.palette_diff_start {
+            let start = usize::try_from(start)?;
+            if start > base.palette_rgba.len() {
+                return Err(format!(
+                    "palette diff start {start} exceeds cached palette length {}",
+                    base.palette_rgba.len()
+                )
+                .into());
+            }
+            colors.palette_rgba = base.palette_rgba[..start].to_vec();
+            colors
+                .palette_rgba
+                .extend(self.palette_diff_rgba.iter().copied());
+        } else if self.palette_rgba.is_empty() {
+            colors.palette_rgba = base.palette_rgba.clone();
+        }
+        colors.palette_diff_start = None;
+        colors.palette_diff_rgba.clear();
+        Ok(colors)
+    }
 }
 
 impl Default for TerminalModeSummary {
@@ -2696,7 +2730,7 @@ impl ClientPaneSurface {
                 return Err("color-only patch is missing terminal colors".into());
             };
             self.cursor = update.cursor;
-            self.colors = colors.clone();
+            self.colors = colors.materialize(&self.colors)?;
             self.title = update.title.clone();
             self.working_directory = update.working_directory.clone();
             self.version = update.version;
@@ -3352,6 +3386,8 @@ impl ClientAttachState {
                             cursor_rgba,
                             cursor_rgba_set: cursor_rgba != 0,
                             palette_rgba: decode_palette_rgba(palette_rgba)?,
+                            palette_diff_start: None,
+                            palette_diff_rgba: Vec::new(),
                         };
                     }
                     [
@@ -3368,6 +3404,8 @@ impl ClientAttachState {
                             cursor_rgba: parse_state_u32(cursor_rgba)?,
                             cursor_rgba_set: parse_state_bool(cursor_rgba_set)?,
                             palette_rgba: decode_palette_rgba(palette_rgba)?,
+                            palette_diff_start: None,
+                            palette_diff_rgba: Vec::new(),
                         };
                     }
                     ["style", fg_rgba, bg_rgba, underline_rgba, flags] => {
@@ -4425,6 +4463,8 @@ mod tests {
             cursor_rgba: 0,
             cursor_rgba_set: false,
             palette_rgba: vec![0x000000ff],
+            palette_diff_start: None,
+            palette_diff_rgba: Vec::new(),
         });
         let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
         let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
@@ -4434,14 +4474,19 @@ mod tests {
             default_bg_rgba: 0x222222ff,
             cursor_rgba: 0,
             cursor_rgba_set: false,
-            palette_rgba: vec![0x000000ff],
+            palette_rgba: Vec::new(),
+            palette_diff_start: Some(1),
+            palette_diff_rgba: vec![0x112233ff],
         });
 
         surface.apply_patch(&patch).expect("apply color-only patch");
 
         assert_eq!(surface.version, 2);
         assert_eq!(surface.render_text(), "top");
-        assert_eq!(surface.colors, patch.colors.expect("patch colors"));
+        assert_eq!(surface.colors.default_bg_rgba, 0x222222ff);
+        assert_eq!(surface.colors.palette_rgba, vec![0x000000ff, 0x112233ff]);
+        assert_eq!(surface.colors.palette_diff_start, None);
+        assert_eq!(surface.colors.palette_diff_rgba, Vec::<u32>::new());
     }
 
     #[test]
@@ -4458,6 +4503,8 @@ mod tests {
             cursor_rgba: 0,
             cursor_rgba_set: false,
             palette_rgba: vec![0x000000ff],
+            palette_diff_start: None,
+            palette_diff_rgba: Vec::new(),
         });
         let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
         let mut patch = surface_update(
@@ -4472,6 +4519,8 @@ mod tests {
             cursor_rgba: 0,
             cursor_rgba_set: false,
             palette_rgba: vec![0x000000ff],
+            palette_diff_start: None,
+            palette_diff_rgba: Vec::new(),
         });
 
         let err = surface
@@ -4656,6 +4705,8 @@ mod tests {
             cursor_rgba: 0xff00ffff,
             cursor_rgba_set: true,
             palette_rgba: vec![0x000000ff, 0x112233ff],
+            palette_diff_start: None,
+            palette_diff_rgba: Vec::new(),
         });
         snapshot.cursor = Some(CursorSummary {
             row: 2,
@@ -6822,17 +6873,29 @@ mod tests {
         let update_colors = update.colors.clone().expect("color-only colors");
         assert_eq!(update_colors.cursor_rgba, 0xff00_ffff);
         assert!(update_colors.cursor_rgba_set);
-        assert_eq!(update_colors.palette_rgba.get(1), Some(&0x112233ff));
+        assert_eq!(update_colors.palette_rgba, Vec::<u32>::new());
+        assert_eq!(update_colors.palette_diff_start, Some(1));
+        assert_eq!(update_colors.palette_diff_rgba.first(), Some(&0x112233ff));
 
         let updated_text = state
             .render_surface_update(&update)
             .expect("render color-only update");
         assert_eq!(updated_text, initial_text);
         assert_eq!(Some(updated_text), state.cached_surface_text("pane-1"));
-        assert_eq!(state.surfaces[0].colors, update_colors);
+        assert_eq!(state.surfaces[0].colors.cursor_rgba, 0xff00_ffff);
+        assert!(state.surfaces[0].colors.cursor_rgba_set);
+        assert_eq!(
+            state.surfaces[0].colors.palette_rgba.get(1),
+            Some(&0x112233ff)
+        );
+        assert_eq!(state.surfaces[0].colors.palette_diff_start, None);
+        assert_eq!(
+            state.surfaces[0].colors.palette_diff_rgba,
+            Vec::<u32>::new()
+        );
 
         let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
-        assert_eq!(decoded.surfaces[0].colors, update_colors);
+        assert_eq!(decoded.surfaces[0].colors, state.surfaces[0].colors);
         assert_eq!(
             decoded.cached_surface_text("pane-1"),
             state.cached_surface_text("pane-1")
