@@ -98,5 +98,4 @@ the default because the first extraction pass still needs:
 
 - backend-owned scrollback extraction instead of mirroring only the visible
   render rows into `ScrollbackChunk`;
-- focused tests for cursor-only VT updates, alternate-screen transitions, and
-  resize after scrollback reflow.
+- focused tests for resize after scrollback reflow.

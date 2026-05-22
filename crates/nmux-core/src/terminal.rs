@@ -566,5 +566,26 @@ mod tests {
             }
         );
     }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_reports_alternate_screen() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(terminal_input(2, &empty, &empty), b"\x1b[?1049halternate")
+            .expect("alternate screen update");
+
+        assert_eq!(update.surface, protocol::SurfaceKind::Alternate);
+        assert!(
+            update
+                .surface_lines
+                .iter()
+                .any(|line| line.contains("alternate")),
+            "surface did not contain alternate text: {:?}",
+            update.surface_lines
+        );
+    }
 }
 use std::collections::HashMap;
