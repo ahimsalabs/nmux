@@ -161,6 +161,7 @@ table TerminalModeState {
 
 table TerminalMetadataState {
   title:string;
+  working_directory:string;
 }
 
 table SurfaceRow {

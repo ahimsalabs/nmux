@@ -9,6 +9,7 @@ pub struct TerminalInput<'a> {
     pub cursor: TerminalCursor,
     pub modes: TerminalModes,
     pub title: &'a str,
+    pub working_directory: &'a str,
     pub surface_lines: &'a [String],
     pub surface_semantic_prompts: &'a [protocol::RowSemanticPrompt],
     pub surface_dirty_rows: &'a [bool],
@@ -91,6 +92,7 @@ pub struct TerminalUpdate {
     pub cursor: TerminalCursor,
     pub modes: TerminalModes,
     pub title: String,
+    pub working_directory: String,
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
@@ -118,6 +120,7 @@ impl TerminalUpdate {
             cursor,
             modes: TerminalModes::default(),
             title: String::new(),
+            working_directory: String::new(),
             styles: vec![PaneStyle::default()],
             surface_row_runs: plain_row_runs(&surface_lines),
             surface_semantic_prompts: plain_row_semantic_prompts(&surface_lines),
@@ -239,6 +242,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
             input.cursor,
             input.modes,
             input.title,
+            input.working_directory,
             input.rows,
             scrollback_lines,
         ))
@@ -255,6 +259,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
             input.cursor,
             input.modes,
             input.title,
+            input.working_directory,
             rows,
             input.scrollback_lines.to_vec(),
         ))
@@ -266,6 +271,7 @@ fn interim_text_update(
     previous_cursor: TerminalCursor,
     modes: TerminalModes,
     title: &str,
+    working_directory: &str,
     rows: u32,
     scrollback_lines: Vec<String>,
 ) -> TerminalUpdate {
@@ -288,6 +294,7 @@ fn interim_text_update(
     );
     update.modes = modes;
     update.title = title.to_owned();
+    update.working_directory = working_directory.to_owned();
     update
 }
 
@@ -455,6 +462,7 @@ mod ghostty_vt {
             let cursor = cursor(&snapshot, input.cursor)?;
             let modes = modes(&self.terminal)?;
             let title = self.terminal.title().ok()?;
+            let working_directory = self.terminal.pwd().ok()?;
             let patch_kind = if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
@@ -464,6 +472,7 @@ mod ghostty_vt {
                 && cursor != input.cursor
                 && modes == input.modes
                 && title == input.title
+                && working_directory == input.working_directory
             {
                 protocol::PatchKind::CursorOnly
             } else if !force_rows
@@ -474,6 +483,7 @@ mod ghostty_vt {
                 && surface_kitty_placeholders == input.surface_kitty_placeholders
                 && modes != input.modes
                 && title == input.title
+                && working_directory == input.working_directory
             {
                 protocol::PatchKind::ModeOnly
             } else {
@@ -486,6 +496,7 @@ mod ghostty_vt {
                 cursor,
                 modes,
                 title: title.to_owned(),
+                working_directory: working_directory.to_owned(),
                 styles,
                 surface_row_runs: surface_rows.row_runs,
                 scrollback_row_runs: scrollback_rows.row_runs,
@@ -881,6 +892,7 @@ mod tests {
             },
             modes: TerminalModes::default(),
             title: "",
+            working_directory: "",
             surface_lines,
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
@@ -902,6 +914,7 @@ mod tests {
             cursor: update.cursor,
             modes: update.modes,
             title: &update.title,
+            working_directory: &update.working_directory,
             surface_lines: &update.surface_lines,
             surface_semantic_prompts: &update.surface_semantic_prompts,
             surface_dirty_rows: &update.surface_dirty_rows,
@@ -931,6 +944,7 @@ mod tests {
             },
             modes: TerminalModes::default(),
             title: "existing title",
+            working_directory: "file://localhost/existing",
             surface_lines: &[],
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
@@ -986,6 +1000,7 @@ mod tests {
             },
             modes: TerminalModes::default(),
             title: "",
+            working_directory: "",
             surface_lines: &[],
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
@@ -1038,6 +1053,7 @@ mod tests {
             },
             modes: TerminalModes::default(),
             title: "",
+            working_directory: "",
             surface_lines: &scrollback_lines,
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
@@ -1276,7 +1292,7 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
-    fn libghostty_vt_safe_api_tracks_title_but_not_osc7_pwd_without_protocol_fields() {
+    fn libghostty_vt_safe_api_has_pwd_accessor_but_does_not_populate_osc7() {
         use libghostty_vt::{Terminal, TerminalOptions};
 
         let mut terminal = Terminal::new(TerminalOptions {
@@ -1293,7 +1309,7 @@ mod tests {
         assert_eq!(
             terminal.pwd().expect("terminal working directory"),
             "",
-            "OSC 7 working directory is not exposed by the current backend path"
+            "current backend path exposes a pwd accessor but does not populate it from OSC 7 bytes"
         );
     }
 

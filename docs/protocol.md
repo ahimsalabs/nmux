@@ -40,8 +40,9 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
 - `CellRun` stores UTF-8 text, per-cell widths, a style table reference, flags, and an optional hyperlink reference.
 - `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot` objects and `ScrollbackChunk` objects carry the style table needed by their rows.
 - `CursorState` stores cursor row, column, visibility, shape, and blinking.
-- `TerminalMetadataState` stores pane terminal title metadata. OSC 7 working
-  directory state is not modeled yet.
+- `TerminalMetadataState` stores pane terminal title and working-directory
+  metadata. The current libghostty-vt path still does not prove OSC 7 byte
+  sequences populate the working-directory value.
 - `RowSemanticPrompt` stores OSC 133 prompt-line metadata on surface rows,
   row updates, and scrollback rows.
 - `TerminalModeState` stores terminal modes that clients need for input and

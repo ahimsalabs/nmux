@@ -1008,6 +1008,11 @@ pub fn surface_update_from_frame(
                     .and_then(|metadata| metadata.title())
                     .unwrap_or_default()
                     .to_owned(),
+                working_directory: snapshot
+                    .metadata()
+                    .and_then(|metadata| metadata.working_directory())
+                    .unwrap_or_default()
+                    .to_owned(),
                 row_updates,
                 styles,
                 text,
@@ -1049,6 +1054,11 @@ pub fn surface_update_from_frame(
                 title: patch
                     .metadata()
                     .and_then(|metadata| metadata.title())
+                    .unwrap_or_default()
+                    .to_owned(),
+                working_directory: patch
+                    .metadata()
+                    .and_then(|metadata| metadata.working_directory())
                     .unwrap_or_default()
                     .to_owned(),
                 row_updates,
@@ -1685,6 +1695,7 @@ pub struct SurfaceUpdate {
     pub cursor: Option<CursorSummary>,
     pub modes: TerminalModeSummary,
     pub title: String,
+    pub working_directory: String,
     pub row_updates: Vec<SurfaceRowUpdate>,
     pub styles: Vec<StyleSummary>,
     pub text: String,
@@ -1802,6 +1813,7 @@ pub struct ClientPaneSurface {
     pub cursor: Option<CursorSummary>,
     pub modes: TerminalModeSummary,
     pub title: String,
+    pub working_directory: String,
     styles: Vec<StyleSummary>,
     row_text: Vec<String>,
     row_runs: Vec<Vec<CellRunSummary>>,
@@ -1821,6 +1833,7 @@ impl ClientPaneSurface {
             cursor: update.cursor,
             modes: update.modes,
             title: update.title.clone(),
+            working_directory: update.working_directory.clone(),
             styles: if update.styles.is_empty() {
                 default_style_summaries()
             } else {
@@ -1882,6 +1895,7 @@ impl ClientPaneSurface {
         if update.patch_kind == Some(protocol::PatchKind::CursorOnly) {
             self.cursor = update.cursor;
             self.title = update.title.clone();
+            self.working_directory = update.working_directory.clone();
             self.version = update.version;
             return Ok(());
         }
@@ -1889,6 +1903,7 @@ impl ClientPaneSurface {
             self.cursor = update.cursor;
             self.modes = update.modes;
             self.title = update.title.clone();
+            self.working_directory = update.working_directory.clone();
             self.version = update.version;
             return Ok(());
         }
@@ -1899,6 +1914,7 @@ impl ClientPaneSurface {
         self.cursor = update.cursor;
         self.modes = update.modes;
         self.title = update.title.clone();
+        self.working_directory = update.working_directory.clone();
         self.version = update.version;
         Ok(())
     }
@@ -2053,7 +2069,7 @@ impl ClientAttachState {
     }
 
     fn encode(&self) -> String {
-        let mut encoded = String::from("NMUX_CLIENT_STATE 1\n");
+        let mut encoded = String::from("NMUX_CLIENT_STATE 2\n");
         for surface in &self.surfaces {
             encoded.push_str("surface ");
             encoded.push_str(&hex_encode(surface.pane_id.as_bytes()));
@@ -2120,6 +2136,9 @@ impl ClientAttachState {
             encoded.push_str("title ");
             encoded.push_str(&hex_encode(surface.title.as_bytes()));
             encoded.push('\n');
+            encoded.push_str("pwd ");
+            encoded.push_str(&hex_encode(surface.working_directory.as_bytes()));
+            encoded.push('\n');
             for style in &surface.styles {
                 encoded.push_str("style ");
                 encoded.push_str(&style.fg_rgba.to_string());
@@ -2173,7 +2192,13 @@ impl ClientAttachState {
 
     fn decode(encoded: &str) -> io::Result<Self> {
         let mut lines = encoded.lines();
-        if lines.next() != Some("NMUX_CLIENT_STATE 1") {
+        let Some(header) = lines.next() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid nmux client state header",
+            ));
+        };
+        if header != "NMUX_CLIENT_STATE 1" && header != "NMUX_CLIENT_STATE 2" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid nmux client state header",
@@ -2223,6 +2248,7 @@ impl ClientAttachState {
             let mut cursor = None;
             let mut modes = TerminalModeSummary::default();
             let mut title = String::new();
+            let mut working_directory = String::new();
             let mut styles = Vec::new();
             let mut row_text = vec![String::new(); row_count];
             let mut row_runs = vec![Vec::new(); row_count];
@@ -2284,6 +2310,10 @@ impl ClientAttachState {
                     }
                     ["title", value] => {
                         title = String::from_utf8(hex_decode(value)?)
+                            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+                    }
+                    ["pwd", value] => {
+                        working_directory = String::from_utf8(hex_decode(value)?)
                             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
                     }
                     ["style", fg_rgba, bg_rgba, underline_rgba, flags] => {
@@ -2410,6 +2440,7 @@ impl ClientAttachState {
                 cursor,
                 modes,
                 title,
+                working_directory,
                 styles: if styles.is_empty() {
                     default_style_summaries()
                 } else {
@@ -2834,6 +2865,7 @@ mod tests {
             cursor: None,
             modes: TerminalModeSummary::default(),
             title: String::new(),
+            working_directory: String::new(),
             styles: if kind == SurfaceUpdateKind::Snapshot {
                 default_style_summaries()
             } else {
@@ -2983,10 +3015,12 @@ mod tests {
             vec![surface_row(2, "new bottom"), surface_row(0, "new top")],
         );
         patch.title = "patched title".to_owned();
+        patch.working_directory = "file://localhost/tmp/patched".to_owned();
         surface.apply_patch(&patch).expect("apply patch");
 
         assert_eq!(surface.version, 2);
         assert_eq!(surface.title, "patched title");
+        assert_eq!(surface.working_directory, "file://localhost/tmp/patched");
         assert_eq!(surface.render_text(), "new top\nmiddle\nnew bottom");
     }
 
@@ -3009,6 +3043,7 @@ mod tests {
             blinking: true,
         });
         patch.title = "cursor title".to_owned();
+        patch.working_directory = "file://localhost/tmp/cursor".to_owned();
 
         surface.apply_patch(&patch).expect("apply patch");
 
@@ -3016,6 +3051,7 @@ mod tests {
         assert_eq!(surface.render_text(), "top\nbottom");
         assert_eq!(surface.cursor, patch.cursor);
         assert_eq!(surface.title, "cursor title");
+        assert_eq!(surface.working_directory, "file://localhost/tmp/cursor");
     }
 
     #[test]
@@ -3031,6 +3067,7 @@ mod tests {
         patch.patch_kind = Some(protocol::PatchKind::ModeOnly);
         patch.modes.bracketed_paste = true;
         patch.title = "mode title".to_owned();
+        patch.working_directory = "file://localhost/tmp/mode".to_owned();
 
         surface.apply_patch(&patch).expect("apply patch");
 
@@ -3038,6 +3075,7 @@ mod tests {
         assert_eq!(surface.render_text(), "top");
         assert!(surface.modes.bracketed_paste);
         assert_eq!(surface.title, "mode title");
+        assert_eq!(surface.working_directory, "file://localhost/tmp/mode");
     }
 
     #[test]
@@ -3170,6 +3208,7 @@ mod tests {
         snapshot.modes.bracketed_paste = true;
         snapshot.modes.focus_reporting = true;
         snapshot.title = "cached title".to_owned();
+        snapshot.working_directory = "file://localhost/tmp/cached".to_owned();
         snapshot.cursor = Some(CursorSummary {
             row: 2,
             col: 4,
@@ -3181,6 +3220,7 @@ mod tests {
         let expected_modes = snapshot.modes;
         let expected_cursor = snapshot.cursor;
         let expected_title = snapshot.title.clone();
+        let expected_working_directory = snapshot.working_directory.clone();
         state
             .render_attach(AttachSnapshot {
                 workspace: WorkspaceSummary {
@@ -3203,6 +3243,10 @@ mod tests {
         assert_eq!(decoded.surfaces[0].cursor, expected_cursor);
         assert_eq!(decoded.surfaces[0].modes, expected_modes);
         assert_eq!(decoded.surfaces[0].title, expected_title);
+        assert_eq!(
+            decoded.surfaces[0].working_directory,
+            expected_working_directory
+        );
         assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
         assert_eq!(
             decoded.surfaces[0].row_semantic_prompts[0],

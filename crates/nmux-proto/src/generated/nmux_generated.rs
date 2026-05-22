@@ -2748,6 +2748,7 @@ impl<'a> ::flatbuffers::Follow<'a> for TerminalMetadataState<'a> {
 
 impl<'a> TerminalMetadataState<'a> {
   pub const VT_TITLE: ::flatbuffers::VOffsetT = 4;
+  pub const VT_WORKING_DIRECTORY: ::flatbuffers::VOffsetT = 6;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2759,6 +2760,7 @@ impl<'a> TerminalMetadataState<'a> {
     args: &'args TerminalMetadataStateArgs<'args>
   ) -> ::flatbuffers::WIPOffset<TerminalMetadataState<'bldr>> {
     let mut builder = TerminalMetadataStateBuilder::new(_fbb);
+    if let Some(x) = args.working_directory { builder.add_working_directory(x); }
     if let Some(x) = args.title { builder.add_title(x); }
     builder.finish()
   }
@@ -2771,6 +2773,13 @@ impl<'a> TerminalMetadataState<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(TerminalMetadataState::VT_TITLE, None)}
   }
+  #[inline]
+  pub fn working_directory(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(TerminalMetadataState::VT_WORKING_DIRECTORY, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for TerminalMetadataState<'_> {
@@ -2780,18 +2789,21 @@ impl ::flatbuffers::Verifiable for TerminalMetadataState<'_> {
   ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
     v.visit_table(pos)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("title", Self::VT_TITLE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("working_directory", Self::VT_WORKING_DIRECTORY, false)?
      .finish();
     Ok(())
   }
 }
 pub struct TerminalMetadataStateArgs<'a> {
     pub title: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub working_directory: Option<::flatbuffers::WIPOffset<&'a str>>,
 }
 impl<'a> Default for TerminalMetadataStateArgs<'a> {
   #[inline]
   fn default() -> Self {
     TerminalMetadataStateArgs {
       title: None,
+      working_directory: None,
     }
   }
 }
@@ -2804,6 +2816,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> TerminalMetadataStateBuilder<
   #[inline]
   pub fn add_title(&mut self, title: ::flatbuffers::WIPOffset<&'b  str>) {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(TerminalMetadataState::VT_TITLE, title);
+  }
+  #[inline]
+  pub fn add_working_directory(&mut self, working_directory: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(TerminalMetadataState::VT_WORKING_DIRECTORY, working_directory);
   }
   #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> TerminalMetadataStateBuilder<'a, 'b, A> {
@@ -2824,6 +2840,7 @@ impl ::core::fmt::Debug for TerminalMetadataState<'_> {
   fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
     let mut ds = f.debug_struct("TerminalMetadataState");
       ds.field("title", &self.title());
+      ds.field("working_directory", &self.working_directory());
       ds.finish()
   }
 }

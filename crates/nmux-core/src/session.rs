@@ -62,6 +62,7 @@ pub struct Pane {
     pub cursor: Cursor,
     pub modes: TerminalModes,
     pub terminal_title: String,
+    pub terminal_working_directory: String,
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
@@ -85,6 +86,7 @@ pub struct PaneSurface {
     pub cursor: Cursor,
     pub modes: TerminalModes,
     pub title: String,
+    pub working_directory: String,
     pub styles: Vec<PaneStyle>,
     pub lines: Vec<String>,
     pub row_runs: Vec<Vec<CellRun>>,
@@ -144,6 +146,7 @@ impl Session {
                     },
                     modes: TerminalModes::default(),
                     terminal_title: String::new(),
+                    terminal_working_directory: String::new(),
                     styles: vec![PaneStyle::default()],
                     surface_lines: vec![
                         "nmux pane-1".to_owned(),
@@ -222,6 +225,7 @@ impl Session {
             cursor: TerminalCursor::from(&pane.cursor),
             modes: pane.modes,
             title: &pane.terminal_title,
+            working_directory: &pane.terminal_working_directory,
             surface_lines: &pane.surface_lines,
             surface_semantic_prompts: &pane.surface_semantic_prompts,
             surface_dirty_rows: &pane.surface_dirty_rows,
@@ -265,6 +269,7 @@ impl Session {
             cursor: TerminalCursor::from(&pane.cursor),
             modes: pane.modes,
             title: &pane.terminal_title,
+            working_directory: &pane.terminal_working_directory,
             surface_lines: &pane.surface_lines,
             surface_semantic_prompts: &pane.surface_semantic_prompts,
             surface_dirty_rows: &pane.surface_dirty_rows,
@@ -413,6 +418,7 @@ impl Session {
             cursor: pane.cursor.clone(),
             modes: pane.modes,
             title: pane.terminal_title.clone(),
+            working_directory: pane.terminal_working_directory.clone(),
             styles: pane.styles.clone(),
             lines: pane.surface_lines.clone(),
             row_runs: row_runs_for_lines(&pane.surface_lines, &pane.surface_row_runs),
@@ -582,7 +588,8 @@ impl Session {
             },
         );
         let modes = build_terminal_modes(&mut builder, surface.modes);
-        let metadata = build_terminal_metadata(&mut builder, &surface.title);
+        let metadata =
+            build_terminal_metadata(&mut builder, &surface.title, &surface.working_directory);
         let pane_id = builder.create_string(&surface.pane_id);
         let snapshot = protocol::PaneSurfaceSnapshot::create(
             &mut builder,
@@ -695,7 +702,8 @@ impl Session {
             },
         );
         let modes = build_terminal_modes(&mut builder, surface.modes);
-        let metadata = build_terminal_metadata(&mut builder, &surface.title);
+        let metadata =
+            build_terminal_metadata(&mut builder, &surface.title, &surface.working_directory);
         let pane_id = builder.create_string(&surface.pane_id);
         let patch = protocol::PaneSurfacePatch::create(
             &mut builder,
@@ -1354,11 +1362,16 @@ fn build_terminal_modes<'a>(
 fn build_terminal_metadata<'a>(
     builder: &mut FlatBufferBuilder<'a>,
     title: &str,
+    working_directory: &str,
 ) -> flatbuffers::WIPOffset<protocol::TerminalMetadataState<'a>> {
     let title = builder.create_string(title);
+    let working_directory = builder.create_string(working_directory);
     protocol::TerminalMetadataState::create(
         builder,
-        &protocol::TerminalMetadataStateArgs { title: Some(title) },
+        &protocol::TerminalMetadataStateArgs {
+            title: Some(title),
+            working_directory: Some(working_directory),
+        },
     )
 }
 
@@ -1389,6 +1402,7 @@ fn apply_terminal_update(
     );
     let modes_changed = pane.modes != update.modes;
     let title_changed = pane.terminal_title != update.title;
+    let working_directory_changed = pane.terminal_working_directory != update.working_directory;
     let rows_changed = pane.surface_lines != update.surface_lines;
     let surface_kind_changed = pane.surface != update.surface;
     let styles_changed = pane.styles != update.styles;
@@ -1415,7 +1429,8 @@ fn apply_terminal_update(
         || kitty_placeholders_changed
         || pane.cursor != cursor
         || modes_changed
-        || title_changed;
+        || title_changed
+        || working_directory_changed;
     let scrollback_changed = pane.scrollback_lines != update.scrollback_lines
         || pane.scrollback_row_runs != scrollback_row_runs
         || pane.scrollback_semantic_prompts != scrollback_semantic_prompts
@@ -1430,6 +1445,7 @@ fn apply_terminal_update(
     pane.surface = update.surface;
     pane.modes = update.modes;
     pane.terminal_title = update.title;
+    pane.terminal_working_directory = update.working_directory;
     pane.styles = update.styles;
     pane.surface_lines = update.surface_lines;
     pane.surface_row_runs = surface_row_runs;
@@ -1772,7 +1788,9 @@ mod tests {
         assert_eq!(snapshot.surface(), protocol::SurfaceKind::Main);
         assert_eq!(snapshot.cols(), 80);
         assert_eq!(snapshot.rows(), 24);
-        assert_eq!(snapshot.metadata().expect("metadata").title(), Some(""));
+        let metadata = snapshot.metadata().expect("metadata");
+        assert_eq!(metadata.title(), Some(""));
+        assert_eq!(metadata.working_directory(), Some(""));
 
         let cursor = snapshot.cursor().expect("cursor");
         assert_eq!(cursor.row(), 1);
@@ -1919,7 +1937,9 @@ mod tests {
         assert_eq!(patch.base_version(), 1);
         assert_eq!(patch.version(), 2);
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
-        assert_eq!(patch.metadata().expect("metadata").title(), Some(""));
+        let metadata = patch.metadata().expect("metadata");
+        assert_eq!(metadata.title(), Some(""));
+        assert_eq!(metadata.working_directory(), Some(""));
 
         let cursor = patch.cursor().expect("cursor");
         assert_eq!(cursor.row(), 1);
@@ -2827,6 +2847,7 @@ mod tests {
                     cursor: input.cursor,
                     modes: input.modes,
                     title: input.title.to_owned(),
+                    working_directory: input.working_directory.to_owned(),
                     styles: vec![
                         PaneStyle::default(),
                         PaneStyle {
@@ -2898,6 +2919,7 @@ mod tests {
                     cursor: input.cursor,
                     modes: input.modes,
                     title: input.title.to_owned(),
+                    working_directory: input.working_directory.to_owned(),
                     styles: vec![PaneStyle::default()],
                     surface_lines: input.surface_lines.to_vec(),
                     surface_row_runs: input
@@ -3017,6 +3039,7 @@ mod tests {
                     input.scrollback_lines.to_vec(),
                 );
                 update.title = "pane title".to_owned();
+                update.working_directory = "file://localhost/tmp/nmux".to_owned();
                 Some(update)
             }
 
@@ -3036,6 +3059,7 @@ mod tests {
         assert!(session.apply_pane_output_with_engine("pane-1", b"title only", &mut engine));
         let surface = session.initial_pane_surface();
         assert_eq!(surface.title, "pane title");
+        assert_eq!(surface.working_directory, "file://localhost/tmp/nmux");
         assert_eq!(
             session.surface_patch_kind("pane-1"),
             Some(protocol::PatchKind::ReplaceRows)
@@ -3048,6 +3072,10 @@ mod tests {
         assert_eq!(
             patch.metadata().expect("metadata").title(),
             Some("pane title")
+        );
+        assert_eq!(
+            patch.metadata().expect("metadata").working_directory(),
+            Some("file://localhost/tmp/nmux")
         );
     }
 

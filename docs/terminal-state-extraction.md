@@ -96,10 +96,10 @@ only after the backend extraction proves the exact shape needed.
   tracking enabled, with bytes encoded by the live pane terminal engine from its
   current terminal mouse mode and format. Broader terminal-derived key
   forwarding and frontend pointer integration still need protocol decisions.
-- Terminal metadata: nmux carries OSC 2 terminal title through pane surface
-  snapshot and patch metadata. OSC 7 working-directory state remains unproven in
-  the current backend path and should stay withheld until the expected upstream
-  behavior is clear.
+- Terminal metadata: nmux carries terminal title and working-directory metadata
+  through pane surface snapshot and patch metadata. The current libghostty-vt
+  path exposes a `pwd()` accessor, but OSC 7 byte-sequence population remains
+  unproven and should not be claimed as covered until a backend test proves it.
 - Shell integration metadata: nmux carries OSC 133 row semantic prompt state on
   surface snapshots, surface patches, and scrollback chunks. Semantic
   input/output command-range metadata remains withheld until that protocol shape
@@ -154,8 +154,8 @@ extraction, style-separated cell runs, basic SGR style flags, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
 render-state default colors/palette,
 palette overrides, and explicit cursor color, alternate-screen entry/restoration
-with alternate scrollback omission, terminal title metadata with OSC 7
-working-directory omission, OSC 133 row semantic prompt state, resize/reflow, styled
+with alternate scrollback omission, terminal title and working-directory metadata
+plumbing, OSC 133 row semantic prompt state, resize/reflow, styled
 backend-owned scrollback extraction, row-level dirty state, Kitty placeholder
 metadata, hyperlink presence, application-keypad and application-cursor encoder support,
 focus event encoding, paste safety validation, safe-API mode tracking for

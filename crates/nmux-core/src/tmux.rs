@@ -119,6 +119,7 @@ impl TmuxSession {
                 },
                 modes: TerminalModes::default(),
                 terminal_title: String::new(),
+                terminal_working_directory: String::new(),
                 styles: vec![PaneStyle::default()],
                 surface_lines: Vec::new(),
                 surface_row_runs: Vec::<Vec<CellRun>>::new(),
