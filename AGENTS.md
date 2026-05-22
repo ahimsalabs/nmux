@@ -18,7 +18,7 @@ Use `docs/roadmap.md` as the current implementation tracker and next-step source
 Current sequencing:
 
 - M12 live workspace usability is implemented enough for the local daemon/client workflow to support bounded and unbounded sequential live clients, default local socket workflows, persisted reconnect state, explicit validation, and runnable docs.
-- M13 backend `libghostty-vt` extraction is the current terminal-state correctness milestone. The optional engine is imported, feature-tested, and smoke-tested for daemon-owned VT ingestion, cursor state, styled visible and scrollback rows, cell widths, graphemes, alternate-screen transitions, selected terminal modes, and mode-aware key encoding. The default engine remains `interim` until a later decision accepts the native Ghostty/Zig build in the regular path.
+- M13 backend `libghostty-vt` extraction is the current terminal-state correctness milestone. The optional engine is imported, feature-tested, and smoke-tested for daemon-owned VT ingestion, cursor state, styled visible and scrollback rows, cell widths, graphemes, alternate-screen transitions, explicit terminal mode payloads, mode-only surface patches, hyperlink presence, and mode-aware key encoding. The default engine remains `interim` until a later decision accepts the native Ghostty/Zig build in the regular path.
 - Frontend Ghostty renderer hydration is a separate upstream/API question; do not reintroduce client-side raw PTY replay to get there.
 
 The current implementation is a Rust workspace:
@@ -35,6 +35,7 @@ The current implementation is a Rust workspace:
 - Keep commits small enough that each one has a clear review purpose.
 - Preserve user or agent work already present in the worktree unless explicitly told to change it.
 - Prefer documentation under `docs/` once a note needs to outlive the current scratch plan.
+- Keep `WORK.md`, `README.md`, `docs/roadmap.md`, `docs/running.md`, and `docs/terminal-state-extraction.md` aligned when M13 coverage or protocol boundaries change.
 - Update this file when repo workflow expectations change.
 - Use subagents only for bounded read-only review, research synthesis, or implementation advice. Do not use them for parallel file edits or competing implementation tracks.
 - Keep generated protocol bindings in `crates/nmux-proto/src/generated` derived from `schema/nmux.fbs`; do not hand-edit generated files.
