@@ -11,7 +11,7 @@ nmux is an experimental portable terminal workspace protocol. The project direct
 The current implementation is a Rust workspace with:
 
 - `nmuxd`: a local daemon that owns one session, starts a local PTY, and serves nmux protocol frames over a Unix socket;
-- `nmux`: a local client that attaches, renders server-owned pane state, sends input, persists client render state, and can run a live attach loop;
+- `nmux`: a local client that attaches, renders server-owned pane state, sends explicit input and resize/control intents, persists client render state, and can run a live attach loop;
 - `nmux-proto`, `nmux-core`, and `nmux-cli` crates;
 - ADRs under [docs/adr](docs/adr);
 - runnable notes in [docs/running.md](docs/running.md);
@@ -60,7 +60,7 @@ Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that survives repeated live client detach and reattach until the daemon is stopped.
 State load/save failures include the state path in the error.
 Bounded client loops require `--iterations` greater than zero.
-Without an explicit input flag, `nmux` attaches read-only; use `--key`, `--key-name`, `--paste`, `--focus`, `--mouse`, `--stdin`, or `--stdin-bytes` to opt into sending input.
+Without an explicit input or resize flag, `nmux` attaches read-only; use `--key`, `--key-name`, `--paste`, `--focus`, `--mouse`, `--stdin`, or `--stdin-bytes` to opt into sending input, or live `--cols`/`--rows` to send a resize control intent.
 Explicit one-shot input is still sent when a persisted state file proves the visible surface is already current.
 Scrollback ranges are 1-based from the oldest retained row and require positive `--scrollback-start` and `--scrollback-count` values. Local clients persist last-seen scrollback range metadata in `--state`, fetch scrollback even when the visible surface is already current, send matching cached versions as fetch preconditions, and retry once without a precondition if the daemon reports a stale scrollback version.
 Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.

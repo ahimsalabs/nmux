@@ -28,13 +28,17 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--stdin-bytes"));
     assert!(stdout.contains("--local-echo off|tty"));
     assert!(stdout.contains("--cols COUNT"));
+    assert!(stdout.contains("Live ResizeIntent columns; requires --rows"));
+    assert!(stdout.contains("--mouse-modifiers MODS"));
     assert!(stdout.contains("--redraw"));
+    assert!(stdout.contains("Without an explicit input or resize flag"));
     assert!(stdout.contains("interim text surface"));
     assert!(stdout.contains("not a VT-correct terminal emulator"));
     assert!(stdout.contains("Default socket: valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock"));
     assert!(stdout.contains("else /tmp/nmux-$UID/nmuxd.sock"));
     assert!(stdout.contains("Examples:"));
     assert!(stdout.contains("nmux --live --iterations 2"));
+    assert!(stdout.contains("nmux --live --cols 100 --rows 30"));
     assert!(stdout.contains("nmux --live --stdin-bytes --redraw"));
 }
 
@@ -149,6 +153,10 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--live", "--cols", "80", "--rows", "65536"],
         "nmux: --cols and --rows must be between 1 and 65535",
+    );
+    assert_nmux_rejects(
+        &["--live", "--no-input", "--cols", "80", "--rows", "24"],
+        "nmux: --no-input cannot be combined with --cols/--rows",
     );
     assert_nmux_rejects(
         &["--live", "--key", "ping", "--stdin"],

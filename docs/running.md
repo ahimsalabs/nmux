@@ -153,7 +153,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 
 After the process-host resize succeeds, the daemon commits the pane size into the workspace tree and republishes a `WorkspaceTreeSnapshot`. The CLI prints the updated workspace summary, including the committed size and daemon-published resize policy.
 
-The local daemon publishes `resize=fixed` by default. Use `nmuxd --resize-policy fixed|leader|active-client|manual` to advertise a different pane resize policy. `manual` ignores frontend viewport resize intents; explicit user-command resize intents remain eligible. Explicit `--cols` and `--rows` values must both be in the local PTY range, 1 through 65535. A resize-only live client attaches read-write so the daemon can apply the control intent without sending pane input. If a live client supplies `--cols` and `--rows` while the daemon publishes `manual`, the client reports `nmux: resize request ignored by manual resize policy` on stderr.
+The local daemon publishes `resize=fixed` by default. Use `nmuxd --resize-policy fixed|leader|active-client|manual` to advertise a different pane resize policy. `manual` ignores frontend viewport resize intents; explicit user-command resize intents remain eligible. Explicit `--cols` and `--rows` values must both be in the local PTY range, 1 through 65535, and cannot be combined with `--no-input`. A resize-only live client attaches read-write so the daemon can apply the control intent without sending pane input. If a live client supplies `--cols` and `--rows` while the daemon publishes `manual`, the client reports `nmux: resize request ignored by manual resize policy` on stderr.
 
 For line-streamed live input, pipe lines through stdin:
 
@@ -267,6 +267,8 @@ Current behavior:
 - no known surface version: daemon sends a full `PaneSurfaceSnapshot`
 - known `pane-1` surface version is current: daemon sends no surface frame
 - known `pane-1` surface version is patchable: daemon sends a `PaneSurfacePatch`
+- known `pane-1` surface version has a latest `FullRefreshRequired` update:
+  daemon sends a full `PaneSurfaceSnapshot`
 - known `pane-1` surface version is stale: daemon sends a full `PaneSurfaceSnapshot`
 
 The CLI can persist its local render state with `--state`. This records the

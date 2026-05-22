@@ -5649,6 +5649,83 @@ mod tests {
     }
 
     #[test]
+    fn live_attach_sends_snapshot_for_full_refresh_required_update() {
+        struct AlternateScreenEngine;
+
+        impl TerminalEngine for AlternateScreenEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"alternate");
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::CursorOnly,
+                    protocol::SurfaceKind::Alternate,
+                    input.cursor,
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                ))
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut engine = AlternateScreenEngine;
+        assert!(session.apply_pane_output_with_engine("pane-1", b"alternate", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::FullRefreshRequired)
+        );
+        let current_version = session.surface_version("pane-1").expect("surface version");
+
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live")
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                known_surfaces: vec![KnownSurfaceVersion {
+                    pane_id: "pane-1".to_owned(),
+                    version: current_version - 1,
+                }],
+                ..AttachOptions::default().request
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        let update = initial.surface.expect("initial surface update");
+        assert_eq!(update.kind, SurfaceUpdateKind::Snapshot);
+        assert_eq!(update.version, current_version);
+        assert_eq!(update.base_version, None);
+        assert_eq!(update.patch_kind, None);
+        assert_eq!(update.surface, Some(protocol::SurfaceKind::Alternate));
+
+        let optional_update =
+            read_optional_surface_update_from_stream(&mut stream).expect("optional surface update");
+        assert_eq!(optional_update, None);
+
+        server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn live_attach_forwards_resize_intent_before_input() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");

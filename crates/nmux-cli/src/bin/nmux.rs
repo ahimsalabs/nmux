@@ -1076,6 +1076,7 @@ where
         stdin_input,
         stdin_bytes,
     )?;
+    validate_no_input_resize_args(no_input_set, live_resize)?;
     validate_mode_args(
         live,
         follow,
@@ -1121,6 +1122,16 @@ where
         connect_timeout_ms,
         iterations,
     })
+}
+
+fn validate_no_input_resize_args(
+    no_input_set: bool,
+    live_resize: Option<(u32, u32)>,
+) -> Result<(), &'static str> {
+    if no_input_set && live_resize.is_some() {
+        return Err("--no-input cannot be combined with --cols/--rows");
+    }
+    Ok(())
 }
 
 fn validate_positive_numeric_args(
@@ -1336,21 +1347,22 @@ Options:
   --stdin-bytes              Stream raw stdin chunks in live mode
   --local-echo off|tty       Local TTY echo policy for --stdin-bytes
   --redraw                   Repaint the current live surface in place
-  --cols COUNT               Desired live pane columns
-  --rows COUNT               Desired live pane rows
+  --cols COUNT               Live ResizeIntent columns; requires --rows
+  --rows COUNT               Live ResizeIntent rows; requires --cols
   --interval-ms MS           Poll/read timeout in milliseconds
   --iterations COUNT         Bounded follow/live cycle count
   -h, --help                 Show this help
 
 Notes:
   Default socket: valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
-  Without an explicit input flag, nmux attaches read-only.
+  Without an explicit input or resize flag, nmux attaches read-only.
   The current renderer uses an interim text surface, not a VT-correct terminal emulator.
 
 Examples:
   nmux
   nmux --key 'ping\n'
   nmux --live --iterations 2 --key 'ping\n'
+  nmux --live --cols 100 --rows 30
   nmux --live --stdin-bytes --redraw
 "
 }
@@ -1539,7 +1551,8 @@ mod tests {
         resize_policy_warning, sigwinch_resize_needed, split_stdin_bytes_for_detach,
         terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
-        validate_mode_args as super_validate_mode_args, validate_positive_numeric_args,
+        validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
+        validate_positive_numeric_args,
     };
     use nmux_cli::local;
     use nmux_proto::protocol;
@@ -2176,6 +2189,16 @@ mod tests {
         assert!(
             validate_explicit_input_modes(false, false, false, false, true, false, false).is_ok()
         );
+    }
+
+    #[test]
+    fn no_input_resize_validation_rejects_conflict() {
+        assert_eq!(
+            validate_no_input_resize_args(true, Some((80, 24))),
+            Err("--no-input cannot be combined with --cols/--rows")
+        );
+        assert!(validate_no_input_resize_args(true, None).is_ok());
+        assert!(validate_no_input_resize_args(false, Some((80, 24))).is_ok());
     }
 
     #[test]

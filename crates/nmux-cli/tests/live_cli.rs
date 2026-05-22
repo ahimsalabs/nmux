@@ -1439,7 +1439,6 @@ fn live_cli_warns_when_resize_request_conflicts_with_manual_policy() {
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--live",
-            "--no-input",
             "--iterations",
             "1",
             "--cols",

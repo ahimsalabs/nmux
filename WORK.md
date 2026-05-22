@@ -436,6 +436,7 @@ M11: terminal frontend polish [done]
   stdin EOF and live server socket close exits report status on stderr
   explicit live resize requests warn when daemon-published manual policy will ignore them
   resize-only live clients can commit explicit ResizeIntent without sending pane input
+  --live --no-input rejects explicit --cols/--rows before connecting because resize control requires a writable actor
   nmux --help and interactive TTY byte mode call out interim text surface / non-VT-correct renderer limitations
   live-only frontend flags fail fast outside --live instead of being silently ignored
   live attach renders requested initial scrollback context before streaming updates, including initial --redraw paint
@@ -452,7 +453,7 @@ M12: live workspace usability [done]
   explicit one-shot --key-name/--focus/--mouse input is forwarded before scrollback fetch using daemon-owned input gates
   nmux client bounded live/follow iterations fail fast on zero counts
   nmux --follow rejects input flags instead of silently dropping explicit input
-  nmux attaches read-only by default unless an explicit input flag is provided
+  nmux attaches read-only by default unless an explicit input flag or live resize control flag is provided
   explicit nmux input modes fail fast on conflicting --key/--stdin/--stdin-bytes/--no-input combinations
   nmux live loop timing and explicit resize dimensions fail fast on zero or out-of-range values
   nmux --state load/save failures include the state path before socket connection work
@@ -507,6 +508,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal mode state, and mode-only updates no longer force full refreshes
   ADR 0017 documents terminal input mode state and daemon-owned input gating for paste, focus, named keys, and mouse input
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch
+  live attach clients with a known surface version receive a PaneSurfaceSnapshot, not a PaneSurfacePatch, when the daemon marks the latest surface update FullRefreshRequired
   ScrollbackChunk carries the pane style table so scrollback row runs do not reference missing style IDs
   nmux --state preserves cached title, OSC 7 working directory, terminal modes including mouse tracking mode/format, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, Kitty placeholder row metadata, and last-seen scrollback metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot
   current-version live reattach sends explicit focus input to the daemon even when no surface frame arrives, so focus-reporting-disabled cases produce daemon-owned Error frames; paste delimiter selection remains daemon-owned
