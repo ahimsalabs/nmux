@@ -147,9 +147,21 @@ pub trait TerminalEngine {
     fn apply_output(&mut self, input: TerminalInput<'_>, output: &[u8]) -> Option<TerminalUpdate>;
     fn resize(&mut self, input: TerminalInput<'_>, cols: u32, rows: u32) -> Option<TerminalUpdate>;
 
+    fn encode_key_input(&mut self, _input: KeyTerminalInput<'_>) -> Option<Vec<u8>> {
+        None
+    }
+
     fn encode_mouse_input(&mut self, _input: MouseTerminalInput) -> Option<Vec<u8>> {
         None
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyTerminalInput<'a> {
+    pub key_name: &'a str,
+    pub modifiers: u32,
+    pub application_keypad: bool,
+    pub application_cursor: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,6 +276,80 @@ impl TerminalEngine for InterimTextTerminalEngine {
             input.scrollback_lines.to_vec(),
         ))
     }
+
+    fn encode_key_input(&mut self, input: KeyTerminalInput<'_>) -> Option<Vec<u8>> {
+        if input.modifiers != 0 {
+            return None;
+        }
+        named_key_bytes(
+            input.key_name,
+            input.application_keypad,
+            input.application_cursor,
+        )
+    }
+}
+
+pub fn named_key_bytes(
+    key_name: &str,
+    application_keypad: bool,
+    application_cursor: bool,
+) -> Option<Vec<u8>> {
+    let bytes: &[u8] = match (key_name, application_keypad, application_cursor) {
+        ("numpad-enter", false, _) => b"\r",
+        ("numpad-enter", true, _) => b"\x1bOM",
+        ("numpad-0", false, _) => b"0",
+        ("numpad-0", true, _) => b"\x1bOp",
+        ("numpad-1", false, _) => b"1",
+        ("numpad-1", true, _) => b"\x1bOq",
+        ("numpad-2", false, _) => b"2",
+        ("numpad-2", true, _) => b"\x1bOr",
+        ("numpad-3", false, _) => b"3",
+        ("numpad-3", true, _) => b"\x1bOs",
+        ("numpad-4", false, _) => b"4",
+        ("numpad-4", true, _) => b"\x1bOt",
+        ("numpad-5", false, _) => b"5",
+        ("numpad-5", true, _) => b"\x1bOu",
+        ("numpad-6", false, _) => b"6",
+        ("numpad-6", true, _) => b"\x1bOv",
+        ("numpad-7", false, _) => b"7",
+        ("numpad-7", true, _) => b"\x1bOw",
+        ("numpad-8", false, _) => b"8",
+        ("numpad-8", true, _) => b"\x1bOx",
+        ("numpad-9", false, _) => b"9",
+        ("numpad-9", true, _) => b"\x1bOy",
+        ("arrow-up", _, false) => b"\x1b[A",
+        ("arrow-up", _, true) => b"\x1bOA",
+        ("arrow-down", _, false) => b"\x1b[B",
+        ("arrow-down", _, true) => b"\x1bOB",
+        ("arrow-right", _, false) => b"\x1b[C",
+        ("arrow-right", _, true) => b"\x1bOC",
+        ("arrow-left", _, false) => b"\x1b[D",
+        ("arrow-left", _, true) => b"\x1bOD",
+        ("enter", _, _) => b"\r",
+        ("tab", _, _) => b"\t",
+        ("backspace", _, _) => b"\x7f",
+        ("escape", _, _) => b"\x1b",
+        ("insert", _, _) => b"\x1b[2~",
+        ("delete", _, _) => b"\x1b[3~",
+        ("home", _, _) => b"\x1b[H",
+        ("end", _, _) => b"\x1b[F",
+        ("page-up", _, _) => b"\x1b[5~",
+        ("page-down", _, _) => b"\x1b[6~",
+        ("f1", _, _) => b"\x1bOP",
+        ("f2", _, _) => b"\x1bOQ",
+        ("f3", _, _) => b"\x1bOR",
+        ("f4", _, _) => b"\x1bOS",
+        ("f5", _, _) => b"\x1b[15~",
+        ("f6", _, _) => b"\x1b[17~",
+        ("f7", _, _) => b"\x1b[18~",
+        ("f8", _, _) => b"\x1b[19~",
+        ("f9", _, _) => b"\x1b[20~",
+        ("f10", _, _) => b"\x1b[21~",
+        ("f11", _, _) => b"\x1b[23~",
+        ("f12", _, _) => b"\x1b[24~",
+        _ => return None,
+    };
+    Some(bytes.to_vec())
 }
 
 fn interim_text_update(
@@ -347,7 +433,7 @@ fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
 #[cfg(feature = "libghostty-vt")]
 mod ghostty_vt {
     use libghostty_vt::{
-        RenderState, Terminal, TerminalOptions, mouse,
+        RenderState, Terminal, TerminalOptions, key, mouse,
         render::{CellIterator, CursorVisualStyle, RowIterator, Snapshot as RenderSnapshot},
         screen::CellWide,
         style::{RgbColor, Style, StyleColor, Underline},
@@ -356,8 +442,8 @@ mod ghostty_vt {
     use nmux_proto::protocol;
 
     use super::{
-        CellRun, MouseAction, MouseButton, MouseTerminalInput, PaneStyle, TerminalCursor,
-        TerminalEngine, TerminalInput, TerminalModes, TerminalUpdate,
+        CellRun, KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneStyle,
+        TerminalCursor, TerminalEngine, TerminalInput, TerminalModes, TerminalUpdate,
     };
 
     pub struct LibghosttyVtTerminalEngine {
@@ -411,6 +497,11 @@ mod ghostty_vt {
         fn encode_mouse_input(&mut self, input: MouseTerminalInput) -> Option<Vec<u8>> {
             let state = self.state.as_ref()?;
             encode_mouse_input(&state.terminal, input)
+        }
+
+        fn encode_key_input(&mut self, input: KeyTerminalInput<'_>) -> Option<Vec<u8>> {
+            let state = self.state.as_ref()?;
+            encode_key_input(&state.terminal, input)
         }
     }
 
@@ -831,6 +922,98 @@ mod ghostty_vt {
         let mut bytes = Vec::new();
         encoder.encode_to_vec(&event, &mut bytes).ok()?;
         Some(bytes)
+    }
+
+    fn encode_key_input(
+        terminal: &Terminal<'_, '_>,
+        input: KeyTerminalInput<'_>,
+    ) -> Option<Vec<u8>> {
+        if input.modifiers == 0 && input.application_keypad && is_keypad_name(input.key_name) {
+            return super::named_key_bytes(
+                input.key_name,
+                input.application_keypad,
+                input.application_cursor,
+            );
+        }
+        let mut encoder = key::Encoder::new().ok()?;
+        encoder.set_options_from_terminal(terminal);
+        let mut event = key::Event::new().ok()?;
+        event
+            .set_action(key::Action::Press)
+            .set_key(key_from_name(input.key_name)?)
+            .set_mods(key::Mods::from_bits_retain(
+                u16::try_from(input.modifiers).ok()?,
+            ));
+        let mut bytes = Vec::new();
+        encoder.encode_to_vec(&event, &mut bytes).ok()?;
+        if bytes.is_empty() && input.modifiers == 0 {
+            return super::named_key_bytes(
+                input.key_name,
+                input.application_keypad,
+                input.application_cursor,
+            );
+        }
+        Some(bytes)
+    }
+
+    fn is_keypad_name(key_name: &str) -> bool {
+        matches!(
+            key_name,
+            "numpad-enter"
+                | "numpad-0"
+                | "numpad-1"
+                | "numpad-2"
+                | "numpad-3"
+                | "numpad-4"
+                | "numpad-5"
+                | "numpad-6"
+                | "numpad-7"
+                | "numpad-8"
+                | "numpad-9"
+        )
+    }
+
+    fn key_from_name(key_name: &str) -> Option<key::Key> {
+        Some(match key_name {
+            "numpad-enter" => key::Key::NumpadEnter,
+            "numpad-0" => key::Key::Numpad0,
+            "numpad-1" => key::Key::Numpad1,
+            "numpad-2" => key::Key::Numpad2,
+            "numpad-3" => key::Key::Numpad3,
+            "numpad-4" => key::Key::Numpad4,
+            "numpad-5" => key::Key::Numpad5,
+            "numpad-6" => key::Key::Numpad6,
+            "numpad-7" => key::Key::Numpad7,
+            "numpad-8" => key::Key::Numpad8,
+            "numpad-9" => key::Key::Numpad9,
+            "arrow-up" => key::Key::ArrowUp,
+            "arrow-down" => key::Key::ArrowDown,
+            "arrow-right" => key::Key::ArrowRight,
+            "arrow-left" => key::Key::ArrowLeft,
+            "enter" => key::Key::Enter,
+            "tab" => key::Key::Tab,
+            "backspace" => key::Key::Backspace,
+            "escape" => key::Key::Escape,
+            "insert" => key::Key::Insert,
+            "delete" => key::Key::Delete,
+            "home" => key::Key::Home,
+            "end" => key::Key::End,
+            "page-up" => key::Key::PageUp,
+            "page-down" => key::Key::PageDown,
+            "f1" => key::Key::F1,
+            "f2" => key::Key::F2,
+            "f3" => key::Key::F3,
+            "f4" => key::Key::F4,
+            "f5" => key::Key::F5,
+            "f6" => key::Key::F6,
+            "f7" => key::Key::F7,
+            "f8" => key::Key::F8,
+            "f9" => key::Key::F9,
+            "f10" => key::Key::F10,
+            "f11" => key::Key::F11,
+            "f12" => key::Key::F12,
+            _ => return None,
+        })
     }
 
     fn mouse_action(action: MouseAction) -> mouse::Action {
@@ -2020,6 +2203,114 @@ mod tests {
             .expect("encoded mouse input");
 
         assert_eq!(bytes, b"\x1b[<0;1;1M");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_encodes_key_from_application_cursor_state() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let update = engine
+            .apply_output(terminal_input(24, &empty, &empty), b"\x1b[?1h")
+            .expect("terminal update");
+        assert!(update.modes.application_cursor);
+
+        let bytes = engine
+            .encode_key_input(super::KeyTerminalInput {
+                key_name: "arrow-up",
+                modifiers: 0,
+                application_keypad: false,
+                application_cursor: false,
+            })
+            .expect("encoded key input");
+
+        assert_eq!(bytes, b"\x1bOA");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_preserves_keypad_fallback_from_application_state() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let update = engine
+            .apply_output(terminal_input(24, &empty, &empty), b"\x1b=")
+            .expect("terminal update");
+        assert!(update.modes.application_keypad);
+
+        let bytes = engine
+            .encode_key_input(super::KeyTerminalInput {
+                key_name: "numpad-enter",
+                modifiers: 0,
+                application_keypad: update.modes.application_keypad,
+                application_cursor: false,
+            })
+            .expect("encoded keypad input");
+
+        assert_eq!(bytes, b"\x1bOM");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_encodes_modified_named_key() {
+        use libghostty_vt::{
+            Terminal, TerminalOptions,
+            key::{Action, Encoder, Event, Key, Mods},
+        };
+
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        engine
+            .apply_output(terminal_input(24, &empty, &empty), b"")
+            .expect("terminal update");
+        let bytes = engine
+            .encode_key_input(super::KeyTerminalInput {
+                key_name: "arrow-up",
+                modifiers: 2,
+                application_keypad: false,
+                application_cursor: false,
+            })
+            .expect("encoded modified key input");
+
+        let terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+        let mut encoder = Encoder::new().expect("key encoder");
+        encoder.set_options_from_terminal(&terminal);
+        let mut event = Event::new().expect("key event");
+        event
+            .set_action(Action::Press)
+            .set_key(Key::ArrowUp)
+            .set_mods(Mods::CTRL);
+        let mut expected = Vec::new();
+        encoder
+            .encode_to_vec(&event, &mut expected)
+            .expect("direct key encoding");
+
+        assert_eq!(bytes, expected);
+        assert!(!bytes.is_empty());
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_rejects_unknown_named_key() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        engine
+            .apply_output(terminal_input(24, &empty, &empty), b"")
+            .expect("terminal update");
+
+        assert_eq!(
+            engine.encode_key_input(super::KeyTerminalInput {
+                key_name: "f13",
+                modifiers: 0,
+                application_keypad: false,
+                application_cursor: false,
+            }),
+            None
+        );
     }
 
     #[cfg(feature = "libghostty-vt")]

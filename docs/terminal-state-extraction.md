@@ -89,13 +89,16 @@ only after the backend extraction proves the exact shape needed.
   Local clients also forward focus gained/lost input through `FocusInput` only
   when the daemon-owned pane mode reports focus reporting enabled.
   Local clients forward common named keys for Enter, Tab, Backspace, Escape,
-  Insert/Delete, Home/End, PageUp/PageDown, and F1-F12; keypad Enter and digit
-  key names through daemon-owned application-keypad mode encoding; and arrow key
-  names through daemon-owned application-cursor mode encoding. Local clients forward explicit mouse
-  press/release/motion input only when the daemon-owned pane mode reports mouse
-  tracking enabled, with bytes encoded by the live pane terminal engine from its
-  current terminal mouse mode and format. Broader terminal-derived key
-  forwarding and frontend pointer integration still need protocol decisions.
+  Insert/Delete, Home/End, PageUp/PageDown, and F1-F12 through the live pane
+  terminal engine. The interim engine preserves existing unmodified
+  keypad/application-cursor behavior, and the libghostty-vt engine uses its key
+  encoder from daemon-owned terminal state while preserving protocol modifiers.
+  Public CLI modifier syntax remains withheld until modifier bit semantics are
+  documented. Local clients forward explicit mouse press/release/motion input
+  only when the daemon-owned pane mode reports mouse tracking enabled, with
+  bytes encoded by the live pane terminal engine from its current terminal mouse
+  mode and format. Broader physical-key/text-event forwarding and frontend
+  pointer integration still need protocol decisions.
 - Terminal metadata: nmux carries terminal title and working-directory metadata
   through pane surface snapshot and patch metadata. The current libghostty-vt
   path exposes a `pwd()` accessor, but OSC 7 byte-sequence population remains

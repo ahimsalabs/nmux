@@ -11,7 +11,8 @@ use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{Actor, AttachMode, Session};
 use nmux_core::terminal::{
-    MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines, TerminalEngineKind,
+    KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines,
+    TerminalEngineKind, named_key_bytes,
 };
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 
@@ -1255,7 +1256,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
     let input = envelope
         .body_as_input_event()
         .ok_or("missing input event body")?;
-    let (bytes, key_name, mouse, requires_focus_reporting, requires_mouse_tracking) =
+    let (bytes, key_name, key_modifiers, mouse, requires_focus_reporting, requires_mouse_tracking) =
         match input.kind() {
             protocol::InputKind::Key => {
                 let key = input.key();
@@ -1265,6 +1266,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                         .as_bytes()
                         .to_vec(),
                     key.and_then(|key| key.key_name()).map(ToOwned::to_owned),
+                    key.map_or(0, |key| key.modifiers()),
                     None,
                     false,
                     false,
@@ -1277,6 +1279,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                     .map(|bytes| bytes.iter().collect())
                     .unwrap_or_default(),
                 None,
+                0,
                 None,
                 false,
                 false,
@@ -1290,6 +1293,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                     .transpose()?
                     .unwrap_or_default(),
                 None,
+                0,
                 None,
                 false,
                 false,
@@ -1301,6 +1305,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                     b"\x1b[O".to_vec()
                 },
                 None,
+                0,
                 None,
                 true,
                 false,
@@ -1310,6 +1315,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                 (
                     Vec::new(),
                     None,
+                    0,
                     Some(MouseSummary {
                         row: mouse.row(),
                         col: mouse.col(),
@@ -1330,6 +1336,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         text: String::from_utf8_lossy(&bytes).into_owned(),
         bytes,
         key_name,
+        key_modifiers,
         mouse,
         requires_focus_reporting,
         requires_mouse_tracking,
@@ -2541,6 +2548,7 @@ pub struct InputSummary {
     pub text: String,
     pub bytes: Vec<u8>,
     pub key_name: Option<String>,
+    pub key_modifiers: u32,
     pub mouse: Option<MouseSummary>,
     pub requires_focus_reporting: bool,
     pub requires_mouse_tracking: bool,
@@ -2567,11 +2575,27 @@ impl InputSummary {
         engines: &mut PaneTerminalEngines,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         if let Some(key_name) = self.key_name.as_deref() {
-            return named_key_bytes(
-                key_name,
-                session.pane_application_keypad(&self.pane_id),
-                session.pane_application_cursor(&self.pane_id),
-            );
+            let application_keypad = session.pane_application_keypad(&self.pane_id);
+            let application_cursor = session.pane_application_cursor(&self.pane_id);
+            if let Some(bytes) =
+                engines
+                    .engine_mut(&self.pane_id)
+                    .encode_key_input(KeyTerminalInput {
+                        key_name,
+                        modifiers: self.key_modifiers,
+                        application_keypad,
+                        application_cursor,
+                    })
+            {
+                return Ok(bytes);
+            }
+            if self.key_modifiers != 0 {
+                return Err(
+                    format!("terminal engine cannot encode modified key name: {key_name}").into(),
+                );
+            }
+            return named_key_bytes(key_name, application_keypad, application_cursor)
+                .ok_or_else(|| format!("unsupported key name: {key_name}").into());
         }
         if let Some(mouse) = self.mouse {
             let (cols, rows) = session
@@ -2592,69 +2616,6 @@ impl InputSummary {
         }
         Ok(self.bytes.clone())
     }
-}
-
-fn named_key_bytes(
-    key_name: &str,
-    application_keypad: bool,
-    application_cursor: bool,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let bytes: &[u8] = match (key_name, application_keypad, application_cursor) {
-        ("numpad-enter", false, _) => b"\r",
-        ("numpad-enter", true, _) => b"\x1bOM",
-        ("numpad-0", false, _) => b"0",
-        ("numpad-0", true, _) => b"\x1bOp",
-        ("numpad-1", false, _) => b"1",
-        ("numpad-1", true, _) => b"\x1bOq",
-        ("numpad-2", false, _) => b"2",
-        ("numpad-2", true, _) => b"\x1bOr",
-        ("numpad-3", false, _) => b"3",
-        ("numpad-3", true, _) => b"\x1bOs",
-        ("numpad-4", false, _) => b"4",
-        ("numpad-4", true, _) => b"\x1bOt",
-        ("numpad-5", false, _) => b"5",
-        ("numpad-5", true, _) => b"\x1bOu",
-        ("numpad-6", false, _) => b"6",
-        ("numpad-6", true, _) => b"\x1bOv",
-        ("numpad-7", false, _) => b"7",
-        ("numpad-7", true, _) => b"\x1bOw",
-        ("numpad-8", false, _) => b"8",
-        ("numpad-8", true, _) => b"\x1bOx",
-        ("numpad-9", false, _) => b"9",
-        ("numpad-9", true, _) => b"\x1bOy",
-        ("arrow-up", _, false) => b"\x1b[A",
-        ("arrow-up", _, true) => b"\x1bOA",
-        ("arrow-down", _, false) => b"\x1b[B",
-        ("arrow-down", _, true) => b"\x1bOB",
-        ("arrow-right", _, false) => b"\x1b[C",
-        ("arrow-right", _, true) => b"\x1bOC",
-        ("arrow-left", _, false) => b"\x1b[D",
-        ("arrow-left", _, true) => b"\x1bOD",
-        ("enter", _, _) => b"\r",
-        ("tab", _, _) => b"\t",
-        ("backspace", _, _) => b"\x7f",
-        ("escape", _, _) => b"\x1b",
-        ("insert", _, _) => b"\x1b[2~",
-        ("delete", _, _) => b"\x1b[3~",
-        ("home", _, _) => b"\x1b[H",
-        ("end", _, _) => b"\x1b[F",
-        ("page-up", _, _) => b"\x1b[5~",
-        ("page-down", _, _) => b"\x1b[6~",
-        ("f1", _, _) => b"\x1bOP",
-        ("f2", _, _) => b"\x1bOQ",
-        ("f3", _, _) => b"\x1bOR",
-        ("f4", _, _) => b"\x1bOS",
-        ("f5", _, _) => b"\x1b[15~",
-        ("f6", _, _) => b"\x1b[17~",
-        ("f7", _, _) => b"\x1b[18~",
-        ("f8", _, _) => b"\x1b[19~",
-        ("f9", _, _) => b"\x1b[20~",
-        ("f10", _, _) => b"\x1b[21~",
-        ("f11", _, _) => b"\x1b[23~",
-        ("f12", _, _) => b"\x1b[24~",
-        _ => return Err(format!("unsupported key name: {key_name}").into()),
-    };
-    Ok(bytes.to_vec())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4244,6 +4205,7 @@ mod tests {
                 text: "x".to_owned(),
                 bytes: b"x".to_vec(),
                 key_name: None,
+                key_modifiers: 0,
                 mouse: None,
                 requires_focus_reporting: false,
                 requires_mouse_tracking: false,
@@ -4268,7 +4230,26 @@ mod tests {
         assert_eq!(input.input_seq, 2);
         assert_eq!(input.bytes, Vec::<u8>::new());
         assert_eq!(input.key_name.as_deref(), Some("numpad-enter"));
+        assert_eq!(input.key_modifiers, 0);
         assert!(!input.requires_focus_reporting);
+    }
+
+    #[test]
+    fn decodes_named_key_modifiers_from_client_frame() {
+        let frame = Session::initial().named_key_input_frame_with_modifiers(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            "arrow-up",
+            2,
+        );
+        let input = input_summary_from_frame(&frame).expect("input summary");
+
+        assert_eq!(input.bytes, Vec::<u8>::new());
+        assert_eq!(input.key_name.as_deref(), Some("arrow-up"));
+        assert_eq!(input.key_modifiers, 2);
     }
 
     #[test]
@@ -4281,6 +4262,7 @@ mod tests {
             text: String::new(),
             bytes: Vec::new(),
             key_name: Some("numpad-enter".to_owned()),
+            key_modifiers: 0,
             mouse: None,
             requires_focus_reporting: false,
             requires_mouse_tracking: false,
@@ -4328,6 +4310,7 @@ mod tests {
             text: String::new(),
             bytes: Vec::new(),
             key_name: Some("arrow-up".to_owned()),
+            key_modifiers: 0,
             mouse: None,
             requires_focus_reporting: false,
             requires_mouse_tracking: false,
@@ -4378,6 +4361,7 @@ mod tests {
                 text: String::new(),
                 bytes: Vec::new(),
                 key_name: Some(key_name.to_owned()),
+                key_modifiers: 0,
                 mouse: None,
                 requires_focus_reporting: false,
                 requires_mouse_tracking: false,
@@ -4403,6 +4387,7 @@ mod tests {
             text: String::new(),
             bytes: Vec::new(),
             key_name: Some("f13".to_owned()),
+            key_modifiers: 0,
             mouse: None,
             requires_focus_reporting: false,
             requires_mouse_tracking: false,
@@ -4412,6 +4397,31 @@ mod tests {
             .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
             .expect_err("unsupported key name");
         assert!(err.to_string().contains("unsupported key name: f13"));
+    }
+
+    #[test]
+    fn modified_named_key_requires_terminal_engine_encoder() {
+        let session = Session::initial();
+        let input = InputSummary {
+            pane_id: "pane-1".to_owned(),
+            actor_id: "actor-1".to_owned(),
+            input_seq: 1,
+            text: String::new(),
+            bytes: Vec::new(),
+            key_name: Some("arrow-up".to_owned()),
+            key_modifiers: 2,
+            mouse: None,
+            requires_focus_reporting: false,
+            requires_mouse_tracking: false,
+        };
+
+        let err = input
+            .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+            .expect_err("modified key unsupported");
+        assert!(
+            err.to_string()
+                .contains("terminal engine cannot encode modified key name: arrow-up")
+        );
     }
 
     #[test]
@@ -4454,6 +4464,7 @@ mod tests {
                 text: "hello\n".to_owned(),
                 bytes: b"hello\n".to_vec(),
                 key_name: None,
+                key_modifiers: 0,
                 mouse: None,
                 requires_focus_reporting: false,
                 requires_mouse_tracking: false,
@@ -4535,6 +4546,7 @@ mod tests {
             text: "\x1b[I".to_owned(),
             bytes: b"\x1b[I".to_vec(),
             key_name: None,
+            key_modifiers: 0,
             mouse: None,
             requires_focus_reporting: true,
             requires_mouse_tracking: false,
@@ -4555,6 +4567,7 @@ mod tests {
             text: String::new(),
             bytes: Vec::new(),
             key_name: None,
+            key_modifiers: 0,
             mouse: Some(MouseSummary {
                 row: 0,
                 col: 0,

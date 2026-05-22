@@ -1001,6 +1001,27 @@ impl Session {
         input_seq: u64,
         key_name: &str,
     ) -> Vec<u8> {
+        self.named_key_input_frame_with_modifiers(
+            connection_id,
+            seq,
+            actor_id,
+            pane_id,
+            input_seq,
+            key_name,
+            0,
+        )
+    }
+
+    pub fn named_key_input_frame_with_modifiers(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        actor_id: &str,
+        pane_id: &str,
+        input_seq: u64,
+        key_name: &str,
+        modifiers: u32,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
 
         let key_name = builder.create_string(key_name);
@@ -1009,7 +1030,7 @@ impl Session {
             &protocol::KeyInputArgs {
                 text_utf8: None,
                 key_name: Some(key_name),
-                modifiers: 0,
+                modifiers,
             },
         );
         let pane_id = builder.create_string(pane_id);
@@ -2358,6 +2379,22 @@ mod tests {
         assert_eq!(key.text_utf8(), None);
         assert_eq!(key.key_name(), Some("numpad-enter"));
         assert_eq!(key.modifiers(), 0);
+    }
+
+    #[test]
+    fn named_key_input_frame_with_modifiers_decodes_to_input_event() {
+        let frame = Session::initial().named_key_input_frame_with_modifiers(
+            "conn-1", 9, "actor-1", "pane-1", 3, "arrow-up", 2,
+        );
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        let input = envelope.body_as_input_event().expect("input event body");
+        assert_eq!(input.kind(), protocol::InputKind::Key);
+
+        let key = input.key().expect("key input");
+        assert_eq!(key.text_utf8(), None);
+        assert_eq!(key.key_name(), Some("arrow-up"));
+        assert_eq!(key.modifiers(), 2);
     }
 
     #[test]
