@@ -491,6 +491,103 @@ fn live_cli_can_wait_for_daemon_socket() {
 }
 
 #[test]
+fn one_shot_cli_can_wait_for_daemon_socket() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--connect-timeout-ms",
+            "2000",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
+
+    thread::sleep(Duration::from_millis(100));
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            "printf 'ready\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    let client = client.wait_with_output().expect("wait for nmux");
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("ready"),
+        "one-shot client did not attach after waiting for socket:\n{stdout}"
+    );
+}
+
+#[test]
+fn follow_cli_can_wait_for_daemon_socket() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--connect-timeout-ms",
+            "2000",
+            "--follow",
+            "--iterations",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
+
+    thread::sleep(Duration::from_millis(100));
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            "printf 'ready\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    let client = client.wait_with_output().expect("wait for nmux");
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("ready"),
+        "follow client did not attach after waiting for socket:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_cli_renders_initial_scrollback_range() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

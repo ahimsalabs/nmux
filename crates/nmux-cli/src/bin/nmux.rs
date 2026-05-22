@@ -653,6 +653,7 @@ fn attach_once(
         }),
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
+        connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
     if args.follow
