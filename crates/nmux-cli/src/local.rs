@@ -424,7 +424,16 @@ fn serve_live_attached_client(
                     if !Session::resize_intent_allowed(policy, resize.reason) {
                         continue;
                     }
-                    host.resize_pane(&resize.pane_id, resize.cols, resize.rows)?;
+                    if let Err(err) = host.resize_pane(&resize.pane_id, resize.cols, resize.rows) {
+                        write_protocol_error(
+                            stream,
+                            session,
+                            &mut seq,
+                            protocol::ErrorCode::Unknown,
+                            &format!("resize failed: {err}"),
+                        )?;
+                        return Ok(());
+                    }
                     if session.commit_pane_resize_with_engine(
                         &resize.pane_id,
                         resize.cols,
@@ -440,7 +449,7 @@ fn serve_live_attached_client(
                     if Session::input_allowed(&actor) {
                         break Some(input);
                     } else {
-                        write_input_error(
+                        write_protocol_error(
                             stream,
                             session,
                             &mut seq,
@@ -457,7 +466,7 @@ fn serve_live_attached_client(
         if Session::input_allowed(&actor) {
             if let Some(input) = input {
                 if let Some(rejection) = input.forwarding_rejection(session) {
-                    write_input_error(
+                    write_protocol_error(
                         stream,
                         session,
                         &mut seq,
@@ -469,7 +478,7 @@ fn serve_live_attached_client(
                     let bytes = match input.forwarded_bytes(session, engines) {
                         Ok(bytes) => bytes,
                         Err(err) => {
-                            write_input_error(
+                            write_protocol_error(
                                 stream,
                                 session,
                                 &mut seq,
@@ -480,7 +489,7 @@ fn serve_live_attached_client(
                         }
                     };
                     if let Err(err) = host.write_input(&input.pane_id, &bytes) {
-                        write_input_error(
+                        write_protocol_error(
                             stream,
                             session,
                             &mut seq,
@@ -619,7 +628,7 @@ fn serve_attached_client(
             if let Some(host) = host.as_deref_mut() {
                 if let Some(rejection) = input.forwarding_rejection(session) {
                     let mut seq = 4;
-                    write_input_error(
+                    write_protocol_error(
                         stream,
                         session,
                         &mut seq,
@@ -632,7 +641,7 @@ fn serve_attached_client(
                         Ok(bytes) => bytes,
                         Err(err) => {
                             let mut seq = 4;
-                            write_input_error(
+                            write_protocol_error(
                                 stream,
                                 session,
                                 &mut seq,
@@ -644,7 +653,7 @@ fn serve_attached_client(
                     };
                     if let Err(err) = host.write_input(&input.pane_id, &bytes) {
                         let mut seq = 4;
-                        write_input_error(
+                        write_protocol_error(
                             stream,
                             session,
                             &mut seq,
@@ -671,7 +680,7 @@ fn serve_attached_client(
     Ok(())
 }
 
-fn write_input_error(
+fn write_protocol_error(
     stream: &mut UnixStream,
     session: &Session,
     seq: &mut u64,
@@ -4776,6 +4785,40 @@ mod tests {
     }
 
     #[test]
+    fn live_attach_reports_resize_failure_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = FailingResizeHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start failing resize pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve live with resize failure");
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert!(initial.surface.is_some());
+
+        send_resize_intent(&mut stream, "pane-1", 100, 30).expect("send resize intent");
+        let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
+        assert_eq!(
+            error,
+            LiveSurfaceRead::Error(ErrorSummary {
+                code: protocol::ErrorCode::Unknown,
+                message: "resize failed: host I/O error during resize_pane for pane-1: simulated resize failure".to_owned(),
+                retryable: false,
+            })
+        );
+
+        server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn live_attach_ignores_frontend_resize_when_policy_is_manual() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -6256,6 +6299,75 @@ mod tests {
     }
 
     impl ProcessOutput for FailingWriteHost {
+        fn try_read_output(
+            &mut self,
+            pane_id: &str,
+            _bytes: &mut [u8],
+        ) -> Result<usize, HostError> {
+            if self.running {
+                Ok(0)
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct FailingResizeHost {
+        running: bool,
+    }
+
+    impl ProcessHost for FailingResizeHost {
+        fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
+            self.running = true;
+            Ok(PaneProcess {
+                pane_id: pane_id.to_owned(),
+                host_id: spec.id.clone(),
+                status: ProcessStatus::Running,
+            })
+        }
+
+        fn write_input(&mut self, pane_id: &str, _bytes: &[u8]) -> Result<(), HostError> {
+            if self.running {
+                Ok(())
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
+        }
+
+        fn resize_pane(&mut self, pane_id: &str, _cols: u32, _rows: u32) -> Result<(), HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            Err(HostError::Io {
+                pane_id: pane_id.to_owned(),
+                operation: "resize_pane".to_owned(),
+                message: "simulated resize failure".to_owned(),
+            })
+        }
+
+        fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            self.running = false;
+            Ok(PaneProcess {
+                pane_id: pane_id.to_owned(),
+                host_id: "failing-resize".to_owned(),
+                status: ProcessStatus::Exited,
+            })
+        }
+    }
+
+    impl ProcessOutput for FailingResizeHost {
         fn try_read_output(
             &mut self,
             pane_id: &str,
