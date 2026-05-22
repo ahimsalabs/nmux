@@ -56,10 +56,11 @@ backend terminal state into the same nmux objects:
   changes.
 - Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; terminal
   mode-only changes should use `PatchKind::ModeOnly`; row text or row-run-only
-  changes should use `PatchKind::ReplaceRows`; changes that cannot be expressed
-  by the current patch schema, including style-table changes, should force a
-  full snapshot. Clients must reject unsupported patch kinds rather than
-  applying them as cursor-only updates.
+  changes should use `PatchKind::ReplaceRows` with only changed rows when pane
+  geometry is stable; changes that cannot be expressed by the current patch
+  schema, including style-table changes, should force a full snapshot. Clients
+  must reject unsupported patch kinds rather than applying them as cursor-only
+  updates.
 
 ## Known Schema Gaps
 
@@ -123,9 +124,10 @@ only after the backend extraction proves the exact shape needed.
   placement, dimensions, persistence, pixel-data, and fallback protocol objects
   remain withheld.
 - Damage granularity: row replacement is enough for the prototype, and nmux now
-  carries backend row dirty flags on surface snapshots, surface patches, and
-  scrollback chunks. Rich cells may still need run-level or region-level patches
-  beyond cursor-only updates before nmux exposes a richer damage protocol.
+  carries backend row dirty flags on surface snapshots, sparse row-replacement
+  patches, and scrollback chunks. Rich cells may still need run-level or
+  region-level patches beyond cursor-only updates before nmux exposes a richer
+  damage protocol.
 
 ## Acceptance Gate
 

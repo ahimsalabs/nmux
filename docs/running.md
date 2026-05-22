@@ -205,7 +205,7 @@ colors/palette, palette overrides, explicit cursor color, terminal title metadat
 tracking and mode-gated mouse forwarding, focus reporting and mode-gated focus forwarding, application keypad tracking,
 common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-aware arrow-key forwarding, explicit encoder output, origin, wraparound mode state, row-level dirty state,
 hyperlink presence, Kitty graphics placeholder metadata, mode-aware key
-encoding, and mode-only surface patches. OSC 7 working-directory metadata,
+encoding, sparse row updates, and mode-only surface patches. OSC 7 working-directory metadata,
 image placement data, and hyperlink IDs remain intentionally withheld until the
 expected backend behavior and nmux protocol shape are clear.
 

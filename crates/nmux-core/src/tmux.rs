@@ -104,6 +104,7 @@ impl TmuxSession {
                 host: tmux_pane_host(&self.name, &window.id, &active_pane.id),
                 surface_version: 1,
                 last_patch_kind: protocol::PatchKind::ReplaceRows,
+                last_row_update_indices: Vec::new(),
                 scrollback_version: 1,
                 cols: active_pane.cols,
                 rows: active_pane.rows,

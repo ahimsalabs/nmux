@@ -53,6 +53,7 @@ pub struct Pane {
     pub host: HostSpec,
     pub surface_version: u64,
     pub last_patch_kind: protocol::PatchKind,
+    pub last_row_update_indices: Vec<u32>,
     pub scrollback_version: u64,
     pub cols: u32,
     pub rows: u32,
@@ -128,6 +129,7 @@ impl Session {
                     host: HostSpec::local("local", CommandSpec::new("sh")),
                     surface_version: 2,
                     last_patch_kind: protocol::PatchKind::ReplaceRows,
+                    last_row_update_indices: vec![0, 1],
                     scrollback_version: 1,
                     cols: 80,
                     rows: 24,
@@ -640,19 +642,25 @@ impl Session {
             .pane(&surface.pane_id)
             .map(|pane| pane.last_patch_kind)
             .unwrap_or(protocol::PatchKind::ReplaceRows);
+        let row_update_indices = self
+            .pane(&surface.pane_id)
+            .map(|pane| pane.last_row_update_indices.as_slice())
+            .unwrap_or(&[]);
         let mut builder = FlatBufferBuilder::new();
 
         let mut row_offsets = Vec::new();
         if patch_kind == protocol::PatchKind::ReplaceRows {
-            row_offsets.reserve(surface.lines.len());
-            for (row, (line, line_runs)) in surface
-                .lines
-                .iter()
-                .zip(surface.row_runs.iter())
-                .enumerate()
-            {
+            row_offsets.reserve(row_update_indices.len());
+            for row in row_update_indices {
+                let row = *row as usize;
+                let Some(line) = surface.lines.get(row) else {
+                    continue;
+                };
+                let Some(line_runs) = surface.row_runs.get(row) else {
+                    continue;
+                };
                 let runs = build_cell_runs(&mut builder, line_runs);
-                let row = protocol::RowUpdate::create(
+                let row_update = protocol::RowUpdate::create(
                     &mut builder,
                     &protocol::RowUpdateArgs {
                         row: row as u32,
@@ -671,7 +679,7 @@ impl Session {
                             .unwrap_or(false),
                     },
                 );
-                row_offsets.push(row);
+                row_offsets.push(row_update);
             }
         }
 
@@ -1360,16 +1368,43 @@ fn apply_terminal_update(
     force_surface_version: bool,
 ) -> bool {
     let cursor = Cursor::from(update.cursor);
+    let surface_row_runs = row_runs_for_lines(&update.surface_lines, &update.surface_row_runs);
+    let surface_semantic_prompts =
+        row_semantic_prompts_for_lines(&update.surface_lines, &update.surface_semantic_prompts);
+    let surface_dirty_rows =
+        row_dirty_flags_for_lines(&update.surface_lines, &update.surface_dirty_rows);
+    let surface_kitty_placeholders =
+        row_kitty_placeholders_for_lines(&update.surface_lines, &update.surface_kitty_placeholders);
+    let scrollback_row_runs =
+        row_runs_for_lines(&update.scrollback_lines, &update.scrollback_row_runs);
+    let scrollback_semantic_prompts = row_semantic_prompts_for_lines(
+        &update.scrollback_lines,
+        &update.scrollback_semantic_prompts,
+    );
+    let scrollback_dirty_rows =
+        row_dirty_flags_for_lines(&update.scrollback_lines, &update.scrollback_dirty_rows);
+    let scrollback_kitty_placeholders = row_kitty_placeholders_for_lines(
+        &update.scrollback_lines,
+        &update.scrollback_kitty_placeholders,
+    );
     let modes_changed = pane.modes != update.modes;
     let title_changed = pane.terminal_title != update.title;
     let rows_changed = pane.surface_lines != update.surface_lines;
     let surface_kind_changed = pane.surface != update.surface;
     let styles_changed = pane.styles != update.styles;
-    let row_runs_changed = pane.surface_row_runs != update.surface_row_runs;
-    let semantic_prompts_changed = pane.surface_semantic_prompts != update.surface_semantic_prompts;
-    let dirty_rows_changed = pane.surface_dirty_rows != update.surface_dirty_rows;
-    let kitty_placeholders_changed =
-        pane.surface_kitty_placeholders != update.surface_kitty_placeholders;
+    let row_runs_changed = pane.surface_row_runs != surface_row_runs;
+    let semantic_prompts_changed = pane.surface_semantic_prompts != surface_semantic_prompts;
+    let dirty_rows_changed = pane.surface_dirty_rows != surface_dirty_rows;
+    let kitty_placeholders_changed = pane.surface_kitty_placeholders != surface_kitty_placeholders;
+    let row_update_indices = surface_row_update_indices(
+        pane,
+        &update.surface_lines,
+        &surface_row_runs,
+        &surface_semantic_prompts,
+        &surface_dirty_rows,
+        &surface_kitty_placeholders,
+        force_surface_version,
+    );
     let surface_changed = force_surface_version
         || surface_kind_changed
         || styles_changed
@@ -1382,34 +1417,25 @@ fn apply_terminal_update(
         || modes_changed
         || title_changed;
     let scrollback_changed = pane.scrollback_lines != update.scrollback_lines
-        || pane.scrollback_row_runs != update.scrollback_row_runs
-        || pane.scrollback_semantic_prompts != update.scrollback_semantic_prompts
-        || pane.scrollback_dirty_rows != update.scrollback_dirty_rows
-        || pane.scrollback_kitty_placeholders != update.scrollback_kitty_placeholders;
+        || pane.scrollback_row_runs != scrollback_row_runs
+        || pane.scrollback_semantic_prompts != scrollback_semantic_prompts
+        || pane.scrollback_dirty_rows != scrollback_dirty_rows
+        || pane.scrollback_kitty_placeholders != scrollback_kitty_placeholders;
 
     pane.scrollback_lines = update.scrollback_lines;
-    pane.scrollback_row_runs =
-        row_runs_for_lines(&pane.scrollback_lines, &update.scrollback_row_runs);
-    pane.scrollback_semantic_prompts =
-        row_semantic_prompts_for_lines(&pane.scrollback_lines, &update.scrollback_semantic_prompts);
-    pane.scrollback_dirty_rows =
-        row_dirty_flags_for_lines(&pane.scrollback_lines, &update.scrollback_dirty_rows);
-    pane.scrollback_kitty_placeholders = row_kitty_placeholders_for_lines(
-        &pane.scrollback_lines,
-        &update.scrollback_kitty_placeholders,
-    );
+    pane.scrollback_row_runs = scrollback_row_runs;
+    pane.scrollback_semantic_prompts = scrollback_semantic_prompts;
+    pane.scrollback_dirty_rows = scrollback_dirty_rows;
+    pane.scrollback_kitty_placeholders = scrollback_kitty_placeholders;
     pane.surface = update.surface;
     pane.modes = update.modes;
     pane.terminal_title = update.title;
     pane.styles = update.styles;
     pane.surface_lines = update.surface_lines;
-    pane.surface_row_runs = row_runs_for_lines(&pane.surface_lines, &update.surface_row_runs);
-    pane.surface_semantic_prompts =
-        row_semantic_prompts_for_lines(&pane.surface_lines, &update.surface_semantic_prompts);
-    pane.surface_dirty_rows =
-        row_dirty_flags_for_lines(&pane.surface_lines, &update.surface_dirty_rows);
-    pane.surface_kitty_placeholders =
-        row_kitty_placeholders_for_lines(&pane.surface_lines, &update.surface_kitty_placeholders);
+    pane.surface_row_runs = surface_row_runs;
+    pane.surface_semantic_prompts = surface_semantic_prompts;
+    pane.surface_dirty_rows = surface_dirty_rows;
+    pane.surface_kitty_placeholders = surface_kitty_placeholders;
     pane.cursor = cursor;
 
     if scrollback_changed {
@@ -1429,6 +1455,11 @@ fn apply_terminal_update(
             styles_changed,
             modes_changed,
         );
+        pane.last_row_update_indices = if pane.last_patch_kind == protocol::PatchKind::ReplaceRows {
+            row_update_indices
+        } else {
+            Vec::new()
+        };
     }
 
     surface_changed || scrollback_changed
@@ -1459,6 +1490,37 @@ fn terminal_patch_kind(
     } else {
         requested
     }
+}
+
+fn surface_row_update_indices(
+    pane: &Pane,
+    lines: &[String],
+    row_runs: &[Vec<CellRun>],
+    semantic_prompts: &[protocol::RowSemanticPrompt],
+    dirty_rows: &[bool],
+    kitty_placeholders: &[bool],
+    force_all: bool,
+) -> Vec<u32> {
+    if force_all || pane.surface_lines.len() != lines.len() {
+        return all_row_indices(lines.len());
+    }
+
+    let mut changed = Vec::new();
+    for row in 0..lines.len() {
+        if pane.surface_lines.get(row) != lines.get(row)
+            || pane.surface_row_runs.get(row) != row_runs.get(row)
+            || pane.surface_semantic_prompts.get(row) != semantic_prompts.get(row)
+            || pane.surface_dirty_rows.get(row) != dirty_rows.get(row)
+            || pane.surface_kitty_placeholders.get(row) != kitty_placeholders.get(row)
+        {
+            changed.push(row as u32);
+        }
+    }
+    changed
+}
+
+fn all_row_indices(len: usize) -> Vec<u32> {
+    (0..len).map(|row| row as u32).collect()
 }
 
 fn stable_row_hash(line: &str) -> u64 {
@@ -1881,6 +1943,62 @@ mod tests {
         assert!(!first_row.kitty_virtual_placeholder());
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
+    }
+
+    #[test]
+    fn replace_rows_patch_only_carries_changed_rows() {
+        struct OneRowEngine;
+
+        impl TerminalEngine for OneRowEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"one row");
+                let mut lines = input.surface_lines.to_vec();
+                lines[1] = "changed row".to_owned();
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    lines,
+                    input.scrollback_lines.to_vec(),
+                ))
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = OneRowEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"one row", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::ReplaceRows)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 10, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
+
+        let rows = patch.row_updates().expect("row updates");
+        assert_eq!(rows.len(), 1);
+        let row = rows.get(0);
+        assert_eq!(row.row(), 1);
+        assert_eq!(
+            row.runs().expect("runs").get(0).text_utf8(),
+            Some("changed row")
+        );
     }
 
     #[test]
