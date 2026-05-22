@@ -487,6 +487,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   SurfaceRow, RowUpdate, and ScrollbackRow carry Kitty virtual placeholder metadata; image placement and pixel-data protocol fields remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk preserve row runs instead of collapsing state to text-only rows
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal mode state, and mode-only updates no longer force full refreshes
+  ADR 0017 documents terminal input mode state and daemon-owned input gating for paste, focus, named keys, and mouse input
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch
   ScrollbackChunk carries the pane style table so scrollback row runs do not reference missing style IDs
   nmux --state preserves cached title, OSC 7 working directory, terminal modes including mouse tracking mode/format, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, and Kitty placeholder row metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot

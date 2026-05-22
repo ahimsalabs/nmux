@@ -22,3 +22,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0014: Transport Identity Boundary](0014-transport-identity-boundary.md)
 - [0015: Cell Semantic Content](0015-cell-semantic-content.md)
 - [0016: Terminal Color State](0016-terminal-color-state.md)
+- [0017: Terminal Input Mode State](0017-terminal-input-mode-state.md)
