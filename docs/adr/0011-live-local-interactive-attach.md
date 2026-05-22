@@ -22,7 +22,8 @@ The local attach path should evolve from one request/response exchange into a lo
 - the daemon sends the initial workspace, presence, and surface state;
 - permitted read-write clients can send repeated `InputEvent` messages;
 - the daemon forwards input through the process host, polls backend output, updates backend-owned pane state, and sends `PaneSurfacePatch` or `PaneSurfaceSnapshot` updates;
-- read-only clients can stay attached and observe updates without sending input;
+- read-only clients can stay attached and observe updates without sending input
+  or resize control intents;
 - resize handling should use `ResizeIntent` and the existing process-host resize boundary when policy allows.
 
 The first implementation should stay library-level. It should prove repeated input/output cycles over one connection before adding raw terminal mode, screen clearing, keyboard decoding, or richer CLI UX.
@@ -42,8 +43,10 @@ M10 is done when:
 - `nmuxd` can keep serving one local PTY while at least one client stays attached;
 - a long-lived read-write client can send repeated input events over one connection;
 - process output updates backend-owned pane state and reaches the client as patches or snapshots;
-- a read-only client can observe updates without forwarding input;
-- tests cover repeated input/output, current-version no-update behavior, and read-only permission enforcement.
+- a read-only client can observe updates without forwarding input or resize
+  control intents;
+- tests cover repeated input/output, current-version no-update behavior, and
+  read-only input/resize permission enforcement.
 
 ## Compatibility
 

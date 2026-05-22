@@ -18,12 +18,12 @@ Model actors and attach modes explicitly in the protocol.
 
 Use these attach modes:
 
-- `ReadOnly`: the actor may receive workspace, surface, scrollback, and presence updates, and may request read-only data such as scrollback ranges. The actor may not send pane input.
+- `ReadOnly`: the actor may receive workspace, surface, scrollback, and presence updates, and may request read-only data such as scrollback ranges. The actor may not send pane input or resize/control intents.
 - `ReadWrite`: the actor may receive updates and send pane input/control events allowed by future policy.
 
 Presence updates are session-scoped and may include a focused pane ID. They identify actors and their attach mode, but they do not change terminal state versions.
 
-Authorization belongs to the attached actor/session, not to each individual `InputEvent`. The daemon must reject or ignore pane input from read-only actors even if a client sends it.
+Authorization belongs to the attached actor/session, not to each individual `InputEvent`. The daemon must reject pane input and resize/control intents from read-only actors even if a client sends them.
 
 ## Consequences
 

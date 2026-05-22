@@ -415,6 +415,7 @@ M9: herdr adapter in separate AGPL repo [done as boundary decision]
 M10: live local interactive attach [done]
   one attached local connection can stream repeated input/output cycles
   read-only live clients can observe output without forwarding input until daemon close
+  read-only live resize intents return protocol PermissionDenied instead of being silently ignored
   live CLI can stream stdin lines until EOF without default key fallback
   live CLI can send stdin byte chunks as InputKind.RawBytes without blocking output polling on full lines
   interactive --stdin-bytes temporarily uses noncanonical stdin with local echo defaulting off and `--local-echo tty` available

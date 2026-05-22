@@ -424,7 +424,14 @@ fn serve_live_attached_client(
                 }
                 LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                     if !Session::input_allowed(&actor) {
-                        continue;
+                        write_protocol_error(
+                            stream,
+                            session,
+                            &mut seq,
+                            protocol::ErrorCode::PermissionDenied,
+                            "resize rejected: actor is read-only",
+                        )?;
+                        return Ok(());
                     }
                     if session.surface_version(&resize.pane_id).is_none() {
                         write_pane_not_found_error(stream, session, &mut seq, &resize.pane_id)?;
@@ -6054,6 +6061,61 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, HostEvent::Input { .. }))
         );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_read_only_attach_rejects_resize_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve read-only live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "spectator".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadOnly);
+
+        send_resize_intent(&mut stream, "pane-1", 100, 30).expect("send resize");
+        let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
+        assert_eq!(
+            error,
+            LiveSurfaceRead::Error(ErrorSummary {
+                code: protocol::ErrorCode::PermissionDenied,
+                message: "resize rejected: actor is read-only".to_owned(),
+                retryable: false,
+            })
+        );
+
+        let host = server.join().expect("server thread");
+        assert!(!host.events().iter().any(|event| matches!(
+            event,
+            HostEvent::Resized {
+                pane_id,
+                cols: 100,
+                rows: 30,
+            } if pane_id == "pane-1"
+        )));
 
         let _ = fs::remove_file(socket_path);
     }
