@@ -490,6 +490,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   SurfaceRow, RowUpdate, and ScrollbackRow carry OSC 133 row semantic prompt metadata; CellRun carries OSC 133 output/input/prompt semantic content; broader semantic command IDs, ranges, lifecycle, and exit metadata remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk carry TerminalColorState; color-state changes require full refreshes while incremental palette diffs remain withheld
   ReplaceRows patches now carry only changed rows when the pane geometry is stable; SurfaceRow, RowUpdate, and ScrollbackRow carry backend row dirty flags and row state hashes as metadata, while richer run/region damage protocol fields remain withheld
+  client-side scrollback decoding preserves ScrollbackRow dirty_hash and row_state_hash metadata instead of reducing scrollback rows to text and runs only
   SurfaceRow, RowUpdate, and ScrollbackRow carry Kitty virtual placeholder metadata; image placement and pixel-data protocol fields remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk preserve row runs instead of collapsing state to text-only rows
   client-side tests prove decoded surface patches and scrollback chunks preserve structured CellRun style IDs, cell widths, hyperlink-presence flags, and semantic content instead of collapsing to rendered fallback text

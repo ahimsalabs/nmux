@@ -123,6 +123,7 @@ Done:
 - Title/OSC 7-only changes use no-row surface patches, and feature-gated live CLI coverage proves non-redraw clients print metadata-only changes without reprinting unchanged row text.
 - `libghostty-vt` OSC 133 prompt-row semantics and per-run semantic content are carried through surface snapshots, surface patches, scrollback chunks, and cached client state, while nmux still withholds broader semantic command IDs, ranges, lifecycle, and exit metadata.
 - `libghostty-vt` render-state row dirty flags and row state hashes are carried through surface snapshots, surface patches, scrollback chunks, and cached client state; `ReplaceRows` patches now carry only changed rows when pane geometry is stable, while richer run/region damage protocol fields remain withheld.
+- Client-side scrollback decoding now preserves both text-only dirty hashes and full row-state hashes from `ScrollbackRow`.
 - `libghostty-vt` Kitty graphics placeholder row metadata is carried through surface snapshots, surface patches, scrollback chunks, and cached client state, while nmux still withholds image placement, dimensions, pixel-data, persistence, and fallback protocol fields.
 - The `libghostty-vt` key encoder is tested against terminal application-cursor mode and protocol modifiers, documenting the future frontend path for mode-aware key encoding without raw PTY replay.
 - Structured-input forwarding failures now return protocol `Error` frames instead of surfacing as opaque daemon exits, and local one-shot clients check for those frames before requesting scrollback.

@@ -1883,6 +1883,8 @@ pub fn scrollback_chunk_from_frame(
             line: row.line(),
             text: render_run_summaries(&runs),
             runs,
+            dirty_hash: row.dirty_hash(),
+            row_state_hash: row.row_state_hash(),
             semantic_prompt: row.semantic_prompt(),
             dirty: row.dirty(),
             kitty_virtual_placeholder: row.kitty_virtual_placeholder(),
@@ -3488,6 +3490,8 @@ pub struct ScrollbackLine {
     pub line: u64,
     pub text: String,
     pub runs: Vec<CellRunSummary>,
+    pub dirty_hash: u64,
+    pub row_state_hash: u64,
     pub semantic_prompt: protocol::RowSemanticPrompt,
     pub dirty: bool,
     pub kitty_virtual_placeholder: bool,
@@ -3530,6 +3534,7 @@ fn resize_policy_label(policy: protocol::ResizePolicy) -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::hash::{Hash, Hasher};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -3703,13 +3708,72 @@ mod tests {
     }
 
     fn scrollback_line(line: u64, text: &str) -> ScrollbackLine {
+        let runs = vec![CellRunSummary::plain(text)];
         ScrollbackLine {
             line,
             text: text.to_owned(),
-            runs: vec![CellRunSummary::plain(text)],
+            runs,
+            dirty_hash: stable_test_row_hash(text),
+            row_state_hash: test_row_state_hash(
+                &[CellRunSummary::plain(text)],
+                protocol::RowSemanticPrompt::None,
+                false,
+                false,
+            ),
             semantic_prompt: protocol::RowSemanticPrompt::None,
             dirty: false,
             kitty_virtual_placeholder: false,
+        }
+    }
+
+    fn stable_test_row_hash(line: &str) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        for byte in line.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash
+    }
+
+    fn test_row_state_hash(
+        runs: &[CellRunSummary],
+        semantic_prompt: protocol::RowSemanticPrompt,
+        dirty: bool,
+        kitty_virtual_placeholder: bool,
+    ) -> u64 {
+        let mut hasher = TestStableHasher::new();
+        for run in runs {
+            run.text.hash(&mut hasher);
+            run.cell_widths.hash(&mut hasher);
+            run.style_id.hash(&mut hasher);
+            run.flags.hash(&mut hasher);
+            run.hyperlink_id.hash(&mut hasher);
+            run.semantic_content.0.hash(&mut hasher);
+        }
+        semantic_prompt.0.hash(&mut hasher);
+        dirty.hash(&mut hasher);
+        kitty_virtual_placeholder.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    struct TestStableHasher(u64);
+
+    impl TestStableHasher {
+        fn new() -> Self {
+            Self(0xcbf2_9ce4_8422_2325_u64)
+        }
+    }
+
+    impl Hasher for TestStableHasher {
+        fn finish(&self) -> u64 {
+            self.0
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            for byte in bytes {
+                self.0 ^= u64::from(*byte);
+                self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+            }
         }
     }
 
@@ -6265,30 +6329,38 @@ mod tests {
         assert_eq!(chunk.total_lines, 3);
         assert_eq!(chunk.styles.len(), 2);
         assert_eq!(chunk.styles[1].fg_rgba, 0xff00_0000);
+        let styled_runs = vec![
+            CellRunSummary {
+                text: "styled".to_owned(),
+                cell_widths: vec![1, 1, 1, 1, 1, 1],
+                style_id: 1,
+                flags: CELL_RUN_FLAG_HYPERLINK_PRESENT,
+                hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Prompt,
+            },
+            CellRunSummary {
+                text: "字".to_owned(),
+                cell_widths: vec![2],
+                style_id: 0,
+                flags: 0,
+                hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Input,
+            },
+        ];
         assert_eq!(
             chunk.lines,
             vec![
                 ScrollbackLine {
                     line: 2,
                     text: "styled字".to_owned(),
-                    runs: vec![
-                        CellRunSummary {
-                            text: "styled".to_owned(),
-                            cell_widths: vec![1, 1, 1, 1, 1, 1],
-                            style_id: 1,
-                            flags: CELL_RUN_FLAG_HYPERLINK_PRESENT,
-                            hyperlink_id: 0,
-                            semantic_content: protocol::CellSemanticContent::Prompt,
-                        },
-                        CellRunSummary {
-                            text: "字".to_owned(),
-                            cell_widths: vec![2],
-                            style_id: 0,
-                            flags: 0,
-                            hyperlink_id: 0,
-                            semantic_content: protocol::CellSemanticContent::Input,
-                        },
-                    ],
+                    dirty_hash: stable_test_row_hash("styled字"),
+                    row_state_hash: test_row_state_hash(
+                        &styled_runs,
+                        protocol::RowSemanticPrompt::None,
+                        false,
+                        false,
+                    ),
+                    runs: styled_runs,
                     semantic_prompt: protocol::RowSemanticPrompt::None,
                     dirty: false,
                     kitty_virtual_placeholder: false,

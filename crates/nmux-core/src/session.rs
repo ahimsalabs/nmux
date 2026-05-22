@@ -2181,6 +2181,32 @@ mod tests {
     }
 
     #[test]
+    fn scrollback_row_state_hash_covers_render_metadata_beyond_text() {
+        let mut session = Session::initial();
+        let pane = session.pane_mut("pane-1").expect("pane");
+        pane.scrollback_lines = vec!["same".to_owned(), "same".to_owned()];
+        pane.scrollback_row_runs = vec![
+            vec![CellRun::plain("same")],
+            vec![CellRun {
+                text: "same".to_owned(),
+                cell_widths: vec![1, 1, 1, 1],
+                style_id: 0,
+                flags: crate::terminal::CELL_RUN_FLAG_HYPERLINK_PRESENT,
+                hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Output,
+            }],
+        ];
+
+        let frame = session.scrollback_chunk_frame("conn-1", 8, 1, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+        let rows = chunk.rows().expect("rows");
+
+        assert_eq!(rows.get(0).dirty_hash(), rows.get(1).dirty_hash());
+        assert_ne!(rows.get(0).row_state_hash(), rows.get(1).row_state_hash());
+    }
+
+    #[test]
     fn pane_surface_patch_frame_decodes_to_replace_rows_patch() {
         let frame = Session::initial().pane_surface_patch_frame("conn-1", 10, 1);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
