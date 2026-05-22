@@ -937,15 +937,24 @@ fn apply_terminal_update(
     let cursor = Cursor::from(update.cursor);
     let rows_changed = pane.surface_lines != update.surface_lines;
     let surface_kind_changed = pane.surface != update.surface;
-    let surface_changed =
-        force_surface_version || surface_kind_changed || rows_changed || pane.cursor != cursor;
-    let scrollback_changed = pane.scrollback_lines != update.scrollback_lines;
+    let styles_changed = pane.styles != update.styles;
+    let row_runs_changed = pane.surface_row_runs != update.surface_row_runs;
+    let surface_changed = force_surface_version
+        || surface_kind_changed
+        || styles_changed
+        || rows_changed
+        || row_runs_changed
+        || pane.cursor != cursor;
+    let scrollback_changed = pane.scrollback_lines != update.scrollback_lines
+        || pane.scrollback_row_runs != update.scrollback_row_runs;
 
     pane.scrollback_lines = update.scrollback_lines;
-    pane.scrollback_row_runs = row_runs_for_lines(&pane.scrollback_lines, &[]);
+    pane.scrollback_row_runs =
+        row_runs_for_lines(&pane.scrollback_lines, &update.scrollback_row_runs);
     pane.surface = update.surface;
+    pane.styles = update.styles;
     pane.surface_lines = update.surface_lines;
-    pane.surface_row_runs = row_runs_for_lines(&pane.surface_lines, &[]);
+    pane.surface_row_runs = row_runs_for_lines(&pane.surface_lines, &update.surface_row_runs);
     pane.cursor = cursor;
 
     if scrollback_changed {
@@ -1668,18 +1677,18 @@ mod tests {
                 assert_eq!(input.surface_lines.len(), 2);
                 assert_eq!(input.scrollback_lines.len(), 3);
                 assert_eq!(output, b"ignored by test engine");
-                Some(TerminalUpdate {
-                    patch_kind: protocol::PatchKind::ReplaceRows,
-                    surface: protocol::SurfaceKind::Alternate,
-                    cursor: TerminalCursor {
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    protocol::SurfaceKind::Alternate,
+                    TerminalCursor {
                         row: 7,
                         col: 8,
                         visible: false,
                         shape: protocol::CursorShape::Beam,
                     },
-                    surface_lines: vec!["engine surface".to_owned()],
-                    scrollback_lines: vec!["engine scrollback".to_owned()],
-                })
+                    vec!["engine surface".to_owned()],
+                    vec!["engine scrollback".to_owned()],
+                ))
             }
 
             fn resize(
@@ -1749,18 +1758,18 @@ mod tests {
                 assert_eq!(input.surface, protocol::SurfaceKind::Main);
                 assert_eq!(cols, 100);
                 assert_eq!(rows, 10);
-                Some(TerminalUpdate {
-                    patch_kind: protocol::PatchKind::ReplaceRows,
-                    surface: input.surface,
-                    cursor: TerminalCursor {
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    TerminalCursor {
                         row: 3,
                         col: 4,
                         visible: true,
                         shape: protocol::CursorShape::Underline,
                     },
-                    surface_lines: vec!["resized surface".to_owned()],
-                    scrollback_lines: vec!["resized scrollback".to_owned()],
-                })
+                    vec!["resized surface".to_owned()],
+                    vec!["resized scrollback".to_owned()],
+                ))
             }
         }
 
@@ -1809,18 +1818,18 @@ mod tests {
                         assert_eq!(input.scrollback_lines.len(), 3);
                         assert_eq!(output, b"first");
                         self.step = 1;
-                        Some(TerminalUpdate {
-                            patch_kind: protocol::PatchKind::ReplaceRows,
-                            surface: input.surface,
-                            cursor: TerminalCursor {
+                        Some(TerminalUpdate::plain(
+                            protocol::PatchKind::ReplaceRows,
+                            input.surface,
+                            TerminalCursor {
                                 row: 0,
                                 col: 5,
                                 visible: true,
                                 shape: input.cursor.shape,
                             },
-                            surface_lines: vec!["first".to_owned()],
-                            scrollback_lines: vec!["first".to_owned()],
-                        })
+                            vec!["first".to_owned()],
+                            vec!["first".to_owned()],
+                        ))
                     }
                     2 => {
                         assert_eq!(input.pane_id, "pane-1");
@@ -1830,18 +1839,18 @@ mod tests {
                         assert_eq!(input.scrollback_lines, ["first"]);
                         assert_eq!(output, b"second");
                         self.step = 3;
-                        Some(TerminalUpdate {
-                            patch_kind: protocol::PatchKind::ReplaceRows,
-                            surface: input.surface,
-                            cursor: TerminalCursor {
+                        Some(TerminalUpdate::plain(
+                            protocol::PatchKind::ReplaceRows,
+                            input.surface,
+                            TerminalCursor {
                                 row: 1,
                                 col: 6,
                                 visible: true,
                                 shape: protocol::CursorShape::Beam,
                             },
-                            surface_lines: vec!["first resized".to_owned(), "second".to_owned()],
-                            scrollback_lines: vec!["first".to_owned(), "second".to_owned()],
-                        })
+                            vec!["first resized".to_owned(), "second".to_owned()],
+                            vec!["first".to_owned(), "second".to_owned()],
+                        ))
                     }
                     _ => panic!("unexpected output step {}", self.step),
                 }
@@ -1862,18 +1871,18 @@ mod tests {
                 assert_eq!(cols, 100);
                 assert_eq!(rows, 10);
                 self.step = 2;
-                Some(TerminalUpdate {
-                    patch_kind: protocol::PatchKind::ReplaceRows,
-                    surface: input.surface,
-                    cursor: TerminalCursor {
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    TerminalCursor {
                         row: 0,
                         col: 5,
                         visible: true,
                         shape: input.cursor.shape,
                     },
-                    surface_lines: vec!["first resized".to_owned()],
-                    scrollback_lines: input.scrollback_lines.to_vec(),
-                })
+                    vec!["first resized".to_owned()],
+                    input.scrollback_lines.to_vec(),
+                ))
             }
         }
 
@@ -1920,18 +1929,18 @@ mod tests {
                 output: &[u8],
             ) -> Option<TerminalUpdate> {
                 assert_eq!(output, b"cursor only");
-                Some(TerminalUpdate {
-                    patch_kind: protocol::PatchKind::CursorOnly,
-                    surface: input.surface,
-                    cursor: TerminalCursor {
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::CursorOnly,
+                    input.surface,
+                    TerminalCursor {
                         row: 1,
                         col: 12,
                         visible: true,
                         shape: protocol::CursorShape::Beam,
                     },
-                    surface_lines: input.surface_lines.to_vec(),
-                    scrollback_lines: input.scrollback_lines.to_vec(),
-                })
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                ))
             }
 
             fn resize(
@@ -1978,18 +1987,18 @@ mod tests {
                 output: &[u8],
             ) -> Option<TerminalUpdate> {
                 assert_eq!(output, b"mode only");
-                Some(TerminalUpdate {
-                    patch_kind: protocol::PatchKind::ModeOnly,
-                    surface: input.surface,
-                    cursor: TerminalCursor {
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::ModeOnly,
+                    input.surface,
+                    TerminalCursor {
                         row: input.cursor.row,
                         col: input.cursor.col,
                         visible: input.cursor.visible,
                         shape: protocol::CursorShape::Beam,
                     },
-                    surface_lines: input.surface_lines.to_vec(),
-                    scrollback_lines: input.scrollback_lines.to_vec(),
-                })
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                ))
             }
 
             fn resize(
@@ -2025,13 +2034,13 @@ mod tests {
                 assert_eq!(output, b"history only");
                 let mut scrollback_lines = input.scrollback_lines.to_vec();
                 scrollback_lines.push("history only".to_owned());
-                Some(TerminalUpdate {
-                    patch_kind: protocol::PatchKind::ReplaceRows,
-                    surface: input.surface,
-                    cursor: input.cursor,
-                    surface_lines: input.surface_lines.to_vec(),
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    input.surface_lines.to_vec(),
                     scrollback_lines,
-                })
+                ))
             }
 
             fn resize(

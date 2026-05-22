@@ -55,8 +55,32 @@ pub struct TerminalUpdate {
     pub patch_kind: protocol::PatchKind,
     pub surface: protocol::SurfaceKind,
     pub cursor: TerminalCursor,
+    pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
+    pub surface_row_runs: Vec<Vec<CellRun>>,
     pub scrollback_lines: Vec<String>,
+    pub scrollback_row_runs: Vec<Vec<CellRun>>,
+}
+
+impl TerminalUpdate {
+    pub fn plain(
+        patch_kind: protocol::PatchKind,
+        surface: protocol::SurfaceKind,
+        cursor: TerminalCursor,
+        surface_lines: Vec<String>,
+        scrollback_lines: Vec<String>,
+    ) -> Self {
+        Self {
+            patch_kind,
+            surface,
+            cursor,
+            styles: vec![PaneStyle::default()],
+            surface_row_runs: plain_row_runs(&surface_lines),
+            scrollback_row_runs: plain_row_runs(&scrollback_lines),
+            surface_lines,
+            scrollback_lines,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,13 +190,20 @@ fn interim_text_update(
         shape: previous_cursor.shape,
     };
 
-    TerminalUpdate {
-        patch_kind: protocol::PatchKind::ReplaceRows,
+    TerminalUpdate::plain(
+        protocol::PatchKind::ReplaceRows,
         surface,
         cursor,
         surface_lines,
         scrollback_lines,
-    }
+    )
+}
+
+fn plain_row_runs(lines: &[String]) -> Vec<Vec<CellRun>> {
+    lines
+        .iter()
+        .map(|line| vec![CellRun::plain(line.clone())])
+        .collect()
 }
 
 fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
@@ -296,13 +327,13 @@ mod ghostty_vt {
                 protocol::PatchKind::ReplaceRows
             };
 
-            Some(TerminalUpdate {
+            Some(TerminalUpdate::plain(
                 patch_kind,
                 surface,
                 cursor,
-                scrollback_lines,
                 surface_lines,
-            })
+                scrollback_lines,
+            ))
         }
 
         fn scrollback_lines(&mut self) -> Option<Vec<String>> {

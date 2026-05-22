@@ -3268,13 +3268,13 @@ mod tests {
                 output: &[u8],
             ) -> Option<TerminalUpdate> {
                 assert_eq!(output, b"alternate");
-                Some(TerminalUpdate {
-                    patch_kind: protocol::PatchKind::CursorOnly,
-                    surface: protocol::SurfaceKind::Alternate,
-                    cursor: input.cursor,
-                    surface_lines: input.surface_lines.to_vec(),
-                    scrollback_lines: input.scrollback_lines.to_vec(),
-                })
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::CursorOnly,
+                    protocol::SurfaceKind::Alternate,
+                    input.cursor,
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                ))
             }
 
             fn resize(
