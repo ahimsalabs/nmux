@@ -197,7 +197,8 @@ patches, row semantic prompt metadata, per-run semantic content, row dirty
 metadata, row state hashes, Kitty placeholder row metadata, mode payloads,
 mode-only patch application, sparse row replacement, `FullRefreshRequired`
 snapshot recovery for known-version live clients, metadata-only no-row live
-updates, cached client-state compatibility, cached terminal metadata reattach,
+updates, libghostty-vt live mode-only patch cache persistence,
+cached client-state compatibility, cached terminal metadata reattach,
 current-surface live key, paste, named-key, focus, and mouse forwarding,
 current-surface live focus/mouse rejection, libghostty-vt current-surface
 bracketed-paste wrapping, libghostty-vt current-surface mouse forwarding,
