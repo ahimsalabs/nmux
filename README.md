@@ -5,7 +5,7 @@ nmux is an experimental portable terminal workspace protocol. The project direct
 - backend-owned terminal state, not client-side PTY replay;
 - FlatBuffers state-sync messages for sessions, tabs, panes, surfaces, scrollback, presence, input, and resize intent;
 - local, sandbox, and adapter process boundaries;
-- backend Ghostty/libghostty-vt as the planned terminal-state correctness path, with a temporary text surface in the current prototype;
+- backend Ghostty/libghostty-vt as the opt-in terminal-state correctness path, with a temporary text surface as the default prototype engine;
 - adapters such as tmux or herdr kept outside the core model.
 
 The current implementation is a Rust workspace with:
@@ -32,7 +32,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --help
 nix develop path:$PWD -c cargo run --bin nmuxd -- --help
 ```
 
-`nmux --help` also calls out the current renderer limitation: the prototype uses an interim text surface, not a VT-correct terminal emulator. That is a sequencing device while the local state-sync/live workflow stabilizes; backend `libghostty-vt` extraction is the planned replacement, separate from the later question of hydrating a frontend Ghostty renderer from nmux-owned state.
+`nmux --help` also calls out the current renderer limitation: the default prototype uses an interim text surface, not a VT-correct terminal emulator. That is a sequencing device while the local state-sync/live workflow stays fast. Backend `libghostty-vt` extraction is available behind an opt-in Cargo feature, separate from the later question of hydrating a frontend Ghostty renderer from nmux-owned state.
 
 One-shot attach:
 
@@ -93,6 +93,6 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 
 Expected output includes `resize=active-client`.
 
-This is still a prototype. It has an interactive byte-streamed live path, but the temporary text surface is not a VT-correct terminal emulator; ANSI styling, cursor motion, alternate screen, images, and grapheme/cell-width correctness are not complete. Backend `libghostty-vt` extraction is the next correctness step once the local state-sync spine has enough snapshots, patches, scrollback, and reconnect behavior to validate against.
+This is still a prototype. It has an interactive byte-streamed live path, but the default temporary text surface is not a VT-correct terminal emulator; ANSI styling, cursor motion, alternate screen, images, and grapheme/cell-width correctness are not complete in the default engine. Backend `libghostty-vt` extraction is available as an experimental opt-in engine for correctness work.
 The core now routes pane output through a daemon-owned terminal engine boundary so that interim behavior can be replaced without changing client-side state-sync semantics.
-`nmuxd --terminal-engine interim` makes the current engine explicit. `libghostty-vt` is imported behind the Cargo feature of the same name, but it is not the default engine until the remaining extraction gaps are closed.
+`nmuxd --terminal-engine interim` makes the default engine explicit. `nmuxd --terminal-engine libghostty-vt` is available only in `--features libghostty-vt` builds; it is compile-checked and smoke-tested, but not yet the default because it pulls in the native Ghostty/Zig build path.
