@@ -1130,6 +1130,29 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_render_state_tracks_cursor_blinking_without_protocol_fields() {
+        use libghostty_vt::{RenderState, Terminal, TerminalOptions};
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+        let mut render_state = RenderState::new().expect("render state");
+
+        terminal.vt_write(b"\x1b[?12l");
+        let snapshot = render_state.update(&terminal).expect("snapshot");
+        assert!(!snapshot.cursor_blinking().expect("cursor blink off"));
+        drop(snapshot);
+
+        terminal.vt_write(b"\x1b[?12h");
+        let snapshot = render_state.update(&terminal).expect("snapshot");
+        assert!(snapshot.cursor_blinking().expect("cursor blink on"));
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_reports_alternate_screen() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();
