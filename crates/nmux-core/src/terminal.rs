@@ -318,15 +318,23 @@ mod ghostty_vt {
             force_rows: bool,
         ) -> Option<TerminalUpdate> {
             let surface = surface_kind(&self.terminal)?;
-            let scrollback_lines = if surface == protocol::SurfaceKind::Main {
-                self.scrollback_lines()?
+            let mut styles = vec![PaneStyle::default()];
+            let scrollback_rows = if surface == protocol::SurfaceKind::Main {
+                self.scrollback_rows(&mut styles)?
             } else {
-                input.scrollback_lines.to_vec()
+                ExtractedRows {
+                    lines: input.scrollback_lines.to_vec(),
+                    row_runs: super::plain_row_runs(input.scrollback_lines),
+                }
             };
             self.terminal.scroll_viewport(ScrollViewport::Bottom);
             let snapshot = self.render_state.update(&self.terminal).ok()?;
-            let surface_rows =
-                extract_rows(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?;
+            let surface_rows = extract_rows(
+                &snapshot,
+                &mut self.row_iterator,
+                &mut self.cell_iterator,
+                &mut styles,
+            )?;
             let surface_lines = surface_rows.lines.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
             let patch_kind = if !force_rows
@@ -343,54 +351,69 @@ mod ghostty_vt {
                 patch_kind,
                 surface,
                 cursor,
-                styles: surface_rows.styles,
+                styles,
                 surface_row_runs: surface_rows.row_runs,
-                scrollback_row_runs: super::plain_row_runs(&scrollback_lines),
+                scrollback_row_runs: scrollback_rows.row_runs,
                 surface_lines,
-                scrollback_lines,
+                scrollback_lines: scrollback_rows.lines,
             })
         }
 
-        fn scrollback_lines(&mut self) -> Option<Vec<String>> {
+        fn scrollback_rows(&mut self, styles: &mut Vec<PaneStyle>) -> Option<ExtractedRows> {
             let total_rows = self.terminal.total_rows().ok()?;
             if total_rows == 0 {
-                return Some(Vec::new());
+                return Some(ExtractedRows {
+                    lines: Vec::new(),
+                    row_runs: Vec::new(),
+                });
             }
 
             self.terminal.scroll_viewport(ScrollViewport::Top);
             let snapshot = self.render_state.update(&self.terminal).ok()?;
-            let mut lines =
-                extract_rows(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?.lines;
-            lines.truncate(total_rows);
+            let mut rows = extract_rows(
+                &snapshot,
+                &mut self.row_iterator,
+                &mut self.cell_iterator,
+                styles,
+            )?;
+            rows.lines.truncate(total_rows);
+            rows.row_runs.truncate(total_rows);
 
-            while lines.len() < total_rows {
+            while rows.lines.len() < total_rows {
                 self.terminal.scroll_viewport(ScrollViewport::Delta(1));
                 let snapshot = self.render_state.update(&self.terminal).ok()?;
-                let viewport_lines =
-                    extract_rows(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?.lines;
-                let Some(next_line) = viewport_lines.last() else {
+                let viewport_lines = extract_rows(
+                    &snapshot,
+                    &mut self.row_iterator,
+                    &mut self.cell_iterator,
+                    styles,
+                )?;
+                let Some(next_line) = viewport_lines.lines.last() else {
                     break;
                 };
-                lines.push(next_line.clone());
+                let Some(next_runs) = viewport_lines.row_runs.last() else {
+                    break;
+                };
+                rows.lines.push(next_line.clone());
+                rows.row_runs.push(next_runs.clone());
             }
 
-            Some(lines)
+            Some(rows)
         }
     }
 
     struct ExtractedRows {
         lines: Vec<String>,
         row_runs: Vec<Vec<CellRun>>,
-        styles: Vec<PaneStyle>,
     }
 
     fn extract_rows<'alloc>(
         snapshot: &RenderSnapshot<'alloc, '_>,
         row_iterator: &mut RowIterator<'alloc>,
         cell_iterator: &mut CellIterator<'alloc>,
+        styles: &mut Vec<PaneStyle>,
     ) -> Option<ExtractedRows> {
         let mut rows = row_iterator.update(snapshot).ok()?;
-        let mut styles = vec![PaneStyle::default()];
         let mut row_runs = Vec::new();
         let mut lines = Vec::new();
         while let Some(row) = rows.next() {
@@ -405,7 +428,7 @@ mod ghostty_vt {
                 };
 
                 let text = cell_text(&cells)?;
-                let style_id = style_id(&mut styles, pane_style(&cells)?);
+                let style_id = style_id(styles, pane_style(&cells)?);
                 if let Some(last) = runs.last_mut()
                     && last.style_id == style_id
                     && last.flags == 0
@@ -427,11 +450,7 @@ mod ghostty_vt {
             lines.push(super::cell_runs_text(&runs));
             row_runs.push(runs);
         }
-        Some(ExtractedRows {
-            lines,
-            row_runs,
-            styles,
-        })
+        Some(ExtractedRows { lines, row_runs })
     }
 
     fn cell_text(cells: &libghostty_vt::render::CellIteration<'_, '_>) -> Option<String> {
@@ -1237,7 +1256,7 @@ mod tests {
         let update = engine
             .apply_output(
                 terminal_input_with_size(20, 2, &empty, &empty),
-                b"one\r\ntwo\r\nthree\r\nfour",
+                b"\x1b[31mone\x1b[0m\r\ntwo\r\nthree\r\nfour",
             )
             .expect("terminal update");
 
@@ -1256,6 +1275,26 @@ mod tests {
                 update.scrollback_lines
             );
         }
+
+        let styled_history_run = update
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("one"))
+            .expect("styled scrollback run");
+        assert_ne!(
+            styled_history_run.style_id, 0,
+            "styled scrollback should preserve Ghostty style IDs: {:?}",
+            update.scrollback_row_runs
+        );
+        let style = update
+            .styles
+            .get(styled_history_run.style_id as usize)
+            .expect("scrollback style");
+        assert_ne!(
+            style.fg_rgba, 0,
+            "styled scrollback should reference a resolved style table entry"
+        );
     }
 }
 use std::collections::HashMap;

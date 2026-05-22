@@ -65,9 +65,9 @@ Do not freeze these into ad hoc string fields. Add protocol fields or objects
 only after the backend extraction proves the exact shape needed.
 
 - Cell style runs: `libghostty-vt` now supplies foreground/background colors,
-  basic SGR flags, style identity, and cell widths for visible rows. Surface
-  snapshots and scrollback chunks carry a pane style table; richer style
-  semantics still need protocol decisions.
+  basic SGR flags, style identity, and cell widths for visible and scrollback
+  rows. Surface snapshots and scrollback chunks carry a pane style table;
+  richer style semantics still need protocol decisions.
 - Grapheme and cell width: double-width cells and combining marks are covered
   by `libghostty-vt` extraction tests and represented as per-cell run widths.
   Emoji clusters, zero-width continuations, and ambiguous-width policy still
@@ -115,7 +115,7 @@ have tests proving:
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, wide-cell widths, cursor-only updates,
 cursor visibility and shape extraction, alternate-screen detection,
-resize/reflow, and backend-owned scrollback extraction through unit, session,
-and live CLI smoke coverage. It is not the default until the project
+resize/reflow, and styled backend-owned scrollback extraction through unit,
+session, and live CLI smoke coverage. It is not the default until the project
 deliberately accepts the native Zig/Ghostty build cost in normal development and
 CI.
