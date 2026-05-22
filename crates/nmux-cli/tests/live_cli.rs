@@ -1031,20 +1031,18 @@ fn live_libghostty_vt_cli_blocks_motion_in_normal_mouse_mode() {
     let _ = fs::remove_file(&socket_path);
 
     assert!(
-        client.status.success(),
-        "nmux failed: {}",
-        String::from_utf8_lossy(&client.stderr)
+        !client.status.success(),
+        "nmux unexpectedly succeeded:\n{}",
+        String::from_utf8_lossy(&client.stdout)
     );
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 
-    let stdout = String::from_utf8_lossy(&client.stdout);
+    let stderr = String::from_utf8_lossy(&client.stderr);
     assert!(
-        stdout.contains("mouse:"),
-        "missing mouse probe output:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("mouse:1b"),
-        "motion input leaked through normal mouse mode:\n{stdout}"
+        stderr.contains(
+            "nmux: live server error: input rejected: normal mouse tracking accepts press and release events only"
+        ),
+        "missing mouse rejection error:\n{stderr}"
     );
 }
 
@@ -1230,6 +1228,110 @@ fn live_cli_warns_when_resize_request_conflicts_with_manual_policy() {
     assert!(
         !stdout.contains("size=100x30"),
         "manual policy should not publish committed resize:\n{stdout}"
+    );
+}
+
+#[test]
+fn live_cli_reports_structured_input_encoding_errors() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'ready\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--key-name",
+            "arrow-up",
+            "--key-modifiers",
+            "ctrl",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        !client.status.success(),
+        "nmux unexpectedly succeeded:\n{}",
+        String::from_utf8_lossy(&client.stdout)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains(
+            "nmux: live server error: terminal engine cannot encode modified key name: arrow-up"
+        ),
+        "missing structured input error:\n{stderr}"
+    );
+}
+
+#[test]
+fn live_cli_reports_mouse_tracking_rejections() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'ready\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--mouse",
+            "press:left:1:1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        !client.status.success(),
+        "nmux unexpectedly succeeded:\n{}",
+        String::from_utf8_lossy(&client.stdout)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains("nmux: live server error: input rejected: mouse tracking is disabled"),
+        "missing mouse tracking error:\n{stderr}"
     );
 }
 

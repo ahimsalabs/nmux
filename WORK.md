@@ -482,6 +482,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal title and OSC 7 working-directory metadata
   title/OSC 7-only updates use no-row surface patches, and feature-gated live CLI coverage proves non-redraw clients print metadata-only changes without reprinting unchanged row text
   local CLI rendering prints non-empty terminal title and OSC 7 working-directory metadata with the current pane surface
+  live structured-input encoding failures return protocol Error frames instead of opaque daemon exits
   SurfaceRow, RowUpdate, and ScrollbackRow carry OSC 133 row semantic prompt metadata; CellRun carries OSC 133 output/input/prompt semantic content; broader semantic command IDs, ranges, lifecycle, and exit metadata remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk carry TerminalColorState; color-state changes require full refreshes while incremental palette diffs remain withheld
   ReplaceRows patches now carry only changed rows when the pane geometry is stable; SurfaceRow, RowUpdate, and ScrollbackRow carry backend row dirty flags and row state hashes as metadata, while richer run/region damage protocol fields remain withheld

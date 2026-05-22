@@ -439,6 +439,15 @@ fn serve_live_attached_client(
                 LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
                     if Session::input_allowed(&actor) {
                         break Some(input);
+                    } else {
+                        write_input_error(
+                            stream,
+                            session,
+                            &mut seq,
+                            protocol::ErrorCode::PermissionDenied,
+                            "input rejected: actor is read-only",
+                        )?;
+                        return Ok(());
                     }
                 }
                 LiveClientRead::NoFrame => break None,
@@ -447,8 +456,29 @@ fn serve_live_attached_client(
         };
         if Session::input_allowed(&actor) {
             if let Some(input) = input {
-                if input.forwarding_allowed(session) {
-                    let bytes = input.forwarded_bytes(session, engines)?;
+                if let Some(rejection) = input.forwarding_rejection(session) {
+                    write_input_error(
+                        stream,
+                        session,
+                        &mut seq,
+                        protocol::ErrorCode::PermissionDenied,
+                        rejection.message(),
+                    )?;
+                    return Ok(());
+                } else {
+                    let bytes = match input.forwarded_bytes(session, engines) {
+                        Ok(bytes) => bytes,
+                        Err(err) => {
+                            write_input_error(
+                                stream,
+                                session,
+                                &mut seq,
+                                protocol::ErrorCode::Unknown,
+                                &err.to_string(),
+                            )?;
+                            return Ok(());
+                        }
+                    };
                     host.write_input(&input.pane_id, &bytes)?;
                 }
                 poll_pane_output_until_quiet(session, engines, host, &input.pane_id)?;
@@ -578,8 +608,31 @@ fn serve_attached_client(
         if Session::input_allowed(&actor) {
             let input = read_input_event_from_stream(stream)?;
             if let Some(host) = host.as_deref_mut() {
-                if input.forwarding_allowed(session) {
-                    let bytes = input.forwarded_bytes(session, engines)?;
+                if let Some(rejection) = input.forwarding_rejection(session) {
+                    let mut seq = 4;
+                    write_input_error(
+                        stream,
+                        session,
+                        &mut seq,
+                        protocol::ErrorCode::PermissionDenied,
+                        rejection.message(),
+                    )?;
+                    return Ok(());
+                } else {
+                    let bytes = match input.forwarded_bytes(session, engines) {
+                        Ok(bytes) => bytes,
+                        Err(err) => {
+                            let mut seq = 4;
+                            write_input_error(
+                                stream,
+                                session,
+                                &mut seq,
+                                protocol::ErrorCode::Unknown,
+                                &err.to_string(),
+                            )?;
+                            return Ok(());
+                        }
+                    };
                     host.write_input(&input.pane_id, &bytes)?;
                 }
                 poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
@@ -596,6 +649,19 @@ fn serve_attached_client(
             wire::write_default_frame(stream, &chunk)?;
         }
     }
+    Ok(())
+}
+
+fn write_input_error(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    code: protocol::ErrorCode,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let error = session.error_frame("local-client", *seq, code, message, false);
+    wire::write_default_frame(stream, &error)?;
+    *seq += 1;
     Ok(())
 }
 
@@ -1270,6 +1336,9 @@ pub fn read_live_surface_update_from_stream(
                 | protocol::EnvelopeBody::PaneSurfacePatch => {
                     Ok(LiveSurfaceRead::Update(surface_update_from_frame(&frame)?))
                 }
+                protocol::EnvelopeBody::Error => {
+                    Ok(LiveSurfaceRead::Error(error_summary_from_frame(&frame)?))
+                }
                 other => Err(format!("unexpected live server frame: {other:?}").into()),
             }
         }
@@ -1293,6 +1362,19 @@ pub fn read_live_surface_update_from_stream(
         }
         Err(err) => Err(err.into()),
     }
+}
+
+pub fn error_summary_from_frame(frame: &[u8]) -> Result<ErrorSummary, Box<dyn std::error::Error>> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::Error {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+    let error = envelope.body_as_error().ok_or("missing error body")?;
+    Ok(ErrorSummary {
+        code: error.code(),
+        message: error.message().unwrap_or_default().to_owned(),
+        retryable: error.retryable(),
+    })
 }
 
 pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn std::error::Error>> {
@@ -1831,8 +1913,16 @@ pub struct SurfaceUpdate {
 pub enum LiveSurfaceRead {
     Workspace(WorkspaceSummary),
     Update(SurfaceUpdate),
+    Error(ErrorSummary),
     NoFrame,
     Closed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErrorSummary {
+    pub code: protocol::ErrorCode,
+    pub message: String,
+    pub retryable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2949,19 +3039,28 @@ pub struct MouseSummary {
 }
 
 impl InputSummary {
-    fn forwarding_allowed(&self, session: &Session) -> bool {
-        (!self.requires_focus_reporting || session.pane_focus_reporting(&self.pane_id))
-            && (!self.requires_mouse_tracking || self.mouse_forwarding_allowed(session))
+    fn forwarding_rejection(&self, session: &Session) -> Option<InputRejection> {
+        if self.requires_focus_reporting && !session.pane_focus_reporting(&self.pane_id) {
+            return Some(InputRejection::FocusReportingDisabled);
+        }
+        if self.requires_mouse_tracking {
+            return self.mouse_forwarding_rejection(session);
+        }
+        None
     }
 
-    fn mouse_forwarding_allowed(&self, session: &Session) -> bool {
+    fn mouse_forwarding_rejection(&self, session: &Session) -> Option<InputRejection> {
         let Some(mouse) = self.mouse else {
-            return session.pane_mouse_tracking(&self.pane_id);
+            return (!session.pane_mouse_tracking(&self.pane_id))
+                .then_some(InputRejection::MouseTrackingDisabled);
         };
         let Some(mode) = session.pane_mouse_tracking_mode(&self.pane_id) else {
-            return false;
+            return Some(InputRejection::MouseTrackingDisabled);
         };
-        mouse_input_allowed(mode, mouse)
+        if mode == protocol::MouseTrackingMode::None {
+            return Some(InputRejection::MouseTrackingDisabled);
+        }
+        (!mouse_input_allowed(mode, mouse)).then_some(InputRejection::MouseActionRejected(mode))
     }
 
     fn forwarded_bytes(
@@ -3013,6 +3112,40 @@ impl InputSummary {
             return paste_input_bytes(paste_text, session.pane_bracketed_paste(&self.pane_id));
         }
         Ok(self.bytes.clone())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputRejection {
+    FocusReportingDisabled,
+    MouseTrackingDisabled,
+    MouseActionRejected(protocol::MouseTrackingMode),
+}
+
+impl InputRejection {
+    fn message(self) -> &'static str {
+        match self {
+            Self::FocusReportingDisabled => "input rejected: focus reporting is disabled",
+            Self::MouseTrackingDisabled => "input rejected: mouse tracking is disabled",
+            Self::MouseActionRejected(protocol::MouseTrackingMode::X10) => {
+                "input rejected: X10 mouse tracking accepts press events only"
+            }
+            Self::MouseActionRejected(protocol::MouseTrackingMode::Normal) => {
+                "input rejected: normal mouse tracking accepts press and release events only"
+            }
+            Self::MouseActionRejected(protocol::MouseTrackingMode::Button) => {
+                "input rejected: button mouse tracking requires a pressed button for motion"
+            }
+            Self::MouseActionRejected(protocol::MouseTrackingMode::Any) => {
+                "input rejected: mouse action is not accepted by current tracking mode"
+            }
+            Self::MouseActionRejected(protocol::MouseTrackingMode::None) => {
+                "input rejected: mouse tracking is disabled"
+            }
+            Self::MouseActionRejected(_) => {
+                "input rejected: mouse action is not accepted by current tracking mode"
+            }
+        }
     }
 }
 
@@ -4344,6 +4477,59 @@ mod tests {
     }
 
     #[test]
+    fn live_read_only_attach_rejects_explicit_input_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve read-only live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "spectator".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadOnly);
+
+        send_key_input(&mut stream, "pane-1", "denied").expect("send input");
+        let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
+        assert_eq!(
+            error,
+            LiveSurfaceRead::Error(ErrorSummary {
+                code: protocol::ErrorCode::PermissionDenied,
+                message: "input rejected: actor is read-only".to_owned(),
+                retryable: false,
+            })
+        );
+
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn live_attach_serves_initial_scrollback_fetch() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -4576,6 +4762,27 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_error_from_server_frame() {
+        let frame = Session::initial().error_frame(
+            "local-client",
+            3,
+            protocol::ErrorCode::Unknown,
+            "unsupported input",
+            false,
+        );
+        let error = error_summary_from_frame(&frame).expect("error summary");
+
+        assert_eq!(
+            error,
+            ErrorSummary {
+                code: protocol::ErrorCode::Unknown,
+                message: "unsupported input".to_owned(),
+                retryable: false,
             }
         );
     }
@@ -5115,9 +5322,12 @@ mod tests {
             requires_mouse_tracking: false,
         };
 
-        assert!(!input.forwarding_allowed(&session));
+        assert_eq!(
+            input.forwarding_rejection(&session),
+            Some(InputRejection::FocusReportingDisabled)
+        );
         session.tabs[0].root.modes.focus_reporting = true;
-        assert!(input.forwarding_allowed(&session));
+        assert_eq!(input.forwarding_rejection(&session), None);
     }
 
     #[test]
@@ -5143,11 +5353,17 @@ mod tests {
             requires_mouse_tracking: true,
         };
 
-        assert!(!input.forwarding_allowed(&session));
+        assert_eq!(
+            input.forwarding_rejection(&session),
+            Some(InputRejection::MouseTrackingDisabled)
+        );
         session.tabs[0].root.modes.mouse_tracking = true;
-        assert!(!input.forwarding_allowed(&session));
+        assert_eq!(
+            input.forwarding_rejection(&session),
+            Some(InputRejection::MouseTrackingDisabled)
+        );
         session.tabs[0].root.modes.mouse_tracking_mode = protocol::MouseTrackingMode::Normal;
-        assert!(input.forwarding_allowed(&session));
+        assert_eq!(input.forwarding_rejection(&session), None);
     }
 
     #[test]

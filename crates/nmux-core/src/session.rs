@@ -1007,6 +1007,46 @@ impl Session {
         builder.finished_data().to_vec()
     }
 
+    pub fn error_frame(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        code: protocol::ErrorCode,
+        message: &str,
+        retryable: bool,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+
+        let message = builder.create_string(message);
+        let error = protocol::Error::create(
+            &mut builder,
+            &protocol::ErrorArgs {
+                code,
+                message: Some(message),
+                retryable,
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::Error,
+                body: Some(error.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+
     pub fn key_input_frame(
         &self,
         connection_id: &str,
