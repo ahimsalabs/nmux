@@ -77,8 +77,9 @@ only after the backend extraction proves the exact shape needed.
   application cursor keys, but nmux has no mode fields yet. Origin mode, wrap
   mode, keypad mode, cursor blink, and the client-visible shape of mode updates
   still need protocol decisions.
-- Alternate screen: alternate scrollback behavior and transitions between
-  primary and alternate buffers.
+- Alternate screen: `libghostty-vt` extraction tests cover entry into the
+  alternate buffer and restoration of the primary buffer. Alternate scrollback
+  behavior still needs protocol guidance.
 - Palette and theme state: indexed SGR colors resolve into RGBA style-table
   entries during `libghostty-vt` extraction. Palette overrides, default
   foreground/background ownership, and dynamic color changes still need protocol

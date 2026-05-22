@@ -1039,6 +1039,66 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_restores_main_screen_after_alternate_screen() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let primary = engine
+            .apply_output(terminal_input(2, &empty, &empty), b"primary")
+            .expect("primary update");
+        assert_eq!(primary.surface, protocol::SurfaceKind::Main);
+        assert!(
+            primary
+                .surface_lines
+                .iter()
+                .any(|line| line.contains("primary")),
+            "primary surface did not contain text: {:?}",
+            primary.surface_lines
+        );
+
+        let alternate = engine
+            .apply_output(
+                terminal_input(2, &primary.surface_lines, &primary.scrollback_lines),
+                b"\x1b[?1049halternate",
+            )
+            .expect("alternate update");
+        assert_eq!(alternate.surface, protocol::SurfaceKind::Alternate);
+        assert!(
+            alternate
+                .surface_lines
+                .iter()
+                .any(|line| line.contains("alternate")),
+            "alternate surface did not contain text: {:?}",
+            alternate.surface_lines
+        );
+
+        let restored = engine
+            .apply_output(
+                terminal_input(2, &alternate.surface_lines, &alternate.scrollback_lines),
+                b"\x1b[?1049l",
+            )
+            .expect("restore update");
+        assert_eq!(restored.surface, protocol::SurfaceKind::Main);
+        assert!(
+            restored
+                .surface_lines
+                .iter()
+                .any(|line| line.contains("primary")),
+            "main surface was not restored: {:?}",
+            restored.surface_lines
+        );
+        assert!(
+            restored
+                .surface_lines
+                .iter()
+                .all(|line| !line.contains("alternate")),
+            "alternate text leaked into restored main surface: {:?}",
+            restored.surface_lines
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_resizes_after_wrapped_output() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();

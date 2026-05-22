@@ -100,6 +100,7 @@ Done:
 - Style-table changes now force a full pane surface snapshot, while row-run-only changes can still use `PaneSurfacePatch`.
 - `ScrollbackChunk` now carries the pane style table, so scrollback row runs no longer reference style IDs without an accompanying table.
 - The optional `libghostty-vt` engine extracts visible rows as style-separated cell runs with cell-width metadata, while keeping plain rendered text available for current clients.
+- `libghostty-vt` extraction tests now cover alternate-screen entry and restoration to the main screen.
 - Palette-indexed SGR colors now have `libghostty-vt` extraction coverage proving they resolve into RGBA style-table entries.
 - `libghostty-vt` extraction tests now cover combining marks as preserved run text with per-cell widths, alongside existing double-width cell coverage.
 - OSC 8 hyperlink text is preserved while `hyperlink_id` remains unset until nmux has a real hyperlink table.
