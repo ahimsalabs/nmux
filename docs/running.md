@@ -179,6 +179,8 @@ applied by the host, the daemon returns an `Error` frame and the CLI prints the
 server-provided reason instead of reporting an ambiguous closed connection.
 One-shot clients also check for an input error before requesting scrollback, so
 unsafe paste, encoding failures, and host input failures are reported directly.
+Pane-scoped input, resize, and scrollback requests for unknown panes return a
+`PaneNotFound` error instead of waiting for a response that will never arrive.
 
 For read-only live observation, use `--no-input`:
 

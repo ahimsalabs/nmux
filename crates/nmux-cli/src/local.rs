@@ -409,7 +409,8 @@ fn serve_live_attached_client(
                         fetch.start_line,
                         fetch.line_count,
                     ) else {
-                        continue;
+                        write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
+                        return Ok(());
                     };
                     wire::write_default_frame(stream, &chunk)?;
                     seq += 1;
@@ -417,6 +418,10 @@ fn serve_live_attached_client(
                 LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                     if !Session::input_allowed(&actor) {
                         continue;
+                    }
+                    if session.surface_version(&resize.pane_id).is_none() {
+                        write_pane_not_found_error(stream, session, &mut seq, &resize.pane_id)?;
+                        return Ok(());
                     }
                     let policy = session
                         .pane_resize_policy(&resize.pane_id)
@@ -465,6 +470,10 @@ fn serve_live_attached_client(
         };
         if Session::input_allowed(&actor) {
             if let Some(input) = input {
+                if session.surface_version(&input.pane_id).is_none() {
+                    write_pane_not_found_error(stream, session, &mut seq, &input.pane_id)?;
+                    return Ok(());
+                }
                 if let Some(rejection) = input.forwarding_rejection(session) {
                     write_protocol_error(
                         stream,
@@ -626,6 +635,11 @@ fn serve_attached_client(
         if Session::input_allowed(&actor) {
             let input = read_input_event_from_stream(stream)?;
             if let Some(host) = host.as_deref_mut() {
+                if session.surface_version(&input.pane_id).is_none() {
+                    let mut seq = 4;
+                    write_pane_not_found_error(stream, session, &mut seq, &input.pane_id)?;
+                    return Ok(());
+                }
                 if let Some(rejection) = input.forwarding_rejection(session) {
                     let mut seq = 4;
                     write_protocol_error(
@@ -675,9 +689,27 @@ fn serve_attached_client(
             fetch.line_count,
         ) {
             wire::write_default_frame(stream, &chunk)?;
+        } else {
+            let mut seq = 5;
+            write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
         }
     }
     Ok(())
+}
+
+fn write_pane_not_found_error(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    pane_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    write_protocol_error(
+        stream,
+        session,
+        seq,
+        protocol::ErrorCode::PaneNotFound,
+        &format!("pane not found: {pane_id}"),
+    )
 }
 
 fn write_protocol_error(
@@ -4601,6 +4633,85 @@ mod tests {
     }
 
     #[test]
+    fn attach_reports_missing_scrollback_pane_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+
+        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "reader".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadOnly);
+
+        send_scrollback_fetch(&mut stream, "missing-pane", 1, 2)
+            .expect("send missing scrollback fetch");
+        let frame = wire::read_default_frame(&mut stream).expect("read error frame");
+        let error = error_summary_from_frame(&frame).expect("decode error");
+        assert_eq!(
+            error,
+            ErrorSummary {
+                code: protocol::ErrorCode::PaneNotFound,
+                message: "pane not found: missing-pane".to_owned(),
+                retryable: false,
+            }
+        );
+
+        server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_reports_missing_input_pane_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadWrite);
+
+        send_key_input(&mut stream, "missing-pane", "input").expect("send input");
+        let frame = wire::read_default_frame(&mut stream).expect("read error frame");
+        let error = error_summary_from_frame(&frame).expect("decode error");
+        assert_eq!(
+            error,
+            ErrorSummary {
+                code: protocol::ErrorCode::PaneNotFound,
+                message: "pane not found: missing-pane".to_owned(),
+                retryable: false,
+            }
+        );
+
+        let host = server.join().expect("server thread");
+        assert!(!host.events().iter().any(|event| matches!(
+            event,
+            HostEvent::Input { pane_id, .. } if pane_id == "missing-pane"
+        )));
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn live_attach_forwards_repeated_input_and_streams_surface_updates() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -4815,6 +4926,122 @@ mod tests {
         );
 
         server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_attach_reports_missing_scrollback_pane_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live");
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert!(initial.surface.is_some());
+
+        send_scrollback_fetch(&mut stream, "missing-pane", 1, 2)
+            .expect("send missing scrollback fetch");
+        let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
+        assert_eq!(
+            error,
+            LiveSurfaceRead::Error(ErrorSummary {
+                code: protocol::ErrorCode::PaneNotFound,
+                message: "pane not found: missing-pane".to_owned(),
+                retryable: false,
+            })
+        );
+
+        server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_attach_reports_missing_resize_pane_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve live with missing resize pane");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert!(initial.surface.is_some());
+
+        send_resize_intent(&mut stream, "missing-pane", 100, 30).expect("send resize intent");
+        let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
+        assert_eq!(
+            error,
+            LiveSurfaceRead::Error(ErrorSummary {
+                code: protocol::ErrorCode::PaneNotFound,
+                message: "pane not found: missing-pane".to_owned(),
+                retryable: false,
+            })
+        );
+
+        let host = server.join().expect("server thread");
+        assert!(!host.events().iter().any(|event| matches!(
+            event,
+            HostEvent::Resized {
+                pane_id,
+                cols: 100,
+                rows: 30,
+            } if pane_id == "missing-pane"
+        )));
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_attach_reports_missing_input_pane_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve live with missing input pane");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert!(initial.surface.is_some());
+
+        send_key_input(&mut stream, "missing-pane", "input").expect("send input");
+        let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
+        assert_eq!(
+            error,
+            LiveSurfaceRead::Error(ErrorSummary {
+                code: protocol::ErrorCode::PaneNotFound,
+                message: "pane not found: missing-pane".to_owned(),
+                retryable: false,
+            })
+        );
+
+        let host = server.join().expect("server thread");
+        assert!(!host.events().iter().any(|event| matches!(
+            event,
+            HostEvent::Input { pane_id, .. } if pane_id == "missing-pane"
+        )));
         let _ = fs::remove_file(socket_path);
     }
 

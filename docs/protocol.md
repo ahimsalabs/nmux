@@ -93,6 +93,9 @@ When a structured input event cannot be encoded or safely forwarded, or a live
 control intent such as resize cannot be applied by the process host, the daemon
 sends an `Error` frame instead of terminating the connection with an opaque
 socket close. The local CLI reports that frame with the server-provided reason.
+Pane-scoped client intents for unknown panes return `ErrorCode::PaneNotFound`
+instead of hanging, silently omitting a response, or falling through to process
+host behavior.
 
 ## Validation
 
