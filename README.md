@@ -55,7 +55,7 @@ Connection failures include the socket path, which helps distinguish a missing d
 Use `nmux --connect-timeout-ms MS` when a script may start the client before `nmuxd` has finished binding the socket.
 `nmuxd` refuses to replace an existing socket path, so remove stale sockets deliberately or choose a different `--socket`.
 On normal bounded exits, `nmuxd` removes the socket path it created if that path still points at the same socket file.
-Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled.
+Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled. When the backend reports terminal title or OSC 7 working-directory metadata, the local CLI prints those metadata lines with the current pane surface.
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache when the daemon has no newer surface update to send.
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that survives repeated live client detach and reattach until the daemon is stopped.
 State load/save failures include the state path in the error.

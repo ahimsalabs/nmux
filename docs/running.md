@@ -195,7 +195,9 @@ feature. The dev shell pins Zig 0.15 because the Ghostty commit used by
 `libghostty-vt-sys` requires that Zig version.
 
 The opt-in engine keeps PTY bytes in `nmuxd` and maps Ghostty state back into
-nmux snapshots, patches, and scrollback chunks. Current coverage includes cursor
+nmux snapshots, patches, and scrollback chunks. The local CLI prints non-empty
+terminal title and OSC 7 working-directory metadata alongside the rendered pane
+surface, including redraw output. Current coverage includes cursor
 position/visibility/shape/blink, alternate-screen entry/restoration with alternate
 scrollback omission, resize/reflow, style-separated visible rows, styled
 scrollback rows, cell widths, combining marks, emoji ZWJ clusters, basic SGR

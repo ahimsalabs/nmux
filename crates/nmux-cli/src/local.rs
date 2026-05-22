@@ -1718,8 +1718,62 @@ pub struct AttachSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedAttach {
     pub workspace: WorkspaceSummary,
+    pub surface_metadata: TerminalMetadataSummary,
     pub surface_text: Option<String>,
     pub scrollback: Option<ScrollbackChunkSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TerminalMetadataSummary {
+    pub title: String,
+    pub working_directory: String,
+}
+
+impl TerminalMetadataSummary {
+    pub fn is_empty(&self) -> bool {
+        self.title.is_empty() && self.working_directory.is_empty()
+    }
+
+    pub fn display_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if !self.title.is_empty() {
+            lines.push(format!("title={}", sanitized_metadata_value(&self.title)));
+        }
+        if !self.working_directory.is_empty() {
+            lines.push(format!(
+                "working-directory={}",
+                sanitized_metadata_value(&self.working_directory)
+            ));
+        }
+        lines
+    }
+
+    fn from_update(update: &SurfaceUpdate) -> Self {
+        Self {
+            title: update.title.clone(),
+            working_directory: update.working_directory.clone(),
+        }
+    }
+
+    fn from_surface(surface: &ClientPaneSurface) -> Self {
+        Self {
+            title: surface.title.clone(),
+            working_directory: surface.working_directory.clone(),
+        }
+    }
+}
+
+fn sanitized_metadata_value(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch == '\t' || !ch.is_control() {
+                ch
+            } else {
+                '\u{fffd}'
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2074,13 +2128,17 @@ impl ClientAttachState {
         &mut self,
         snapshot: AttachSnapshot,
     ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
-        let surface_text = match snapshot.surface.as_ref() {
-            Some(update) => Some(self.apply_surface_update(update)?),
-            None => None,
+        let (surface_metadata, surface_text) = match snapshot.surface.as_ref() {
+            Some(update) => (
+                TerminalMetadataSummary::from_update(update),
+                Some(self.apply_surface_update(update)?),
+            ),
+            None => (TerminalMetadataSummary::default(), None),
         };
 
         Ok(RenderedAttach {
             workspace: snapshot.workspace,
+            surface_metadata,
             surface_text,
             scrollback: snapshot.scrollback,
         })
@@ -2098,6 +2156,13 @@ impl ClientAttachState {
             .iter()
             .find(|surface| surface.pane_id == pane_id)
             .map(ClientPaneSurface::render_text)
+    }
+
+    pub fn cached_surface_metadata(&self, pane_id: &str) -> Option<TerminalMetadataSummary> {
+        self.surfaces
+            .iter()
+            .find(|surface| surface.pane_id == pane_id)
+            .map(TerminalMetadataSummary::from_surface)
     }
 
     fn apply_surface_update(
@@ -3180,6 +3245,22 @@ mod tests {
     }
 
     #[test]
+    fn terminal_metadata_summary_formats_visible_values() {
+        let metadata = TerminalMetadataSummary {
+            title: "pane\u{1b} title".to_owned(),
+            working_directory: "file://localhost/tmp/nmux".to_owned(),
+        };
+
+        assert_eq!(
+            metadata.display_lines(),
+            vec![
+                "title=pane\u{fffd} title".to_owned(),
+                "working-directory=file://localhost/tmp/nmux".to_owned()
+            ]
+        );
+    }
+
+    #[test]
     fn client_surface_rejects_supported_patch_that_changes_colors() {
         let mut snapshot = surface_update(
             SurfaceUpdateKind::Snapshot,
@@ -3303,6 +3384,7 @@ mod tests {
             rendered.surface_text.as_deref(),
             Some("nmux pane-1\nserver-owned terminal state")
         );
+        assert!(rendered.surface_metadata.is_empty());
         assert_eq!(
             state.known_surfaces(),
             vec![KnownSurfaceVersion {

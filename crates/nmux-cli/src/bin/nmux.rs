@@ -111,9 +111,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut rendered = client_state.render_attach(snapshot)?;
     if rendered.surface_text.is_none() {
         rendered.surface_text = client_state.cached_surface_text(&rendered.workspace.pane_id);
+        rendered.surface_metadata = client_state
+            .cached_surface_metadata(&rendered.workspace.pane_id)
+            .unwrap_or_default();
     }
     warn_if_resize_intent_conflicts_with_policy(args.live_resize, rendered.workspace.resize_policy);
     let mut current_workspace = rendered.workspace.clone();
+    let mut current_surface_metadata = rendered.surface_metadata.clone();
     let mut current_surface_text = rendered
         .surface_text
         .clone()
@@ -204,7 +208,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::LiveSurfaceRead::Workspace(workspace) => {
                     current_workspace = workspace;
                     if args.redraw {
-                        print_live_surface(&current_workspace, &current_surface_text, args.redraw);
+                        print_live_surface(
+                            &current_workspace,
+                            &current_surface_metadata,
+                            &current_surface_text,
+                            args.redraw,
+                        );
                     } else {
                         println!("{}", current_workspace.display_line());
                     }
@@ -213,8 +222,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::LiveSurfaceRead::Update(update) => {
                     paste_bracketed = update.modes.bracketed_paste;
                     focus_reporting = update.modes.focus_reporting;
+                    current_surface_metadata = local::TerminalMetadataSummary {
+                        title: update.title.clone(),
+                        working_directory: update.working_directory.clone(),
+                    };
                     current_surface_text = client_state.render_surface_update(&update)?;
-                    print_live_surface(&current_workspace, &current_surface_text, args.redraw);
+                    print_live_surface(
+                        &current_workspace,
+                        &current_surface_metadata,
+                        &current_surface_text,
+                        args.redraw,
+                    );
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::NoFrame => break,
@@ -597,6 +615,7 @@ fn connect_timeout_duration(args: &Args) -> Option<Duration> {
 
 fn print_rendered(rendered: local::RenderedAttach) {
     println!("{}", rendered.workspace.display_line());
+    print_terminal_metadata(&rendered.surface_metadata);
     if let Some(surface_text) = rendered.surface_text {
         println!("{surface_text}");
     }
@@ -614,8 +633,12 @@ fn print_live_rendered(
         let surface_text = rendered
             .surface_text
             .unwrap_or_else(|| rendered.workspace.display_line());
-        let redraw_text =
-            redraw_text_with_context(&rendered.workspace, &surface_text, initial_scrollback);
+        let redraw_text = redraw_text_with_context(
+            &rendered.workspace,
+            &rendered.surface_metadata,
+            &surface_text,
+            initial_scrollback,
+        );
         redraw_terminal(&redraw_text);
         return;
     }
@@ -626,10 +649,21 @@ fn print_live_rendered(
     }
 }
 
-fn print_live_surface(workspace: &local::WorkspaceSummary, surface_text: &str, redraw: bool) {
+fn print_live_surface(
+    workspace: &local::WorkspaceSummary,
+    metadata: &local::TerminalMetadataSummary,
+    surface_text: &str,
+    redraw: bool,
+) {
     if redraw {
-        redraw_terminal(&redraw_text_with_context(workspace, surface_text, None));
+        redraw_terminal(&redraw_text_with_context(
+            workspace,
+            metadata,
+            surface_text,
+            None,
+        ));
     } else {
+        print_terminal_metadata(metadata);
         println!("{surface_text}");
     }
 }
@@ -647,16 +681,31 @@ fn print_scrollback(scrollback: local::ScrollbackChunkSummary) {
 
 fn redraw_text_with_context(
     workspace: &local::WorkspaceSummary,
+    metadata: &local::TerminalMetadataSummary,
     surface_text: &str,
     scrollback: Option<local::ScrollbackChunkSummary>,
 ) -> String {
     let mut text = workspace.display_line();
     text.push('\n');
+    append_terminal_metadata(&mut text, metadata);
     if let Some(scrollback) = scrollback {
         text.push_str(&format_scrollback(&scrollback));
     }
     text.push_str(surface_text);
     text
+}
+
+fn print_terminal_metadata(metadata: &local::TerminalMetadataSummary) {
+    for line in metadata.display_lines() {
+        println!("{line}");
+    }
+}
+
+fn append_terminal_metadata(text: &mut String, metadata: &local::TerminalMetadataSummary) {
+    for line in metadata.display_lines() {
+        text.push_str(&line);
+        text.push('\n');
+    }
 }
 
 fn format_scrollback(scrollback: &local::ScrollbackChunkSummary) -> String {
