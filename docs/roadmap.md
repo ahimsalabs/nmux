@@ -99,7 +99,7 @@ Done:
 - Pane state now preserves `CellRun` and style-table data internally, and snapshots/patches serialize stored runs instead of flattening every row to one default-style string.
 - Style-table changes now force a full pane surface snapshot, while row-run-only changes can still use `PaneSurfacePatch`.
 - `ScrollbackChunk` now carries the pane style table, so scrollback row runs no longer reference style IDs without an accompanying table.
-- The optional `libghostty-vt` engine extracts visible and scrollback rows as style-separated cell runs with cell-width metadata, while keeping plain rendered text available for current clients.
+- The optional `libghostty-vt` engine extracts visible and scrollback rows as style-separated cell runs with cell-width metadata, while keeping plain rendered text available for current clients. Style-bearing trailing blank cells are preserved so background-colored row regions survive, while default trailing blanks stay trimmed.
 - Basic SGR style flags now have `libghostty-vt` extraction coverage for bold, italic, underline, and strikethrough style-table bits.
 - Underline color now has `libghostty-vt` extraction coverage proving it resolves into an RGBA style-table entry.
 - Cursor-only `libghostty-vt` patches now cover cursor movement, visibility changes, and DECSCUSR visual shape changes.

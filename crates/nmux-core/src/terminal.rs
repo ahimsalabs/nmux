@@ -873,6 +873,9 @@ mod ghostty_vt {
 
     fn trim_trailing_spaces(runs: &mut Vec<CellRun>) {
         while let Some(last) = runs.last_mut() {
+            if !trimmable_trailing_run(last) {
+                break;
+            }
             while last.text.ends_with(' ') {
                 last.text.pop();
                 last.cell_widths.pop();
@@ -883,6 +886,10 @@ mod ghostty_vt {
                 break;
             }
         }
+    }
+
+    fn trimmable_trailing_run(run: &CellRun) -> bool {
+        run.style_id == 0 && run.flags == 0 && run.hyperlink_id == 0
     }
 
     fn cursor(
@@ -1452,6 +1459,68 @@ mod tests {
         assert_ne!(
             style.bg_rgba, 0,
             "palette background should resolve to RGBA"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_preserves_styled_trailing_blank_cells() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(12, 1, &empty, &empty),
+                b"\x1b[48;2;1;2;3m   \x1b[0m",
+            )
+            .expect("terminal update");
+
+        let blank_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text == "   ")
+            .expect("styled blank run");
+        assert_ne!(blank_run.style_id, 0);
+        assert_eq!(blank_run.cell_widths, vec![1, 1, 1]);
+        let style = update
+            .styles
+            .get(blank_run.style_id as usize)
+            .expect("blank style");
+        assert_ne!(
+            style.bg_rgba, 0,
+            "styled trailing blanks should preserve background color"
+        );
+        assert!(
+            update.surface_lines.iter().any(|line| line == "   "),
+            "styled trailing blanks were trimmed from fallback text: {:?}",
+            update.surface_lines
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_trims_default_trailing_blank_cells() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(terminal_input_with_size(12, 1, &empty, &empty), b"plain   ")
+            .expect("terminal update");
+
+        assert!(
+            update.surface_lines.iter().any(|line| line == "plain"),
+            "default trailing blanks should still be trimmed: {:?}",
+            update.surface_lines
+        );
+        assert!(
+            update
+                .surface_row_runs
+                .iter()
+                .flat_map(|row| row.iter())
+                .all(|run| run.text != "plain   "),
+            "default trailing blanks leaked into row runs: {:?}",
+            update.surface_row_runs
         );
     }
 
