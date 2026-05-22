@@ -24,6 +24,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("Send a supported named key"));
     assert!(stdout.contains("--paste TEXT"));
     assert!(stdout.contains("--focus gained|lost"));
+    assert!(stdout.contains("daemon rejects if reporting is off"));
     assert!(stdout.contains("--stdin-bytes"));
     assert!(stdout.contains("--local-echo off|tty"));
     assert!(stdout.contains("--cols COUNT"));

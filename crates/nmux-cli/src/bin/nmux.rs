@@ -1321,7 +1321,7 @@ Options:
   --key-name NAME            Send a supported named key
   --key-modifiers MODS       Modifiers for --key-name: shift,ctrl,alt,super
   --paste TEXT               Paste UTF-8 text through PasteInput
-  --focus gained|lost        Send a focus event when reporting is enabled
+  --focus gained|lost        Send focus input; daemon rejects if reporting is off
   --mouse A:B:R:C            Send mouse press/release/motion input
   --mouse-modifiers MODS     Modifiers for --mouse: shift,ctrl,alt,super
   --no-input                 Attach read-only

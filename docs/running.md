@@ -223,7 +223,7 @@ Current coverage includes:
 - OSC 133 row semantic prompt state and per-run semantic content;
 - bracketed paste, paste safety validation, paste forwarding, mouse tracking
   and mode-gated mouse forwarding with modifiers, focus reporting and
-  mode-gated focus forwarding, application keypad tracking, common named-key
+  daemon-gated focus forwarding with Error frames, application keypad tracking, common named-key
   forwarding, mode-aware keypad Enter/digit forwarding, mode-aware arrow-key
   forwarding, engine-backed key encoding with modifier preservation, explicit
   encoder output, origin mode, wraparound mode, and mode-aware key encoding.

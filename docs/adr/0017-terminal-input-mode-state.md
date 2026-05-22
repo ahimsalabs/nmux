@@ -44,7 +44,8 @@ The daemon remains the authority for input gating:
 
 - paste input is wrapped by the daemon in bracketed-paste delimiters only when
   the current pane mode reports bracketed paste enabled;
-- focus gained/lost input is forwarded only when focus reporting is enabled;
+- focus gained/lost input is sent to the daemon, which forwards it only when
+  focus reporting is enabled and otherwise reports a structured error;
 - keypad and cursor named keys are encoded through the live pane terminal
   engine from daemon-owned modes;
 - mouse input is forwarded according to the daemon-owned tracking mode:
