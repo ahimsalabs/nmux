@@ -199,8 +199,9 @@ updates, cached client-state compatibility, cached terminal metadata reattach,
 current-surface live key, paste, named-key, focus, and mouse forwarding,
 current-surface live focus/mouse rejection, libghostty-vt current-surface
 bracketed-paste wrapping, libghostty-vt current-surface mouse forwarding,
-mode-aware libghostty-vt current-surface application-cursor named-key
-forwarding, protocol-visible host input and live resize failures,
+libghostty-vt current-surface CLI SGR mouse forwarding, mode-aware
+libghostty-vt current-surface application-cursor named-key forwarding,
+protocol-visible host input and live resize failures,
 `PaneNotFound` errors for unknown pane-scoped client intents, consistent
 1-based public scrollback ranges, decoded scrollback row hash metadata, and
 feature-gated live CLI smoke paths, committed user-command live resize
