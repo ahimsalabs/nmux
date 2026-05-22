@@ -824,6 +824,41 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_resolves_palette_indexed_styles() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input(2, &empty, &empty),
+                b"\x1b[38;5;196;48;5;21mpalette\x1b[0m",
+            )
+            .expect("terminal update");
+
+        let palette_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("palette"))
+            .expect("palette-styled run");
+        assert_ne!(palette_run.style_id, 0);
+
+        let style = update
+            .styles
+            .get(palette_run.style_id as usize)
+            .expect("palette style");
+        assert_ne!(
+            style.fg_rgba, 0,
+            "palette foreground should resolve to RGBA"
+        );
+        assert_ne!(
+            style.bg_rgba, 0,
+            "palette background should resolve to RGBA"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_preserves_combining_mark_cell_widths() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();

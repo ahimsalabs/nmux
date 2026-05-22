@@ -79,8 +79,10 @@ only after the backend extraction proves the exact shape needed.
   still need protocol decisions.
 - Alternate screen: alternate scrollback behavior and transitions between
   primary and alternate buffers.
-- Palette and theme state: indexed palette overrides, default foreground and
-  background, and dynamic color changes.
+- Palette and theme state: indexed SGR colors resolve into RGBA style-table
+  entries during `libghostty-vt` extraction. Palette overrides, default
+  foreground/background ownership, and dynamic color changes still need protocol
+  decisions.
 - Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, but
   nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
   ownership, and lifetime have a protocol object.
