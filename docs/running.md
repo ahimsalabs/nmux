@@ -199,7 +199,7 @@ scrollback omission, resize/reflow, style-separated visible rows, styled
 scrollback rows, cell widths, combining marks, emoji ZWJ clusters, basic SGR
 style flags, underline color, palette-indexed colors, render-state default
 colors/palette, palette overrides, explicit cursor color, terminal title metadata, OSC
-133 semantic prompt state, bracketed paste, paste safety validation, mouse
+133 row semantic prompt state, bracketed paste, paste safety validation, mouse
 tracking, focus reporting and event encoding, application keypad tracking and
 explicit encoder output, origin, wraparound mode state, row-level dirty state,
 hyperlink presence, Kitty graphics placeholder detection, mode-aware key

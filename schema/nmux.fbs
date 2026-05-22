@@ -73,6 +73,12 @@ enum AttachMode : byte {
   ReadWrite = 1,
 }
 
+enum RowSemanticPrompt : byte {
+  None = 0,
+  Prompt = 1,
+  Continuation = 2,
+}
+
 enum PresenceKind : byte {
   Joined = 0,
   Updated = 1,
@@ -154,12 +160,14 @@ table SurfaceRow {
   row:uint;
   runs:[CellRun];
   dirty_hash:ulong;
+  semantic_prompt:RowSemanticPrompt = None;
 }
 
 table RowUpdate {
   row:uint;
   runs:[CellRun];
   dirty_hash:ulong;
+  semantic_prompt:RowSemanticPrompt = None;
 }
 
 table CellRun {
@@ -239,6 +247,7 @@ table ScrollbackRow {
   line:ulong;
   runs:[CellRun];
   dirty_hash:ulong;
+  semantic_prompt:RowSemanticPrompt = None;
 }
 
 table PresenceUpdate {

@@ -1007,6 +1007,94 @@ impl<'a> ::flatbuffers::Verifiable for AttachMode {
 
 impl ::flatbuffers::SimpleToVerifyInSlice for AttachMode {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ROW_SEMANTIC_PROMPT: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ROW_SEMANTIC_PROMPT: i8 = 2;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ROW_SEMANTIC_PROMPT: [RowSemanticPrompt; 3] = [
+  RowSemanticPrompt::None,
+  RowSemanticPrompt::Prompt,
+  RowSemanticPrompt::Continuation,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct RowSemanticPrompt(pub i8);
+#[allow(non_upper_case_globals)]
+impl RowSemanticPrompt {
+  pub const None: Self = Self(0);
+  pub const Prompt: Self = Self(1);
+  pub const Continuation: Self = Self(2);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 2;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::Prompt,
+    Self::Continuation,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::Prompt => Some("Prompt"),
+      Self::Continuation => Some("Continuation"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for RowSemanticPrompt {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for RowSemanticPrompt {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for RowSemanticPrompt {
+    type Output = RowSemanticPrompt;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for RowSemanticPrompt {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for RowSemanticPrompt {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for RowSemanticPrompt {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_PRESENCE_KIND: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MAX_PRESENCE_KIND: i8 = 2;
@@ -2666,6 +2754,7 @@ impl<'a> SurfaceRow<'a> {
   pub const VT_ROW: ::flatbuffers::VOffsetT = 4;
   pub const VT_RUNS: ::flatbuffers::VOffsetT = 6;
   pub const VT_DIRTY_HASH: ::flatbuffers::VOffsetT = 8;
+  pub const VT_SEMANTIC_PROMPT: ::flatbuffers::VOffsetT = 10;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2680,6 +2769,7 @@ impl<'a> SurfaceRow<'a> {
     builder.add_dirty_hash(args.dirty_hash);
     if let Some(x) = args.runs { builder.add_runs(x); }
     builder.add_row(args.row);
+    builder.add_semantic_prompt(args.semantic_prompt);
     builder.finish()
   }
 
@@ -2705,6 +2795,13 @@ impl<'a> SurfaceRow<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(SurfaceRow::VT_DIRTY_HASH, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn semantic_prompt(&self) -> RowSemanticPrompt {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<RowSemanticPrompt>(SurfaceRow::VT_SEMANTIC_PROMPT, Some(RowSemanticPrompt::None)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for SurfaceRow<'_> {
@@ -2716,6 +2813,7 @@ impl ::flatbuffers::Verifiable for SurfaceRow<'_> {
      .visit_field::<u32>("row", Self::VT_ROW, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CellRun>>>>("runs", Self::VT_RUNS, false)?
      .visit_field::<u64>("dirty_hash", Self::VT_DIRTY_HASH, false)?
+     .visit_field::<RowSemanticPrompt>("semantic_prompt", Self::VT_SEMANTIC_PROMPT, false)?
      .finish();
     Ok(())
   }
@@ -2724,6 +2822,7 @@ pub struct SurfaceRowArgs<'a> {
     pub row: u32,
     pub runs: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun<'a>>>>>,
     pub dirty_hash: u64,
+    pub semantic_prompt: RowSemanticPrompt,
 }
 impl<'a> Default for SurfaceRowArgs<'a> {
   #[inline]
@@ -2732,6 +2831,7 @@ impl<'a> Default for SurfaceRowArgs<'a> {
       row: 0,
       runs: None,
       dirty_hash: 0,
+      semantic_prompt: RowSemanticPrompt::None,
     }
   }
 }
@@ -2754,6 +2854,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SurfaceRowBuilder<'a, 'b, A> 
     self.fbb_.push_slot::<u64>(SurfaceRow::VT_DIRTY_HASH, dirty_hash, 0);
   }
   #[inline]
+  pub fn add_semantic_prompt(&mut self, semantic_prompt: RowSemanticPrompt) {
+    self.fbb_.push_slot::<RowSemanticPrompt>(SurfaceRow::VT_SEMANTIC_PROMPT, semantic_prompt, RowSemanticPrompt::None);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SurfaceRowBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SurfaceRowBuilder {
@@ -2774,6 +2878,7 @@ impl ::core::fmt::Debug for SurfaceRow<'_> {
       ds.field("row", &self.row());
       ds.field("runs", &self.runs());
       ds.field("dirty_hash", &self.dirty_hash());
+      ds.field("semantic_prompt", &self.semantic_prompt());
       ds.finish()
   }
 }
@@ -2796,6 +2901,7 @@ impl<'a> RowUpdate<'a> {
   pub const VT_ROW: ::flatbuffers::VOffsetT = 4;
   pub const VT_RUNS: ::flatbuffers::VOffsetT = 6;
   pub const VT_DIRTY_HASH: ::flatbuffers::VOffsetT = 8;
+  pub const VT_SEMANTIC_PROMPT: ::flatbuffers::VOffsetT = 10;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2810,6 +2916,7 @@ impl<'a> RowUpdate<'a> {
     builder.add_dirty_hash(args.dirty_hash);
     if let Some(x) = args.runs { builder.add_runs(x); }
     builder.add_row(args.row);
+    builder.add_semantic_prompt(args.semantic_prompt);
     builder.finish()
   }
 
@@ -2835,6 +2942,13 @@ impl<'a> RowUpdate<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(RowUpdate::VT_DIRTY_HASH, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn semantic_prompt(&self) -> RowSemanticPrompt {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<RowSemanticPrompt>(RowUpdate::VT_SEMANTIC_PROMPT, Some(RowSemanticPrompt::None)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for RowUpdate<'_> {
@@ -2846,6 +2960,7 @@ impl ::flatbuffers::Verifiable for RowUpdate<'_> {
      .visit_field::<u32>("row", Self::VT_ROW, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CellRun>>>>("runs", Self::VT_RUNS, false)?
      .visit_field::<u64>("dirty_hash", Self::VT_DIRTY_HASH, false)?
+     .visit_field::<RowSemanticPrompt>("semantic_prompt", Self::VT_SEMANTIC_PROMPT, false)?
      .finish();
     Ok(())
   }
@@ -2854,6 +2969,7 @@ pub struct RowUpdateArgs<'a> {
     pub row: u32,
     pub runs: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun<'a>>>>>,
     pub dirty_hash: u64,
+    pub semantic_prompt: RowSemanticPrompt,
 }
 impl<'a> Default for RowUpdateArgs<'a> {
   #[inline]
@@ -2862,6 +2978,7 @@ impl<'a> Default for RowUpdateArgs<'a> {
       row: 0,
       runs: None,
       dirty_hash: 0,
+      semantic_prompt: RowSemanticPrompt::None,
     }
   }
 }
@@ -2884,6 +3001,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> RowUpdateBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<u64>(RowUpdate::VT_DIRTY_HASH, dirty_hash, 0);
   }
   #[inline]
+  pub fn add_semantic_prompt(&mut self, semantic_prompt: RowSemanticPrompt) {
+    self.fbb_.push_slot::<RowSemanticPrompt>(RowUpdate::VT_SEMANTIC_PROMPT, semantic_prompt, RowSemanticPrompt::None);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> RowUpdateBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     RowUpdateBuilder {
@@ -2904,6 +3025,7 @@ impl ::core::fmt::Debug for RowUpdate<'_> {
       ds.field("row", &self.row());
       ds.field("runs", &self.runs());
       ds.field("dirty_hash", &self.dirty_hash());
+      ds.field("semantic_prompt", &self.semantic_prompt());
       ds.finish()
   }
 }
@@ -4447,6 +4569,7 @@ impl<'a> ScrollbackRow<'a> {
   pub const VT_LINE: ::flatbuffers::VOffsetT = 4;
   pub const VT_RUNS: ::flatbuffers::VOffsetT = 6;
   pub const VT_DIRTY_HASH: ::flatbuffers::VOffsetT = 8;
+  pub const VT_SEMANTIC_PROMPT: ::flatbuffers::VOffsetT = 10;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -4461,6 +4584,7 @@ impl<'a> ScrollbackRow<'a> {
     builder.add_dirty_hash(args.dirty_hash);
     builder.add_line(args.line);
     if let Some(x) = args.runs { builder.add_runs(x); }
+    builder.add_semantic_prompt(args.semantic_prompt);
     builder.finish()
   }
 
@@ -4486,6 +4610,13 @@ impl<'a> ScrollbackRow<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(ScrollbackRow::VT_DIRTY_HASH, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn semantic_prompt(&self) -> RowSemanticPrompt {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<RowSemanticPrompt>(ScrollbackRow::VT_SEMANTIC_PROMPT, Some(RowSemanticPrompt::None)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for ScrollbackRow<'_> {
@@ -4497,6 +4628,7 @@ impl ::flatbuffers::Verifiable for ScrollbackRow<'_> {
      .visit_field::<u64>("line", Self::VT_LINE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CellRun>>>>("runs", Self::VT_RUNS, false)?
      .visit_field::<u64>("dirty_hash", Self::VT_DIRTY_HASH, false)?
+     .visit_field::<RowSemanticPrompt>("semantic_prompt", Self::VT_SEMANTIC_PROMPT, false)?
      .finish();
     Ok(())
   }
@@ -4505,6 +4637,7 @@ pub struct ScrollbackRowArgs<'a> {
     pub line: u64,
     pub runs: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun<'a>>>>>,
     pub dirty_hash: u64,
+    pub semantic_prompt: RowSemanticPrompt,
 }
 impl<'a> Default for ScrollbackRowArgs<'a> {
   #[inline]
@@ -4513,6 +4646,7 @@ impl<'a> Default for ScrollbackRowArgs<'a> {
       line: 0,
       runs: None,
       dirty_hash: 0,
+      semantic_prompt: RowSemanticPrompt::None,
     }
   }
 }
@@ -4535,6 +4669,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackRowBuilder<'a, 'b, 
     self.fbb_.push_slot::<u64>(ScrollbackRow::VT_DIRTY_HASH, dirty_hash, 0);
   }
   #[inline]
+  pub fn add_semantic_prompt(&mut self, semantic_prompt: RowSemanticPrompt) {
+    self.fbb_.push_slot::<RowSemanticPrompt>(ScrollbackRow::VT_SEMANTIC_PROMPT, semantic_prompt, RowSemanticPrompt::None);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackRowBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     ScrollbackRowBuilder {
@@ -4555,6 +4693,7 @@ impl ::core::fmt::Debug for ScrollbackRow<'_> {
       ds.field("line", &self.line());
       ds.field("runs", &self.runs());
       ds.field("dirty_hash", &self.dirty_hash());
+      ds.field("semantic_prompt", &self.semantic_prompt());
       ds.finish()
   }
 }

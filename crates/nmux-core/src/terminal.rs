@@ -10,7 +10,9 @@ pub struct TerminalInput<'a> {
     pub modes: TerminalModes,
     pub title: &'a str,
     pub surface_lines: &'a [String],
+    pub surface_semantic_prompts: &'a [protocol::RowSemanticPrompt],
     pub scrollback_lines: &'a [String],
+    pub scrollback_semantic_prompts: &'a [protocol::RowSemanticPrompt],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,8 +90,10 @@ pub struct TerminalUpdate {
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
+    pub surface_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
     pub scrollback_lines: Vec<String>,
     pub scrollback_row_runs: Vec<Vec<CellRun>>,
+    pub scrollback_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
 }
 
 impl TerminalUpdate {
@@ -108,7 +112,9 @@ impl TerminalUpdate {
             title: String::new(),
             styles: vec![PaneStyle::default()],
             surface_row_runs: plain_row_runs(&surface_lines),
+            surface_semantic_prompts: plain_row_semantic_prompts(&surface_lines),
             scrollback_row_runs: plain_row_runs(&scrollback_lines),
+            scrollback_semantic_prompts: plain_row_semantic_prompts(&scrollback_lines),
             surface_lines,
             scrollback_lines,
         }
@@ -248,6 +254,10 @@ pub(crate) fn plain_row_runs(lines: &[String]) -> Vec<Vec<CellRun>> {
         .collect()
 }
 
+pub(crate) fn plain_row_semantic_prompts(lines: &[String]) -> Vec<protocol::RowSemanticPrompt> {
+    vec![protocol::RowSemanticPrompt::None; lines.len()]
+}
+
 pub(crate) fn cell_runs_text(runs: &[CellRun]) -> String {
     let mut text = String::new();
     for run in runs {
@@ -368,6 +378,7 @@ mod ghostty_vt {
                 ExtractedRows {
                     lines: input.scrollback_lines.to_vec(),
                     row_runs: super::plain_row_runs(input.scrollback_lines),
+                    semantic_prompts: input.scrollback_semantic_prompts.to_vec(),
                 }
             };
             self.terminal.scroll_viewport(ScrollViewport::Bottom);
@@ -379,12 +390,14 @@ mod ghostty_vt {
                 &mut styles,
             )?;
             let surface_lines = surface_rows.lines.clone();
+            let surface_semantic_prompts = surface_rows.semantic_prompts.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
             let modes = modes(&self.terminal)?;
             let title = self.terminal.title().ok()?;
             let patch_kind = if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
+                && surface_semantic_prompts == input.surface_semantic_prompts
                 && cursor != input.cursor
                 && modes == input.modes
                 && title == input.title
@@ -393,6 +406,7 @@ mod ghostty_vt {
             } else if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
+                && surface_semantic_prompts == input.surface_semantic_prompts
                 && modes != input.modes
                 && title == input.title
             {
@@ -410,6 +424,8 @@ mod ghostty_vt {
                 styles,
                 surface_row_runs: surface_rows.row_runs,
                 scrollback_row_runs: scrollback_rows.row_runs,
+                surface_semantic_prompts,
+                scrollback_semantic_prompts: scrollback_rows.semantic_prompts,
                 surface_lines,
                 scrollback_lines: scrollback_rows.lines,
             })
@@ -421,6 +437,7 @@ mod ghostty_vt {
                 return Some(ExtractedRows {
                     lines: Vec::new(),
                     row_runs: Vec::new(),
+                    semantic_prompts: Vec::new(),
                 });
             }
 
@@ -434,6 +451,7 @@ mod ghostty_vt {
             )?;
             rows.lines.truncate(total_rows);
             rows.row_runs.truncate(total_rows);
+            rows.semantic_prompts.truncate(total_rows);
 
             while rows.lines.len() < total_rows {
                 self.terminal.scroll_viewport(ScrollViewport::Delta(1));
@@ -450,8 +468,12 @@ mod ghostty_vt {
                 let Some(next_runs) = viewport_lines.row_runs.last() else {
                     break;
                 };
+                let Some(next_semantic_prompt) = viewport_lines.semantic_prompts.last() else {
+                    break;
+                };
                 rows.lines.push(next_line.clone());
                 rows.row_runs.push(next_runs.clone());
+                rows.semantic_prompts.push(*next_semantic_prompt);
             }
 
             Some(rows)
@@ -461,6 +483,7 @@ mod ghostty_vt {
     struct ExtractedRows {
         lines: Vec<String>,
         row_runs: Vec<Vec<CellRun>>,
+        semantic_prompts: Vec<protocol::RowSemanticPrompt>,
     }
 
     fn extract_rows<'alloc>(
@@ -472,7 +495,9 @@ mod ghostty_vt {
         let mut rows = row_iterator.update(snapshot).ok()?;
         let mut row_runs = Vec::new();
         let mut lines = Vec::new();
+        let mut semantic_prompts = Vec::new();
         while let Some(row) = rows.next() {
+            let semantic_prompt = row_semantic_prompt(row.raw_row().ok()?.semantic_prompt().ok()?);
             let mut cells = cell_iterator.update(row).ok()?;
             let mut runs: Vec<CellRun> = Vec::new();
             while cells.next().is_some() {
@@ -505,8 +530,25 @@ mod ghostty_vt {
             trim_trailing_spaces(&mut runs);
             lines.push(super::cell_runs_text(&runs));
             row_runs.push(runs);
+            semantic_prompts.push(semantic_prompt);
         }
-        Some(ExtractedRows { lines, row_runs })
+        Some(ExtractedRows {
+            lines,
+            row_runs,
+            semantic_prompts,
+        })
+    }
+
+    fn row_semantic_prompt(
+        prompt: libghostty_vt::screen::RowSemanticPrompt,
+    ) -> protocol::RowSemanticPrompt {
+        match prompt {
+            libghostty_vt::screen::RowSemanticPrompt::None => protocol::RowSemanticPrompt::None,
+            libghostty_vt::screen::RowSemanticPrompt::Prompt => protocol::RowSemanticPrompt::Prompt,
+            libghostty_vt::screen::RowSemanticPrompt::Continuation => {
+                protocol::RowSemanticPrompt::Continuation
+            }
+        }
     }
 
     fn cell_text(cells: &libghostty_vt::render::CellIteration<'_, '_>) -> Option<String> {
@@ -696,7 +738,9 @@ mod tests {
             modes: TerminalModes::default(),
             title: "",
             surface_lines,
+            surface_semantic_prompts: &[],
             scrollback_lines,
+            scrollback_semantic_prompts: &[],
         }
     }
 
@@ -711,7 +755,9 @@ mod tests {
             modes: update.modes,
             title: &update.title,
             surface_lines: &update.surface_lines,
+            surface_semantic_prompts: &update.surface_semantic_prompts,
             scrollback_lines: &update.scrollback_lines,
+            scrollback_semantic_prompts: &update.scrollback_semantic_prompts,
         }
     }
 
@@ -734,7 +780,9 @@ mod tests {
             modes: TerminalModes::default(),
             title: "existing title",
             surface_lines: &[],
+            surface_semantic_prompts: &[],
             scrollback_lines: &scrollback_lines,
+            scrollback_semantic_prompts: &[],
         };
 
         let update = engine
@@ -783,7 +831,9 @@ mod tests {
             modes: TerminalModes::default(),
             title: "",
             surface_lines: &[],
+            surface_semantic_prompts: &[],
             scrollback_lines: &scrollback_lines,
+            scrollback_semantic_prompts: &[],
         };
 
         let update = engine
@@ -829,7 +879,9 @@ mod tests {
             modes: TerminalModes::default(),
             title: "",
             surface_lines: &scrollback_lines,
+            surface_semantic_prompts: &[],
             scrollback_lines: &scrollback_lines,
+            scrollback_semantic_prompts: &[],
         };
 
         let update = engine.resize(input, 100, 2).expect("terminal update");
@@ -1102,7 +1154,7 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
-    fn libghostty_vt_safe_api_tracks_semantic_prompt_without_protocol_fields() {
+    fn libghostty_vt_safe_api_tracks_semantic_prompt() {
         use libghostty_vt::{
             RenderState, Terminal, TerminalOptions, render::RowIterator, screen::RowSemanticPrompt,
         };
@@ -1128,6 +1180,27 @@ mod tests {
                 .semantic_prompt()
                 .expect("semantic prompt"),
             RowSemanticPrompt::Prompt
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_extracts_semantic_prompt_metadata() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b]133;A\x1b\\prompt> ",
+            )
+            .expect("prompt update");
+
+        assert_eq!(
+            update.surface_lines.first().map(String::as_str),
+            Some("prompt>")
+        );
+        assert_eq!(
+            update.surface_semantic_prompts.first().copied(),
+            Some(protocol::RowSemanticPrompt::Prompt)
         );
     }
 
@@ -1703,10 +1776,7 @@ mod tests {
             .expect("initial terminal update");
 
         let cursor_move = engine
-            .apply_output(
-                terminal_input(2, &first.surface_lines, &first.scrollback_lines),
-                b"\x1b[1;3H",
-            )
+            .apply_output(terminal_input_from_update(&first), b"\x1b[1;3H")
             .expect("cursor movement update");
 
         assert_eq!(cursor_move.patch_kind, protocol::PatchKind::CursorOnly);
@@ -1868,7 +1938,7 @@ mod tests {
 
         let alternate = engine
             .apply_output(
-                terminal_input(2, &primary.surface_lines, &primary.scrollback_lines),
+                terminal_input_from_update(&primary),
                 b"\x1b[?1049halternate",
             )
             .expect("alternate update");
@@ -1883,10 +1953,7 @@ mod tests {
         );
 
         let restored = engine
-            .apply_output(
-                terminal_input(2, &alternate.surface_lines, &alternate.scrollback_lines),
-                b"\x1b[?1049l",
-            )
+            .apply_output(terminal_input_from_update(&alternate), b"\x1b[?1049l")
             .expect("restore update");
         assert_eq!(restored.surface, protocol::SurfaceKind::Main);
         assert!(

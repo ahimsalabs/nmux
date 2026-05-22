@@ -892,7 +892,12 @@ pub fn surface_update_from_frame(
                 .unwrap_or_else(default_style_summaries);
             let row_updates = decoded_surface_rows(rows.len(), |index| {
                 let row = rows.get(index);
-                decoded_surface_row(row.row(), row.runs(), row.dirty_hash())
+                decoded_surface_row(
+                    row.row(),
+                    row.runs(),
+                    row.dirty_hash(),
+                    row.semantic_prompt(),
+                )
             });
             let text = render_decoded_rows(&row_updates);
             Ok(SurfaceUpdate {
@@ -928,7 +933,12 @@ pub fn surface_update_from_frame(
                 .ok_or("pane surface patch has no rows")?;
             let row_updates = decoded_surface_rows(rows.len(), |index| {
                 let row = rows.get(index);
-                decoded_surface_row(row.row(), row.runs(), row.dirty_hash())
+                decoded_surface_row(
+                    row.row(),
+                    row.runs(),
+                    row.dirty_hash(),
+                    row.semantic_prompt(),
+                )
             });
             let text = render_decoded_rows(&row_updates);
             Ok(SurfaceUpdate {
@@ -970,6 +980,7 @@ fn decoded_surface_row(
     row: u32,
     runs: Option<flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<protocol::CellRun<'_>>>>,
     dirty_hash: u64,
+    semantic_prompt: protocol::RowSemanticPrompt,
 ) -> SurfaceRowUpdate {
     let runs = runs.map(decoded_cell_runs).unwrap_or_default();
     SurfaceRowUpdate {
@@ -977,6 +988,7 @@ fn decoded_surface_row(
         text: render_run_summaries(&runs),
         runs,
         dirty_hash,
+        semantic_prompt,
     }
 }
 
@@ -1240,6 +1252,7 @@ pub fn scrollback_chunk_from_frame(
             line: row.line(),
             text: render_run_summaries(&runs),
             runs,
+            semantic_prompt: row.semantic_prompt(),
         });
     }
 
@@ -1566,6 +1579,7 @@ pub struct SurfaceRowUpdate {
     pub text: String,
     pub runs: Vec<CellRunSummary>,
     pub dirty_hash: u64,
+    pub semantic_prompt: protocol::RowSemanticPrompt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1598,6 +1612,7 @@ pub struct ClientPaneSurface {
     styles: Vec<StyleSummary>,
     row_text: Vec<String>,
     row_runs: Vec<Vec<CellRunSummary>>,
+    row_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
 }
 
 impl ClientPaneSurface {
@@ -1618,11 +1633,15 @@ impl ClientPaneSurface {
             },
             row_text: Vec::new(),
             row_runs: Vec::new(),
+            row_semantic_prompts: Vec::new(),
         };
         let row_count =
             usize::try_from(surface.rows).map_err(|_| "surface row count does not fit in usize")?;
         surface.row_text.resize(row_count, String::new());
         surface.row_runs.resize(row_count, Vec::new());
+        surface
+            .row_semantic_prompts
+            .resize(row_count, protocol::RowSemanticPrompt::None);
         surface.apply_rows(&update.row_updates)?;
         Ok(surface)
     }
@@ -1712,6 +1731,7 @@ impl ClientPaneSurface {
             } else {
                 row.runs.clone()
             };
+            self.row_semantic_prompts[index] = row.semantic_prompt;
         }
         Ok(())
     }
@@ -1916,6 +1936,11 @@ impl ClientAttachState {
                 encoded.push(' ');
                 encoded.push_str(&hex_encode(row.as_bytes()));
                 encoded.push('\n');
+                encoded.push_str("rowmeta ");
+                encoded.push_str(&index.to_string());
+                encoded.push(' ');
+                encoded.push_str(&surface.row_semantic_prompts[index].0.to_string());
+                encoded.push('\n');
                 for run in &surface.row_runs[index] {
                     encoded.push_str("run ");
                     encoded.push_str(&index.to_string());
@@ -1992,6 +2017,7 @@ impl ClientAttachState {
             let mut styles = Vec::new();
             let mut row_text = vec![String::new(); row_count];
             let mut row_runs = vec![Vec::new(); row_count];
+            let mut row_semantic_prompts = vec![protocol::RowSemanticPrompt::None; row_count];
 
             loop {
                 let Some(line) = lines.next() else {
@@ -2068,6 +2094,16 @@ impl ClientAttachState {
                         *target = String::from_utf8(hex_decode(text)?)
                             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
                     }
+                    ["rowmeta", row, semantic_prompt] => {
+                        let row = parse_state_usize(row)?;
+                        let Some(target) = row_semantic_prompts.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        *target = protocol::RowSemanticPrompt(parse_state_i8(semantic_prompt)?);
+                    }
                     ["run", row, text, cell_widths, style_id, flags] => {
                         let row = parse_state_usize(row)?;
                         let Some(target) = row_runs.get_mut(row) else {
@@ -2126,6 +2162,7 @@ impl ClientAttachState {
                     styles
                 },
                 row_runs: row_runs_for_text(&row_text, row_runs),
+                row_semantic_prompts,
                 row_text,
             });
         }
@@ -2260,6 +2297,7 @@ pub struct ScrollbackLine {
     pub line: u64,
     pub text: String,
     pub runs: Vec<CellRunSummary>,
+    pub semantic_prompt: protocol::RowSemanticPrompt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2445,6 +2483,7 @@ mod tests {
                 hyperlink_id: 0,
             }],
             dirty_hash: u64::from(row),
+            semantic_prompt: protocol::RowSemanticPrompt::None,
         }
     }
 
@@ -2453,6 +2492,7 @@ mod tests {
             line,
             text: text.to_owned(),
             runs: vec![CellRunSummary::plain(text)],
+            semantic_prompt: protocol::RowSemanticPrompt::None,
         }
     }
 
@@ -2736,6 +2776,7 @@ mod tests {
                         CellRunSummary::plain("d"),
                     ],
                     dirty_hash: 0,
+                    semantic_prompt: protocol::RowSemanticPrompt::Prompt,
                 },
                 surface_row(2, "tail"),
             ],
@@ -2783,6 +2824,10 @@ mod tests {
         assert_eq!(decoded.surfaces[0].modes, expected_modes);
         assert_eq!(decoded.surfaces[0].title, expected_title);
         assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
+        assert_eq!(
+            decoded.surfaces[0].row_semantic_prompts[0],
+            protocol::RowSemanticPrompt::Prompt
+        );
         assert_eq!(decoded.surfaces[0].styles, expected_styles);
         assert_eq!(decoded.surfaces[0].row_runs[0].len(), 2);
         assert_eq!(decoded.surfaces[0].row_runs[0][0].text, "cache");
@@ -2800,6 +2845,10 @@ mod tests {
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
         assert_eq!(decoded.surfaces[0].modes, TerminalModeSummary::default());
         assert_eq!(decoded.surfaces[0].title, "");
+        assert_eq!(
+            decoded.surfaces[0].row_semantic_prompts[0],
+            protocol::RowSemanticPrompt::None
+        );
         assert_eq!(decoded.surfaces[0].styles, default_style_summaries());
         assert_eq!(decoded.surfaces[0].render_text(), "cached");
     }

@@ -64,8 +64,10 @@ pub struct Pane {
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
+    pub surface_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
     pub scrollback_lines: Vec<String>,
     pub scrollback_row_runs: Vec<Vec<CellRun>>,
+    pub scrollback_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +83,7 @@ pub struct PaneSurface {
     pub styles: Vec<PaneStyle>,
     pub lines: Vec<String>,
     pub row_runs: Vec<Vec<CellRun>>,
+    pub semantic_prompts: Vec<protocol::RowSemanticPrompt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +93,7 @@ pub struct PaneScrollback {
     pub styles: Vec<PaneStyle>,
     pub lines: Vec<String>,
     pub row_runs: Vec<Vec<CellRun>>,
+    pub semantic_prompts: Vec<protocol::RowSemanticPrompt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +143,10 @@ impl Session {
                         vec![CellRun::plain("nmux pane-1")],
                         vec![CellRun::plain("server-owned terminal state")],
                     ],
+                    surface_semantic_prompts: vec![
+                        protocol::RowSemanticPrompt::None,
+                        protocol::RowSemanticPrompt::None,
+                    ],
                     scrollback_lines: vec![
                         "booting nmux workspace".to_owned(),
                         "nmux pane-1".to_owned(),
@@ -148,6 +156,11 @@ impl Session {
                         vec![CellRun::plain("booting nmux workspace")],
                         vec![CellRun::plain("nmux pane-1")],
                         vec![CellRun::plain("server-owned terminal state")],
+                    ],
+                    scrollback_semantic_prompts: vec![
+                        protocol::RowSemanticPrompt::None,
+                        protocol::RowSemanticPrompt::None,
+                        protocol::RowSemanticPrompt::None,
                     ],
                 },
             }],
@@ -159,8 +172,10 @@ impl Session {
         if let Some(pane) = session.pane_mut("pane-1") {
             pane.surface_lines.clear();
             pane.surface_row_runs.clear();
+            pane.surface_semantic_prompts.clear();
             pane.scrollback_lines.clear();
             pane.scrollback_row_runs.clear();
+            pane.scrollback_semantic_prompts.clear();
         }
         session.apply_pane_output("pane-1", output);
         session
@@ -190,7 +205,9 @@ impl Session {
             modes: pane.modes,
             title: &pane.terminal_title,
             surface_lines: &pane.surface_lines,
+            surface_semantic_prompts: &pane.surface_semantic_prompts,
             scrollback_lines: &pane.scrollback_lines,
+            scrollback_semantic_prompts: &pane.scrollback_semantic_prompts,
         };
         let Some(update) = engine.apply_output(input, output) else {
             return false;
@@ -227,7 +244,9 @@ impl Session {
             modes: pane.modes,
             title: &pane.terminal_title,
             surface_lines: &pane.surface_lines,
+            surface_semantic_prompts: &pane.surface_semantic_prompts,
             scrollback_lines: &pane.scrollback_lines,
+            scrollback_semantic_prompts: &pane.scrollback_semantic_prompts,
         };
         let Some(update) = engine.resize(input, cols, rows) else {
             return false;
@@ -371,6 +390,10 @@ impl Session {
             styles: pane.styles.clone(),
             lines: pane.surface_lines.clone(),
             row_runs: row_runs_for_lines(&pane.surface_lines, &pane.surface_row_runs),
+            semantic_prompts: row_semantic_prompts_for_lines(
+                &pane.surface_lines,
+                &pane.surface_semantic_prompts,
+            ),
         })
     }
 
@@ -386,6 +409,10 @@ impl Session {
             styles: pane.styles.clone(),
             lines: pane.scrollback_lines.clone(),
             row_runs: row_runs_for_lines(&pane.scrollback_lines, &pane.scrollback_row_runs),
+            semantic_prompts: row_semantic_prompts_for_lines(
+                &pane.scrollback_lines,
+                &pane.scrollback_semantic_prompts,
+            ),
         })
     }
 
@@ -451,6 +478,11 @@ impl Session {
                     row: row as u32,
                     runs: Some(runs),
                     dirty_hash: stable_row_hash(line),
+                    semantic_prompt: surface
+                        .semantic_prompts
+                        .get(row)
+                        .copied()
+                        .unwrap_or(protocol::RowSemanticPrompt::None),
                 },
             );
             row_offsets.push(row);
@@ -559,6 +591,11 @@ impl Session {
                         row: row as u32,
                         runs: Some(runs),
                         dirty_hash: stable_row_hash(line),
+                        semantic_prompt: surface
+                            .semantic_prompts
+                            .get(row)
+                            .copied()
+                            .unwrap_or(protocol::RowSemanticPrompt::None),
                     },
                 );
                 row_offsets.push(row);
@@ -655,6 +692,11 @@ impl Session {
                     line: start_line + offset as u64,
                     runs: Some(runs),
                     dirty_hash: stable_row_hash(line),
+                    semantic_prompt: scrollback
+                        .semantic_prompts
+                        .get(start.saturating_add(offset))
+                        .copied()
+                        .unwrap_or(protocol::RowSemanticPrompt::None),
                 },
             );
             row_offsets.push(row);
@@ -1013,26 +1055,33 @@ fn apply_terminal_update(
     let surface_kind_changed = pane.surface != update.surface;
     let styles_changed = pane.styles != update.styles;
     let row_runs_changed = pane.surface_row_runs != update.surface_row_runs;
+    let semantic_prompts_changed = pane.surface_semantic_prompts != update.surface_semantic_prompts;
     let surface_changed = force_surface_version
         || surface_kind_changed
         || styles_changed
         || rows_changed
         || row_runs_changed
+        || semantic_prompts_changed
         || pane.cursor != cursor
         || modes_changed
         || title_changed;
     let scrollback_changed = pane.scrollback_lines != update.scrollback_lines
-        || pane.scrollback_row_runs != update.scrollback_row_runs;
+        || pane.scrollback_row_runs != update.scrollback_row_runs
+        || pane.scrollback_semantic_prompts != update.scrollback_semantic_prompts;
 
     pane.scrollback_lines = update.scrollback_lines;
     pane.scrollback_row_runs =
         row_runs_for_lines(&pane.scrollback_lines, &update.scrollback_row_runs);
+    pane.scrollback_semantic_prompts =
+        row_semantic_prompts_for_lines(&pane.scrollback_lines, &update.scrollback_semantic_prompts);
     pane.surface = update.surface;
     pane.modes = update.modes;
     pane.terminal_title = update.title;
     pane.styles = update.styles;
     pane.surface_lines = update.surface_lines;
     pane.surface_row_runs = row_runs_for_lines(&pane.surface_lines, &update.surface_row_runs);
+    pane.surface_semantic_prompts =
+        row_semantic_prompts_for_lines(&pane.surface_lines, &update.surface_semantic_prompts);
     pane.cursor = cursor;
 
     if scrollback_changed {
@@ -1045,6 +1094,7 @@ fn apply_terminal_update(
             update.patch_kind,
             rows_changed,
             row_runs_changed,
+            semantic_prompts_changed,
             surface_kind_changed,
             styles_changed,
             modes_changed,
@@ -1058,13 +1108,14 @@ fn terminal_patch_kind(
     requested: protocol::PatchKind,
     rows_changed: bool,
     row_runs_changed: bool,
+    semantic_prompts_changed: bool,
     surface_kind_changed: bool,
     styles_changed: bool,
     modes_changed: bool,
 ) -> protocol::PatchKind {
     if surface_kind_changed || styles_changed {
         protocol::PatchKind::FullRefreshRequired
-    } else if rows_changed || row_runs_changed {
+    } else if rows_changed || row_runs_changed || semantic_prompts_changed {
         protocol::PatchKind::ReplaceRows
     } else if modes_changed {
         protocol::PatchKind::ModeOnly
@@ -1095,6 +1146,17 @@ fn row_runs_for_lines(lines: &[String], row_runs: &[Vec<CellRun>]) -> Vec<Vec<Ce
             .iter()
             .map(|line| vec![CellRun::plain(line.clone())])
             .collect()
+    }
+}
+
+fn row_semantic_prompts_for_lines(
+    lines: &[String],
+    semantic_prompts: &[protocol::RowSemanticPrompt],
+) -> Vec<protocol::RowSemanticPrompt> {
+    if semantic_prompts.len() == lines.len() {
+        semantic_prompts.to_vec()
+    } else {
+        crate::terminal::plain_row_semantic_prompts(lines)
     }
 }
 
@@ -1318,6 +1380,10 @@ mod tests {
         let first_row = rows.get(0);
         assert_eq!(first_row.row(), 0);
         assert_ne!(first_row.dirty_hash(), 0);
+        assert_eq!(
+            first_row.semantic_prompt(),
+            protocol::RowSemanticPrompt::None
+        );
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.len(), 1);
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
@@ -1452,6 +1518,10 @@ mod tests {
 
         let first_row = rows.get(0);
         assert_eq!(first_row.row(), 0);
+        assert_eq!(
+            first_row.semantic_prompt(),
+            protocol::RowSemanticPrompt::None
+        );
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
     }
@@ -1524,6 +1594,7 @@ mod tests {
 
         let first = rows.get(0);
         assert_eq!(first.line(), 1);
+        assert_eq!(first.semantic_prompt(), protocol::RowSemanticPrompt::None);
         let first_runs = first.runs().expect("first runs");
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
 
@@ -2192,8 +2263,10 @@ mod tests {
                             }]
                         })
                         .collect(),
+                    surface_semantic_prompts: input.surface_semantic_prompts.to_vec(),
                     scrollback_lines: input.scrollback_lines.to_vec(),
                     scrollback_row_runs: crate::terminal::plain_row_runs(input.scrollback_lines),
+                    scrollback_semantic_prompts: input.scrollback_semantic_prompts.to_vec(),
                 })
             }
 
@@ -2250,8 +2323,10 @@ mod tests {
                             }
                         })
                         .collect(),
+                    surface_semantic_prompts: input.surface_semantic_prompts.to_vec(),
                     scrollback_lines: input.scrollback_lines.to_vec(),
                     scrollback_row_runs: crate::terminal::plain_row_runs(input.scrollback_lines),
+                    scrollback_semantic_prompts: input.scrollback_semantic_prompts.to_vec(),
                 })
             }
 
@@ -2378,6 +2453,62 @@ mod tests {
         assert_eq!(
             patch.metadata().expect("metadata").title(),
             Some("pane title")
+        );
+    }
+
+    #[test]
+    fn semantic_prompt_only_engine_update_emits_replace_rows_patch() {
+        struct SemanticPromptOnlyEngine;
+
+        impl TerminalEngine for SemanticPromptOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"semantic prompt");
+                let mut update = TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                );
+                update.surface_semantic_prompts =
+                    vec![protocol::RowSemanticPrompt::None; input.surface_lines.len()];
+                update.scrollback_semantic_prompts =
+                    vec![protocol::RowSemanticPrompt::None; input.scrollback_lines.len()];
+                update.surface_semantic_prompts[0] = protocol::RowSemanticPrompt::Prompt;
+                Some(update)
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = SemanticPromptOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"semantic prompt", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::ReplaceRows)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
+        let rows = patch.row_updates().expect("row updates");
+        assert_eq!(
+            rows.get(0).semantic_prompt(),
+            protocol::RowSemanticPrompt::Prompt
         );
     }
 

@@ -88,10 +88,10 @@ only after the backend extraction proves the exact shape needed.
   snapshot and patch metadata. OSC 7 working-directory state remains unproven in
   the current backend path and should stay withheld until the expected upstream
   behavior is clear.
-- Shell integration metadata: `libghostty-vt` exposes OSC 133 prompt semantics
-  on rows, but nmux has no semantic prompt/input/output protocol fields yet.
-  Keep this backend-observable state withheld until the row metadata shape is
-  explicit.
+- Shell integration metadata: nmux carries OSC 133 row semantic prompt state on
+  surface snapshots, surface patches, and scrollback chunks. Semantic
+  input/output command-range metadata remains withheld until that protocol shape
+  is explicit.
 - Alternate screen: `libghostty-vt` extraction tests cover entry into the
   alternate buffer, restoration of the primary buffer, and preservation of main
   scrollback while alternate-screen output is active. Alternate-screen
@@ -142,14 +142,14 @@ wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
 render-state default colors/palette,
 palette overrides, and explicit cursor color, alternate-screen entry/restoration
 with alternate scrollback omission, terminal title metadata with OSC 7
-working-directory omission, OSC 133 semantic prompt state, resize/reflow, styled
+working-directory omission, OSC 133 row semantic prompt state, resize/reflow, styled
 backend-owned scrollback extraction, row-level dirty state, Kitty graphics
 placeholder detection, hyperlink presence, application-keypad encoder support,
 focus event encoding, paste safety validation, safe-API mode tracking for
 bracketed paste, mouse tracking, focus reporting, application keypad mode, and
-origin/wraparound modes, plus nmux snapshot/patch cursor blink and mode
-payloads, mode-only patch application, and cursor cache compatibility through
-unit, session, and live CLI
+origin/wraparound modes, plus nmux snapshot/patch cursor blink, row semantic
+prompt, and mode payloads, mode-only patch application, and cursor cache
+compatibility through unit, session, and live CLI
 smoke coverage. It is not the default until
 the project deliberately accepts the native Zig/Ghostty build cost in normal
 development and CI.
