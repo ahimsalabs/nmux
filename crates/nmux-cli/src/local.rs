@@ -479,7 +479,16 @@ fn serve_live_attached_client(
                             return Ok(());
                         }
                     };
-                    host.write_input(&input.pane_id, &bytes)?;
+                    if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+                        write_input_error(
+                            stream,
+                            session,
+                            &mut seq,
+                            protocol::ErrorCode::Unknown,
+                            &format!("input forwarding failed: {err}"),
+                        )?;
+                        return Ok(());
+                    }
                 }
                 poll_pane_output_until_quiet(session, engines, host, &input.pane_id)?;
             } else {
@@ -4878,6 +4887,51 @@ mod tests {
     }
 
     #[test]
+    fn live_attach_reports_host_write_failure_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = FailingWriteHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start failing write pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve live with write failure");
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadWrite);
+
+        send_key_input(&mut stream, "pane-1", "fail").expect("send input");
+        let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
+        assert_eq!(
+            error,
+            LiveSurfaceRead::Error(ErrorSummary {
+                code: protocol::ErrorCode::Unknown,
+                message: "input forwarding failed: host I/O error during write_input for pane-1: simulated write failure".to_owned(),
+                retryable: false,
+            })
+        );
+
+        server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn live_attach_serves_initial_scrollback_fetch() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -6103,6 +6157,75 @@ mod tests {
                 *byte = self.pending.pop_front().expect("queued scripted output");
             }
             Ok(count)
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct FailingWriteHost {
+        running: bool,
+    }
+
+    impl ProcessHost for FailingWriteHost {
+        fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
+            self.running = true;
+            Ok(PaneProcess {
+                pane_id: pane_id.to_owned(),
+                host_id: spec.id.clone(),
+                status: ProcessStatus::Running,
+            })
+        }
+
+        fn write_input(&mut self, pane_id: &str, _bytes: &[u8]) -> Result<(), HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            Err(HostError::Io {
+                pane_id: pane_id.to_owned(),
+                operation: "write_input".to_owned(),
+                message: "simulated write failure".to_owned(),
+            })
+        }
+
+        fn resize_pane(&mut self, pane_id: &str, _cols: u32, _rows: u32) -> Result<(), HostError> {
+            if self.running {
+                Ok(())
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
+        }
+
+        fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            self.running = false;
+            Ok(PaneProcess {
+                pane_id: pane_id.to_owned(),
+                host_id: "failing-write".to_owned(),
+                status: ProcessStatus::Exited,
+            })
+        }
+    }
+
+    impl ProcessOutput for FailingWriteHost {
+        fn try_read_output(
+            &mut self,
+            pane_id: &str,
+            _bytes: &mut [u8],
+        ) -> Result<usize, HostError> {
+            if self.running {
+                Ok(0)
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
         }
     }
 
