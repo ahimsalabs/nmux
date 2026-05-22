@@ -963,8 +963,13 @@ fn apply_terminal_update(
 
     if surface_changed {
         pane.surface_version = pane.surface_version.saturating_add(1);
-        pane.last_patch_kind =
-            terminal_patch_kind(update.patch_kind, rows_changed, surface_kind_changed);
+        pane.last_patch_kind = terminal_patch_kind(
+            update.patch_kind,
+            rows_changed,
+            row_runs_changed,
+            surface_kind_changed,
+            styles_changed,
+        );
     }
 
     surface_changed || scrollback_changed
@@ -973,11 +978,13 @@ fn apply_terminal_update(
 fn terminal_patch_kind(
     requested: protocol::PatchKind,
     rows_changed: bool,
+    row_runs_changed: bool,
     surface_kind_changed: bool,
+    styles_changed: bool,
 ) -> protocol::PatchKind {
-    if surface_kind_changed {
+    if surface_kind_changed || styles_changed {
         protocol::PatchKind::FullRefreshRequired
-    } else if rows_changed {
+    } else if rows_changed || row_runs_changed {
         protocol::PatchKind::ReplaceRows
     } else if requested == protocol::PatchKind::ModeOnly {
         protocol::PatchKind::FullRefreshRequired
@@ -1970,6 +1977,125 @@ mod tests {
         assert_eq!(cursor.row(), 1);
         assert_eq!(cursor.col(), 12);
         assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
+    }
+
+    #[test]
+    fn style_table_change_requires_full_refresh_patch() {
+        struct StyleTableEngine;
+
+        impl TerminalEngine for StyleTableEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"style table");
+                Some(TerminalUpdate {
+                    patch_kind: protocol::PatchKind::ReplaceRows,
+                    surface: input.surface,
+                    cursor: input.cursor,
+                    styles: vec![
+                        PaneStyle::default(),
+                        PaneStyle {
+                            fg_rgba: 0xff00_0000,
+                            bg_rgba: 0,
+                            underline_rgba: 0,
+                            flags: 1,
+                        },
+                    ],
+                    surface_lines: input.surface_lines.to_vec(),
+                    surface_row_runs: input
+                        .surface_lines
+                        .iter()
+                        .map(|line| {
+                            vec![CellRun {
+                                text: line.clone(),
+                                cell_widths: vec![1; line.chars().count()],
+                                style_id: 1,
+                                flags: 0,
+                                hyperlink_id: 0,
+                            }]
+                        })
+                        .collect(),
+                    scrollback_lines: input.scrollback_lines.to_vec(),
+                    scrollback_row_runs: crate::terminal::plain_row_runs(input.scrollback_lines),
+                })
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = StyleTableEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"style table", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::FullRefreshRequired)
+        );
+    }
+
+    #[test]
+    fn row_run_only_change_emits_replace_rows_patch() {
+        struct RowRunOnlyEngine;
+
+        impl TerminalEngine for RowRunOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"row runs");
+                Some(TerminalUpdate {
+                    patch_kind: protocol::PatchKind::ReplaceRows,
+                    surface: input.surface,
+                    cursor: input.cursor,
+                    styles: vec![PaneStyle::default()],
+                    surface_lines: input.surface_lines.to_vec(),
+                    surface_row_runs: input
+                        .surface_lines
+                        .iter()
+                        .map(|line| {
+                            if let Some(split) = line.find(' ') {
+                                vec![
+                                    CellRun::plain(&line[..split]),
+                                    CellRun::plain(&line[split..]),
+                                ]
+                            } else {
+                                vec![CellRun::plain(line.clone())]
+                            }
+                        })
+                        .collect(),
+                    scrollback_lines: input.scrollback_lines.to_vec(),
+                    scrollback_row_runs: crate::terminal::plain_row_runs(input.scrollback_lines),
+                })
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = RowRunOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"row runs", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::ReplaceRows)
+        );
     }
 
     #[test]
