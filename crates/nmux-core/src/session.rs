@@ -66,10 +66,12 @@ pub struct Pane {
     pub surface_row_runs: Vec<Vec<CellRun>>,
     pub surface_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
     pub surface_dirty_rows: Vec<bool>,
+    pub surface_kitty_placeholders: Vec<bool>,
     pub scrollback_lines: Vec<String>,
     pub scrollback_row_runs: Vec<Vec<CellRun>>,
     pub scrollback_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
     pub scrollback_dirty_rows: Vec<bool>,
+    pub scrollback_kitty_placeholders: Vec<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +89,7 @@ pub struct PaneSurface {
     pub row_runs: Vec<Vec<CellRun>>,
     pub semantic_prompts: Vec<protocol::RowSemanticPrompt>,
     pub dirty_rows: Vec<bool>,
+    pub kitty_placeholders: Vec<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +101,7 @@ pub struct PaneScrollback {
     pub row_runs: Vec<Vec<CellRun>>,
     pub semantic_prompts: Vec<protocol::RowSemanticPrompt>,
     pub dirty_rows: Vec<bool>,
+    pub kitty_placeholders: Vec<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +156,7 @@ impl Session {
                         protocol::RowSemanticPrompt::None,
                     ],
                     surface_dirty_rows: vec![false, false],
+                    surface_kitty_placeholders: vec![false, false],
                     scrollback_lines: vec![
                         "booting nmux workspace".to_owned(),
                         "nmux pane-1".to_owned(),
@@ -168,6 +173,7 @@ impl Session {
                         protocol::RowSemanticPrompt::None,
                     ],
                     scrollback_dirty_rows: vec![false, false, false],
+                    scrollback_kitty_placeholders: vec![false, false, false],
                 },
             }],
         }
@@ -180,10 +186,12 @@ impl Session {
             pane.surface_row_runs.clear();
             pane.surface_semantic_prompts.clear();
             pane.surface_dirty_rows.clear();
+            pane.surface_kitty_placeholders.clear();
             pane.scrollback_lines.clear();
             pane.scrollback_row_runs.clear();
             pane.scrollback_semantic_prompts.clear();
             pane.scrollback_dirty_rows.clear();
+            pane.scrollback_kitty_placeholders.clear();
         }
         session.apply_pane_output("pane-1", output);
         session
@@ -215,9 +223,11 @@ impl Session {
             surface_lines: &pane.surface_lines,
             surface_semantic_prompts: &pane.surface_semantic_prompts,
             surface_dirty_rows: &pane.surface_dirty_rows,
+            surface_kitty_placeholders: &pane.surface_kitty_placeholders,
             scrollback_lines: &pane.scrollback_lines,
             scrollback_semantic_prompts: &pane.scrollback_semantic_prompts,
             scrollback_dirty_rows: &pane.scrollback_dirty_rows,
+            scrollback_kitty_placeholders: &pane.scrollback_kitty_placeholders,
         };
         let Some(update) = engine.apply_output(input, output) else {
             return false;
@@ -256,9 +266,11 @@ impl Session {
             surface_lines: &pane.surface_lines,
             surface_semantic_prompts: &pane.surface_semantic_prompts,
             surface_dirty_rows: &pane.surface_dirty_rows,
+            surface_kitty_placeholders: &pane.surface_kitty_placeholders,
             scrollback_lines: &pane.scrollback_lines,
             scrollback_semantic_prompts: &pane.scrollback_semantic_prompts,
             scrollback_dirty_rows: &pane.scrollback_dirty_rows,
+            scrollback_kitty_placeholders: &pane.scrollback_kitty_placeholders,
         };
         let Some(update) = engine.resize(input, cols, rows) else {
             return false;
@@ -407,6 +419,10 @@ impl Session {
                 &pane.surface_semantic_prompts,
             ),
             dirty_rows: row_dirty_flags_for_lines(&pane.surface_lines, &pane.surface_dirty_rows),
+            kitty_placeholders: row_kitty_placeholders_for_lines(
+                &pane.surface_lines,
+                &pane.surface_kitty_placeholders,
+            ),
         })
     }
 
@@ -429,6 +445,10 @@ impl Session {
             dirty_rows: row_dirty_flags_for_lines(
                 &pane.scrollback_lines,
                 &pane.scrollback_dirty_rows,
+            ),
+            kitty_placeholders: row_kitty_placeholders_for_lines(
+                &pane.scrollback_lines,
+                &pane.scrollback_kitty_placeholders,
             ),
         })
     }
@@ -501,6 +521,11 @@ impl Session {
                         .copied()
                         .unwrap_or(protocol::RowSemanticPrompt::None),
                     dirty: surface.dirty_rows.get(row).copied().unwrap_or(false),
+                    kitty_virtual_placeholder: surface
+                        .kitty_placeholders
+                        .get(row)
+                        .copied()
+                        .unwrap_or(false),
                 },
             );
             row_offsets.push(row);
@@ -615,6 +640,11 @@ impl Session {
                             .copied()
                             .unwrap_or(protocol::RowSemanticPrompt::None),
                         dirty: surface.dirty_rows.get(row).copied().unwrap_or(false),
+                        kitty_virtual_placeholder: surface
+                            .kitty_placeholders
+                            .get(row)
+                            .copied()
+                            .unwrap_or(false),
                     },
                 );
                 row_offsets.push(row);
@@ -718,6 +748,11 @@ impl Session {
                         .unwrap_or(protocol::RowSemanticPrompt::None),
                     dirty: scrollback
                         .dirty_rows
+                        .get(start.saturating_add(offset))
+                        .copied()
+                        .unwrap_or(false),
+                    kitty_virtual_placeholder: scrollback
+                        .kitty_placeholders
                         .get(start.saturating_add(offset))
                         .copied()
                         .unwrap_or(false),
@@ -1081,6 +1116,8 @@ fn apply_terminal_update(
     let row_runs_changed = pane.surface_row_runs != update.surface_row_runs;
     let semantic_prompts_changed = pane.surface_semantic_prompts != update.surface_semantic_prompts;
     let dirty_rows_changed = pane.surface_dirty_rows != update.surface_dirty_rows;
+    let kitty_placeholders_changed =
+        pane.surface_kitty_placeholders != update.surface_kitty_placeholders;
     let surface_changed = force_surface_version
         || surface_kind_changed
         || styles_changed
@@ -1088,13 +1125,15 @@ fn apply_terminal_update(
         || row_runs_changed
         || semantic_prompts_changed
         || dirty_rows_changed
+        || kitty_placeholders_changed
         || pane.cursor != cursor
         || modes_changed
         || title_changed;
     let scrollback_changed = pane.scrollback_lines != update.scrollback_lines
         || pane.scrollback_row_runs != update.scrollback_row_runs
         || pane.scrollback_semantic_prompts != update.scrollback_semantic_prompts
-        || pane.scrollback_dirty_rows != update.scrollback_dirty_rows;
+        || pane.scrollback_dirty_rows != update.scrollback_dirty_rows
+        || pane.scrollback_kitty_placeholders != update.scrollback_kitty_placeholders;
 
     pane.scrollback_lines = update.scrollback_lines;
     pane.scrollback_row_runs =
@@ -1103,6 +1142,10 @@ fn apply_terminal_update(
         row_semantic_prompts_for_lines(&pane.scrollback_lines, &update.scrollback_semantic_prompts);
     pane.scrollback_dirty_rows =
         row_dirty_flags_for_lines(&pane.scrollback_lines, &update.scrollback_dirty_rows);
+    pane.scrollback_kitty_placeholders = row_kitty_placeholders_for_lines(
+        &pane.scrollback_lines,
+        &update.scrollback_kitty_placeholders,
+    );
     pane.surface = update.surface;
     pane.modes = update.modes;
     pane.terminal_title = update.title;
@@ -1113,6 +1156,8 @@ fn apply_terminal_update(
         row_semantic_prompts_for_lines(&pane.surface_lines, &update.surface_semantic_prompts);
     pane.surface_dirty_rows =
         row_dirty_flags_for_lines(&pane.surface_lines, &update.surface_dirty_rows);
+    pane.surface_kitty_placeholders =
+        row_kitty_placeholders_for_lines(&pane.surface_lines, &update.surface_kitty_placeholders);
     pane.cursor = cursor;
 
     if scrollback_changed {
@@ -1127,6 +1172,7 @@ fn apply_terminal_update(
             row_runs_changed,
             semantic_prompts_changed,
             dirty_rows_changed,
+            kitty_placeholders_changed,
             surface_kind_changed,
             styles_changed,
             modes_changed,
@@ -1142,13 +1188,19 @@ fn terminal_patch_kind(
     row_runs_changed: bool,
     semantic_prompts_changed: bool,
     dirty_rows_changed: bool,
+    kitty_placeholders_changed: bool,
     surface_kind_changed: bool,
     styles_changed: bool,
     modes_changed: bool,
 ) -> protocol::PatchKind {
     if surface_kind_changed || styles_changed {
         protocol::PatchKind::FullRefreshRequired
-    } else if rows_changed || row_runs_changed || semantic_prompts_changed || dirty_rows_changed {
+    } else if rows_changed
+        || row_runs_changed
+        || semantic_prompts_changed
+        || dirty_rows_changed
+        || kitty_placeholders_changed
+    {
         protocol::PatchKind::ReplaceRows
     } else if modes_changed {
         protocol::PatchKind::ModeOnly
@@ -1198,6 +1250,14 @@ fn row_dirty_flags_for_lines(lines: &[String], dirty_rows: &[bool]) -> Vec<bool>
         dirty_rows.to_vec()
     } else {
         crate::terminal::plain_row_dirty_flags(lines)
+    }
+}
+
+fn row_kitty_placeholders_for_lines(lines: &[String], kitty_placeholders: &[bool]) -> Vec<bool> {
+    if kitty_placeholders.len() == lines.len() {
+        kitty_placeholders.to_vec()
+    } else {
+        crate::terminal::plain_row_kitty_placeholders(lines)
     }
 }
 
@@ -1426,6 +1486,7 @@ mod tests {
             protocol::RowSemanticPrompt::None
         );
         assert!(!first_row.dirty());
+        assert!(!first_row.kitty_virtual_placeholder());
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.len(), 1);
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
@@ -1565,6 +1626,7 @@ mod tests {
             protocol::RowSemanticPrompt::None
         );
         assert!(!first_row.dirty());
+        assert!(!first_row.kitty_virtual_placeholder());
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
     }
@@ -1639,6 +1701,7 @@ mod tests {
         assert_eq!(first.line(), 1);
         assert_eq!(first.semantic_prompt(), protocol::RowSemanticPrompt::None);
         assert!(!first.dirty());
+        assert!(!first.kitty_virtual_placeholder());
         let first_runs = first.runs().expect("first runs");
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
 
@@ -2309,10 +2372,12 @@ mod tests {
                         .collect(),
                     surface_semantic_prompts: input.surface_semantic_prompts.to_vec(),
                     surface_dirty_rows: input.surface_dirty_rows.to_vec(),
+                    surface_kitty_placeholders: input.surface_kitty_placeholders.to_vec(),
                     scrollback_lines: input.scrollback_lines.to_vec(),
                     scrollback_row_runs: crate::terminal::plain_row_runs(input.scrollback_lines),
                     scrollback_semantic_prompts: input.scrollback_semantic_prompts.to_vec(),
                     scrollback_dirty_rows: input.scrollback_dirty_rows.to_vec(),
+                    scrollback_kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
                 })
             }
 
@@ -2371,10 +2436,12 @@ mod tests {
                         .collect(),
                     surface_semantic_prompts: input.surface_semantic_prompts.to_vec(),
                     surface_dirty_rows: input.surface_dirty_rows.to_vec(),
+                    surface_kitty_placeholders: input.surface_kitty_placeholders.to_vec(),
                     scrollback_lines: input.scrollback_lines.to_vec(),
                     scrollback_row_runs: crate::terminal::plain_row_runs(input.scrollback_lines),
                     scrollback_semantic_prompts: input.scrollback_semantic_prompts.to_vec(),
                     scrollback_dirty_rows: input.scrollback_dirty_rows.to_vec(),
+                    scrollback_kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
                 })
             }
 
@@ -2611,6 +2678,61 @@ mod tests {
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
         let rows = patch.row_updates().expect("row updates");
         assert!(rows.get(0).dirty());
+    }
+
+    #[test]
+    fn kitty_placeholder_only_engine_update_emits_replace_rows_patch() {
+        struct KittyPlaceholderOnlyEngine;
+
+        impl TerminalEngine for KittyPlaceholderOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"kitty placeholder");
+                let mut update = TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                );
+                update.surface_semantic_prompts = input.surface_semantic_prompts.to_vec();
+                update.scrollback_semantic_prompts = input.scrollback_semantic_prompts.to_vec();
+                update.surface_dirty_rows = input.surface_dirty_rows.to_vec();
+                update.scrollback_dirty_rows = input.scrollback_dirty_rows.to_vec();
+                update.surface_kitty_placeholders = vec![false; input.surface_lines.len()];
+                update.scrollback_kitty_placeholders = vec![false; input.scrollback_lines.len()];
+                update.surface_kitty_placeholders[0] = true;
+                Some(update)
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = KittyPlaceholderOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"kitty placeholder", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::ReplaceRows)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
+        let rows = patch.row_updates().expect("row updates");
+        assert!(rows.get(0).kitty_virtual_placeholder());
     }
 
     #[test]

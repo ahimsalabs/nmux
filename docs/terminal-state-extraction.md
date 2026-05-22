@@ -107,10 +107,10 @@ only after the backend extraction proves the exact shape needed.
   the safe API exposes row/cell hyperlink presence. nmux intentionally leaves
   `hyperlink_id` unset until URI, identifier, range ownership, and lifetime have
   a protocol object.
-- Images and graphics protocols: `libghostty-vt` build info and row metadata
-  can prove Kitty graphics support and virtual placeholder rows, but nmux has no
-  image placement, dimensions, persistence, pixel-data, or fallback protocol
-  objects yet.
+- Images and graphics protocols: nmux carries Kitty virtual placeholder
+  presence on surface snapshots, surface patches, and scrollback chunks. Image
+  placement, dimensions, persistence, pixel-data, and fallback protocol objects
+  remain withheld.
 - Damage granularity: row replacement is enough for the prototype, and nmux now
   carries backend row dirty flags on surface snapshots, surface patches, and
   scrollback chunks. Rich cells may still need run-level or region-level patches
@@ -143,8 +143,8 @@ render-state default colors/palette,
 palette overrides, and explicit cursor color, alternate-screen entry/restoration
 with alternate scrollback omission, terminal title metadata with OSC 7
 working-directory omission, OSC 133 row semantic prompt state, resize/reflow, styled
-backend-owned scrollback extraction, row-level dirty state, Kitty graphics
-placeholder detection, hyperlink presence, application-keypad encoder support,
+backend-owned scrollback extraction, row-level dirty state, Kitty placeholder
+metadata, hyperlink presence, application-keypad encoder support,
 focus event encoding, paste safety validation, safe-API mode tracking for
 bracketed paste, mouse tracking, focus reporting, application keypad mode, and
 origin/wraparound modes, plus nmux snapshot/patch cursor blink, row semantic

@@ -323,6 +323,40 @@ For mobile-style roaming, QUIC is the natural native transport because RFC 9000 
 
 But the protocol should not depend on QUIC. State sync is the real win. QUIC helps the connection survive; nmux snapshots help the workspace survive even when the connection does not.
 
+### Identity and auth
+
+Three transport paths, each with its own identity source. See [ADR 0014](docs/adr/0014-transport-identity-boundary.md) for the boundary decision.
+
+```text
+local:      Unix peer credentials (uid/gid)
+tailscale:  WireGuard encryption + tailscaled WhoIs API + ephemeral session token
+non-ts:     SSH bootstrap → short-lived signed token → QUIC+TLS direct connection
+```
+
+On Tailscale, WireGuard provides encryption and peer authentication at the network layer. `nmuxd` calls `GET /localapi/v0/whois?addr=IP:port` on the tailscaled Unix socket to get the peer's `UserProfile.LoginName`, `Node.Name`, and `Node.StableID`. An ephemeral session token adds per-session verification so that WhoIs is not the sole identity gate (guards against local-process spoofing on a compromised node). No application-layer TLS needed on a tailnet.
+
+Without Tailscale, the mosh bootstrap model applies: `nmux connect host` SSHs to the remote, starts or finds `nmuxd`, exchanges a short-lived signed session token, then opens a direct QUIC+TLS connection with that token. SSH handles authentication; the token authorizes the direct connection. The SSH session ends after bootstrap.
+
+All three paths resolve to the same `Actor` for the nmux protocol: `actor_id`, `user_id`, `display_name`, `mode`. The FlatBuffers layer does not know which transport authenticated the peer.
+
+### Proxy composition and chaining
+
+A proxy daemon can aggregate multiple upstream `nmuxd` instances into one workspace tree. See [ADR 0014](docs/adr/0014-transport-identity-boundary.md) for design rationale.
+
+```text
+client → nmux-proxy → nmuxd@machine-a (local PTY)
+                     → nmuxd@machine-b (tmux adapter)
+                     → nmuxd@machine-c (herdr adapter)
+```
+
+The proxy assembles a synthetic workspace tree, namespaces pane IDs by upstream origin, routes input/scrollback to the owning upstream, and forwards surface state downstream. FlatBuffers pane state can be forwarded as raw bytes without deserialize/reserialize. Per-pane version streams are independent across upstreams.
+
+Chaining works because each proxy is just another nmux speaker. `nmuxd` sets `NMUX_*` environment variables in spawned PTYs; a client running inside an nmux pane reads those vars and sends chain/origin metadata in its `AttachRequest`. Each hop appends to the origin chain automatically.
+
+### Zero-overhead local path
+
+When the terminal emulator (Ghostty) embeds `nmuxd` in-process, the local render path reads VT state directly from the in-process `libghostty-vt` instance -- no FlatBuffers serialization, no IPC. The FlatBuffers protocol only activates when a remote client connects. This dual-path model (in-process fast path + serialized remote path) is the same pattern used by Chrome DevTools / V8 inspector and gRPC in-process optimization. Consistency between paths should be enforced by invariant tests that compare serialized snapshots against direct state reads.
+
 ## The first build target
 
 Do not start with a beautiful Ghostty fork. Start with a local state-sync spine that can be used and tested end to end, then swap in libghostty-backed terminal state when that boundary is ready.
@@ -441,12 +475,13 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   keep the terminal-state extraction checklist current while importing libghostty-vt and before expanding protocol fields
   optional libghostty-vt feature feeds PTY bytes into daemon-owned VT state, not clients
   optional libghostty-vt engine maps cursor, surface kind, terminal modes, visible rows, styled scrollback rows, row runs, style IDs, cell widths, resize/reflow, and backend-owned scrollback into nmux objects
-  optional libghostty-vt coverage includes cursor visibility/shape/blink state, alternate-screen entry/restoration with alternate scrollback omission, combining marks, emoji ZWJ clusters, basic SGR style flags, underline color, palette-indexed SGR color resolution, render-state default colors/palette, palette overrides, explicit cursor color, title metadata with OSC 7 working-directory omission, OSC 133 row semantic prompt state, row-level dirty state, Kitty graphics placeholder detection, hyperlink presence, bracketed paste, paste safety validation, mouse tracking, focus reporting and event encoding, application keypad tracking and explicit encoder output, origin, and wraparound modes, and mode-aware key encoding
+  optional libghostty-vt coverage includes cursor visibility/shape/blink state, alternate-screen entry/restoration with alternate scrollback omission, combining marks, emoji ZWJ clusters, basic SGR style flags, underline color, palette-indexed SGR color resolution, render-state default colors/palette, palette overrides, explicit cursor color, title metadata with OSC 7 working-directory omission, OSC 133 row semantic prompt state, row-level dirty state, Kitty graphics placeholder metadata, hyperlink presence, bracketed paste, paste safety validation, mouse tracking, focus reporting and event encoding, application keypad tracking and explicit encoder output, origin, and wraparound modes, and mode-aware key encoding
   OSC 8 hyperlink text and backend row/cell hyperlink presence are preserved, but hyperlink IDs remain unset until nmux has a hyperlink table
   CursorState carries cursor blink metadata from libghostty-vt, and old cached client cursor state defaults to blinking enabled
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal title metadata; OSC 7 working-directory state remains withheld until the backend and protocol shape are clear
   SurfaceRow, RowUpdate, and ScrollbackRow carry OSC 133 row semantic prompt metadata; broader semantic input/output command metadata remains withheld
   SurfaceRow, RowUpdate, and ScrollbackRow carry backend row dirty flags as metadata; richer sparse damage protocol fields remain withheld
+  SurfaceRow, RowUpdate, and ScrollbackRow carry Kitty virtual placeholder metadata; image placement and pixel-data protocol fields remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk preserve row runs instead of collapsing state to text-only rows
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal mode state, and mode-only updates no longer force full refreshes
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch

@@ -32,9 +32,11 @@ This keeps frontend behavior consistent across native, web, mobile, and automati
 Pane surfaces and scrollback chunks are encoded as rows of runs:
 
 - `SurfaceRow` and `RowUpdate` identify rows by index and include both a
-  stable `dirty_hash` and the backend row `dirty` flag.
+  stable `dirty_hash`, the backend row `dirty` flag, and Kitty virtual
+  placeholder presence.
 - `ScrollbackRow` identifies history rows by absolute scrollback line and
-  includes both a stable `dirty_hash` and the backend row `dirty` flag.
+  includes both a stable `dirty_hash`, the backend row `dirty` flag, and Kitty
+  virtual placeholder presence.
 - `CellRun` stores UTF-8 text, per-cell widths, a style table reference, flags, and an optional hyperlink reference.
 - `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot` objects and `ScrollbackChunk` objects carry the style table needed by their rows.
 - `CursorState` stores cursor row, column, visibility, shape, and blinking.
