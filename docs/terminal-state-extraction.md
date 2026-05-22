@@ -111,10 +111,10 @@ only after the backend extraction proves the exact shape needed.
   can prove Kitty graphics support and virtual placeholder rows, but nmux has no
   image placement, dimensions, persistence, pixel-data, or fallback protocol
   objects yet.
-- Damage granularity: row replacement is enough for the prototype, and
-  `libghostty-vt` render-state tests prove row-level dirty state is
-  backend-observable. Rich cells may still need run-level or region-level
-  patches beyond cursor-only updates before nmux exposes a damage protocol.
+- Damage granularity: row replacement is enough for the prototype, and nmux now
+  carries backend row dirty flags on surface snapshots, surface patches, and
+  scrollback chunks. Rich cells may still need run-level or region-level patches
+  beyond cursor-only updates before nmux exposes a richer damage protocol.
 
 ## Acceptance Gate
 
@@ -148,8 +148,8 @@ placeholder detection, hyperlink presence, application-keypad encoder support,
 focus event encoding, paste safety validation, safe-API mode tracking for
 bracketed paste, mouse tracking, focus reporting, application keypad mode, and
 origin/wraparound modes, plus nmux snapshot/patch cursor blink, row semantic
-prompt, and mode payloads, mode-only patch application, and cursor cache
-compatibility through unit, session, and live CLI
+prompt, row dirty, and mode payloads, mode-only patch application, and cursor
+cache compatibility through unit, session, and live CLI
 smoke coverage. It is not the default until
 the project deliberately accepts the native Zig/Ghostty build cost in normal
 development and CI.

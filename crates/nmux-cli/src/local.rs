@@ -897,6 +897,7 @@ pub fn surface_update_from_frame(
                     row.runs(),
                     row.dirty_hash(),
                     row.semantic_prompt(),
+                    row.dirty(),
                 )
             });
             let text = render_decoded_rows(&row_updates);
@@ -938,6 +939,7 @@ pub fn surface_update_from_frame(
                     row.runs(),
                     row.dirty_hash(),
                     row.semantic_prompt(),
+                    row.dirty(),
                 )
             });
             let text = render_decoded_rows(&row_updates);
@@ -981,6 +983,7 @@ fn decoded_surface_row(
     runs: Option<flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<protocol::CellRun<'_>>>>,
     dirty_hash: u64,
     semantic_prompt: protocol::RowSemanticPrompt,
+    dirty: bool,
 ) -> SurfaceRowUpdate {
     let runs = runs.map(decoded_cell_runs).unwrap_or_default();
     SurfaceRowUpdate {
@@ -989,6 +992,7 @@ fn decoded_surface_row(
         runs,
         dirty_hash,
         semantic_prompt,
+        dirty,
     }
 }
 
@@ -1253,6 +1257,7 @@ pub fn scrollback_chunk_from_frame(
             text: render_run_summaries(&runs),
             runs,
             semantic_prompt: row.semantic_prompt(),
+            dirty: row.dirty(),
         });
     }
 
@@ -1580,6 +1585,7 @@ pub struct SurfaceRowUpdate {
     pub runs: Vec<CellRunSummary>,
     pub dirty_hash: u64,
     pub semantic_prompt: protocol::RowSemanticPrompt,
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1613,6 +1619,7 @@ pub struct ClientPaneSurface {
     row_text: Vec<String>,
     row_runs: Vec<Vec<CellRunSummary>>,
     row_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
+    row_dirty: Vec<bool>,
 }
 
 impl ClientPaneSurface {
@@ -1634,6 +1641,7 @@ impl ClientPaneSurface {
             row_text: Vec::new(),
             row_runs: Vec::new(),
             row_semantic_prompts: Vec::new(),
+            row_dirty: Vec::new(),
         };
         let row_count =
             usize::try_from(surface.rows).map_err(|_| "surface row count does not fit in usize")?;
@@ -1642,6 +1650,7 @@ impl ClientPaneSurface {
         surface
             .row_semantic_prompts
             .resize(row_count, protocol::RowSemanticPrompt::None);
+        surface.row_dirty.resize(row_count, false);
         surface.apply_rows(&update.row_updates)?;
         Ok(surface)
     }
@@ -1732,6 +1741,7 @@ impl ClientPaneSurface {
                 row.runs.clone()
             };
             self.row_semantic_prompts[index] = row.semantic_prompt;
+            self.row_dirty[index] = row.dirty;
         }
         Ok(())
     }
@@ -1940,6 +1950,8 @@ impl ClientAttachState {
                 encoded.push_str(&index.to_string());
                 encoded.push(' ');
                 encoded.push_str(&surface.row_semantic_prompts[index].0.to_string());
+                encoded.push(' ');
+                encoded.push_str(if surface.row_dirty[index] { "1" } else { "0" });
                 encoded.push('\n');
                 for run in &surface.row_runs[index] {
                     encoded.push_str("run ");
@@ -2018,6 +2030,7 @@ impl ClientAttachState {
             let mut row_text = vec![String::new(); row_count];
             let mut row_runs = vec![Vec::new(); row_count];
             let mut row_semantic_prompts = vec![protocol::RowSemanticPrompt::None; row_count];
+            let mut row_dirty = vec![false; row_count];
 
             loop {
                 let Some(line) = lines.next() else {
@@ -2104,6 +2117,24 @@ impl ClientAttachState {
                         };
                         *target = protocol::RowSemanticPrompt(parse_state_i8(semantic_prompt)?);
                     }
+                    ["rowmeta", row, semantic_prompt, dirty] => {
+                        let row = parse_state_usize(row)?;
+                        let Some(semantic_target) = row_semantic_prompts.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        let Some(dirty_target) = row_dirty.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        *semantic_target =
+                            protocol::RowSemanticPrompt(parse_state_i8(semantic_prompt)?);
+                        *dirty_target = parse_state_bool(dirty)?;
+                    }
                     ["run", row, text, cell_widths, style_id, flags] => {
                         let row = parse_state_usize(row)?;
                         let Some(target) = row_runs.get_mut(row) else {
@@ -2163,6 +2194,7 @@ impl ClientAttachState {
                 },
                 row_runs: row_runs_for_text(&row_text, row_runs),
                 row_semantic_prompts,
+                row_dirty,
                 row_text,
             });
         }
@@ -2298,6 +2330,7 @@ pub struct ScrollbackLine {
     pub text: String,
     pub runs: Vec<CellRunSummary>,
     pub semantic_prompt: protocol::RowSemanticPrompt,
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2484,6 +2517,7 @@ mod tests {
             }],
             dirty_hash: u64::from(row),
             semantic_prompt: protocol::RowSemanticPrompt::None,
+            dirty: false,
         }
     }
 
@@ -2493,6 +2527,7 @@ mod tests {
             text: text.to_owned(),
             runs: vec![CellRunSummary::plain(text)],
             semantic_prompt: protocol::RowSemanticPrompt::None,
+            dirty: false,
         }
     }
 
@@ -2777,6 +2812,7 @@ mod tests {
                     ],
                     dirty_hash: 0,
                     semantic_prompt: protocol::RowSemanticPrompt::Prompt,
+                    dirty: true,
                 },
                 surface_row(2, "tail"),
             ],
@@ -2828,6 +2864,7 @@ mod tests {
             decoded.surfaces[0].row_semantic_prompts[0],
             protocol::RowSemanticPrompt::Prompt
         );
+        assert!(decoded.surfaces[0].row_dirty[0]);
         assert_eq!(decoded.surfaces[0].styles, expected_styles);
         assert_eq!(decoded.surfaces[0].row_runs[0].len(), 2);
         assert_eq!(decoded.surfaces[0].row_runs[0][0].text, "cache");
@@ -2849,6 +2886,7 @@ mod tests {
             decoded.surfaces[0].row_semantic_prompts[0],
             protocol::RowSemanticPrompt::None
         );
+        assert!(!decoded.surfaces[0].row_dirty[0]);
         assert_eq!(decoded.surfaces[0].styles, default_style_summaries());
         assert_eq!(decoded.surfaces[0].render_text(), "cached");
     }

@@ -446,6 +446,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   CursorState carries cursor blink metadata from libghostty-vt, and old cached client cursor state defaults to blinking enabled
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal title metadata; OSC 7 working-directory state remains withheld until the backend and protocol shape are clear
   SurfaceRow, RowUpdate, and ScrollbackRow carry OSC 133 row semantic prompt metadata; broader semantic input/output command metadata remains withheld
+  SurfaceRow, RowUpdate, and ScrollbackRow carry backend row dirty flags as metadata; richer sparse damage protocol fields remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk preserve row runs instead of collapsing state to text-only rows
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal mode state, and mode-only updates no longer force full refreshes
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch

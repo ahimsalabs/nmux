@@ -122,9 +122,11 @@ impl TmuxSession {
                 surface_lines: Vec::new(),
                 surface_row_runs: Vec::<Vec<CellRun>>::new(),
                 surface_semantic_prompts: Vec::new(),
+                surface_dirty_rows: Vec::new(),
                 scrollback_lines: Vec::new(),
                 scrollback_row_runs: Vec::<Vec<CellRun>>::new(),
                 scrollback_semantic_prompts: Vec::new(),
+                scrollback_dirty_rows: Vec::new(),
             },
         })
     }

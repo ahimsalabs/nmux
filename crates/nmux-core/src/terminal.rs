@@ -11,8 +11,10 @@ pub struct TerminalInput<'a> {
     pub title: &'a str,
     pub surface_lines: &'a [String],
     pub surface_semantic_prompts: &'a [protocol::RowSemanticPrompt],
+    pub surface_dirty_rows: &'a [bool],
     pub scrollback_lines: &'a [String],
     pub scrollback_semantic_prompts: &'a [protocol::RowSemanticPrompt],
+    pub scrollback_dirty_rows: &'a [bool],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,9 +93,11 @@ pub struct TerminalUpdate {
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
     pub surface_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
+    pub surface_dirty_rows: Vec<bool>,
     pub scrollback_lines: Vec<String>,
     pub scrollback_row_runs: Vec<Vec<CellRun>>,
     pub scrollback_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
+    pub scrollback_dirty_rows: Vec<bool>,
 }
 
 impl TerminalUpdate {
@@ -113,8 +117,10 @@ impl TerminalUpdate {
             styles: vec![PaneStyle::default()],
             surface_row_runs: plain_row_runs(&surface_lines),
             surface_semantic_prompts: plain_row_semantic_prompts(&surface_lines),
+            surface_dirty_rows: plain_row_dirty_flags(&surface_lines),
             scrollback_row_runs: plain_row_runs(&scrollback_lines),
             scrollback_semantic_prompts: plain_row_semantic_prompts(&scrollback_lines),
+            scrollback_dirty_rows: plain_row_dirty_flags(&scrollback_lines),
             surface_lines,
             scrollback_lines,
         }
@@ -258,6 +264,10 @@ pub(crate) fn plain_row_semantic_prompts(lines: &[String]) -> Vec<protocol::RowS
     vec![protocol::RowSemanticPrompt::None; lines.len()]
 }
 
+pub(crate) fn plain_row_dirty_flags(lines: &[String]) -> Vec<bool> {
+    vec![false; lines.len()]
+}
+
 pub(crate) fn cell_runs_text(runs: &[CellRun]) -> String {
     let mut text = String::new();
     for run in runs {
@@ -379,6 +389,7 @@ mod ghostty_vt {
                     lines: input.scrollback_lines.to_vec(),
                     row_runs: super::plain_row_runs(input.scrollback_lines),
                     semantic_prompts: input.scrollback_semantic_prompts.to_vec(),
+                    dirty_rows: input.scrollback_dirty_rows.to_vec(),
                 }
             };
             self.terminal.scroll_viewport(ScrollViewport::Bottom);
@@ -391,6 +402,7 @@ mod ghostty_vt {
             )?;
             let surface_lines = surface_rows.lines.clone();
             let surface_semantic_prompts = surface_rows.semantic_prompts.clone();
+            let surface_dirty_rows = surface_rows.dirty_rows.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
             let modes = modes(&self.terminal)?;
             let title = self.terminal.title().ok()?;
@@ -398,6 +410,7 @@ mod ghostty_vt {
                 && surface == input.surface
                 && surface_lines == input.surface_lines
                 && surface_semantic_prompts == input.surface_semantic_prompts
+                && surface_dirty_rows == input.surface_dirty_rows
                 && cursor != input.cursor
                 && modes == input.modes
                 && title == input.title
@@ -407,6 +420,7 @@ mod ghostty_vt {
                 && surface == input.surface
                 && surface_lines == input.surface_lines
                 && surface_semantic_prompts == input.surface_semantic_prompts
+                && surface_dirty_rows == input.surface_dirty_rows
                 && modes != input.modes
                 && title == input.title
             {
@@ -426,6 +440,8 @@ mod ghostty_vt {
                 scrollback_row_runs: scrollback_rows.row_runs,
                 surface_semantic_prompts,
                 scrollback_semantic_prompts: scrollback_rows.semantic_prompts,
+                surface_dirty_rows,
+                scrollback_dirty_rows: scrollback_rows.dirty_rows,
                 surface_lines,
                 scrollback_lines: scrollback_rows.lines,
             })
@@ -438,6 +454,7 @@ mod ghostty_vt {
                     lines: Vec::new(),
                     row_runs: Vec::new(),
                     semantic_prompts: Vec::new(),
+                    dirty_rows: Vec::new(),
                 });
             }
 
@@ -452,6 +469,7 @@ mod ghostty_vt {
             rows.lines.truncate(total_rows);
             rows.row_runs.truncate(total_rows);
             rows.semantic_prompts.truncate(total_rows);
+            rows.dirty_rows.truncate(total_rows);
 
             while rows.lines.len() < total_rows {
                 self.terminal.scroll_viewport(ScrollViewport::Delta(1));
@@ -471,9 +489,13 @@ mod ghostty_vt {
                 let Some(next_semantic_prompt) = viewport_lines.semantic_prompts.last() else {
                     break;
                 };
+                let Some(next_dirty) = viewport_lines.dirty_rows.last() else {
+                    break;
+                };
                 rows.lines.push(next_line.clone());
                 rows.row_runs.push(next_runs.clone());
                 rows.semantic_prompts.push(*next_semantic_prompt);
+                rows.dirty_rows.push(*next_dirty);
             }
 
             Some(rows)
@@ -484,6 +506,7 @@ mod ghostty_vt {
         lines: Vec<String>,
         row_runs: Vec<Vec<CellRun>>,
         semantic_prompts: Vec<protocol::RowSemanticPrompt>,
+        dirty_rows: Vec<bool>,
     }
 
     fn extract_rows<'alloc>(
@@ -496,8 +519,10 @@ mod ghostty_vt {
         let mut row_runs = Vec::new();
         let mut lines = Vec::new();
         let mut semantic_prompts = Vec::new();
+        let mut dirty_rows = Vec::new();
         while let Some(row) = rows.next() {
             let semantic_prompt = row_semantic_prompt(row.raw_row().ok()?.semantic_prompt().ok()?);
+            let dirty = row.dirty().ok()?;
             let mut cells = cell_iterator.update(row).ok()?;
             let mut runs: Vec<CellRun> = Vec::new();
             while cells.next().is_some() {
@@ -531,11 +556,13 @@ mod ghostty_vt {
             lines.push(super::cell_runs_text(&runs));
             row_runs.push(runs);
             semantic_prompts.push(semantic_prompt);
+            dirty_rows.push(dirty);
         }
         Some(ExtractedRows {
             lines,
             row_runs,
             semantic_prompts,
+            dirty_rows,
         })
     }
 
@@ -739,8 +766,10 @@ mod tests {
             title: "",
             surface_lines,
             surface_semantic_prompts: &[],
+            surface_dirty_rows: &[],
             scrollback_lines,
             scrollback_semantic_prompts: &[],
+            scrollback_dirty_rows: &[],
         }
     }
 
@@ -756,8 +785,10 @@ mod tests {
             title: &update.title,
             surface_lines: &update.surface_lines,
             surface_semantic_prompts: &update.surface_semantic_prompts,
+            surface_dirty_rows: &update.surface_dirty_rows,
             scrollback_lines: &update.scrollback_lines,
             scrollback_semantic_prompts: &update.scrollback_semantic_prompts,
+            scrollback_dirty_rows: &update.scrollback_dirty_rows,
         }
     }
 
@@ -781,8 +812,10 @@ mod tests {
             title: "existing title",
             surface_lines: &[],
             surface_semantic_prompts: &[],
+            surface_dirty_rows: &[],
             scrollback_lines: &scrollback_lines,
             scrollback_semantic_prompts: &[],
+            scrollback_dirty_rows: &[],
         };
 
         let update = engine
@@ -832,8 +865,10 @@ mod tests {
             title: "",
             surface_lines: &[],
             surface_semantic_prompts: &[],
+            surface_dirty_rows: &[],
             scrollback_lines: &scrollback_lines,
             scrollback_semantic_prompts: &[],
+            scrollback_dirty_rows: &[],
         };
 
         let update = engine
@@ -880,8 +915,10 @@ mod tests {
             title: "",
             surface_lines: &scrollback_lines,
             surface_semantic_prompts: &[],
+            surface_dirty_rows: &[],
             scrollback_lines: &scrollback_lines,
             scrollback_semantic_prompts: &[],
+            scrollback_dirty_rows: &[],
         };
 
         let update = engine.resize(input, 100, 2).expect("terminal update");
@@ -1206,7 +1243,7 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
-    fn libghostty_vt_render_state_exposes_row_dirty_without_protocol_fields() {
+    fn libghostty_vt_render_state_exposes_row_dirty() {
         use libghostty_vt::{RenderState, Terminal, TerminalOptions, render::RowIterator};
 
         let mut terminal = Terminal::new(TerminalOptions {
@@ -1240,6 +1277,21 @@ mod tests {
             dirty_rows > 0,
             "render state should expose at least one dirty row"
         );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_extracts_row_dirty_metadata() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let update = engine
+            .apply_output(terminal_input_with_size(80, 24, &[], &[]), b"dirty row")
+            .expect("dirty update");
+
+        assert_eq!(
+            update.surface_lines.first().map(String::as_str),
+            Some("dirty row")
+        );
+        assert_eq!(update.surface_dirty_rows.first().copied(), Some(true));
     }
 
     #[cfg(feature = "libghostty-vt")]

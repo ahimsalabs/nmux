@@ -161,6 +161,7 @@ table SurfaceRow {
   runs:[CellRun];
   dirty_hash:ulong;
   semantic_prompt:RowSemanticPrompt = None;
+  dirty:bool;
 }
 
 table RowUpdate {
@@ -168,6 +169,7 @@ table RowUpdate {
   runs:[CellRun];
   dirty_hash:ulong;
   semantic_prompt:RowSemanticPrompt = None;
+  dirty:bool;
 }
 
 table CellRun {
@@ -248,6 +250,7 @@ table ScrollbackRow {
   runs:[CellRun];
   dirty_hash:ulong;
   semantic_prompt:RowSemanticPrompt = None;
+  dirty:bool;
 }
 
 table PresenceUpdate {

@@ -2755,6 +2755,7 @@ impl<'a> SurfaceRow<'a> {
   pub const VT_RUNS: ::flatbuffers::VOffsetT = 6;
   pub const VT_DIRTY_HASH: ::flatbuffers::VOffsetT = 8;
   pub const VT_SEMANTIC_PROMPT: ::flatbuffers::VOffsetT = 10;
+  pub const VT_DIRTY: ::flatbuffers::VOffsetT = 12;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2769,6 +2770,7 @@ impl<'a> SurfaceRow<'a> {
     builder.add_dirty_hash(args.dirty_hash);
     if let Some(x) = args.runs { builder.add_runs(x); }
     builder.add_row(args.row);
+    builder.add_dirty(args.dirty);
     builder.add_semantic_prompt(args.semantic_prompt);
     builder.finish()
   }
@@ -2802,6 +2804,13 @@ impl<'a> SurfaceRow<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<RowSemanticPrompt>(SurfaceRow::VT_SEMANTIC_PROMPT, Some(RowSemanticPrompt::None)).unwrap()}
   }
+  #[inline]
+  pub fn dirty(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(SurfaceRow::VT_DIRTY, Some(false)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for SurfaceRow<'_> {
@@ -2814,6 +2823,7 @@ impl ::flatbuffers::Verifiable for SurfaceRow<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CellRun>>>>("runs", Self::VT_RUNS, false)?
      .visit_field::<u64>("dirty_hash", Self::VT_DIRTY_HASH, false)?
      .visit_field::<RowSemanticPrompt>("semantic_prompt", Self::VT_SEMANTIC_PROMPT, false)?
+     .visit_field::<bool>("dirty", Self::VT_DIRTY, false)?
      .finish();
     Ok(())
   }
@@ -2823,6 +2833,7 @@ pub struct SurfaceRowArgs<'a> {
     pub runs: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun<'a>>>>>,
     pub dirty_hash: u64,
     pub semantic_prompt: RowSemanticPrompt,
+    pub dirty: bool,
 }
 impl<'a> Default for SurfaceRowArgs<'a> {
   #[inline]
@@ -2832,6 +2843,7 @@ impl<'a> Default for SurfaceRowArgs<'a> {
       runs: None,
       dirty_hash: 0,
       semantic_prompt: RowSemanticPrompt::None,
+      dirty: false,
     }
   }
 }
@@ -2858,6 +2870,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SurfaceRowBuilder<'a, 'b, A> 
     self.fbb_.push_slot::<RowSemanticPrompt>(SurfaceRow::VT_SEMANTIC_PROMPT, semantic_prompt, RowSemanticPrompt::None);
   }
   #[inline]
+  pub fn add_dirty(&mut self, dirty: bool) {
+    self.fbb_.push_slot::<bool>(SurfaceRow::VT_DIRTY, dirty, false);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SurfaceRowBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SurfaceRowBuilder {
@@ -2879,6 +2895,7 @@ impl ::core::fmt::Debug for SurfaceRow<'_> {
       ds.field("runs", &self.runs());
       ds.field("dirty_hash", &self.dirty_hash());
       ds.field("semantic_prompt", &self.semantic_prompt());
+      ds.field("dirty", &self.dirty());
       ds.finish()
   }
 }
@@ -2902,6 +2919,7 @@ impl<'a> RowUpdate<'a> {
   pub const VT_RUNS: ::flatbuffers::VOffsetT = 6;
   pub const VT_DIRTY_HASH: ::flatbuffers::VOffsetT = 8;
   pub const VT_SEMANTIC_PROMPT: ::flatbuffers::VOffsetT = 10;
+  pub const VT_DIRTY: ::flatbuffers::VOffsetT = 12;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2916,6 +2934,7 @@ impl<'a> RowUpdate<'a> {
     builder.add_dirty_hash(args.dirty_hash);
     if let Some(x) = args.runs { builder.add_runs(x); }
     builder.add_row(args.row);
+    builder.add_dirty(args.dirty);
     builder.add_semantic_prompt(args.semantic_prompt);
     builder.finish()
   }
@@ -2949,6 +2968,13 @@ impl<'a> RowUpdate<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<RowSemanticPrompt>(RowUpdate::VT_SEMANTIC_PROMPT, Some(RowSemanticPrompt::None)).unwrap()}
   }
+  #[inline]
+  pub fn dirty(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(RowUpdate::VT_DIRTY, Some(false)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for RowUpdate<'_> {
@@ -2961,6 +2987,7 @@ impl ::flatbuffers::Verifiable for RowUpdate<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CellRun>>>>("runs", Self::VT_RUNS, false)?
      .visit_field::<u64>("dirty_hash", Self::VT_DIRTY_HASH, false)?
      .visit_field::<RowSemanticPrompt>("semantic_prompt", Self::VT_SEMANTIC_PROMPT, false)?
+     .visit_field::<bool>("dirty", Self::VT_DIRTY, false)?
      .finish();
     Ok(())
   }
@@ -2970,6 +2997,7 @@ pub struct RowUpdateArgs<'a> {
     pub runs: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun<'a>>>>>,
     pub dirty_hash: u64,
     pub semantic_prompt: RowSemanticPrompt,
+    pub dirty: bool,
 }
 impl<'a> Default for RowUpdateArgs<'a> {
   #[inline]
@@ -2979,6 +3007,7 @@ impl<'a> Default for RowUpdateArgs<'a> {
       runs: None,
       dirty_hash: 0,
       semantic_prompt: RowSemanticPrompt::None,
+      dirty: false,
     }
   }
 }
@@ -3005,6 +3034,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> RowUpdateBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<RowSemanticPrompt>(RowUpdate::VT_SEMANTIC_PROMPT, semantic_prompt, RowSemanticPrompt::None);
   }
   #[inline]
+  pub fn add_dirty(&mut self, dirty: bool) {
+    self.fbb_.push_slot::<bool>(RowUpdate::VT_DIRTY, dirty, false);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> RowUpdateBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     RowUpdateBuilder {
@@ -3026,6 +3059,7 @@ impl ::core::fmt::Debug for RowUpdate<'_> {
       ds.field("runs", &self.runs());
       ds.field("dirty_hash", &self.dirty_hash());
       ds.field("semantic_prompt", &self.semantic_prompt());
+      ds.field("dirty", &self.dirty());
       ds.finish()
   }
 }
@@ -4570,6 +4604,7 @@ impl<'a> ScrollbackRow<'a> {
   pub const VT_RUNS: ::flatbuffers::VOffsetT = 6;
   pub const VT_DIRTY_HASH: ::flatbuffers::VOffsetT = 8;
   pub const VT_SEMANTIC_PROMPT: ::flatbuffers::VOffsetT = 10;
+  pub const VT_DIRTY: ::flatbuffers::VOffsetT = 12;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -4584,6 +4619,7 @@ impl<'a> ScrollbackRow<'a> {
     builder.add_dirty_hash(args.dirty_hash);
     builder.add_line(args.line);
     if let Some(x) = args.runs { builder.add_runs(x); }
+    builder.add_dirty(args.dirty);
     builder.add_semantic_prompt(args.semantic_prompt);
     builder.finish()
   }
@@ -4617,6 +4653,13 @@ impl<'a> ScrollbackRow<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<RowSemanticPrompt>(ScrollbackRow::VT_SEMANTIC_PROMPT, Some(RowSemanticPrompt::None)).unwrap()}
   }
+  #[inline]
+  pub fn dirty(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(ScrollbackRow::VT_DIRTY, Some(false)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for ScrollbackRow<'_> {
@@ -4629,6 +4672,7 @@ impl ::flatbuffers::Verifiable for ScrollbackRow<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CellRun>>>>("runs", Self::VT_RUNS, false)?
      .visit_field::<u64>("dirty_hash", Self::VT_DIRTY_HASH, false)?
      .visit_field::<RowSemanticPrompt>("semantic_prompt", Self::VT_SEMANTIC_PROMPT, false)?
+     .visit_field::<bool>("dirty", Self::VT_DIRTY, false)?
      .finish();
     Ok(())
   }
@@ -4638,6 +4682,7 @@ pub struct ScrollbackRowArgs<'a> {
     pub runs: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun<'a>>>>>,
     pub dirty_hash: u64,
     pub semantic_prompt: RowSemanticPrompt,
+    pub dirty: bool,
 }
 impl<'a> Default for ScrollbackRowArgs<'a> {
   #[inline]
@@ -4647,6 +4692,7 @@ impl<'a> Default for ScrollbackRowArgs<'a> {
       runs: None,
       dirty_hash: 0,
       semantic_prompt: RowSemanticPrompt::None,
+      dirty: false,
     }
   }
 }
@@ -4673,6 +4719,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackRowBuilder<'a, 'b, 
     self.fbb_.push_slot::<RowSemanticPrompt>(ScrollbackRow::VT_SEMANTIC_PROMPT, semantic_prompt, RowSemanticPrompt::None);
   }
   #[inline]
+  pub fn add_dirty(&mut self, dirty: bool) {
+    self.fbb_.push_slot::<bool>(ScrollbackRow::VT_DIRTY, dirty, false);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackRowBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     ScrollbackRowBuilder {
@@ -4694,6 +4744,7 @@ impl ::core::fmt::Debug for ScrollbackRow<'_> {
       ds.field("runs", &self.runs());
       ds.field("dirty_hash", &self.dirty_hash());
       ds.field("semantic_prompt", &self.semantic_prompt());
+      ds.field("dirty", &self.dirty());
       ds.finish()
   }
 }
