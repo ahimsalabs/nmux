@@ -886,6 +886,10 @@ pub fn surface_update_from_frame(
                 .body_as_pane_surface_snapshot()
                 .ok_or("missing pane surface body")?;
             let rows = snapshot.rows_data().ok_or("pane surface has no rows")?;
+            let styles = snapshot
+                .styles()
+                .map(decoded_styles)
+                .unwrap_or_else(default_style_summaries);
             let row_updates = decoded_surface_rows(rows.len(), |index| {
                 let row = rows.get(index);
                 decoded_surface_row(row.row(), row.runs(), row.dirty_hash())
@@ -902,6 +906,7 @@ pub fn surface_update_from_frame(
                 surface: Some(snapshot.surface()),
                 cursor: snapshot.cursor().map(CursorSummary::from_protocol),
                 row_updates,
+                styles,
                 text,
             })
         }
@@ -928,6 +933,7 @@ pub fn surface_update_from_frame(
                 surface: None,
                 cursor: patch.cursor().map(CursorSummary::from_protocol),
                 row_updates,
+                styles: Vec::new(),
                 text,
             })
         }
@@ -991,6 +997,15 @@ fn decoded_styles(
         });
     }
     decoded
+}
+
+fn default_style_summaries() -> Vec<StyleSummary> {
+    vec![StyleSummary {
+        fg_rgba: 0,
+        bg_rgba: 0,
+        underline_rgba: 0,
+        flags: 0,
+    }]
 }
 
 fn render_decoded_rows(rows: &[SurfaceRowUpdate]) -> String {
@@ -1447,6 +1462,7 @@ pub struct SurfaceUpdate {
     pub surface: Option<protocol::SurfaceKind>,
     pub cursor: Option<CursorSummary>,
     pub row_updates: Vec<SurfaceRowUpdate>,
+    pub styles: Vec<StyleSummary>,
     pub text: String,
 }
 
@@ -1516,6 +1532,7 @@ pub struct ClientPaneSurface {
     pub rows: u32,
     pub surface: protocol::SurfaceKind,
     pub cursor: Option<CursorSummary>,
+    styles: Vec<StyleSummary>,
     row_text: Vec<String>,
     row_runs: Vec<Vec<CellRunSummary>>,
 }
@@ -1529,6 +1546,11 @@ impl ClientPaneSurface {
             rows: update.rows.ok_or("surface snapshot missing rows")?,
             surface: update.surface.unwrap_or(protocol::SurfaceKind::Main),
             cursor: update.cursor,
+            styles: if update.styles.is_empty() {
+                default_style_summaries()
+            } else {
+                update.styles.clone()
+            },
             row_text: Vec::new(),
             row_runs: Vec::new(),
         };
@@ -1762,6 +1784,17 @@ impl ClientAttachState {
                 }
                 None => encoded.push_str("cursor none\n"),
             }
+            for style in &surface.styles {
+                encoded.push_str("style ");
+                encoded.push_str(&style.fg_rgba.to_string());
+                encoded.push(' ');
+                encoded.push_str(&style.bg_rgba.to_string());
+                encoded.push(' ');
+                encoded.push_str(&style.underline_rgba.to_string());
+                encoded.push(' ');
+                encoded.push_str(&style.flags.to_string());
+                encoded.push('\n');
+            }
             for (index, row) in surface.row_text.iter().enumerate() {
                 encoded.push_str("row ");
                 encoded.push_str(&index.to_string());
@@ -1839,6 +1872,7 @@ impl ClientAttachState {
                 io::Error::new(io::ErrorKind::InvalidData, "surface rows too large")
             })?;
             let mut cursor = None;
+            let mut styles = Vec::new();
             let mut row_text = vec![String::new(); row_count];
             let mut row_runs = vec![Vec::new(); row_count];
 
@@ -1878,6 +1912,22 @@ impl ClientAttachState {
                             col: parse_state_u32(col)?,
                             visible: parse_state_bool(visible)?,
                             shape: protocol::CursorShape(parse_state_i8(shape)?),
+                        });
+                    }
+                    (
+                        Some("style"),
+                        Some(fg_rgba),
+                        Some(bg_rgba),
+                        Some(underline_rgba),
+                        Some(flags),
+                        None,
+                        None,
+                    ) => {
+                        styles.push(StyleSummary {
+                            fg_rgba: parse_state_u32(fg_rgba)?,
+                            bg_rgba: parse_state_u32(bg_rgba)?,
+                            underline_rgba: parse_state_u32(underline_rgba)?,
+                            flags: parse_state_u32(flags)?,
                         });
                     }
                     (Some("row"), Some(row), Some(text), None, None, None, None) => {
@@ -1935,6 +1985,11 @@ impl ClientAttachState {
                 rows,
                 surface,
                 cursor,
+                styles: if styles.is_empty() {
+                    default_style_summaries()
+                } else {
+                    styles
+                },
                 row_runs: row_runs_for_text(&row_text, row_runs),
                 row_text,
             });
@@ -2231,6 +2286,11 @@ mod tests {
                 SurfaceUpdateKind::Patch => None,
             },
             cursor: None,
+            styles: if kind == SurfaceUpdateKind::Snapshot {
+                default_style_summaries()
+            } else {
+                Vec::new()
+            },
             text: render_decoded_rows(&rows),
             row_updates: rows,
         }
@@ -2257,15 +2317,6 @@ mod tests {
             text: text.to_owned(),
             runs: vec![CellRunSummary::plain(text)],
         }
-    }
-
-    fn default_style_summaries() -> Vec<StyleSummary> {
-        vec![StyleSummary {
-            fg_rgba: 0,
-            bg_rgba: 0,
-            underline_rgba: 0,
-            flags: 0,
-        }]
     }
 
     fn presence_summary(mode: AttachMode) -> PresenceSummary {
@@ -2523,7 +2574,7 @@ mod tests {
     #[test]
     fn client_attach_state_round_trips_cached_surface() {
         let mut state = ClientAttachState::default();
-        let snapshot = surface_update(
+        let mut snapshot = surface_update(
             SurfaceUpdateKind::Snapshot,
             7,
             None,
@@ -2546,6 +2597,13 @@ mod tests {
                 surface_row(2, "tail"),
             ],
         );
+        snapshot.styles.push(StyleSummary {
+            fg_rgba: 0xff00_0000,
+            bg_rgba: 0,
+            underline_rgba: 0,
+            flags: 1,
+        });
+        let expected_styles = snapshot.styles.clone();
         state
             .render_attach(AttachSnapshot {
                 workspace: WorkspaceSummary {
@@ -2566,6 +2624,7 @@ mod tests {
         assert_eq!(decoded.known_surfaces(), state.known_surfaces());
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
         assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
+        assert_eq!(decoded.surfaces[0].styles, expected_styles);
         assert_eq!(decoded.surfaces[0].row_runs[0].len(), 2);
         assert_eq!(decoded.surfaces[0].row_runs[0][0].text, "cache");
         assert_eq!(decoded.surfaces[0].row_runs[0][0].style_id, 1);
@@ -2580,6 +2639,7 @@ mod tests {
         .expect("decode old state");
 
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
+        assert_eq!(decoded.surfaces[0].styles, default_style_summaries());
         assert_eq!(decoded.surfaces[0].render_text(), "cached");
     }
 

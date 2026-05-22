@@ -227,7 +227,7 @@ Current behavior:
 - known `pane-1` surface version is patchable: daemon sends a `PaneSurfacePatch`
 - known `pane-1` surface version is stale: daemon sends a full `PaneSurfaceSnapshot`
 
-The CLI can persist its local render state with `--state`. This records the rendered pane surface, cached row runs, and the last known server version, so a later process can request a patch and apply it to the cached surface instead of replaying raw PTY bytes. Older state files that only contain rendered row text still load as default-style rows.
+The CLI can persist its local render state with `--state`. This records the rendered pane surface, cached row runs, the cached style table, and the last known server version, so a later process can request a patch and apply it to the cached surface instead of replaying raw PTY bytes. Older state files that only contain rendered row text still load as default-style rows with the default style table.
 
 Start a long-running command-backed daemon:
 
