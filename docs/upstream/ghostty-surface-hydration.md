@@ -2,7 +2,7 @@
 
 Status: Tracking
 
-Last reviewed: 2026-05-21
+Last reviewed: 2026-05-22
 
 ## nmux Requirement
 
@@ -35,19 +35,37 @@ For nmux to replace its temporary renderer with a Ghostty/libghostty-backed fron
 
 The current nmux prototype can supply:
 
-- `PaneSurfaceSnapshot`: pane ID, version, surface kind, size, cursor, styles, and rows;
-- `PaneSurfacePatch`: pane ID, base version, version, patch kind, row updates, and cursor;
-- `SurfaceRow` / `RowUpdate`: row index, cell runs, and dirty hash;
-- `CellRun`: UTF-8 text, cell widths, style ID, flags, and hyperlink ID;
-- `Style`: foreground, background, underline color, and flags.
+- `PaneSurfaceSnapshot`: pane ID, version, surface kind, size, cursor,
+  terminal modes, terminal color state, terminal title, working directory,
+  styles, and rows;
+- `PaneSurfacePatch`: pane ID, base version, version, patch kind, sparse row
+  updates, cursor, terminal modes, terminal color state, terminal title, and
+  working directory;
+- `ScrollbackChunk`: backend-owned scrollback rows, style table, and terminal
+  color state;
+- `SurfaceRow` / `RowUpdate` / `ScrollbackRow`: row index, cell runs, dirty
+  metadata, row state hash, OSC 133 prompt metadata, and Kitty placeholder
+  presence;
+- `CellRun`: UTF-8 text, cell widths, style ID, hyperlink-presence flags,
+  semantic content, and hyperlink ID;
+- `Style`: foreground, background, underline color, and flags;
+- cached client state that preserves row runs, style tables, cursor blink,
+  terminal metadata, terminal modes, terminal color state, row metadata, and
+  scrollback rows across live reattach.
 
-This schema is not frozen as the final Ghostty-compatible terminal model. ADR 0007 already calls out likely future additions for cursor/mode fidelity, alternate screen, palette state, hyperlinks, images, grapheme details, and renderer metadata.
+This schema is not frozen as the final Ghostty-compatible terminal model. ADR
+0007 already calls out likely future additions for externally hydrating a
+Ghostty renderer, and later M13 decisions still withhold hyperlink tables,
+image placement/pixel data, incremental palette diffs, richer damage objects,
+and broader semantic command metadata until their protocol shape is explicit.
 
 ## Gaps And Open Questions
 
 - Is there an upstream API to build render state from externally supplied terminal grid data, rather than from VT-parser-owned terminal state?
 - If the render state API is the right layer, can nmux map rows/runs/styles/cursor into it without copying Ghostty internals?
-- How should nmux encode alternate screen state, terminal modes, palettes, hyperlinks, and image protocols before backend libghostty extraction is available?
+- How should nmux encode hyperlink tables, image placement, incremental palette
+  diffs, richer damage, and command lifecycle metadata before asking a frontend
+  renderer to preserve them?
 - Would an upstream proposal be accepted as a public API, or would nmux need a short-lived fork to prove the shape first?
 - What versioning or capability negotiation should a frontend use to declare support for Ghostty-backed rendering vs the temporary nmux renderer?
 

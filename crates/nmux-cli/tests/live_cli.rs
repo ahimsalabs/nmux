@@ -556,6 +556,64 @@ fn live_libghostty_vt_cli_prints_terminal_metadata() {
 
 #[cfg(feature = "libghostty-vt")]
 #[test]
+fn live_libghostty_vt_cli_prints_metadata_only_update_without_reprinting_rows() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "4",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "printf 'ready\\n'; sleep 0.3; printf '\\033]2;metadata only\\033\\\\'; sleep 0.3",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "4",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("title=metadata only"),
+        "missing metadata-only title update:\n{stdout}"
+    );
+    assert_eq!(
+        stdout.matches("ready").count(),
+        1,
+        "metadata-only update reprinted unchanged row text:\n{stdout}"
+    );
+}
+
+#[cfg(feature = "libghostty-vt")]
+#[test]
 fn live_libghostty_vt_cli_redraw_prints_terminal_metadata() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

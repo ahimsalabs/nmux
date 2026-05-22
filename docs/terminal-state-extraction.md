@@ -179,7 +179,8 @@ The nmux state-sync path now has coverage for snapshot/patch cursor blink, title
 and working-directory metadata, terminal color state, row semantic prompt
 metadata, per-run semantic content, row dirty metadata, row state hashes, Kitty
 placeholder row metadata, mode payloads, mode-only patch application, sparse row
-replacement, cached client-state compatibility, cached terminal metadata reattach, and
-feature-gated live CLI smoke paths. The default engine remains `interim` until a
-later ADR explicitly accepts the native Ghostty/Zig build cost in normal
-development, CI, and packaging.
+replacement, metadata-only no-row live updates, cached client-state
+compatibility, cached terminal metadata reattach, and feature-gated live CLI
+smoke paths. The default engine remains `interim` until a later ADR explicitly
+accepts the native Ghostty/Zig build cost in normal development, CI, and
+packaging.
