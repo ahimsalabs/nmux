@@ -1294,6 +1294,107 @@ fn live_libghostty_vt_cli_persists_mode_only_update_to_state() {
 
 #[cfg(feature = "libghostty-vt")]
 #[test]
+fn live_libghostty_vt_cli_persists_styled_wide_runs_to_state() {
+    let socket_path = test_socket_path();
+    let state_path = socket_path.with_extension("state");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "2",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "printf '\\033[31mred\\033[0m plain\\nwide:\\344\\270\\255'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let first_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run first nmux");
+
+    assert!(
+        first_client.status.success(),
+        "first nmux failed: {}",
+        String::from_utf8_lossy(&first_client.stderr)
+    );
+
+    let first_stdout = String::from_utf8_lossy(&first_client.stdout);
+    assert!(
+        first_stdout.contains("red plain") && first_stdout.contains("wide:中"),
+        "first client did not render styled/wide rows:\n{first_stdout}"
+    );
+    assert!(
+        !first_stdout.contains("[31m") && !first_stdout.contains("[0m"),
+        "SGR controls leaked into first render:\n{first_stdout}"
+    );
+
+    let first_state = fs::read_to_string(&state_path).expect("read first state");
+    assert_styled_wide_state(&first_state, "first");
+
+    let second_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run second nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+
+    assert!(
+        second_client.status.success(),
+        "second nmux failed: {}",
+        String::from_utf8_lossy(&second_client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let second_stdout = String::from_utf8_lossy(&second_client.stdout);
+    assert!(
+        second_stdout.contains("red plain") && second_stdout.contains("wide:中"),
+        "reattached client did not render cached styled/wide rows:\n{second_stdout}"
+    );
+    assert!(
+        !second_stdout.contains("[31m") && !second_stdout.contains("[0m"),
+        "SGR controls leaked after state reattach:\n{second_stdout}"
+    );
+
+    let second_state = fs::read_to_string(&state_path).expect("read second state");
+    assert_styled_wide_state(&second_state, "second");
+
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+}
+
+#[cfg(feature = "libghostty-vt")]
+#[test]
 fn live_libghostty_vt_cli_persists_replace_rows_metadata_to_state() {
     let socket_path = test_socket_path();
     let state_path = socket_path.with_extension("state");
@@ -3775,6 +3876,45 @@ fn wait_for_socket(path: &Path) {
 }
 
 #[cfg(feature = "libghostty-vt")]
+fn assert_styled_wide_state(state: &str, label: &str) {
+    let style_count = state
+        .lines()
+        .filter(|line| line.starts_with("style "))
+        .count();
+    assert!(
+        style_count > 1,
+        "{label} state missing non-default style table entry:\n{state}"
+    );
+
+    let styled_row = state_row_index(state, "72656420706c61696e")
+        .unwrap_or_else(|| panic!("{label} state missing styled row:\n{state}"));
+    assert!(
+        state_contains_run_with_style_and_width(state, styled_row, "726564", "010101", true)
+            && state_contains_run_with_style_and_width(
+                state,
+                styled_row,
+                "20706c61696e",
+                "010101010101",
+                false,
+            ),
+        "{label} state missing styled/default run split:\n{state}"
+    );
+
+    let wide_row = state_row_index(state, "776964653ae4b8ad")
+        .unwrap_or_else(|| panic!("{label} state missing wide row:\n{state}"));
+    assert!(
+        state_contains_run_with_style_and_width(
+            state,
+            wide_row,
+            "776964653ae4b8ad",
+            "010101010102",
+            false,
+        ),
+        "{label} state missing wide-cell width bytes:\n{state}"
+    );
+}
+
+#[cfg(feature = "libghostty-vt")]
 fn assert_replace_rows_metadata_state(state: &str, label: &str) {
     let prompt_row = state_row_index(state, "70726f6d707420696e7075746f7574707574")
         .unwrap_or_else(|| panic!("{label} state missing OSC 133 prompt row:\n{state}"));
@@ -3807,6 +3947,31 @@ fn state_row_index<'a>(state: &'a str, text_hex: &str) -> Option<&'a str> {
             (Some("row"), Some(row), Some(text), None) if text == text_hex => Some(row),
             _ => None,
         }
+    })
+}
+
+#[cfg(feature = "libghostty-vt")]
+fn state_contains_run_with_style_and_width(
+    state: &str,
+    row: &str,
+    text_hex: &str,
+    width_hex: &str,
+    styled: bool,
+) -> bool {
+    state.lines().any(|line| {
+        let parts = line.split_whitespace().collect::<Vec<_>>();
+        if parts.len() != 8
+            || parts[0] != "run"
+            || parts[1] != row
+            || parts[2] != text_hex
+            || parts[3] != width_hex
+        {
+            return false;
+        }
+        let Ok(style_id) = parts[4].parse::<u32>() else {
+            return false;
+        };
+        (styled && style_id != 0) || (!styled && style_id == 0)
     })
 }
 

@@ -206,6 +206,7 @@ metadata, terminal color state, color-only palette diffs, live color-only patch
 cache persistence through real `--state` reattach, row semantic prompt metadata, per-run semantic content,
 live ReplaceRows row-metadata cache persistence through real `--state` reattach,
 live ReplaceRows hyperlink run-flag cache persistence through real `--state`
+reattach, styled/wide row-run state persistence through real `--state`
 reattach, row dirty metadata, row state hashes, Kitty
 placeholder row metadata, mode payloads, mode-only patch application, sparse
 row replacement, `FullRefreshRequired` snapshot recovery for known-version live
