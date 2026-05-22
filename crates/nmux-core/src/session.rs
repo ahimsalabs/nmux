@@ -3316,6 +3316,65 @@ mod tests {
     }
 
     #[test]
+    fn working_directory_only_engine_update_emits_replace_rows_patch_with_metadata() {
+        struct WorkingDirectoryOnlyEngine;
+
+        impl TerminalEngine for WorkingDirectoryOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"working directory only");
+                let mut update = TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                );
+                update.working_directory = "file://localhost/tmp/nmux".to_owned();
+                Some(update)
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = WorkingDirectoryOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"working directory only",
+            &mut engine
+        ));
+        let surface = session.initial_pane_surface();
+        assert_eq!(surface.title, "");
+        assert_eq!(surface.working_directory, "file://localhost/tmp/nmux");
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::ReplaceRows)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
+        assert_eq!(patch.metadata().expect("metadata").title(), Some(""));
+        assert_eq!(
+            patch.metadata().expect("metadata").working_directory(),
+            Some("file://localhost/tmp/nmux")
+        );
+    }
+
+    #[test]
     fn semantic_prompt_only_engine_update_emits_replace_rows_patch() {
         struct SemanticPromptOnlyEngine;
 

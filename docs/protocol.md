@@ -42,8 +42,9 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
 - `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot` objects and `ScrollbackChunk` objects carry the style table needed by their rows.
 - `CursorState` stores cursor row, column, visibility, shape, and blinking.
 - `TerminalMetadataState` stores pane terminal title and working-directory
-  metadata. The current libghostty-vt path still does not prove OSC 7 byte
-  sequences populate the working-directory value.
+  metadata. The libghostty-vt path tracks OSC 7 byte sequences and populates the
+  working-directory value carried by snapshots, patches, and cached client
+  state.
 - `TerminalColorState` stores backend-observed default foreground/background,
   optional explicit cursor color, and the active palette. Color-state changes
   currently require a full surface refresh rather than an incremental palette

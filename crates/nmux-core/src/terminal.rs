@@ -481,11 +481,86 @@ mod ghostty_vt {
         state: Option<GhosttyVtState>,
     }
 
+    const OSC_BUFFER_LIMIT: usize = 4096;
+
     struct GhosttyVtState {
         terminal: Terminal<'static, 'static>,
         render_state: RenderState<'static>,
         row_iterator: RowIterator<'static>,
         cell_iterator: CellIterator<'static>,
+        osc7: Osc7Tracker,
+    }
+
+    #[derive(Default)]
+    struct Osc7Tracker {
+        buffer: Vec<u8>,
+        active: bool,
+        escape_pending: bool,
+        working_directory: Option<String>,
+    }
+
+    impl Osc7Tracker {
+        fn ingest(&mut self, bytes: &[u8]) {
+            for byte in bytes.iter().copied() {
+                if self.active {
+                    self.ingest_osc_byte(byte);
+                } else if self.escape_pending {
+                    if byte == b']' {
+                        self.active = true;
+                        self.escape_pending = false;
+                        self.buffer.clear();
+                    } else {
+                        self.escape_pending = byte == 0x1b;
+                    }
+                } else if byte == 0x1b {
+                    self.escape_pending = true;
+                }
+            }
+        }
+
+        fn working_directory(&self) -> Option<&str> {
+            self.working_directory.as_deref()
+        }
+
+        fn ingest_osc_byte(&mut self, byte: u8) {
+            if self.escape_pending {
+                if byte == b'\\' {
+                    self.complete();
+                } else {
+                    self.push_osc_byte(0x1b);
+                    self.escape_pending = false;
+                    self.ingest_osc_byte(byte);
+                }
+            } else if byte == 0x07 {
+                self.complete();
+            } else if byte == 0x1b {
+                self.escape_pending = true;
+            } else {
+                self.push_osc_byte(byte);
+            }
+        }
+
+        fn push_osc_byte(&mut self, byte: u8) {
+            self.buffer.push(byte);
+            if self.buffer.len() > OSC_BUFFER_LIMIT {
+                self.reset_sequence();
+            }
+        }
+
+        fn complete(&mut self) {
+            if let Some(payload) = self.buffer.strip_prefix(b"7;")
+                && let Ok(working_directory) = std::str::from_utf8(payload)
+            {
+                self.working_directory = Some(working_directory.to_owned());
+            }
+            self.reset_sequence();
+        }
+
+        fn reset_sequence(&mut self) {
+            self.buffer.clear();
+            self.active = false;
+            self.escape_pending = false;
+        }
     }
 
     impl LibghosttyVtTerminalEngine {
@@ -508,6 +583,7 @@ mod ghostty_vt {
             output: &[u8],
         ) -> Option<TerminalUpdate> {
             let state = self.state_mut(&input)?;
+            state.osc7.ingest(output);
             state.terminal.vt_write(output);
             state.extract_update(input, false)
         }
@@ -548,6 +624,7 @@ mod ghostty_vt {
                 render_state: RenderState::new().ok()?,
                 row_iterator: RowIterator::new().ok()?,
                 cell_iterator: CellIterator::new().ok()?,
+                osc7: Osc7Tracker::default(),
             })
         }
 
@@ -584,7 +661,11 @@ mod ghostty_vt {
             let cursor = cursor(&snapshot, input.cursor)?;
             let modes = modes(&self.terminal)?;
             let title = self.terminal.title().ok()?;
-            let working_directory = self.terminal.pwd().ok()?;
+            let terminal_working_directory = self.terminal.pwd().ok()?.to_owned();
+            let working_directory = self
+                .osc7
+                .working_directory()
+                .unwrap_or(&terminal_working_directory);
             let colors = terminal_colors(&snapshot)?;
             let patch_kind = if !force_rows
                 && surface == input.surface
@@ -1690,6 +1771,155 @@ mod tests {
         assert_eq!(title.title, "nmux test title");
         assert_eq!(title.surface_lines, first.surface_lines);
         assert_eq!(title.patch_kind, protocol::PatchKind::ReplaceRows);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_extracts_osc7_working_directory_with_bel() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let first = engine
+            .apply_output(terminal_input_with_size(80, 24, &[], &[]), b"ready")
+            .expect("first update");
+        let update = engine
+            .apply_output(
+                terminal_input_from_update(&first),
+                b"\x1b]7;file://localhost/tmp/nmux\x07",
+            )
+            .expect("working-directory update");
+
+        assert_eq!(update.working_directory, "file://localhost/tmp/nmux");
+        assert_eq!(update.surface_lines, first.surface_lines);
+        assert_eq!(update.patch_kind, protocol::PatchKind::ReplaceRows);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_extracts_osc7_working_directory_with_st() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b]7;file://localhost/tmp/st\x1b\\ready",
+            )
+            .expect("working-directory update");
+
+        assert_eq!(update.working_directory, "file://localhost/tmp/st");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_extracts_split_osc7_working_directory() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let partial = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b]7;file://localhost/tmp/split",
+            )
+            .expect("partial update");
+        assert_eq!(partial.working_directory, "");
+
+        let update = engine
+            .apply_output(terminal_input_from_update(&partial), b"\x07")
+            .expect("working-directory update");
+
+        assert_eq!(update.working_directory, "file://localhost/tmp/split");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_extracts_osc7_when_start_is_split() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let partial = engine
+            .apply_output(terminal_input_with_size(80, 24, &[], &[]), b"\x1b")
+            .expect("partial update");
+        assert_eq!(partial.working_directory, "");
+
+        let update = engine
+            .apply_output(
+                terminal_input_from_update(&partial),
+                b"]7;file://localhost/tmp/start\x07",
+            )
+            .expect("working-directory update");
+
+        assert_eq!(update.working_directory, "file://localhost/tmp/start");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_ignores_invalid_utf8_osc7() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let first = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b]7;file://localhost/tmp/valid\x07",
+            )
+            .expect("first update");
+        assert_eq!(first.working_directory, "file://localhost/tmp/valid");
+
+        let update = engine
+            .apply_output(
+                terminal_input_from_update(&first),
+                b"\x1b]7;file://localhost/tmp/\xff\x07",
+            )
+            .expect("terminal update");
+
+        assert_eq!(update.working_directory, "file://localhost/tmp/valid");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_ignores_non_osc7_metadata() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let first = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b]7;file://localhost/tmp/valid\x07",
+            )
+            .expect("first update");
+
+        let update = engine
+            .apply_output(
+                terminal_input_from_update(&first),
+                b"\x1b]2;pane title\x1b\\",
+            )
+            .expect("terminal update");
+
+        assert_eq!(update.working_directory, "file://localhost/tmp/valid");
+        assert_eq!(update.title, "pane title");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_allows_empty_osc7_to_clear_working_directory() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let first = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b]7;file://localhost/tmp/valid\x07",
+            )
+            .expect("first update");
+        assert_eq!(first.working_directory, "file://localhost/tmp/valid");
+
+        let update = engine
+            .apply_output(terminal_input_from_update(&first), b"\x1b]7;\x07")
+            .expect("terminal update");
+
+        assert_eq!(update.working_directory, "");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_ignores_oversized_unterminated_osc7() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let mut output = b"\x1b]7;file://localhost/tmp/".to_vec();
+        output.extend(std::iter::repeat_n(b'x', 4097));
+        output.push(0x07);
+
+        let update = engine
+            .apply_output(terminal_input_with_size(80, 24, &[], &[]), &output)
+            .expect("terminal update");
+
+        assert_eq!(update.working_directory, "");
     }
 
     #[cfg(feature = "libghostty-vt")]
