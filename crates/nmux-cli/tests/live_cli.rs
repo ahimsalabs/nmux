@@ -2400,6 +2400,10 @@ fn live_cli_persists_rendered_surface_state() {
         state.contains("6563686f3a70657273697374"),
         "expected rendered live output in state:\n{state}"
     );
+    assert!(
+        state.contains("scrollback 70616e652d31 "),
+        "expected pane-1 scrollback metadata in state:\n{state}"
+    );
 }
 
 fn test_socket_path() -> PathBuf {

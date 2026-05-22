@@ -60,7 +60,7 @@ Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that survives repeated live client detach and reattach until the daemon is stopped.
 State load/save failures include the state path in the error.
 Bounded client loops require `--iterations` greater than zero.
-Scrollback ranges are 1-based from the oldest retained row and require positive `--scrollback-start` and `--scrollback-count` values. Local clients request scrollback without a version precondition until a future client-side scrollback cache stores the last seen scrollback version.
+Scrollback ranges are 1-based from the oldest retained row and require positive `--scrollback-start` and `--scrollback-count` values. Local clients persist last-seen scrollback range metadata in `--state`, but still request scrollback without a version precondition until cached row rendering or stale-retry behavior exists.
 Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.
 Live polling intervals must be greater than zero, and explicit resize dimensions must be between 1 and 65535.
 

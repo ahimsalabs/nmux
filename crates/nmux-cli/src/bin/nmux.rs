@@ -122,6 +122,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .clone()
         .unwrap_or_else(|| current_workspace.display_line());
     let scrollback = initial_live_scrollback(args, &mut stream, &mut client_sequence)?;
+    if let Some(scrollback) = scrollback.as_ref() {
+        client_state.cache_scrollback_chunk(scrollback);
+    }
     print_live_rendered(rendered, args.redraw, scrollback);
     flush_stdout()?;
 

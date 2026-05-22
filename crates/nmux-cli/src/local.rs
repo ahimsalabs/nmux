@@ -2552,6 +2552,16 @@ fn row_runs_for_text(
 pub struct ClientAttachState {
     scope: Option<SocketIdentity>,
     surfaces: Vec<ClientPaneSurface>,
+    scrollbacks: Vec<ClientPaneScrollback>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientPaneScrollback {
+    pub pane_id: String,
+    pub version: u64,
+    pub start_line: u64,
+    pub line_count: u32,
+    pub total_lines: u64,
 }
 
 impl ClientAttachState {
@@ -2593,9 +2603,23 @@ impl ClientAttachState {
         }
     }
 
+    pub fn cached_scrollback_version_for_scope(
+        &self,
+        scope: Option<SocketIdentity>,
+        pane_id: &str,
+        start_line: u64,
+        line_count: u32,
+    ) -> Option<u64> {
+        if self.scope != scope {
+            return None;
+        }
+        self.cached_scrollback_version(pane_id, start_line, line_count)
+    }
+
     pub fn apply_scope(&mut self, scope: Option<SocketIdentity>) {
         if self.scope != scope {
             self.surfaces.clear();
+            self.scrollbacks.clear();
         }
         self.scope = scope;
     }
@@ -2611,6 +2635,10 @@ impl ClientAttachState {
             ),
             None => (TerminalMetadataSummary::default(), None),
         };
+
+        if let Some(scrollback) = snapshot.scrollback.as_ref() {
+            self.cache_scrollback_chunk(scrollback);
+        }
 
         Ok(RenderedAttach {
             workspace: snapshot.workspace,
@@ -2648,6 +2676,22 @@ impl ClientAttachState {
             .map(|surface| surface.modes)
     }
 
+    pub fn cached_scrollback_version(
+        &self,
+        pane_id: &str,
+        start_line: u64,
+        line_count: u32,
+    ) -> Option<u64> {
+        self.scrollbacks
+            .iter()
+            .find(|scrollback| {
+                scrollback.pane_id == pane_id
+                    && scrollback.start_line == start_line
+                    && scrollback.line_count == line_count
+            })
+            .map(|scrollback| scrollback.version)
+    }
+
     fn apply_surface_update(
         &mut self,
         update: &SurfaceUpdate,
@@ -2675,13 +2719,46 @@ impl ClientAttachState {
         Ok(rendered)
     }
 
+    pub fn cache_scrollback_chunk(&mut self, chunk: &ScrollbackChunkSummary) {
+        let line_count = u32::try_from(chunk.lines.len()).unwrap_or(u32::MAX);
+        let cached = ClientPaneScrollback {
+            pane_id: chunk.pane_id.clone(),
+            version: chunk.scrollback_version,
+            start_line: chunk.start_line,
+            line_count,
+            total_lines: chunk.total_lines,
+        };
+        if let Some(existing) = self
+            .scrollbacks
+            .iter_mut()
+            .find(|scrollback| scrollback.pane_id == cached.pane_id)
+        {
+            *existing = cached;
+        } else {
+            self.scrollbacks.push(cached);
+        }
+    }
+
     fn encode(&self) -> String {
-        let mut encoded = String::from("NMUX_CLIENT_STATE 5\n");
+        let mut encoded = String::from("NMUX_CLIENT_STATE 6\n");
         if let Some(scope) = self.scope {
             encoded.push_str("scope socket ");
             encoded.push_str(&scope.dev.to_string());
             encoded.push(' ');
             encoded.push_str(&scope.ino.to_string());
+            encoded.push('\n');
+        }
+        for scrollback in &self.scrollbacks {
+            encoded.push_str("scrollback ");
+            encoded.push_str(&hex_encode(scrollback.pane_id.as_bytes()));
+            encoded.push(' ');
+            encoded.push_str(&scrollback.version.to_string());
+            encoded.push(' ');
+            encoded.push_str(&scrollback.start_line.to_string());
+            encoded.push(' ');
+            encoded.push_str(&scrollback.line_count.to_string());
+            encoded.push(' ');
+            encoded.push_str(&scrollback.total_lines.to_string());
             encoded.push('\n');
         }
         for surface in &self.surfaces {
@@ -2847,6 +2924,7 @@ impl ClientAttachState {
             && header != "NMUX_CLIENT_STATE 3"
             && header != "NMUX_CLIENT_STATE 4"
             && header != "NMUX_CLIENT_STATE 5"
+            && header != "NMUX_CLIENT_STATE 6"
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -2856,12 +2934,32 @@ impl ClientAttachState {
 
         let mut scope = None;
         let mut surfaces = Vec::new();
+        let mut scrollbacks = Vec::new();
         while let Some(line) = lines.next() {
             let scope_parts = line.split(' ').collect::<Vec<_>>();
             if let ["scope", "socket", dev, ino] = scope_parts.as_slice() {
                 scope = Some(SocketIdentity {
                     dev: parse_state_u64(dev)?,
                     ino: parse_state_u64(ino)?,
+                });
+                continue;
+            }
+            if let [
+                "scrollback",
+                pane_id,
+                version,
+                start_line,
+                line_count,
+                total_lines,
+            ] = scope_parts.as_slice()
+            {
+                scrollbacks.push(ClientPaneScrollback {
+                    pane_id: String::from_utf8(hex_decode(pane_id)?)
+                        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
+                    version: parse_state_u64(version)?,
+                    start_line: parse_state_u64(start_line)?,
+                    line_count: parse_state_u32(line_count)?,
+                    total_lines: parse_state_u64(total_lines)?,
                 });
                 continue;
             }
@@ -3246,7 +3344,11 @@ impl ClientAttachState {
             });
         }
 
-        Ok(Self { scope, surfaces })
+        Ok(Self {
+            scope,
+            surfaces,
+            scrollbacks,
+        })
     }
 }
 
@@ -4295,7 +4397,15 @@ mod tests {
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 surface: Some(snapshot),
-                scrollback: None,
+                scrollback: Some(ScrollbackChunkSummary {
+                    pane_id: "pane-1".to_owned(),
+                    scrollback_version: 11,
+                    start_line: 4,
+                    total_lines: 9,
+                    styles: default_style_summaries(),
+                    colors: TerminalColorSummary::default(),
+                    lines: vec![scrollback_line(4, "cached scrollback")],
+                }),
             })
             .expect("render snapshot");
 
@@ -4311,6 +4421,31 @@ mod tests {
         assert_eq!(
             decoded.known_surfaces_for_scope(Some(SocketIdentity { dev: 10, ino: 21 })),
             Vec::new()
+        );
+        assert_eq!(decoded.cached_scrollback_version("pane-1", 4, 1), Some(11));
+        assert_eq!(decoded.cached_scrollback_version("pane-1", 5, 1), None);
+        assert_eq!(
+            decoded.cached_scrollback_version_for_scope(Some(expected_scope), "pane-1", 4, 1),
+            Some(11)
+        );
+        assert_eq!(
+            decoded.cached_scrollback_version_for_scope(
+                Some(SocketIdentity { dev: 10, ino: 21 }),
+                "pane-1",
+                4,
+                1,
+            ),
+            None
+        );
+        assert_eq!(
+            decoded.scrollbacks,
+            vec![ClientPaneScrollback {
+                pane_id: "pane-1".to_owned(),
+                version: 11,
+                start_line: 4,
+                line_count: 1,
+                total_lines: 9,
+            }]
         );
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
         assert_eq!(decoded.surfaces[0].cursor, expected_cursor);
@@ -4364,6 +4499,42 @@ mod tests {
         assert!(!decoded.surfaces[0].row_kitty_placeholders[0]);
         assert_eq!(decoded.surfaces[0].styles, default_style_summaries());
         assert_eq!(decoded.surfaces[0].render_text(), "cached");
+        assert!(decoded.scrollbacks.is_empty());
+    }
+
+    #[test]
+    fn client_attach_state_scope_change_drops_cached_scrollback() {
+        let mut state = ClientAttachState::default();
+        state.apply_scope(Some(SocketIdentity { dev: 10, ino: 20 }));
+        state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                surface: None,
+                scrollback: Some(ScrollbackChunkSummary {
+                    pane_id: "pane-1".to_owned(),
+                    scrollback_version: 3,
+                    start_line: 1,
+                    total_lines: 2,
+                    styles: default_style_summaries(),
+                    colors: TerminalColorSummary::default(),
+                    lines: vec![scrollback_line(1, "cached")],
+                }),
+            })
+            .expect("render scrollback");
+        assert_eq!(state.cached_scrollback_version("pane-1", 1, 1), Some(3));
+
+        state.apply_scope(Some(SocketIdentity { dev: 10, ino: 21 }));
+
+        assert_eq!(state.cached_scrollback_version("pane-1", 1, 1), None);
+        assert!(state.scrollbacks.is_empty());
     }
 
     #[test]

@@ -488,6 +488,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   pane-scoped one-shot and live client intents for unknown panes return protocol PaneNotFound errors instead of hanging or falling through to process-host behavior
   public scrollback ranges consistently use 1-based line numbers from ScrollbackFetch through ScrollbackChunk and decoded client summaries
   ScrollbackFetch known_scrollback_version 0 means no client precondition, and nonzero stale scrollback versions return protocol StaleVersion errors
+  nmux --state preserves last-seen scrollback range/version metadata scoped to the daemon socket identity, while fetches still use no version precondition until cached scrollback row rendering or stale-retry behavior exists
   SurfaceRow, RowUpdate, and ScrollbackRow carry OSC 133 row semantic prompt metadata; CellRun carries OSC 133 output/input/prompt semantic content; broader semantic command IDs, ranges, lifecycle, and exit metadata remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk carry TerminalColorState; color-state changes require full refreshes while incremental palette diffs remain withheld
   ReplaceRows patches now carry only changed rows when the pane geometry is stable; SurfaceRow, RowUpdate, and ScrollbackRow carry backend row dirty flags and row state hashes as metadata, while richer run/region damage protocol fields remain withheld
@@ -501,7 +502,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   ADR 0017 documents terminal input mode state and daemon-owned input gating for paste, focus, named keys, and mouse input
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch
   ScrollbackChunk carries the pane style table so scrollback row runs do not reference missing style IDs
-  nmux --state preserves cached title, OSC 7 working directory, terminal modes including mouse tracking mode/format, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, and Kitty placeholder row metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot
+  nmux --state preserves cached title, OSC 7 working directory, terminal modes including mouse tracking mode/format, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, Kitty placeholder row metadata, and last-seen scrollback metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot
   current-version live reattach reuses cached terminal modes for initial focus-reporting input gates when the daemon sends no surface frame; paste delimiter selection remains daemon-owned
   local clients maintain monotonic Envelope.seq and InputEvent.input_seq values across one-shot and live post-attach frames, including repeated structured live input
   document cursor, mode, alternate-screen, palette, hyperlink, image, grapheme, and cell-width gaps before schema changes

@@ -273,13 +273,17 @@ rendered pane surface, terminal title, OSC 7 working directory, terminal modes
 including mouse tracking mode/format,
 cached row runs, the cached style table, terminal color state, OSC 133 row/run
 semantic metadata, row dirty flags, row state hashes, Kitty placeholder row
-metadata, and the last known server version, so a later process can request a patch and apply it to the
+metadata, last known surface version, and last seen scrollback range/version
+metadata, so a later process can request a surface patch and apply it to the
 cached surface instead of replaying raw PTY bytes. The state file is scoped to
 the daemon socket identity, so a recreated socket path forces a fresh snapshot
 instead of reusing stale rows from an older daemon. Older state files that only
 contain rendered row text still load as default-style rows with default
-metadata, default modes, and default color state, but they also force one fresh
-snapshot before being rewritten with the current socket scope.
+metadata, default modes, default color state, and no scrollback metadata, but
+they also force one fresh snapshot before being rewritten with the current
+socket scope. The scrollback metadata is groundwork for a future cached
+scrollback range path; the current CLI still fetches scrollback ranges from the
+daemon without a version precondition.
 When a scoped state file is already current and the daemon sends no surface
 frame, live input gating reuses the cached terminal modes for bracketed paste
 and focus reporting until the next surface update arrives.
