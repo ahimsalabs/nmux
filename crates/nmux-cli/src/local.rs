@@ -433,6 +433,8 @@ fn serve_live_attached_client(
                             &mut seq,
                             protocol::ErrorCode::PermissionDenied,
                             "resize rejected: actor is read-only",
+                            Some(&resize.pane_id),
+                            0,
                         )?;
                         return Ok(());
                     }
@@ -453,6 +455,8 @@ fn serve_live_attached_client(
                             &mut seq,
                             protocol::ErrorCode::Unknown,
                             &format!("resize failed: {err}"),
+                            Some(&resize.pane_id),
+                            0,
                         )?;
                         return Ok(());
                     }
@@ -477,6 +481,8 @@ fn serve_live_attached_client(
                             &mut seq,
                             protocol::ErrorCode::PermissionDenied,
                             "input rejected: actor is read-only",
+                            Some(&input.pane_id),
+                            input.input_seq,
                         )?;
                         return Ok(());
                     }
@@ -488,7 +494,13 @@ fn serve_live_attached_client(
         if Session::input_allowed(&actor) {
             if let Some(input) = input {
                 if session.surface_version(&input.pane_id).is_none() {
-                    write_pane_not_found_error(stream, session, &mut seq, &input.pane_id)?;
+                    write_pane_not_found_error_with_input_seq(
+                        stream,
+                        session,
+                        &mut seq,
+                        &input.pane_id,
+                        input.input_seq,
+                    )?;
                     return Ok(());
                 }
                 if let Some(rejection) = input.forwarding_rejection(session) {
@@ -498,6 +510,8 @@ fn serve_live_attached_client(
                         &mut seq,
                         protocol::ErrorCode::PermissionDenied,
                         rejection.message(),
+                        Some(&input.pane_id),
+                        input.input_seq,
                     )?;
                     return Ok(());
                 } else {
@@ -510,6 +524,8 @@ fn serve_live_attached_client(
                                 &mut seq,
                                 protocol::ErrorCode::Unknown,
                                 &err.to_string(),
+                                Some(&input.pane_id),
+                                input.input_seq,
                             )?;
                             return Ok(());
                         }
@@ -521,6 +537,8 @@ fn serve_live_attached_client(
                             &mut seq,
                             protocol::ErrorCode::Unknown,
                             &format!("input forwarding failed: {err}"),
+                            Some(&input.pane_id),
+                            input.input_seq,
                         )?;
                         return Ok(());
                     }
@@ -667,6 +685,8 @@ fn serve_attached_client(
                     &mut seq,
                     protocol::ErrorCode::PermissionDenied,
                     "input rejected: attach is read-only",
+                    Some(&input.pane_id),
+                    input.input_seq,
                 )?;
                 return Ok(());
             }
@@ -727,7 +747,13 @@ fn process_one_shot_input(
 ) -> Result<bool, Box<dyn std::error::Error>> {
     if session.surface_version(&input.pane_id).is_none() {
         let mut seq = 4;
-        write_pane_not_found_error(stream, session, &mut seq, &input.pane_id)?;
+        write_pane_not_found_error_with_input_seq(
+            stream,
+            session,
+            &mut seq,
+            &input.pane_id,
+            input.input_seq,
+        )?;
         return Ok(false);
     }
     if let Some(rejection) = input.forwarding_rejection(session) {
@@ -738,6 +764,8 @@ fn process_one_shot_input(
             &mut seq,
             protocol::ErrorCode::PermissionDenied,
             rejection.message(),
+            Some(&input.pane_id),
+            input.input_seq,
         )?;
         return Ok(false);
     } else {
@@ -751,6 +779,8 @@ fn process_one_shot_input(
                     &mut seq,
                     protocol::ErrorCode::Unknown,
                     &err.to_string(),
+                    Some(&input.pane_id),
+                    input.input_seq,
                 )?;
                 return Ok(false);
             }
@@ -763,6 +793,8 @@ fn process_one_shot_input(
                 &mut seq,
                 protocol::ErrorCode::Unknown,
                 &format!("input forwarding failed: {err}"),
+                Some(&input.pane_id),
+                input.input_seq,
             )?;
             return Ok(false);
         }
@@ -800,6 +832,8 @@ fn write_scrollback_fetch_error(
             "stale scrollback version for {}: client={} server={current}",
             fetch.pane_id, fetch.known_scrollback_version
         ),
+        Some(&fetch.pane_id),
+        0,
     )
 }
 
@@ -809,12 +843,24 @@ fn write_pane_not_found_error(
     seq: &mut u64,
     pane_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    write_pane_not_found_error_with_input_seq(stream, session, seq, pane_id, 0)
+}
+
+fn write_pane_not_found_error_with_input_seq(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    pane_id: &str,
+    input_seq: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
     write_protocol_error(
         stream,
         session,
         seq,
         protocol::ErrorCode::PaneNotFound,
         &format!("pane not found: {pane_id}"),
+        Some(pane_id),
+        input_seq,
     )
 }
 
@@ -824,8 +870,18 @@ fn write_protocol_error(
     seq: &mut u64,
     code: protocol::ErrorCode,
     message: &str,
+    pane_id: Option<&str>,
+    input_seq: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let error = session.error_frame("local-client", *seq, code, message, false);
+    let error = session.error_frame_with_context(
+        "local-client",
+        *seq,
+        code,
+        message,
+        false,
+        pane_id,
+        input_seq,
+    );
     wire::write_default_frame(stream, &error)?;
     *seq += 1;
     Ok(())
@@ -1944,6 +2000,8 @@ pub fn error_summary_from_frame(frame: &[u8]) -> Result<ErrorSummary, Box<dyn st
         code: error.code(),
         message: error.message().unwrap_or_default().to_owned(),
         retryable: error.retryable(),
+        pane_id: error.pane_id().map(ToOwned::to_owned),
+        input_seq: error.input_seq(),
     })
 }
 
@@ -2495,6 +2553,8 @@ pub struct ErrorSummary {
     pub code: protocol::ErrorCode,
     pub message: String,
     pub retryable: bool,
+    pub pane_id: Option<String>,
+    pub input_seq: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5661,6 +5721,8 @@ mod tests {
                 code: protocol::ErrorCode::PaneNotFound,
                 message: "pane not found: missing-pane".to_owned(),
                 retryable: false,
+                pane_id: Some("missing-pane".to_owned()),
+                input_seq: 0,
             }
         );
 
@@ -5702,6 +5764,8 @@ mod tests {
                 code: protocol::ErrorCode::StaleVersion,
                 message: "stale scrollback version for pane-1: client=999 server=1".to_owned(),
                 retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 0,
             }
         );
         send_scrollback_fetch_with_known_version(&mut stream, &mut sequence, "pane-1", 1, 1, 0)
@@ -5782,6 +5846,8 @@ mod tests {
                 code: protocol::ErrorCode::PaneNotFound,
                 message: "pane not found: missing-pane".to_owned(),
                 retryable: false,
+                pane_id: Some("missing-pane".to_owned()),
+                input_seq: 1,
             }
         );
 
@@ -6081,6 +6147,8 @@ mod tests {
                 code: protocol::ErrorCode::Unknown,
                 message: "resize failed: host I/O error during resize_pane for pane-1: simulated resize failure".to_owned(),
                 retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 0,
             })
         );
 
@@ -6115,6 +6183,8 @@ mod tests {
                 code: protocol::ErrorCode::PaneNotFound,
                 message: "pane not found: missing-pane".to_owned(),
                 retryable: false,
+                pane_id: Some("missing-pane".to_owned()),
+                input_seq: 0,
             })
         );
 
@@ -6150,6 +6220,8 @@ mod tests {
                 code: protocol::ErrorCode::StaleVersion,
                 message: "stale scrollback version for pane-1: client=999 server=1".to_owned(),
                 retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 0,
             })
         );
         send_scrollback_fetch_with_known_version(&mut stream, &mut sequence, "pane-1", 1, 1, 0)
@@ -6195,6 +6267,8 @@ mod tests {
                 code: protocol::ErrorCode::PaneNotFound,
                 message: "pane not found: missing-pane".to_owned(),
                 retryable: false,
+                pane_id: Some("missing-pane".to_owned()),
+                input_seq: 0,
             })
         );
 
@@ -6238,6 +6312,8 @@ mod tests {
                 code: protocol::ErrorCode::PaneNotFound,
                 message: "pane not found: missing-pane".to_owned(),
                 retryable: false,
+                pane_id: Some("missing-pane".to_owned()),
+                input_seq: 1,
             })
         );
 
@@ -6388,6 +6464,8 @@ mod tests {
                 code: protocol::ErrorCode::PermissionDenied,
                 message: "input rejected: actor is read-only".to_owned(),
                 retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 1,
             })
         );
 
@@ -6441,6 +6519,8 @@ mod tests {
                 code: protocol::ErrorCode::PermissionDenied,
                 message: "resize rejected: actor is read-only".to_owned(),
                 retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 0,
             })
         );
 
@@ -6496,6 +6576,8 @@ mod tests {
                 code: protocol::ErrorCode::PermissionDenied,
                 message: "input rejected: focus reporting is disabled".to_owned(),
                 retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 1,
             })
         );
 
@@ -6553,6 +6635,8 @@ mod tests {
                 code: protocol::ErrorCode::PermissionDenied,
                 message: "input rejected: focus reporting is disabled".to_owned(),
                 retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 1,
             })
         );
 
@@ -6801,6 +6885,8 @@ mod tests {
                 code: protocol::ErrorCode::PermissionDenied,
                 message: "input rejected: mouse tracking is disabled".to_owned(),
                 retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 1,
             })
         );
 
@@ -7428,6 +7514,8 @@ mod tests {
                 code: protocol::ErrorCode::PermissionDenied,
                 message: "input rejected: mouse coordinates are outside pane bounds".to_owned(),
                 retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 1,
             })
         );
 
@@ -7480,6 +7568,8 @@ mod tests {
                 code: protocol::ErrorCode::Unknown,
                 message: "input forwarding failed: host I/O error during write_input for pane-1: simulated write failure".to_owned(),
                 retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 1,
             })
         );
 
@@ -8220,6 +8310,8 @@ mod tests {
                 code: protocol::ErrorCode::Unknown,
                 message: "unsupported input".to_owned(),
                 retryable: false,
+                pane_id: None,
+                input_seq: 0,
             }
         );
     }

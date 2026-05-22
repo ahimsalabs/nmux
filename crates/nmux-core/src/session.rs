@@ -1043,15 +1043,31 @@ impl Session {
         message: &str,
         retryable: bool,
     ) -> Vec<u8> {
+        self.error_frame_with_context(connection_id, seq, code, message, retryable, None, 0)
+    }
+
+    pub fn error_frame_with_context(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        code: protocol::ErrorCode,
+        message: &str,
+        retryable: bool,
+        pane_id: Option<&str>,
+        input_seq: u64,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
 
         let message = builder.create_string(message);
+        let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
         let error = protocol::Error::create(
             &mut builder,
             &protocol::ErrorArgs {
                 code,
                 message: Some(message),
                 retryable,
+                pane_id,
+                input_seq,
             },
         );
 

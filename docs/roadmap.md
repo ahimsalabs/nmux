@@ -139,6 +139,7 @@ Done:
 - Local clients now fetch daemon-owned scrollback even when a reconnect has the current visible surface, preserve distinct scoped cached scrollback range/version entries as fetch preconditions for matching ranges, and retry once with `known_scrollback_version = 0` after `StaleVersion`.
 - Explicit one-shot text, paste, named-key, focus, and mouse input is forwarded before scrollback fetch even when a reconnect has the current visible surface and no surface frame is sent.
 - One-shot and live post-attach input, resize, and scrollback control frames now use the attached active pane ID instead of assuming `pane-1`.
+- Protocol `Error` frames now carry structured pane attribution and input sequence attribution for pane-scoped/input failures, so clients do not need to parse reason strings to identify the failed pane or input event.
 - Current-surface paste forwarding keeps bracketed-paste delimiter selection on daemon-owned pane mode instead of cached client assumptions.
 - `nmux --follow` rejects input flags instead of accepting and silently dropping them.
 - `make check-ghostty-vt` now runs full `nmux-core` and `nmux-cli` test suites with `--features libghostty-vt`, so the opt-in engine gate covers ordinary feature-sensitive tests as well as Ghostty-named smoke tests.

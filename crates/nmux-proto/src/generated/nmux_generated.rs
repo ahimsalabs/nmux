@@ -5873,6 +5873,8 @@ impl<'a> Error<'a> {
   pub const VT_CODE: ::flatbuffers::VOffsetT = 4;
   pub const VT_MESSAGE: ::flatbuffers::VOffsetT = 6;
   pub const VT_RETRYABLE: ::flatbuffers::VOffsetT = 8;
+  pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 10;
+  pub const VT_INPUT_SEQ: ::flatbuffers::VOffsetT = 12;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5884,6 +5886,8 @@ impl<'a> Error<'a> {
     args: &'args ErrorArgs<'args>
   ) -> ::flatbuffers::WIPOffset<Error<'bldr>> {
     let mut builder = ErrorBuilder::new(_fbb);
+    builder.add_input_seq(args.input_seq);
+    if let Some(x) = args.pane_id { builder.add_pane_id(x); }
     if let Some(x) = args.message { builder.add_message(x); }
     builder.add_code(args.code);
     builder.add_retryable(args.retryable);
@@ -5912,6 +5916,20 @@ impl<'a> Error<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<bool>(Error::VT_RETRYABLE, Some(false)).unwrap()}
   }
+  #[inline]
+  pub fn pane_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Error::VT_PANE_ID, None)}
+  }
+  #[inline]
+  pub fn input_seq(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Error::VT_INPUT_SEQ, Some(0)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Error<'_> {
@@ -5923,6 +5941,8 @@ impl ::flatbuffers::Verifiable for Error<'_> {
      .visit_field::<ErrorCode>("code", Self::VT_CODE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("message", Self::VT_MESSAGE, false)?
      .visit_field::<bool>("retryable", Self::VT_RETRYABLE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
+     .visit_field::<u64>("input_seq", Self::VT_INPUT_SEQ, false)?
      .finish();
     Ok(())
   }
@@ -5931,6 +5951,8 @@ pub struct ErrorArgs<'a> {
     pub code: ErrorCode,
     pub message: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub retryable: bool,
+    pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub input_seq: u64,
 }
 impl<'a> Default for ErrorArgs<'a> {
   #[inline]
@@ -5939,6 +5961,8 @@ impl<'a> Default for ErrorArgs<'a> {
       code: ErrorCode::Unknown,
       message: None,
       retryable: false,
+      pane_id: None,
+      input_seq: 0,
     }
   }
 }
@@ -5961,6 +5985,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ErrorBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<bool>(Error::VT_RETRYABLE, retryable, false);
   }
   #[inline]
+  pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Error::VT_PANE_ID, pane_id);
+  }
+  #[inline]
+  pub fn add_input_seq(&mut self, input_seq: u64) {
+    self.fbb_.push_slot::<u64>(Error::VT_INPUT_SEQ, input_seq, 0);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ErrorBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     ErrorBuilder {
@@ -5981,6 +6013,8 @@ impl ::core::fmt::Debug for Error<'_> {
       ds.field("code", &self.code());
       ds.field("message", &self.message());
       ds.field("retryable", &self.retryable());
+      ds.field("pane_id", &self.pane_id());
+      ds.field("input_seq", &self.input_seq());
       ds.finish()
   }
 }

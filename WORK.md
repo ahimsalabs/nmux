@@ -514,6 +514,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   current-version reattach sends explicit paste input before scrollback fetch and keeps bracketed-paste delimiter selection daemon-owned
   current-version live reattach sends explicit focus input to the daemon even when no surface frame arrives, and CLI integration coverage proves focus-reporting-disabled cases produce daemon-owned Error frames
   current-version live reattach covers key, paste, named-key, focus, and mouse input when no surface frame arrives, including CLI paste forwarding, disabled-mode rejection, current-surface CLI libghostty-vt bracketed-paste wrapping, current-surface CLI libghostty-vt SGR mouse forwarding, and mode-aware CLI libghostty-vt application-keypad and application-cursor named-key forwarding
+  Error frames carry structured pane attribution and input sequence attribution for pane-scoped/input failures instead of requiring clients to parse reason strings
   focused local coverage proves clients maintain monotonic Envelope.seq and InputEvent.input_seq values across one-shot and live-style post-attach frames, including repeated structured input separated by scrollback fetches and resize intents
   document cursor, mode, alternate-screen, palette, hyperlink, image, grapheme, and cell-width gaps before schema changes
   preserve frontend state-sync semantics; do not introduce client-side raw PTY replay

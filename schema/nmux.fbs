@@ -325,6 +325,8 @@ table Error {
   code:ErrorCode = Unknown;
   message:string;
   retryable:bool;
+  pane_id:string;
+  input_seq:ulong;
 }
 
 table KnownPaneSurfaceVersion {
