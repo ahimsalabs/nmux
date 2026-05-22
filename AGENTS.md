@@ -58,18 +58,19 @@ If `schema/nmux.fbs` changes, regenerate bindings with:
 nix develop path:$PWD -c make generate-schema
 ```
 
-The experimental backend Ghostty VT engine is feature-gated. Use this focused
-check when changing the optional path:
+The experimental backend Ghostty VT engine is feature-gated. Use this full
+feature-enabled package check when changing the optional path:
 
 ```sh
 nix develop path:$PWD -c make check-ghostty-vt
 ```
 
-The target sets `GIT_CONFIG_GLOBAL=/dev/null` to avoid local GitHub HTTPS-to-SSH rewrites while
-`libghostty-vt-sys` fetches its pinned Ghostty source. The Nix shell pins Zig
-0.15 for that native build. Keep this path opt-in unless a later ADR explicitly
-makes the native Ghostty/Zig build part of regular CI, default development, and
-packaging.
+The target runs `nmux-core` and `nmux-cli` with `--features libghostty-vt`, not
+only name-filtered smoke tests. It sets `GIT_CONFIG_GLOBAL=/dev/null` to avoid
+local GitHub HTTPS-to-SSH rewrites while `libghostty-vt-sys` fetches its pinned
+Ghostty source. The Nix shell pins Zig 0.15 for that native build. Keep this
+path opt-in unless a later ADR explicitly makes the native Ghostty/Zig build
+part of regular CI, default development, and packaging.
 
 ## Licensing Rules
 

@@ -182,6 +182,8 @@ metadata, per-run semantic content, row dirty metadata, row state hashes, Kitty
 placeholder row metadata, mode payloads, mode-only patch application, sparse row
 replacement, metadata-only no-row live updates, cached client-state
 compatibility, cached terminal metadata reattach, and feature-gated live CLI
-smoke paths. The default engine remains `interim` until a later ADR explicitly
-accepts the native Ghostty/Zig build cost in normal development, CI, and
-packaging.
+smoke paths. `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli`
+test suites with `--features libghostty-vt`, so ordinary feature-sensitive
+tests are part of the opt-in gate. The default engine remains `interim` until a
+later ADR explicitly accepts the native Ghostty/Zig build cost in normal
+development, CI, and packaging.

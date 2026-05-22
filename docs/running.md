@@ -222,9 +222,10 @@ and nmux protocol shape are clear.
 nix develop path:$PWD -c make check-ghostty-vt
 ```
 
-The target sets `GIT_CONFIG_GLOBAL=/dev/null`. That is not logically required
-by nmux; it avoids a local Git configuration that rewrites GitHub HTTPS URLs to
-SSH. The
+The target runs full `nmux-core` and `nmux-cli` test suites with
+`--features libghostty-vt`, and sets `GIT_CONFIG_GLOBAL=/dev/null`. That Git
+setting is not logically required by nmux; it avoids a local Git configuration
+that rewrites GitHub HTTPS URLs to SSH. The
 `libghostty-vt-sys` build script fetches Ghostty from an HTTPS URL unless
 `GHOSTTY_SOURCE_DIR` points at an existing Ghostty checkout.
 
