@@ -6910,6 +6910,130 @@ mod tests {
         let _ = fs::remove_file(socket_path);
     }
 
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn live_libghostty_vt_replace_rows_patch_updates_cached_row_metadata() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![
+            b"ready\n".to_vec(),
+            Vec::new(),
+            b"\x1b]133;A\x1b\\prompt \x1b]133;B\x1b\\input\x1b]133;C\x1b\\output".to_vec(),
+        ]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            serve_live_n_with_host_and_terminal_engine_kind(
+                &listener,
+                &mut session,
+                &mut host,
+                1,
+                2,
+                TerminalEngineKind::LibghosttyVt,
+            )
+            .expect("serve replace-rows live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        let mut state = ClientAttachState::default();
+        let rendered = state.render_attach(initial).expect("render initial attach");
+        let initial_text = rendered.surface_text.expect("initial surface text");
+        assert!(initial_text.contains("ready"));
+
+        let update = loop {
+            match read_live_surface_update_from_stream(&mut stream).expect("live update") {
+                LiveSurfaceRead::Update(update) => break update,
+                LiveSurfaceRead::NoFrame => continue,
+                other => panic!("expected replace-rows surface update, got {other:?}"),
+            }
+        };
+        assert_eq!(update.kind, SurfaceUpdateKind::Patch);
+        assert_eq!(update.patch_kind, Some(protocol::PatchKind::ReplaceRows));
+        let prompt_row = update
+            .row_updates
+            .iter()
+            .find(|row| row.text == "prompt inputoutput")
+            .expect("prompt row update");
+        assert_eq!(
+            prompt_row.semantic_prompt,
+            protocol::RowSemanticPrompt::Prompt
+        );
+        assert!(prompt_row.dirty);
+        assert_ne!(prompt_row.row_state_hash, prompt_row.dirty_hash);
+        let semantic_content: Vec<_> = prompt_row
+            .runs
+            .iter()
+            .map(|run| run.semantic_content)
+            .collect();
+        assert_eq!(
+            semantic_content,
+            vec![
+                protocol::CellSemanticContent::Prompt,
+                protocol::CellSemanticContent::Input,
+                protocol::CellSemanticContent::Output,
+            ]
+        );
+        let prompt_row_index =
+            usize::try_from(prompt_row.row).expect("prompt row index fits in usize");
+        let prompt_row_state_hash = prompt_row.row_state_hash;
+
+        let updated_text = state
+            .render_surface_update(&update)
+            .expect("render replace-rows update");
+        assert_ne!(updated_text, initial_text);
+        assert_eq!(Some(updated_text), state.cached_surface_text("pane-1"));
+        assert_eq!(
+            state.surfaces[0].row_semantic_prompts[prompt_row_index],
+            protocol::RowSemanticPrompt::Prompt
+        );
+        assert!(state.surfaces[0].row_dirty[prompt_row_index]);
+        assert_eq!(
+            state.surfaces[0].row_state_hashes[prompt_row_index],
+            prompt_row_state_hash
+        );
+        assert_eq!(
+            state.surfaces[0].row_runs[prompt_row_index]
+                .iter()
+                .map(|run| run.semantic_content)
+                .collect::<Vec<_>>(),
+            semantic_content
+        );
+
+        let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
+        assert_eq!(
+            decoded.surfaces[0].row_semantic_prompts[prompt_row_index],
+            protocol::RowSemanticPrompt::Prompt
+        );
+        assert!(decoded.surfaces[0].row_dirty[prompt_row_index]);
+        assert_eq!(
+            decoded.surfaces[0].row_state_hashes[prompt_row_index],
+            prompt_row_state_hash
+        );
+        assert_eq!(
+            decoded.surfaces[0].row_runs[prompt_row_index]
+                .iter()
+                .map(|run| run.semantic_content)
+                .collect::<Vec<_>>(),
+            semantic_content
+        );
+
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
     #[test]
     fn live_attach_reports_mouse_out_of_bounds_with_error_frame() {
         let socket_path = test_socket_path();
