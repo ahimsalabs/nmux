@@ -52,11 +52,12 @@ backend terminal state into the same nmux objects:
 - Versions: bump surface versions when the nmux-visible surface, cursor, or
   surface dimensions change; scrollback-only updates should not force a surface
   version bump. Keep workspace versions for tree metadata changes.
-- Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; row
-  changes should use `PatchKind::ReplaceRows`; changes that cannot be expressed
-  by the current patch schema, including mode-only updates before mode fields
-  exist, should force a full snapshot. Clients must reject unsupported patch
-  kinds rather than applying them as cursor-only updates.
+- Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; row text
+  or row-run-only changes should use `PatchKind::ReplaceRows`; changes that
+  cannot be expressed by the current patch schema, including style-table changes
+  and mode-only updates before mode fields exist, should force a full snapshot.
+  Clients must reject unsupported patch kinds rather than applying them as
+  cursor-only updates.
 
 ## Known Schema Gaps
 
