@@ -1169,7 +1169,7 @@ fn live_libghostty_vt_clients_can_reattach_to_persisted_workspace_state() {
             "--terminal-engine",
             "libghostty-vt",
             "--command",
-            "printf 'ready\n'; while IFS= read -r line; do printf '\\033[32mecho:%s\\033[0m\n' \"$line\"; done",
+            "printf '\\033]2;cached title\\033\\\\\\033]7;file://localhost/tmp/cached\\007ready\\n'; while IFS= read -r line; do printf '\\033[32mecho:%s\\033[0m\n' \"$line\"; done",
         ])
         .spawn()
         .expect("spawn nmuxd");
@@ -1234,6 +1234,14 @@ fn live_libghostty_vt_clients_can_reattach_to_persisted_workspace_state() {
     assert!(
         stdout.contains("echo:reattach"),
         "reattached libghostty-vt client did not render cached current live surface:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("title=cached title"),
+        "reattached libghostty-vt client did not render cached title metadata:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("working-directory=file://localhost/tmp/cached"),
+        "reattached libghostty-vt client did not render cached working-directory metadata:\n{stdout}"
     );
     assert!(
         stdout.contains("scrollback"),
