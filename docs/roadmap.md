@@ -95,12 +95,12 @@ Done:
 - Mode-only terminal updates are treated as full-refresh-required until nmux has explicit mode fields in the surface schema.
 - Client-side surface state rejects unsupported patch kinds instead of treating them as cursor-only updates.
 - Pane surface snapshot and patch serialization is pane-scoped, matching the per-pane terminal engine and scrollback boundaries.
-- `nmuxd --terminal-engine interim` exposes the current engine choice explicitly; backend `libghostty-vt` is not imported yet.
+- `nmuxd --terminal-engine interim` exposes the current engine choice explicitly; backend `libghostty-vt` is imported behind an opt-in Cargo feature while extraction gaps are closed.
 
 Next:
 
 - Map the current interim terminal output fields to the first backend `libghostty-vt` extraction requirements.
-- Use [the terminal state extraction checklist](terminal-state-extraction.md) as the gate for any `libghostty-vt` import or protocol expansion.
+- Use [the terminal state extraction checklist](terminal-state-extraction.md) as the gate for making `libghostty-vt` the default engine or expanding protocol fields.
 - Keep client attach, reconnect, live streaming, and scrollback fetch semantics on nmux state objects.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
 
@@ -276,6 +276,6 @@ Exit evidence:
 - The interim text surface remains explicitly labeled temporary until replaced.
 - No GPL or AGPL terminal parser code is copied into the core.
 
-Status: Started. ADR 0012 documents the terminal engine boundary. `nmux-core` exposes a terminal engine trait, the interim text behavior implements it, pane cursor state and resize updates are routed through that engine boundary, local daemon serving paths keep engine instances alive per pane across output polls and sequential clients, and `nmuxd --terminal-engine interim` exposes the current engine choice before backend `libghostty-vt` is available.
+Status: Started. ADR 0012 documents the terminal engine boundary. `nmux-core` exposes a terminal engine trait, the interim text behavior implements it, pane cursor state and resize updates are routed through that engine boundary, local daemon serving paths keep engine instances alive per pane across output polls and sequential clients, and `nmuxd --terminal-engine interim` exposes the current engine choice. `libghostty-vt` is now an optional Cargo feature with a compile-checked engine path, but the default engine remains interim until the remaining extraction gaps are closed.
 
-Initial boundary slice: `nmux-core` now exposes a terminal engine boundary for daemon-owned pane output hydration. The existing interim text behavior lives behind that boundary, preserving current `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` semantics while creating the replacement point for backend `libghostty-vt` extraction. Local daemon serving paths keep terminal engine instances alive per pane across output polls, resize handling, and sequential clients, and cursor state is now produced by the terminal engine boundary, matching the stateful shape expected from a real VT engine.
+Initial boundary slice: `nmux-core` now exposes a terminal engine boundary for daemon-owned pane output hydration. The existing interim text behavior lives behind that boundary, preserving current `PaneSurfaceSnapshot`, `PaneSurfacePatch`, and `ScrollbackChunk` semantics while creating the replacement point for backend `libghostty-vt` extraction. Local daemon serving paths keep terminal engine instances alive per pane across output polls, resize handling, and sequential clients, and cursor state is now produced by the terminal engine boundary, matching the stateful shape expected from a real VT engine. Focused tests prove a single stateful engine instance can span output, resize, and later output, and the optional `libghostty-vt` feature compiles against the Rust crate plus vendored native Ghostty VT build.

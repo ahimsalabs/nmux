@@ -185,7 +185,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             }
             "--terminal-engine" => {
                 terminal_engine_kind = parse_terminal_engine_kind(
-                    &args.next().ok_or("--terminal-engine requires interim")?,
+                    &args
+                        .next()
+                        .ok_or("--terminal-engine requires interim or libghostty-vt")?,
                 )
                 .map_err(|err| format!("--terminal-engine {err}"))?;
             }
@@ -252,13 +254,14 @@ Options:
   --command SHELL                       Run a shell command in the pane PTY
   --resize-policy fixed|leader|active-client|manual
                                          Publish and enforce pane resize policy
-  --terminal-engine interim              Backend terminal engine implementation
+  --terminal-engine interim|libghostty-vt
+                                         Backend terminal engine implementation
   -h, --help                            Show this help
 
 Notes:
   Default socket: valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   Existing socket paths are not replaced automatically.
-  The only implemented terminal engine is the interim text surface.
+  libghostty-vt requires building nmux with the libghostty-vt feature.
 
 Examples:
   nmuxd --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
@@ -281,7 +284,11 @@ fn parse_resize_policy(value: &str) -> Result<protocol::ResizePolicy, &'static s
 fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'static str> {
     match value {
         "interim" => Ok(TerminalEngineKind::InterimText),
-        _ => Err("requires interim"),
+        #[cfg(feature = "libghostty-vt")]
+        "libghostty-vt" => Ok(TerminalEngineKind::LibghosttyVt),
+        #[cfg(not(feature = "libghostty-vt"))]
+        "libghostty-vt" => Err("libghostty-vt requires the libghostty-vt feature"),
+        _ => Err("requires interim or libghostty-vt"),
     }
 }
 
@@ -336,6 +343,12 @@ mod tests {
             parse_terminal_engine_kind("interim"),
             Ok(TerminalEngineKind::InterimText)
         );
+        #[cfg(feature = "libghostty-vt")]
+        assert_eq!(
+            parse_terminal_engine_kind("libghostty-vt"),
+            Ok(TerminalEngineKind::LibghosttyVt)
+        );
+        #[cfg(not(feature = "libghostty-vt"))]
         assert!(parse_terminal_engine_kind("libghostty-vt").is_err());
     }
 
@@ -347,8 +360,8 @@ mod tests {
         assert!(usage.contains("--live-cycles COUNT"));
         assert!(usage.contains("--live-clients COUNT"));
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
-        assert!(usage.contains("--terminal-engine interim"));
-        assert!(usage.contains("only implemented terminal engine is the interim text surface"));
+        assert!(usage.contains("--terminal-engine interim|libghostty-vt"));
+        assert!(usage.contains("libghostty-vt requires building nmux"));
         assert!(usage.contains("Existing socket paths are not replaced automatically"));
     }
 

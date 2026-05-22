@@ -29,6 +29,7 @@
               pkgs.gnumake
               pkgs.rustc
               pkgs.rustfmt
+              pkgs.zig_0_15
             ];
           };
         }

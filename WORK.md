@@ -438,8 +438,8 @@ M13: backend libghostty-vt extraction [next correctness milestone]
   terminal engine boundary wraps current interim text surface behavior
   terminal engine boundary owns pane cursor state along with surface and scrollback output
   local daemon serving paths keep terminal engines alive per pane across output polls, resize handling, and sequential clients
-  nmuxd exposes --terminal-engine interim as an explicit selection point before libghostty-vt is available
-  document the terminal-state extraction checklist before importing libghostty-vt or expanding protocol fields
+  nmuxd exposes --terminal-engine interim as an explicit default while libghostty-vt remains opt-in
+  keep the terminal-state extraction checklist current while importing libghostty-vt and before expanding protocol fields
   replace interim backend-owned text surface with backend libghostty-vt terminal-state extraction
   feed PTY bytes into the daemon-owned libghostty-vt state, not into clients
   map extracted terminal state into nmux PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk objects

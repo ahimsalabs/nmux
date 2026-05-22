@@ -31,6 +31,8 @@ pub struct TerminalUpdate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalEngineKind {
     InterimText,
+    #[cfg(feature = "libghostty-vt")]
+    LibghosttyVt,
 }
 
 pub trait TerminalEngine {
@@ -82,6 +84,8 @@ impl Default for TerminalEngineKind {
 fn terminal_engine_for_kind(kind: TerminalEngineKind) -> Box<dyn TerminalEngine> {
     match kind {
         TerminalEngineKind::InterimText => Box::new(InterimTextTerminalEngine),
+        #[cfg(feature = "libghostty-vt")]
+        TerminalEngineKind::LibghosttyVt => Box::new(ghostty_vt::LibghosttyVtTerminalEngine::new()),
     }
 }
 
@@ -159,6 +163,183 @@ fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
     lines
 }
 
+#[cfg(feature = "libghostty-vt")]
+mod ghostty_vt {
+    use libghostty_vt::{
+        RenderState, Terminal, TerminalOptions,
+        render::{CellIterator, CursorVisualStyle, RowIterator, Snapshot as RenderSnapshot},
+        screen::CellWide,
+        terminal::Mode,
+    };
+    use nmux_proto::protocol;
+
+    use super::{TerminalCursor, TerminalEngine, TerminalInput, TerminalUpdate};
+
+    pub struct LibghosttyVtTerminalEngine {
+        state: Option<GhosttyVtState>,
+    }
+
+    struct GhosttyVtState {
+        terminal: Terminal<'static, 'static>,
+        render_state: RenderState<'static>,
+        row_iterator: RowIterator<'static>,
+        cell_iterator: CellIterator<'static>,
+    }
+
+    impl LibghosttyVtTerminalEngine {
+        pub fn new() -> Self {
+            Self { state: None }
+        }
+
+        fn state_mut(&mut self, input: TerminalInput<'_>) -> Option<&mut GhosttyVtState> {
+            if self.state.is_none() {
+                self.state = Some(GhosttyVtState::new(input.cols, input.rows)?);
+            }
+            self.state.as_mut()
+        }
+    }
+
+    impl TerminalEngine for LibghosttyVtTerminalEngine {
+        fn apply_output(
+            &mut self,
+            input: TerminalInput<'_>,
+            output: &[u8],
+        ) -> Option<TerminalUpdate> {
+            let state = self.state_mut(input)?;
+            state.terminal.vt_write(output);
+            state.extract_update(input, false)
+        }
+
+        fn resize(
+            &mut self,
+            input: TerminalInput<'_>,
+            cols: u32,
+            rows: u32,
+        ) -> Option<TerminalUpdate> {
+            let state = self.state_mut(input)?;
+            let cols = u16::try_from(cols).ok()?;
+            let rows = u16::try_from(rows).ok()?;
+            state.terminal.resize(cols, rows, 8, 16).ok()?;
+            state.extract_update(input, true)
+        }
+    }
+
+    impl GhosttyVtState {
+        fn new(cols: u32, rows: u32) -> Option<Self> {
+            Some(Self {
+                terminal: Terminal::new(TerminalOptions {
+                    cols: u16::try_from(cols).ok()?,
+                    rows: u16::try_from(rows).ok()?,
+                    max_scrollback: 10000,
+                })
+                .ok()?,
+                render_state: RenderState::new().ok()?,
+                row_iterator: RowIterator::new().ok()?,
+                cell_iterator: CellIterator::new().ok()?,
+            })
+        }
+
+        fn extract_update(
+            &mut self,
+            input: TerminalInput<'_>,
+            force_rows: bool,
+        ) -> Option<TerminalUpdate> {
+            let snapshot = self.render_state.update(&self.terminal).ok()?;
+            let surface_lines =
+                surface_lines(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?;
+            let cursor = cursor(&snapshot, input.cursor)?;
+            let surface = surface_kind(&self.terminal)?;
+            let patch_kind = if !force_rows
+                && surface == input.surface
+                && surface_lines == input.surface_lines
+                && cursor != input.cursor
+            {
+                protocol::PatchKind::CursorOnly
+            } else {
+                protocol::PatchKind::ReplaceRows
+            };
+
+            Some(TerminalUpdate {
+                patch_kind,
+                surface,
+                cursor,
+                scrollback_lines: surface_lines.clone(),
+                surface_lines,
+            })
+        }
+    }
+
+    fn surface_lines<'alloc>(
+        snapshot: &RenderSnapshot<'alloc, '_>,
+        row_iterator: &mut RowIterator<'alloc>,
+        cell_iterator: &mut CellIterator<'alloc>,
+    ) -> Option<Vec<String>> {
+        let mut rows = row_iterator.update(snapshot).ok()?;
+        let mut lines = Vec::new();
+        while let Some(row) = rows.next() {
+            let mut cells = cell_iterator.update(row).ok()?;
+            let mut line = String::new();
+            while cells.next().is_some() {
+                let raw_cell = cells.raw_cell().ok()?;
+                if matches!(
+                    raw_cell.wide().ok()?,
+                    CellWide::SpacerTail | CellWide::SpacerHead
+                ) {
+                    continue;
+                }
+
+                let graphemes = cells.graphemes().ok()?;
+                if graphemes.is_empty() {
+                    line.push(' ');
+                } else {
+                    line.extend(graphemes);
+                }
+            }
+            lines.push(line.trim_end().to_owned());
+        }
+        Some(lines)
+    }
+
+    fn cursor(
+        snapshot: &RenderSnapshot<'_, '_>,
+        previous: TerminalCursor,
+    ) -> Option<TerminalCursor> {
+        let shape = match snapshot.cursor_visual_style().ok()? {
+            CursorVisualStyle::Bar => protocol::CursorShape::Beam,
+            CursorVisualStyle::Underline => protocol::CursorShape::Underline,
+            CursorVisualStyle::Block | CursorVisualStyle::BlockHollow => {
+                protocol::CursorShape::Block
+            }
+            _ => protocol::CursorShape::Block,
+        };
+        let Some(viewport) = snapshot.cursor_viewport().ok()? else {
+            return Some(TerminalCursor {
+                visible: false,
+                shape,
+                ..previous
+            });
+        };
+
+        Some(TerminalCursor {
+            row: u32::from(viewport.y),
+            col: u32::from(viewport.x),
+            visible: snapshot.cursor_visible().ok()?,
+            shape,
+        })
+    }
+
+    fn surface_kind(terminal: &Terminal<'_, '_>) -> Option<protocol::SurfaceKind> {
+        if terminal.mode(Mode::ALT_SCREEN).ok()?
+            || terminal.mode(Mode::ALT_SCREEN_SAVE).ok()?
+            || terminal.mode(Mode::ALT_SCREEN_LEGACY).ok()?
+        {
+            Some(protocol::SurfaceKind::Alternate)
+        } else {
+            Some(protocol::SurfaceKind::Main)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use nmux_proto::protocol;
@@ -167,6 +348,28 @@ mod tests {
         InterimTextTerminalEngine, PaneTerminalEngines, TerminalCursor, TerminalEngine,
         TerminalEngineKind, TerminalInput,
     };
+
+    #[cfg(feature = "libghostty-vt")]
+    fn terminal_input<'a>(
+        rows: u32,
+        surface_lines: &'a [String],
+        scrollback_lines: &'a [String],
+    ) -> TerminalInput<'a> {
+        TerminalInput {
+            pane_id: "pane-1",
+            cols: 80,
+            rows,
+            surface: protocol::SurfaceKind::Main,
+            cursor: TerminalCursor {
+                row: 0,
+                col: 0,
+                visible: true,
+                shape: protocol::CursorShape::Block,
+            },
+            surface_lines,
+            scrollback_lines,
+        }
+    }
 
     #[test]
     fn interim_text_engine_normalizes_process_output() {
@@ -303,6 +506,35 @@ mod tests {
 
         let _ = engines.engine_mut("pane-2");
         assert_eq!(engines.pane_count(), 2);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_consumes_ansi_sequences() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input(2, &empty, &empty),
+                b"\x1b[31mred\x1b[0m\r\nnext",
+            )
+            .expect("terminal update");
+
+        assert_eq!(update.surface, protocol::SurfaceKind::Main);
+        assert!(
+            update.surface_lines.iter().any(|line| line.contains("red")),
+            "surface did not contain red text: {:?}",
+            update.surface_lines
+        );
+        assert!(
+            update
+                .surface_lines
+                .iter()
+                .all(|line| !line.contains("[31m") && !line.contains("[0m")),
+            "ansi sequences leaked into surface text: {:?}",
+            update.surface_lines
+        );
     }
 }
 use std::collections::HashMap;

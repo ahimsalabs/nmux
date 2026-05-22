@@ -51,12 +51,12 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("--live-forever"));
     assert!(stdout.contains("--live-clients COUNT"));
     assert!(stdout.contains("--resize-policy fixed|leader|active-client|manual"));
-    assert!(stdout.contains("--terminal-engine interim"));
+    assert!(stdout.contains("--terminal-engine interim|libghostty-vt"));
     assert!(stdout.contains("--command SHELL"));
     assert!(stdout.contains("Default socket: valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock"));
     assert!(stdout.contains("else /tmp/nmux-$UID/nmuxd.sock"));
     assert!(stdout.contains("Existing socket paths are not replaced automatically"));
-    assert!(stdout.contains("only implemented terminal engine is the interim text surface"));
+    assert!(stdout.contains("libghostty-vt requires building nmux"));
     assert!(stdout.contains("Examples:"));
     assert!(stdout.contains("nmuxd --one-shot"));
     assert!(stdout.contains("nmuxd --live"));
@@ -177,10 +177,13 @@ fn nmuxd_rejects_conflicting_server_modes() {
         &["--live-clients", "0"],
         "nmuxd: --live-clients must be greater than 0",
     );
-    assert_nmuxd_rejects(
-        &["--terminal-engine", "libghostty-vt"],
-        "nmuxd: --terminal-engine requires interim",
-    );
+    #[cfg(not(feature = "libghostty-vt"))]
+    {
+        assert_nmuxd_rejects(
+            &["--terminal-engine", "libghostty-vt"],
+            "nmuxd: --terminal-engine libghostty-vt requires the libghostty-vt feature",
+        );
+    }
 }
 
 #[test]

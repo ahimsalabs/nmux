@@ -13,6 +13,9 @@ path = "src/bin/nmux.rs"
 name = "nmuxd"
 path = "src/bin/nmuxd.rs"
 
+[features]
+libghostty-vt = ["nmux-core/libghostty-vt"]
+
 [dependencies]
 flatbuffers = "=25.12.19"
 libc = "0.2"

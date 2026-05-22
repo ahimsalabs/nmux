@@ -4,6 +4,10 @@ M13 replaces the interim text engine with daemon-owned backend `libghostty-vt`
 state extraction. This file records the minimum mapping work needed before that
 import so the protocol changes stay deliberate.
 
+`libghostty-vt` is now present as an optional Cargo feature and compiles through
+the vendored native Ghostty VT build. The default `nmuxd` engine remains
+`interim` until the acceptance gate below is complete.
+
 ## Current nmux Surface
 
 `nmux-core` currently publishes:
@@ -86,3 +90,16 @@ have tests proving:
   behind the interim engine flag;
 - unsupported VT features fail by omission with documented limitations, not by
   corrupting the existing nmux state objects.
+
+## Current libghostty-vt Feature Gaps
+
+The opt-in engine currently proves dependency and lifecycle wiring. It is not
+the default because the first extraction pass still needs:
+
+- backend-owned scrollback extraction instead of mirroring only the visible
+  render rows into `ScrollbackChunk`;
+- focused tests for cursor-only VT updates, alternate-screen transitions, and
+  resize after scrollback reflow;
+- documentation for the local GitHub HTTPS-to-SSH rewrite trap during the
+  vendored build, or a repo-local build strategy that avoids relying on user
+  Git config.

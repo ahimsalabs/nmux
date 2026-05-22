@@ -5,7 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+libghostty-vt = ["dep:libghostty-vt"]
+
 [dependencies]
 flatbuffers = "=25.12.19"
+libghostty-vt = { version = "=0.1.1", optional = true }
 nmux-proto = { path = "../nmux-proto" }
 portable-pty = "0.9.0"
