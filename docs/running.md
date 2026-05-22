@@ -198,8 +198,10 @@ position/visibility/shape, alternate-screen entry/restoration, resize/reflow,
 style-separated visible rows, styled scrollback rows, cell widths, combining
 marks, emoji ZWJ clusters, basic SGR style flags, underline color,
 palette-indexed colors, render-state default colors/palette, palette overrides,
-explicit cursor color, bracketed paste, mouse tracking, application keypad,
-origin, and wraparound mode state, and mode-aware key encoding.
+explicit cursor color, title metadata, bracketed paste, mouse tracking,
+application keypad, origin, and wraparound mode state, and mode-aware key
+encoding. OSC 7 working-directory metadata remains intentionally withheld until
+the expected backend behavior and nmux protocol shape are clear.
 
 ```sh
 nix develop path:$PWD -c make check-ghostty-vt
