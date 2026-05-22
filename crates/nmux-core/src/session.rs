@@ -1012,11 +1012,7 @@ fn row_runs_for_lines(lines: &[String], row_runs: &[Vec<CellRun>]) -> Vec<Vec<Ce
 }
 
 fn cell_runs_text(runs: &[CellRun]) -> String {
-    let mut text = String::new();
-    for run in runs {
-        text.push_str(&run.text);
-    }
-    text
+    crate::terminal::cell_runs_text(runs)
 }
 
 fn build_cell_runs<'a>(

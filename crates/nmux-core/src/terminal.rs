@@ -199,11 +199,19 @@ fn interim_text_update(
     )
 }
 
-fn plain_row_runs(lines: &[String]) -> Vec<Vec<CellRun>> {
+pub(crate) fn plain_row_runs(lines: &[String]) -> Vec<Vec<CellRun>> {
     lines
         .iter()
         .map(|line| vec![CellRun::plain(line.clone())])
         .collect()
+}
+
+pub(crate) fn cell_runs_text(runs: &[CellRun]) -> String {
+    let mut text = String::new();
+    for run in runs {
+        text.push_str(&run.text);
+    }
+    text
 }
 
 fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
@@ -231,11 +239,14 @@ mod ghostty_vt {
         RenderState, Terminal, TerminalOptions,
         render::{CellIterator, CursorVisualStyle, RowIterator, Snapshot as RenderSnapshot},
         screen::CellWide,
+        style::{RgbColor, Style, StyleColor, Underline},
         terminal::{Mode, ScrollViewport},
     };
     use nmux_proto::protocol;
 
-    use super::{TerminalCursor, TerminalEngine, TerminalInput, TerminalUpdate};
+    use super::{
+        CellRun, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput, TerminalUpdate,
+    };
 
     pub struct LibghosttyVtTerminalEngine {
         state: Option<GhosttyVtState>,
@@ -314,8 +325,9 @@ mod ghostty_vt {
             };
             self.terminal.scroll_viewport(ScrollViewport::Bottom);
             let snapshot = self.render_state.update(&self.terminal).ok()?;
-            let surface_lines =
-                surface_lines(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?;
+            let surface_rows =
+                extract_rows(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?;
+            let surface_lines = surface_rows.lines.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
             let patch_kind = if !force_rows
                 && surface == input.surface
@@ -327,13 +339,16 @@ mod ghostty_vt {
                 protocol::PatchKind::ReplaceRows
             };
 
-            Some(TerminalUpdate::plain(
+            Some(TerminalUpdate {
                 patch_kind,
                 surface,
                 cursor,
+                styles: surface_rows.styles,
+                surface_row_runs: surface_rows.row_runs,
+                scrollback_row_runs: super::plain_row_runs(&scrollback_lines),
                 surface_lines,
                 scrollback_lines,
-            ))
+            })
         }
 
         fn scrollback_lines(&mut self) -> Option<Vec<String>> {
@@ -345,14 +360,14 @@ mod ghostty_vt {
             self.terminal.scroll_viewport(ScrollViewport::Top);
             let snapshot = self.render_state.update(&self.terminal).ok()?;
             let mut lines =
-                surface_lines(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?;
+                extract_rows(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?.lines;
             lines.truncate(total_rows);
 
             while lines.len() < total_rows {
                 self.terminal.scroll_viewport(ScrollViewport::Delta(1));
                 let snapshot = self.render_state.update(&self.terminal).ok()?;
                 let viewport_lines =
-                    surface_lines(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?;
+                    extract_rows(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?.lines;
                 let Some(next_line) = viewport_lines.last() else {
                     break;
                 };
@@ -363,35 +378,153 @@ mod ghostty_vt {
         }
     }
 
-    fn surface_lines<'alloc>(
+    struct ExtractedRows {
+        lines: Vec<String>,
+        row_runs: Vec<Vec<CellRun>>,
+        styles: Vec<PaneStyle>,
+    }
+
+    fn extract_rows<'alloc>(
         snapshot: &RenderSnapshot<'alloc, '_>,
         row_iterator: &mut RowIterator<'alloc>,
         cell_iterator: &mut CellIterator<'alloc>,
-    ) -> Option<Vec<String>> {
+    ) -> Option<ExtractedRows> {
         let mut rows = row_iterator.update(snapshot).ok()?;
+        let mut styles = vec![PaneStyle::default()];
+        let mut row_runs = Vec::new();
         let mut lines = Vec::new();
         while let Some(row) = rows.next() {
             let mut cells = cell_iterator.update(row).ok()?;
-            let mut line = String::new();
+            let mut runs: Vec<CellRun> = Vec::new();
             while cells.next().is_some() {
                 let raw_cell = cells.raw_cell().ok()?;
-                if matches!(
-                    raw_cell.wide().ok()?,
-                    CellWide::SpacerTail | CellWide::SpacerHead
-                ) {
-                    continue;
-                }
+                let width = match raw_cell.wide().ok()? {
+                    CellWide::Narrow => 1,
+                    CellWide::Wide => 2,
+                    CellWide::SpacerTail | CellWide::SpacerHead => continue,
+                };
 
-                let graphemes = cells.graphemes().ok()?;
-                if graphemes.is_empty() {
-                    line.push(' ');
+                let text = cell_text(&cells)?;
+                let style_id = style_id(&mut styles, pane_style(&cells)?);
+                if let Some(last) = runs.last_mut()
+                    && last.style_id == style_id
+                    && last.flags == 0
+                    && last.hyperlink_id == 0
+                {
+                    last.text.push_str(&text);
+                    last.cell_widths.push(width);
                 } else {
-                    line.extend(graphemes);
+                    runs.push(CellRun {
+                        text,
+                        cell_widths: vec![width],
+                        style_id,
+                        flags: 0,
+                        hyperlink_id: 0,
+                    });
                 }
             }
-            lines.push(line.trim_end().to_owned());
+            trim_trailing_spaces(&mut runs);
+            lines.push(super::cell_runs_text(&runs));
+            row_runs.push(runs);
         }
-        Some(lines)
+        Some(ExtractedRows {
+            lines,
+            row_runs,
+            styles,
+        })
+    }
+
+    fn cell_text(cells: &libghostty_vt::render::CellIteration<'_, '_>) -> Option<String> {
+        let graphemes = cells.graphemes().ok()?;
+        if graphemes.is_empty() {
+            Some(" ".to_owned())
+        } else {
+            Some(graphemes.into_iter().collect())
+        }
+    }
+
+    fn pane_style(cells: &libghostty_vt::render::CellIteration<'_, '_>) -> Option<PaneStyle> {
+        let style = cells.style().ok()?;
+        Some(PaneStyle {
+            fg_rgba: cells.fg_color().ok().flatten().map_or(0, rgba),
+            bg_rgba: cells.bg_color().ok().flatten().map_or(0, rgba),
+            underline_rgba: style_color_rgba(style.underline_color),
+            flags: style_flags(style),
+        })
+    }
+
+    fn style_id(styles: &mut Vec<PaneStyle>, style: PaneStyle) -> u32 {
+        if let Some(index) = styles.iter().position(|known| *known == style) {
+            index as u32
+        } else {
+            styles.push(style);
+            (styles.len() - 1) as u32
+        }
+    }
+
+    fn rgba(color: RgbColor) -> u32 {
+        u32::from_be_bytes([color.r, color.g, color.b, 0xff])
+    }
+
+    fn style_color_rgba(color: StyleColor) -> u32 {
+        match color {
+            StyleColor::Rgb(rgb) => rgba(rgb),
+            _ => 0,
+        }
+    }
+
+    fn style_flags(style: Style) -> u32 {
+        let mut flags = 0;
+        if style.bold {
+            flags |= 1 << 0;
+        }
+        if style.italic {
+            flags |= 1 << 1;
+        }
+        if style.faint {
+            flags |= 1 << 2;
+        }
+        if style.blink {
+            flags |= 1 << 3;
+        }
+        if style.inverse {
+            flags |= 1 << 4;
+        }
+        if style.invisible {
+            flags |= 1 << 5;
+        }
+        if style.strikethrough {
+            flags |= 1 << 6;
+        }
+        if style.overline {
+            flags |= 1 << 7;
+        }
+        flags | underline_flags(style.underline)
+    }
+
+    fn underline_flags(underline: Underline) -> u32 {
+        match underline {
+            Underline::Single => 1 << 8,
+            Underline::Double => 1 << 9,
+            Underline::Curly => 1 << 10,
+            Underline::Dotted => 1 << 11,
+            Underline::Dashed => 1 << 12,
+            _ => 0,
+        }
+    }
+
+    fn trim_trailing_spaces(runs: &mut Vec<CellRun>) {
+        while let Some(last) = runs.last_mut() {
+            while last.text.ends_with(' ') {
+                last.text.pop();
+                last.cell_widths.pop();
+            }
+            if last.text.is_empty() {
+                runs.pop();
+            } else {
+                break;
+            }
+        }
     }
 
     fn cursor(
@@ -639,6 +772,54 @@ mod tests {
             "ansi sequences leaked into surface text: {:?}",
             update.surface_lines
         );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_extracts_cell_runs_and_style_ids() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input(2, &empty, &empty),
+                b"\x1b[31mred\x1b[0m plain\r\nwide:\xe4\xb8\xad",
+            )
+            .expect("terminal update");
+
+        assert!(
+            update.styles.len() > 1,
+            "styled output did not add a non-default style: {:?}",
+            update.styles
+        );
+        let styled_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("red"))
+            .expect("styled red run");
+        assert_ne!(styled_run.style_id, 0);
+
+        let plain_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains(" plain"))
+            .expect("plain run");
+        assert_eq!(plain_run.style_id, 0);
+
+        let wide_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains('中'))
+            .expect("wide run");
+        let wide_index = wide_run
+            .text
+            .chars()
+            .position(|ch| ch == '中')
+            .expect("wide char");
+        assert_eq!(wide_run.cell_widths[wide_index], 2);
     }
 
     #[cfg(feature = "libghostty-vt")]
