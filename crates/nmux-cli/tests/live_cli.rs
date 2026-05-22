@@ -1062,6 +1062,126 @@ fn live_libghostty_vt_cli_persists_cursor_only_update_to_state() {
 
 #[cfg(feature = "libghostty-vt")]
 #[test]
+fn live_libghostty_vt_cli_persists_color_only_update_to_state() {
+    let socket_path = test_socket_path();
+    let state_path = socket_path.with_extension("state");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "2",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "printf 'ready\\n'; sleep 0.3; printf '\\033]12;#ff00ff\\033\\\\\\033]4;1;#112233\\033\\\\'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let first_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "4",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run first nmux");
+
+    assert!(
+        first_client.status.success(),
+        "first nmux failed: {}",
+        String::from_utf8_lossy(&first_client.stderr)
+    );
+
+    let first_stdout = String::from_utf8_lossy(&first_client.stdout);
+    assert!(
+        first_stdout.contains("ready"),
+        "first client did not render initial row text:\n{first_stdout}"
+    );
+    assert_eq!(
+        first_stdout.matches("ready").count(),
+        2,
+        "color-only update reprinted unchanged row text:\n{first_stdout}"
+    );
+    assert!(
+        !first_stdout.contains("\x1b]12;") && !first_stdout.contains("\x1b]4;"),
+        "color controls leaked into first render:\n{first_stdout}"
+    );
+
+    let first_state = fs::read_to_string(&state_path).expect("read first state");
+    assert!(
+        first_state.contains("4278255615 1 "),
+        "first state did not persist explicit cursor color:\n{first_state}"
+    );
+    assert!(
+        first_state.contains("112233ff"),
+        "first state did not persist palette-diff materialized color:\n{first_state}"
+    );
+
+    let second_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run second nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+
+    assert!(
+        second_client.status.success(),
+        "second nmux failed: {}",
+        String::from_utf8_lossy(&second_client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let second_stdout = String::from_utf8_lossy(&second_client.stdout);
+    assert!(
+        second_stdout.contains("ready"),
+        "reattached client did not render cached row text:\n{second_stdout}"
+    );
+    assert!(
+        !second_stdout.contains("\x1b]12;") && !second_stdout.contains("\x1b]4;"),
+        "color controls leaked after state reattach:\n{second_stdout}"
+    );
+
+    let second_state = fs::read_to_string(&state_path).expect("read second state");
+    assert!(
+        second_state.contains("4278255615 1 "),
+        "second state did not preserve explicit cursor color:\n{second_state}"
+    );
+    assert!(
+        second_state.contains("112233ff"),
+        "second state did not preserve palette-diff materialized color:\n{second_state}"
+    );
+
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+}
+
+#[cfg(feature = "libghostty-vt")]
+#[test]
 fn live_libghostty_vt_cli_redraw_prints_terminal_metadata() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
