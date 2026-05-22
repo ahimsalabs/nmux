@@ -86,6 +86,14 @@ fn nmux_rejects_conflicting_frontend_modes() {
         "nmux: --follow cannot be combined with --live",
     );
     assert_nmux_rejects(
+        &["--follow", "--key", "ping"],
+        "nmux: --follow cannot be combined with --key",
+    );
+    assert_nmux_rejects(
+        &["--follow", "--paste", "clip"],
+        "nmux: --follow cannot be combined with --paste",
+    );
+    assert_nmux_rejects(
         &["--local-echo", "tty"],
         "nmux: --local-echo requires --stdin-bytes",
     );

@@ -1071,6 +1071,8 @@ where
         redraw,
         live_resize,
         iterations,
+        key_set,
+        paste_set,
         focus_set,
         key_name_set,
         key_modifiers_set,
@@ -1236,6 +1238,8 @@ fn validate_mode_args(
     redraw: bool,
     live_resize: Option<(u32, u32)>,
     iterations: Option<usize>,
+    key_set: bool,
+    paste_set: bool,
     focus_set: bool,
     key_name_set: bool,
     key_modifiers_set: bool,
@@ -1244,6 +1248,12 @@ fn validate_mode_args(
 ) -> Result<(), &'static str> {
     if live && follow {
         return Err("--follow cannot be combined with --live");
+    }
+    if follow && key_set {
+        return Err("--follow cannot be combined with --key");
+    }
+    if follow && paste_set {
+        return Err("--follow cannot be combined with --paste");
     }
     if stdin_input && !live {
         return Err("--stdin requires --live");
@@ -1529,6 +1539,8 @@ mod tests {
         redraw: bool,
         live_resize: Option<(u32, u32)>,
         iterations: Option<usize>,
+        key_set: bool,
+        paste_set: bool,
         focus_set: bool,
         key_name_set: bool,
     ) -> Result<(), &'static str> {
@@ -1541,6 +1553,8 @@ mod tests {
             redraw,
             live_resize,
             iterations,
+            key_set,
+            paste_set,
             focus_set,
             key_name_set,
             false,
@@ -1879,31 +1893,43 @@ mod tests {
     fn mode_validation_rejects_ignored_or_conflicting_flags() {
         assert_eq!(
             validate_mode_args(
-                true, true, false, false, false, false, None, None, false, false
+                true, true, false, false, false, false, None, None, false, false, false, false
             ),
             Err("--follow cannot be combined with --live")
         );
         assert_eq!(
             validate_mode_args(
-                false, false, true, false, false, false, None, None, false, false
+                false, true, false, false, false, false, None, None, true, false, false, false
+            ),
+            Err("--follow cannot be combined with --key")
+        );
+        assert_eq!(
+            validate_mode_args(
+                false, true, false, false, false, false, None, None, false, true, false, false
+            ),
+            Err("--follow cannot be combined with --paste")
+        );
+        assert_eq!(
+            validate_mode_args(
+                false, false, true, false, false, false, None, None, false, false, false, false
             ),
             Err("--stdin requires --live")
         );
         assert_eq!(
             validate_mode_args(
-                false, false, false, true, false, false, None, None, false, false
+                false, false, false, true, false, false, None, None, false, false, false, false
             ),
             Err("--stdin-bytes requires --live")
         );
         assert_eq!(
             validate_mode_args(
-                true, false, false, false, true, false, None, None, false, false
+                true, false, false, false, true, false, None, None, false, false, false, false
             ),
             Err("--local-echo requires --stdin-bytes")
         );
         assert_eq!(
             validate_mode_args(
-                false, false, false, false, false, true, None, None, false, false
+                false, false, false, false, false, true, None, None, false, false, false, false
             ),
             Err("--redraw requires --live")
         );
@@ -1917,6 +1943,8 @@ mod tests {
                 false,
                 Some((80, 24)),
                 None,
+                false,
+                false,
                 false,
                 false
             ),
@@ -1933,6 +1961,8 @@ mod tests {
                 None,
                 Some(1),
                 false,
+                false,
+                false,
                 false
             ),
             Err("--iterations requires --live or --follow")
@@ -1948,40 +1978,42 @@ mod tests {
                 None,
                 Some(0),
                 false,
+                false,
+                false,
                 false
             ),
             Err("--iterations must be greater than 0")
         );
         assert_eq!(
             validate_mode_args(
-                false, false, false, false, false, false, None, None, true, false
+                false, false, false, false, false, false, None, None, false, false, true, false
             ),
             Err("--focus requires --live")
         );
         assert_eq!(
             validate_mode_args(
-                false, false, false, false, false, false, None, None, false, true
+                false, false, false, false, false, false, None, None, false, false, false, true
             ),
             Err("--key-name requires --live")
         );
         assert_eq!(
             super_validate_mode_args(
-                false, false, false, false, false, false, None, None, false, false, false, true,
-                false
+                false, false, false, false, false, false, None, None, false, false, false, false,
+                false, true, false
             ),
             Err("--mouse requires --live")
         );
         assert_eq!(
             super_validate_mode_args(
-                true, false, false, false, false, false, None, None, false, false, true, false,
-                false
+                true, false, false, false, false, false, None, None, false, false, false, false,
+                true, false, false
             ),
             Err("--key-modifiers requires --key-name")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                true
+                false, false, true
             ),
             Err("--mouse-modifiers requires --mouse")
         );
@@ -1995,6 +2027,8 @@ mod tests {
                 true,
                 Some((80, 24)),
                 Some(1),
+                false,
+                false,
                 true,
                 true
             )
@@ -2010,6 +2044,8 @@ mod tests {
                 false,
                 None,
                 Some(1),
+                false,
+                false,
                 false,
                 false
             )
