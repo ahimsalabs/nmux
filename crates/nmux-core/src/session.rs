@@ -3029,6 +3029,48 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn ghostty_vt_style_table_change_requires_full_refresh_patch() {
+        let mut session = Session::initial();
+        let mut engines = crate::terminal::PaneTerminalEngines::new(
+            crate::terminal::TerminalEngineKind::LibghosttyVt,
+        );
+
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"baseline",
+            engines.engine_mut("pane-1")
+        ));
+        let base_version = session.surface_version("pane-1").expect("surface version");
+
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"\x1b[31mred\x1b[0m",
+            engines.engine_mut("pane-1")
+        ));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::FullRefreshRequired)
+        );
+
+        let patch_frame = session.pane_surface_patch_frame("conn-1", 9, base_version);
+        let envelope =
+            protocol::size_prefixed_root_as_envelope(&patch_frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::FullRefreshRequired);
+        assert_eq!(patch.row_updates().expect("row updates").len(), 0);
+
+        let snapshot_frame = session.pane_surface_frame("conn-1", 10);
+        let envelope =
+            protocol::size_prefixed_root_as_envelope(&snapshot_frame).expect("valid envelope");
+        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        assert!(
+            snapshot.styles().expect("styles").len() > 1,
+            "snapshot should carry the expanded style table"
+        );
+    }
+
     #[test]
     fn row_run_only_change_emits_replace_rows_patch() {
         struct RowRunOnlyEngine;
@@ -3207,6 +3249,40 @@ mod tests {
         assert_eq!(colors.default_bg_rgba(), 0x111111ff);
         assert_eq!(colors.cursor_rgba(), 0xff00ffff);
         assert!(colors.cursor_rgba_set());
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn ghostty_vt_color_state_change_requires_full_refresh_patch() {
+        let mut session = Session::initial();
+        let mut engines = crate::terminal::PaneTerminalEngines::new(
+            crate::terminal::TerminalEngineKind::LibghosttyVt,
+        );
+
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"color baseline",
+            engines.engine_mut("pane-1")
+        ));
+        let base_version = session.surface_version("pane-1").expect("surface version");
+
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"\x1b]4;1;#112233\x1b\\",
+            engines.engine_mut("pane-1")
+        ));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::FullRefreshRequired)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 9, base_version);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::FullRefreshRequired);
+        let colors = patch.colors().expect("colors");
+        let palette = colors.palette_rgba().expect("palette");
+        assert_eq!(palette.get(1), 0x112233ff);
     }
 
     #[test]
