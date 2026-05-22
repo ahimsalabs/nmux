@@ -196,8 +196,8 @@ The opt-in engine keeps PTY bytes in `nmuxd` and maps Ghostty state back into
 nmux snapshots, patches, and scrollback chunks. Current coverage includes cursor
 position/visibility/shape, alternate-screen entry/restoration, resize/reflow,
 style-separated visible rows, styled scrollback rows, cell widths, combining
-marks, palette-indexed colors, bracketed paste and mouse tracking mode state,
-and mode-aware key encoding.
+marks, basic SGR style flags, palette-indexed colors, bracketed paste, mouse
+tracking, and application keypad mode state, and mode-aware key encoding.
 
 ```sh
 nix develop path:$PWD -c make check-ghostty-vt
