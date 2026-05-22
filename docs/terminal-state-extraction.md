@@ -184,7 +184,7 @@ placeholder row metadata, mode payloads, mode-only patch application, sparse row
 replacement, metadata-only no-row live updates, cached client-state
 compatibility, cached terminal metadata reattach, protocol-visible host input
 and live resize failures, `PaneNotFound` errors for unknown pane-scoped client
-intents, and feature-gated live CLI
+intents, consistent 1-based public scrollback ranges, and feature-gated live CLI
 smoke paths, committed live resize metadata, and restored alternate-screen
 scrollback omission. Client-side tests assert decoded surface patches and
 scrollback chunks preserve structured `CellRun` style IDs, cell widths,

@@ -737,9 +737,11 @@ fn live_libghostty_vt_cli_prints_metadata_only_update_without_reprinting_rows() 
         stdout.contains("title=metadata only"),
         "missing metadata-only title update:\n{stdout}"
     );
-    assert_eq!(
-        stdout.matches("ready").count(),
-        1,
+    let metadata_update = stdout
+        .find("title=metadata only")
+        .expect("metadata-only title update");
+    assert!(
+        !stdout[metadata_update..].contains("ready"),
         "metadata-only update reprinted unchanged row text:\n{stdout}"
     );
 }

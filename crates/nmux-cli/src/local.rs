@@ -3805,8 +3805,8 @@ mod tests {
                 styles: default_style_summaries(),
                 colors: TerminalColorSummary::default(),
                 lines: vec![
-                    scrollback_line(1, "nmux pane-1"),
-                    scrollback_line(2, "server-owned terminal state"),
+                    scrollback_line(1, "booting nmux workspace"),
+                    scrollback_line(2, "nmux pane-1"),
                 ],
             })
         );
@@ -4302,7 +4302,7 @@ mod tests {
                 total_lines: 1,
                 styles: default_style_summaries(),
                 colors: TerminalColorSummary::default(),
-                lines: Vec::new(),
+                lines: vec![scrollback_line(1, "real process output")],
             })
         );
 
@@ -4459,7 +4459,7 @@ mod tests {
         .expect("write attach request");
         let snapshot = attach_from_stream(&mut stream).expect("attach snapshot");
         send_key_input(&mut stream, "pane-1", "z").expect("send key input");
-        send_scrollback_fetch(&mut stream, "pane-1", 3, 1).expect("send scrollback fetch");
+        send_scrollback_fetch(&mut stream, "pane-1", 4, 1).expect("send scrollback fetch");
         let scrollback = read_scrollback_chunk_from_stream(&mut stream).expect("scrollback chunk");
         server.join().expect("server thread");
 
@@ -4469,11 +4469,11 @@ mod tests {
             ScrollbackChunkSummary {
                 pane_id: "pane-1".to_owned(),
                 scrollback_version: 2,
-                start_line: 3,
+                start_line: 4,
                 total_lines: 4,
                 styles: default_style_summaries(),
                 colors: TerminalColorSummary::default(),
-                lines: vec![scrollback_line(3, "z")],
+                lines: vec![scrollback_line(4, "z")],
             }
         );
 
@@ -4496,7 +4496,7 @@ mod tests {
             &socket_path,
             AttachOptions {
                 input_text: Some("custom".to_owned()),
-                scrollback_start_line: 3,
+                scrollback_start_line: 4,
                 scrollback_line_count: 1,
                 ..AttachOptions::default()
             },
@@ -4509,11 +4509,11 @@ mod tests {
             Some(ScrollbackChunkSummary {
                 pane_id: "pane-1".to_owned(),
                 scrollback_version: 2,
-                start_line: 3,
+                start_line: 4,
                 total_lines: 4,
                 styles: default_style_summaries(),
                 colors: TerminalColorSummary::default(),
-                lines: vec![scrollback_line(3, "custom")],
+                lines: vec![scrollback_line(4, "custom")],
             })
         );
 
@@ -4537,7 +4537,7 @@ mod tests {
             AttachOptions {
                 input_text: None,
                 paste_text: Some("pasted\ntext".to_owned()),
-                scrollback_start_line: 3,
+                scrollback_start_line: 4,
                 scrollback_line_count: 2,
                 ..AttachOptions::default()
             },
@@ -4550,11 +4550,11 @@ mod tests {
             Some(ScrollbackChunkSummary {
                 pane_id: "pane-1".to_owned(),
                 scrollback_version: 2,
-                start_line: 3,
+                start_line: 4,
                 total_lines: 5,
                 styles: default_style_summaries(),
                 colors: TerminalColorSummary::default(),
-                lines: vec![scrollback_line(3, "pasted"), scrollback_line(4, "text")],
+                lines: vec![scrollback_line(4, "pasted"), scrollback_line(5, "text")],
             })
         );
 
@@ -5285,8 +5285,8 @@ mod tests {
                 styles: default_style_summaries(),
                 colors: TerminalColorSummary::default(),
                 lines: vec![
-                    scrollback_line(1, "nmux pane-1"),
-                    scrollback_line(2, "server-owned terminal state"),
+                    scrollback_line(1, "booting nmux workspace"),
+                    scrollback_line(2, "nmux pane-1"),
                 ],
             }
         );
@@ -6256,12 +6256,12 @@ mod tests {
                 semantic_content: protocol::CellSemanticContent::Input,
             },
         ];
-        let frame = session.scrollback_chunk_frame("local-client", 4, 1, 2);
+        let frame = session.scrollback_chunk_frame("local-client", 4, 2, 2);
         let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
 
         assert_eq!(chunk.pane_id, "pane-1");
         assert_eq!(chunk.scrollback_version, 1);
-        assert_eq!(chunk.start_line, 1);
+        assert_eq!(chunk.start_line, 2);
         assert_eq!(chunk.total_lines, 3);
         assert_eq!(chunk.styles.len(), 2);
         assert_eq!(chunk.styles[1].fg_rgba, 0xff00_0000);
@@ -6269,7 +6269,7 @@ mod tests {
             chunk.lines,
             vec![
                 ScrollbackLine {
-                    line: 1,
+                    line: 2,
                     text: "styled字".to_owned(),
                     runs: vec![
                         CellRunSummary {
@@ -6293,7 +6293,7 @@ mod tests {
                     dirty: false,
                     kitty_virtual_placeholder: false,
                 },
-                scrollback_line(2, "server-owned terminal state"),
+                scrollback_line(3, "server-owned terminal state"),
             ]
         );
         assert_eq!(chunk.lines[0].runs.len(), 2);

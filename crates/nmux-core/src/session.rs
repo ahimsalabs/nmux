@@ -813,7 +813,7 @@ impl Session {
         let scrollback = self.pane_scrollback(pane_id)?;
         let mut builder = FlatBufferBuilder::new();
 
-        let start = usize::try_from(start_line).unwrap_or(usize::MAX);
+        let start = usize::try_from(start_line.saturating_sub(1)).unwrap_or(usize::MAX);
         let count = line_count as usize;
         let end = start.saturating_add(count).min(scrollback.lines.len());
         let selected = scrollback
@@ -2361,15 +2361,15 @@ mod tests {
         assert!(!first.dirty());
         assert!(!first.kitty_virtual_placeholder());
         let first_runs = first.runs().expect("first runs");
-        assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
+        assert_eq!(
+            first_runs.get(0).text_utf8(),
+            Some("booting nmux workspace")
+        );
 
         let second = rows.get(1);
         assert_eq!(second.line(), 2);
         let second_runs = second.runs().expect("second runs");
-        assert_eq!(
-            second_runs.get(0).text_utf8(),
-            Some("server-owned terminal state")
-        );
+        assert_eq!(second_runs.get(0).text_utf8(), Some("nmux pane-1"));
         assert_eq!(
             second_runs.get(0).semantic_content(),
             protocol::CellSemanticContent::Output
@@ -2443,16 +2443,27 @@ mod tests {
 
         assert!(
             session
-                .scrollback_chunk_frame_for_pane("conn-1", 11, "missing", 0, 2)
+                .scrollback_chunk_frame_for_pane("conn-1", 11, "missing", 1, 2)
                 .is_none()
         );
 
         let frame = session
-            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 0, 1)
+            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 1)
             .expect("pane scrollback");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
         assert_eq!(chunk.pane_id(), Some("pane-1"));
+    }
+
+    #[test]
+    fn scrollback_chunk_uses_one_based_public_line_numbers() {
+        let frame = Session::initial().scrollback_chunk_frame("conn-1", 11, 4, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+
+        assert_eq!(chunk.start_line(), 4);
+        assert_eq!(chunk.total_lines(), 3);
+        assert_eq!(chunk.rows().expect("rows").len(), 0);
     }
 
     #[cfg(feature = "libghostty-vt")]
@@ -2477,7 +2488,7 @@ mod tests {
 
         let surface = session.initial_pane_surface();
         let frame = session
-            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 0, 10)
+            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 10)
             .expect("scrollback chunk");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let chunk = envelope.body_as_scrollback_chunk().expect("chunk");

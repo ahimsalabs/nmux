@@ -77,7 +77,11 @@ visible text does not change.
 
 `PaneSurfacePatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, if terminal color state changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired` and the client must request or wait for a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
 
-Scrollback is a separate versioned object. Clients request ranges with `ScrollbackFetch`; the daemon replies with `ScrollbackChunk` rows and the corresponding style table for that chunk.
+Scrollback is a separate versioned object. Clients request ranges with
+`ScrollbackFetch`; the daemon replies with `ScrollbackChunk` rows and the
+corresponding style table for that chunk. `ScrollbackFetch.start_line`,
+`ScrollbackChunk.start_line`, and `ScrollbackRow.line` are 1-based public line
+numbers, so line 1 is the oldest retained row in the chunk's pane history.
 
 ## Resize Model
 
