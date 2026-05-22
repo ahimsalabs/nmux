@@ -895,6 +895,27 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_safe_api_tracks_bracketed_paste_mode() {
+        use libghostty_vt::{Terminal, TerminalOptions, terminal::Mode};
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+
+        assert!(!terminal.mode(Mode::BRACKETED_PASTE).expect("mode"));
+
+        terminal.vt_write(b"\x1b[?2004h");
+        assert!(terminal.mode(Mode::BRACKETED_PASTE).expect("mode"));
+
+        terminal.vt_write(b"\x1b[?2004l");
+        assert!(!terminal.mode(Mode::BRACKETED_PASTE).expect("mode"));
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_emits_cursor_only_patch_for_cursor_movement() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();

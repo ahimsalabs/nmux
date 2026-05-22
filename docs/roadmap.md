@@ -102,6 +102,7 @@ Done:
 - The optional `libghostty-vt` engine extracts visible rows as style-separated cell runs with cell-width metadata, while keeping plain rendered text available for current clients.
 - `libghostty-vt` extraction tests now cover combining marks as preserved run text with per-cell widths, alongside existing double-width cell coverage.
 - OSC 8 hyperlink text is preserved while `hyperlink_id` remains unset until nmux has a real hyperlink table.
+- The `libghostty-vt` safe API is now tested for bracketed paste mode tracking, while nmux still withholds mode fields until the protocol shape is explicit.
 - Persisted `nmux --state` files now retain cached row runs and style tables alongside fallback row text, while still accepting older text-only state files as default-style rows.
 - Client-side scrollback decoding now retains `ScrollbackRow` runs alongside rendered fallback text.
 
