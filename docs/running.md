@@ -192,6 +192,13 @@ The experimental backend VT engine is gated behind the `libghostty-vt` Cargo
 feature. The dev shell pins Zig 0.15 because the Ghostty commit used by
 `libghostty-vt-sys` requires that Zig version.
 
+The opt-in engine keeps PTY bytes in `nmuxd` and maps Ghostty state back into
+nmux snapshots, patches, and scrollback chunks. Current coverage includes cursor
+position/visibility/shape, alternate-screen entry/restoration, resize/reflow,
+style-separated visible rows, styled scrollback rows, cell widths, combining
+marks, palette-indexed colors, bracketed paste and mouse tracking mode state,
+and mode-aware key encoding.
+
 ```sh
 nix develop path:$PWD -c make check-ghostty-vt
 ```
