@@ -82,7 +82,7 @@ To keep one local frontend process polling for server-owned surface updates, run
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --follow --iterations 3 --interval-ms 500 --state /tmp/nmux-follow.state --scrollback-start 1 --scrollback-count 1
 ```
 
-`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and treats current-version reconnects as no render update. Follow mode is read-only for now, so it does not repeatedly send default input.
+`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and renders the scoped cached surface when a current-version reconnect has no newer surface frame. Follow mode is read-only for now, so it does not repeatedly send default input.
 
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
@@ -274,8 +274,9 @@ including mouse tracking mode/format,
 cached row runs, the cached style table, terminal color state, OSC 133 row/run
 semantic metadata, row dirty flags, row state hashes, Kitty placeholder row
 metadata, last known surface version, and last seen scrollback range/version
-metadata, so a later process can request a surface patch and apply it to the
-cached surface instead of replaying raw PTY bytes. The state file is scoped to
+metadata, so a later process can request a surface patch, apply it to the
+cached surface, or render the cached current surface when the daemon has no
+newer surface frame, instead of replaying raw PTY bytes. The state file is scoped to
 the daemon socket identity, so a recreated socket path forces a fresh snapshot
 instead of reusing stale rows from an older daemon. Older state files that only
 contain rendered row text still load as default-style rows with default

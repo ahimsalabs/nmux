@@ -445,7 +445,7 @@ M11: terminal frontend polish [done]
 M12: live workspace usability [done]
   nmuxd --live-clients COUNT keeps one workspace and PTY alive across bounded sequential live clients
   nmuxd live mode flags fail fast on ambiguous server modes and zero live counts
-  live reattach with --state renders cached current surfaces instead of waiting for raw replay
+  nmux --state renders scoped cached current surfaces on one-shot, follow, and live reattach instead of waiting for raw replay
   nmux client bounded live/follow iterations fail fast on zero counts
   nmux attaches read-only by default unless an explicit input flag is provided
   explicit nmux input modes fail fast on conflicting --key/--stdin/--stdin-bytes/--no-input combinations

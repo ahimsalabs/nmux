@@ -2714,12 +2714,16 @@ impl ClientAttachState {
         &mut self,
         snapshot: AttachSnapshot,
     ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
+        let pane_id = snapshot.workspace.pane_id.clone();
         let (surface_metadata, surface_text) = match snapshot.surface.as_ref() {
             Some(update) => (
                 TerminalMetadataSummary::from_update(update),
                 Some(self.apply_surface_update(update)?),
             ),
-            None => (TerminalMetadataSummary::default(), None),
+            None => (
+                self.cached_surface_metadata(&pane_id).unwrap_or_default(),
+                self.cached_surface_text(&pane_id),
+            ),
         };
 
         if let Some(scrollback) = snapshot.scrollback.as_ref() {
@@ -5878,7 +5882,10 @@ mod tests {
             .expect("attach render");
         server.join().expect("server thread");
 
-        assert_eq!(rendered.surface_text, None);
+        assert_eq!(
+            rendered.surface_text.as_deref(),
+            Some("nmux pane-1\nserver-owned terminal state")
+        );
         let scrollback = rendered.scrollback.expect("fresh scrollback after retry");
         assert_eq!(scrollback.scrollback_version, 2);
         assert_eq!(
@@ -5989,7 +5996,7 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_loop_renders_snapshot_patch_then_no_update() {
+    fn reconnect_loop_renders_snapshot_patch_then_cached_current_surface() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
@@ -6023,7 +6030,10 @@ mod tests {
             second.surface_text.as_deref(),
             Some("booting nmux workspace\nnmux pane-1\nserver-owned terminal state\nloop update")
         );
-        assert_eq!(third.surface_text, None);
+        assert_eq!(
+            third.surface_text.as_deref(),
+            Some("booting nmux workspace\nnmux pane-1\nserver-owned terminal state\nloop update")
+        );
         assert_eq!(
             state.known_surfaces(),
             vec![KnownSurfaceVersion {
