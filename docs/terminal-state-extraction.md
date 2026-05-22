@@ -68,10 +68,10 @@ only after the backend extraction proves the exact shape needed.
   basic SGR flags, style identity, and cell widths for visible and scrollback
   rows. Surface snapshots and scrollback chunks carry a pane style table;
   richer style semantics still need protocol decisions.
-- Grapheme and cell width: double-width cells and combining marks are covered
-  by `libghostty-vt` extraction tests and represented as per-cell run widths.
-  Emoji clusters, zero-width continuations, and ambiguous-width policy still
-  need broader tests and protocol guidance.
+- Grapheme and cell width: double-width cells, combining marks, and emoji ZWJ
+  clusters are covered by `libghostty-vt` extraction tests and represented as
+  per-cell run widths. Ambiguous-width policy and broader grapheme cases still
+  need protocol guidance.
 - Terminal modes: `libghostty-vt` tracks bracketed paste, mouse tracking,
   application keypad, origin, and wraparound modes through its safe API and can
   derive key encoder behavior from terminal modes such as application cursor

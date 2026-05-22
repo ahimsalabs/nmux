@@ -971,6 +971,47 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_preserves_emoji_cluster_cell_widths() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input(2, &empty, &empty),
+                b"emoji:\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x92\xbb\r\nplain",
+            )
+            .expect("terminal update");
+
+        let emoji_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("\u{1f469}\u{200d}\u{1f4bb}"))
+            .expect("emoji cluster run");
+        assert!(
+            emoji_run.text.contains("emoji:\u{1f469}\u{200d}\u{1f4bb}"),
+            "emoji cluster was not preserved in run text: {:?}",
+            emoji_run
+        );
+        let emoji_index = emoji_run
+            .text
+            .chars()
+            .position(|ch| ch == '\u{1f469}')
+            .expect("emoji base char");
+        assert_eq!(
+            emoji_run.cell_widths[emoji_index], 2,
+            "emoji cluster should occupy a double-width rendered cell: {:?}",
+            emoji_run
+        );
+        assert!(
+            emoji_run.cell_widths.len() < emoji_run.text.chars().count(),
+            "emoji cluster widths should be per rendered cell, not per scalar: {:?}",
+            emoji_run
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_preserves_hyperlink_text_without_ids() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();
