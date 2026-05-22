@@ -972,6 +972,29 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_safe_api_tracks_title_but_not_osc7_pwd_without_protocol_fields() {
+        use libghostty_vt::{Terminal, TerminalOptions};
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+
+        terminal.vt_write(b"\x1b]2;nmux test title\x1b\\");
+        assert_eq!(terminal.title().expect("terminal title"), "nmux test title");
+
+        terminal.vt_write(b"\x1b]7;file://localhost/tmp/nmux\x07");
+        assert_eq!(
+            terminal.pwd().expect("terminal working directory"),
+            "",
+            "OSC 7 working directory is not exposed by the current backend path"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_extracts_basic_sgr_style_flags() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();
