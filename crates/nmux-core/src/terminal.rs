@@ -1059,6 +1059,27 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_safe_api_tracks_application_keypad_mode() {
+        use libghostty_vt::{Terminal, TerminalOptions, terminal::Mode};
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+
+        assert!(!terminal.mode(Mode::KEYPAD_KEYS).expect("keypad mode"));
+
+        terminal.vt_write(b"\x1b=");
+        assert!(terminal.mode(Mode::KEYPAD_KEYS).expect("keypad mode"));
+
+        terminal.vt_write(b"\x1b>");
+        assert!(!terminal.mode(Mode::KEYPAD_KEYS).expect("keypad mode"));
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_safe_api_tracks_mouse_tracking_modes() {
         use libghostty_vt::{Terminal, TerminalOptions};
 
