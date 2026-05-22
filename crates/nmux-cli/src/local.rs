@@ -2951,11 +2951,11 @@ impl ClientAttachState {
             line_count,
             total_lines: chunk.total_lines,
         };
-        if let Some(existing) = self
-            .scrollbacks
-            .iter_mut()
-            .find(|scrollback| scrollback.pane_id == cached.pane_id)
-        {
+        if let Some(existing) = self.scrollbacks.iter_mut().find(|scrollback| {
+            scrollback.pane_id == cached.pane_id
+                && scrollback.start_line == cached.start_line
+                && scrollback.line_count == cached.line_count
+        }) {
             *existing = cached;
         } else {
             self.scrollbacks.push(cached);
@@ -4807,6 +4807,49 @@ mod tests {
 
         assert_eq!(state.cached_scrollback_version("pane-1", 1, 1), None);
         assert!(state.scrollbacks.is_empty());
+    }
+
+    #[test]
+    fn client_attach_state_preserves_distinct_cached_scrollback_ranges() {
+        let mut state = ClientAttachState::default();
+        state.apply_scope(Some(SocketIdentity { dev: 10, ino: 20 }));
+
+        state.cache_scrollback_chunk(&ScrollbackChunkSummary {
+            pane_id: "pane-1".to_owned(),
+            scrollback_version: 3,
+            start_line: 1,
+            total_lines: 6,
+            styles: default_style_summaries(),
+            colors: TerminalColorSummary::default(),
+            lines: vec![scrollback_line(1, "one"), scrollback_line(2, "two")],
+        });
+        state.cache_scrollback_chunk(&ScrollbackChunkSummary {
+            pane_id: "pane-1".to_owned(),
+            scrollback_version: 4,
+            start_line: 3,
+            total_lines: 6,
+            styles: default_style_summaries(),
+            colors: TerminalColorSummary::default(),
+            lines: vec![scrollback_line(3, "three")],
+        });
+        state.cache_scrollback_chunk(&ScrollbackChunkSummary {
+            pane_id: "pane-1".to_owned(),
+            scrollback_version: 5,
+            start_line: 1,
+            total_lines: 6,
+            styles: default_style_summaries(),
+            colors: TerminalColorSummary::default(),
+            lines: vec![scrollback_line(1, "one"), scrollback_line(2, "two")],
+        });
+
+        assert_eq!(state.cached_scrollback_version("pane-1", 1, 2), Some(5));
+        assert_eq!(state.cached_scrollback_version("pane-1", 3, 1), Some(4));
+        assert_eq!(state.scrollbacks.len(), 2);
+
+        let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
+        assert_eq!(decoded.cached_scrollback_version("pane-1", 1, 2), Some(5));
+        assert_eq!(decoded.cached_scrollback_version("pane-1", 3, 1), Some(4));
+        assert_eq!(decoded.scrollbacks.len(), 2);
     }
 
     #[test]

@@ -54,8 +54,9 @@ backend terminal state into the same nmux objects:
   client precondition, and reject nonzero stale client versions with
   `ErrorCode::StaleVersion`. Local persisted client state records the last seen
   scrollback range/version metadata; matching later fetches still ask the
-  daemon for scrollback when the visible surface is current, send that version
-  as a precondition, and retry once with version zero if it is stale.
+  daemon for scrollback when the visible surface is current, preserve distinct
+  cached range/version entries, send matching versions as preconditions, and
+  retry once with version zero if a precondition is stale.
 - Resize: feed resize events into the VT engine and publish the resulting pane
   size, cursor, visible rows, and scrollback state.
 - Versions: bump surface versions when the nmux-visible surface, cursor,
