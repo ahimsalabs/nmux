@@ -60,10 +60,10 @@ Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that survives repeated live client detach and reattach until the daemon is stopped.
 State load/save failures include the state path in the error.
 Bounded client loops require `--iterations` greater than zero.
-Without an explicit input or resize flag, `nmux` attaches read-only; use `--key`, `--key-name`, `--paste`, `--focus`, `--mouse`, `--stdin`, or `--stdin-bytes` to opt into sending input, or live `--cols`/`--rows` to send a resize control intent.
+Without an explicit input or resize flag, `nmux` attaches read-only; use `--key`, `--key-name`, `--paste`, `--focus`, `--mouse`, `--stdin`, or `--stdin-bytes` to opt into sending input, or live `--cols`/`--rows` to send a resize control intent. `--key-modifiers` and `--mouse-modifiers` refine their matching named-key or mouse input flag rather than selecting a separate input mode.
 Explicit one-shot input is still sent when a persisted state file proves the visible surface is already current.
 Scrollback ranges are 1-based from the oldest retained row and require positive `--scrollback-start` and `--scrollback-count` values. Local clients persist last-seen scrollback range metadata in `--state`, fetch scrollback even when the visible surface is already current, send matching cached versions as fetch preconditions, and retry once without a precondition if the daemon reports a stale scrollback version.
-Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.
+Explicit input modes such as `--key`, `--key-name`, `--paste`, `--focus`, `--mouse`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.
 Live polling intervals must be greater than zero, and explicit resize dimensions must be between 1 and 65535.
 
 Line-streamed live input:

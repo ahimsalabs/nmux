@@ -28,7 +28,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--stdin-bytes"));
     assert!(stdout.contains("--local-echo off|tty"));
     assert!(stdout.contains("--cols COUNT"));
-    assert!(stdout.contains("Live ResizeIntent columns; requires --rows"));
+    assert!(stdout.contains("Live ResizeIntent columns; both dimensions required"));
     assert!(stdout.contains("--mouse-modifiers MODS"));
     assert!(stdout.contains("--redraw"));
     assert!(stdout.contains("Without an explicit input or resize flag"));
@@ -39,6 +39,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("Examples:"));
     assert!(stdout.contains("nmux --live --iterations 2"));
     assert!(stdout.contains("nmux --live --cols 100 --rows 30"));
+    assert!(stdout.contains("nmux --live --no-input"));
     assert!(stdout.contains("nmux --live --stdin-bytes --redraw"));
 }
 

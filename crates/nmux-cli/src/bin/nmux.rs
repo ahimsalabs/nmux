@@ -1331,8 +1331,8 @@ Options:
   --stdin-bytes              Stream raw stdin chunks in live mode
   --local-echo off|tty       Local TTY echo policy for --stdin-bytes
   --redraw                   Repaint the current live surface in place
-  --cols COUNT               Live ResizeIntent columns; requires --rows
-  --rows COUNT               Live ResizeIntent rows; requires --cols
+  --cols COUNT               Live ResizeIntent columns; both dimensions required
+  --rows COUNT               Live ResizeIntent rows; both dimensions required
   --interval-ms MS           Poll/read timeout in milliseconds
   --iterations COUNT         Bounded follow/live cycle count
   -h, --help                 Show this help
@@ -1347,6 +1347,7 @@ Examples:
   nmux --key 'ping\n'
   nmux --live --iterations 2 --key 'ping\n'
   nmux --live --cols 100 --rows 30
+  nmux --live --no-input
   nmux --live --stdin-bytes --redraw
 "
 }

@@ -454,7 +454,7 @@ M12: live workspace usability [done]
   nmux client bounded live/follow iterations fail fast on zero counts
   nmux --follow rejects input flags instead of silently dropping explicit input
   nmux attaches read-only by default unless an explicit input flag or live resize control flag is provided
-  explicit nmux input modes fail fast on conflicting --key/--stdin/--stdin-bytes/--no-input combinations
+  explicit nmux input modes fail fast on conflicting --key/--key-name/--paste/--focus/--mouse/--stdin/--stdin-bytes/--no-input combinations
   nmux live loop timing and explicit resize dimensions fail fast on zero or out-of-range values
   nmux --state load/save failures include the state path before socket connection work
   nmuxd and nmux share a stable default socket path for local workflows without --socket
