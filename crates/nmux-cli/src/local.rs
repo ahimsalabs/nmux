@@ -956,12 +956,6 @@ fn decoded_surface_row(
     }
 }
 
-fn render_cell_runs(
-    runs: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<protocol::CellRun<'_>>>,
-) -> String {
-    render_run_summaries(&decoded_cell_runs(runs))
-}
-
 fn decoded_cell_runs(
     runs: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<protocol::CellRun<'_>>>,
 ) -> Vec<CellRunSummary> {
@@ -1191,9 +1185,11 @@ pub fn scrollback_chunk_from_frame(
     let mut lines = Vec::with_capacity(rows.len());
     for index in 0..rows.len() {
         let row = rows.get(index);
+        let runs = row.runs().map(decoded_cell_runs).unwrap_or_default();
         lines.push(ScrollbackLine {
             line: row.line(),
-            text: row.runs().map(render_cell_runs).unwrap_or_default(),
+            text: render_run_summaries(&runs),
+            runs,
         });
     }
 
@@ -2046,6 +2042,7 @@ pub struct ScrollbackChunkSummary {
 pub struct ScrollbackLine {
     pub line: u64,
     pub text: String,
+    pub runs: Vec<CellRunSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2227,6 +2224,14 @@ mod tests {
         }
     }
 
+    fn scrollback_line(line: u64, text: &str) -> ScrollbackLine {
+        ScrollbackLine {
+            line,
+            text: text.to_owned(),
+            runs: vec![CellRunSummary::plain(text)],
+        }
+    }
+
     fn presence_summary(mode: AttachMode) -> PresenceSummary {
         PresenceSummary {
             actor_id: "local-actor".to_owned(),
@@ -2305,14 +2310,8 @@ mod tests {
                 start_line: 1,
                 total_lines: 3,
                 lines: vec![
-                    ScrollbackLine {
-                        line: 1,
-                        text: "nmux pane-1".to_owned(),
-                    },
-                    ScrollbackLine {
-                        line: 2,
-                        text: "server-owned terminal state".to_owned(),
-                    },
+                    scrollback_line(1, "nmux pane-1"),
+                    scrollback_line(2, "server-owned terminal state"),
                 ],
             })
         );
@@ -2738,10 +2737,7 @@ mod tests {
                 scrollback_version: 2,
                 start_line: 3,
                 total_lines: 4,
-                lines: vec![ScrollbackLine {
-                    line: 3,
-                    text: "z".to_owned(),
-                }],
+                lines: vec![scrollback_line(3, "z")],
             }
         );
 
@@ -2779,10 +2775,7 @@ mod tests {
                 scrollback_version: 2,
                 start_line: 3,
                 total_lines: 4,
-                lines: vec![ScrollbackLine {
-                    line: 3,
-                    text: "custom".to_owned(),
-                }],
+                lines: vec![scrollback_line(3, "custom")],
             })
         );
 
@@ -3109,14 +3102,8 @@ mod tests {
                 start_line: 1,
                 total_lines: 3,
                 lines: vec![
-                    ScrollbackLine {
-                        line: 1,
-                        text: "nmux pane-1".to_owned(),
-                    },
-                    ScrollbackLine {
-                        line: 2,
-                        text: "server-owned terminal state".to_owned(),
-                    },
+                    scrollback_line(1, "nmux pane-1"),
+                    scrollback_line(2, "server-owned terminal state"),
                 ],
             }
         );
@@ -3516,16 +3503,12 @@ mod tests {
         assert_eq!(
             chunk.lines,
             vec![
-                ScrollbackLine {
-                    line: 1,
-                    text: "nmux pane-1".to_owned(),
-                },
-                ScrollbackLine {
-                    line: 2,
-                    text: "server-owned terminal state".to_owned(),
-                },
+                scrollback_line(1, "nmux pane-1"),
+                scrollback_line(2, "server-owned terminal state"),
             ]
         );
+        assert_eq!(chunk.lines[0].runs[0].text, "nmux pane-1");
+        assert_eq!(chunk.lines[0].runs[0].cell_widths.len(), 11);
     }
 
     #[derive(Debug, Default)]
