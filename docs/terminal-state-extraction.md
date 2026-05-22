@@ -210,7 +210,8 @@ reattach, styled/wide row-run state persistence through real `--state`
 reattach, row dirty metadata, row state hashes, Kitty
 placeholder row metadata, mode payloads, mode-only patch application, sparse
 row replacement, `FullRefreshRequired` snapshot recovery for known-version live
-clients, metadata-only no-row live updates, metadata-only state reattach,
+clients, metadata-only `CursorOnly` no-row live updates, metadata-only state
+reattach,
 libghostty-vt live mode-only patch cache persistence through real `--state` reattach,
 cached client-state compatibility, cached terminal metadata reattach,
 current-surface live key, paste, named-key, focus, and mouse forwarding,

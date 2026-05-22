@@ -30,12 +30,9 @@ RGBA via a boolean presence flag, and the active palette as RGBA entries.
 Backend engines populate this state when it is available. Old client cache files
 default missing color state to zero/empty values.
 
-Color changes require `PatchKind::FullRefreshRequired`. This avoids freezing a
-partial palette-diff protocol before renderer requirements are clearer.
-
-ADR 0019 later narrows that restriction: color-only patches may carry palette
-entry diffs, while color changes coupled to row or style-table changes still
-require full refreshes.
+Color changes that are coupled to row, style-table, or surface-kind changes
+require `PatchKind::FullRefreshRequired`. Pure color updates may use
+`PatchKind::ColorOnly` with the palette-diff shape documented in ADR 0019.
 
 ## Consequences
 

@@ -135,7 +135,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --live --iterations 2 --key $'p
 
 Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached. Bounded live and follow loops reject `--iterations 0` before connecting, and `--interval-ms` must be greater than zero.
 
-Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. In non-redraw mode, metadata-only updates print changed title or working-directory lines without reprinting unchanged pane text.
+Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
 
 By default, live mode prints each rendered update as plain text. Add `--redraw` to clear the terminal and repaint the latest workspace summary plus the current client-side pane surface on each update. When stdout is a TTY, `--redraw` uses the alternate screen and hides the cursor for the live session, then restores both on exit. Captured or piped stdout stays as plain clear/home escape output:
 
@@ -230,7 +230,8 @@ Current coverage includes:
   flags, underline color, palette-indexed colors, row-level dirty state, row
   state hashes, hyperlink presence, and Kitty graphics placeholder metadata;
 - alternate-screen entry/restoration with alternate scrollback omission,
-  resize/reflow, committed live resize metadata, metadata-only no-row patches,
+  resize/reflow, committed live resize metadata, metadata-only `CursorOnly`
+  no-row patches,
   style-table full-refresh reattach, sparse row updates, and mode-only surface
   patches;
 - OSC 133 row semantic prompt state and per-run semantic content;
@@ -282,7 +283,8 @@ Current behavior:
 - known `pane-1` surface version is current: daemon sends `AttachStatus.surface_state = Current` and no surface frame
 - known `pane-1` surface version is patchable: daemon sends `AttachStatus.surface_state = Patch` followed by a `PaneSurfacePatch`
 - known `pane-1` surface version has a latest `FullRefreshRequired` update:
-  daemon sends `AttachStatus.surface_state = Snapshot` followed by a full `PaneSurfaceSnapshot`
+  daemon recovers during attach with `AttachStatus.surface_state = Snapshot`
+  followed immediately by a full `PaneSurfaceSnapshot`
 - known `pane-1` surface version is stale: daemon sends `AttachStatus.surface_state = Snapshot` followed by a full `PaneSurfaceSnapshot`
 
 The CLI can persist its local render state with `--state`. This records the

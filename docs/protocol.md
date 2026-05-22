@@ -99,15 +99,17 @@ should use the status pane ID, not a guessed default, for post-attach input,
 resize, and scrollback requests.
 
 Cursor-only, mode-only, and color-only patches can also update
-`TerminalMetadataState` without row updates. Mode-only patches update
-`TerminalModeState` without row updates, and color-only patches update
-`TerminalColorState` without row updates. If a color-only patch carries a
-palette diff, clients apply it to their cached palette for the matching
-`base_version`; the diff is not an absolute palette. These are versioned surface
-changes because future input encoding, renderer behavior, and pane chrome can
-depend on terminal state even when visible text does not change.
+`TerminalMetadataState` without row updates. Metadata-only updates are therefore
+ordinary `PatchKind::CursorOnly` patches with no row payload; there is no
+separate metadata-only patch kind. Mode-only patches update `TerminalModeState`
+without row updates, and color-only patches update `TerminalColorState` without
+row updates. If a color-only patch carries a palette diff, clients apply it to
+their cached palette for the matching `base_version`; the diff is not an
+absolute palette. These are versioned surface changes because future input
+encoding, renderer behavior, and pane chrome can depend on terminal state even
+when visible text does not change.
 
-`PaneSurfacePatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, if color changes are coupled to row/style changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired` and the client must request or wait for a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
+`PaneSurfacePatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, if color changes are coupled to row/style changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired`. During attach, `AttachStatus.surface_state = Snapshot` is the recovery signal and the daemon immediately follows it with a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
 
 Scrollback is a separate versioned object. Clients request ranges with
 `ScrollbackFetch`; the daemon replies with `ScrollbackChunk` rows and the
