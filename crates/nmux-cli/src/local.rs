@@ -2536,7 +2536,11 @@ impl InputSummary {
         engines: &mut PaneTerminalEngines,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         if let Some(key_name) = self.key_name.as_deref() {
-            return keypad_key_bytes(key_name, session.pane_application_keypad(&self.pane_id));
+            return named_key_bytes(
+                key_name,
+                session.pane_application_keypad(&self.pane_id),
+                session.pane_application_cursor(&self.pane_id),
+            );
         }
         if let Some(mouse) = self.mouse {
             let (cols, rows) = session
@@ -2559,33 +2563,42 @@ impl InputSummary {
     }
 }
 
-fn keypad_key_bytes(
+fn named_key_bytes(
     key_name: &str,
     application_keypad: bool,
+    application_cursor: bool,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let bytes: &[u8] = match (key_name, application_keypad) {
-        ("numpad-enter", false) => b"\r",
-        ("numpad-enter", true) => b"\x1bOM",
-        ("numpad-0", false) => b"0",
-        ("numpad-0", true) => b"\x1bOp",
-        ("numpad-1", false) => b"1",
-        ("numpad-1", true) => b"\x1bOq",
-        ("numpad-2", false) => b"2",
-        ("numpad-2", true) => b"\x1bOr",
-        ("numpad-3", false) => b"3",
-        ("numpad-3", true) => b"\x1bOs",
-        ("numpad-4", false) => b"4",
-        ("numpad-4", true) => b"\x1bOt",
-        ("numpad-5", false) => b"5",
-        ("numpad-5", true) => b"\x1bOu",
-        ("numpad-6", false) => b"6",
-        ("numpad-6", true) => b"\x1bOv",
-        ("numpad-7", false) => b"7",
-        ("numpad-7", true) => b"\x1bOw",
-        ("numpad-8", false) => b"8",
-        ("numpad-8", true) => b"\x1bOx",
-        ("numpad-9", false) => b"9",
-        ("numpad-9", true) => b"\x1bOy",
+    let bytes: &[u8] = match (key_name, application_keypad, application_cursor) {
+        ("numpad-enter", false, _) => b"\r",
+        ("numpad-enter", true, _) => b"\x1bOM",
+        ("numpad-0", false, _) => b"0",
+        ("numpad-0", true, _) => b"\x1bOp",
+        ("numpad-1", false, _) => b"1",
+        ("numpad-1", true, _) => b"\x1bOq",
+        ("numpad-2", false, _) => b"2",
+        ("numpad-2", true, _) => b"\x1bOr",
+        ("numpad-3", false, _) => b"3",
+        ("numpad-3", true, _) => b"\x1bOs",
+        ("numpad-4", false, _) => b"4",
+        ("numpad-4", true, _) => b"\x1bOt",
+        ("numpad-5", false, _) => b"5",
+        ("numpad-5", true, _) => b"\x1bOu",
+        ("numpad-6", false, _) => b"6",
+        ("numpad-6", true, _) => b"\x1bOv",
+        ("numpad-7", false, _) => b"7",
+        ("numpad-7", true, _) => b"\x1bOw",
+        ("numpad-8", false, _) => b"8",
+        ("numpad-8", true, _) => b"\x1bOx",
+        ("numpad-9", false, _) => b"9",
+        ("numpad-9", true, _) => b"\x1bOy",
+        ("arrow-up", _, false) => b"\x1b[A",
+        ("arrow-up", _, true) => b"\x1bOA",
+        ("arrow-down", _, false) => b"\x1b[B",
+        ("arrow-down", _, true) => b"\x1bOB",
+        ("arrow-right", _, false) => b"\x1b[C",
+        ("arrow-right", _, true) => b"\x1bOC",
+        ("arrow-left", _, false) => b"\x1b[D",
+        ("arrow-left", _, true) => b"\x1bOD",
         _ => return Err(format!("unsupported key name: {key_name}").into()),
     };
     Ok(bytes.to_vec())
@@ -4236,6 +4249,37 @@ mod tests {
                 .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
                 .expect("application digit"),
             b"\x1bOw"
+        );
+    }
+
+    #[test]
+    fn named_key_input_uses_daemon_owned_application_cursor_mode() {
+        let mut session = Session::initial();
+        let arrow = InputSummary {
+            pane_id: "pane-1".to_owned(),
+            actor_id: "actor-1".to_owned(),
+            input_seq: 1,
+            text: String::new(),
+            bytes: Vec::new(),
+            key_name: Some("arrow-up".to_owned()),
+            mouse: None,
+            requires_focus_reporting: false,
+            requires_mouse_tracking: false,
+        };
+
+        assert_eq!(
+            arrow
+                .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+                .expect("normal arrow"),
+            b"\x1b[A"
+        );
+
+        session.tabs[0].root.modes.application_cursor = true;
+        assert_eq!(
+            arrow
+                .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+                .expect("application arrow"),
+            b"\x1bOA"
         );
     }
 

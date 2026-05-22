@@ -21,6 +21,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
     assert!(stdout.contains("--key-name NAME"));
+    assert!(stdout.contains("keypad-enter, keypad-0..9, or arrow keys"));
     assert!(stdout.contains("--paste TEXT"));
     assert!(stdout.contains("--focus gained|lost"));
     assert!(stdout.contains("--stdin-bytes"));
@@ -183,7 +184,7 @@ fn nmux_rejects_conflicting_frontend_modes() {
     );
     assert_nmux_rejects(
         &["--live", "--key-name", "enter"],
-        "nmux: --key-name requires keypad-enter or keypad-0..9",
+        "nmux: --key-name requires keypad-enter, keypad-0..9, or arrow-up|arrow-down|arrow-right|arrow-left",
     );
     assert_nmux_rejects(
         &["--live", "--focus", "blurred"],

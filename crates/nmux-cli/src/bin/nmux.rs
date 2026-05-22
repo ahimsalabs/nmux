@@ -741,7 +741,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                 key_name = Some(parse_key_name(
                     &args
                         .next()
-                        .ok_or("--key-name requires keypad-enter or keypad-0..9")?,
+                        .ok_or("--key-name requires a supported key name")?,
                 )?);
                 input_text = None;
             }
@@ -1084,7 +1084,7 @@ Options:
   --socket PATH              Unix socket path
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send for read-write attach
-  --key-name NAME            Send keypad-enter or keypad-0..9 in live mode
+  --key-name NAME            Send keypad-enter, keypad-0..9, or arrow keys in live mode
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send a focus event in live mode when reporting is enabled
   --mouse A:B:R:C            Send mouse press/release/motion in live mode
@@ -1170,7 +1170,13 @@ fn parse_key_name(value: &str) -> Result<String, &'static str> {
         "keypad-7" => Ok("numpad-7".to_owned()),
         "keypad-8" => Ok("numpad-8".to_owned()),
         "keypad-9" => Ok("numpad-9".to_owned()),
-        _ => Err("--key-name requires keypad-enter or keypad-0..9"),
+        "arrow-up" => Ok("arrow-up".to_owned()),
+        "arrow-down" => Ok("arrow-down".to_owned()),
+        "arrow-right" => Ok("arrow-right".to_owned()),
+        "arrow-left" => Ok("arrow-left".to_owned()),
+        _ => Err(
+            "--key-name requires keypad-enter, keypad-0..9, or arrow-up|arrow-down|arrow-right|arrow-left",
+        ),
     }
 }
 
@@ -1386,6 +1392,8 @@ mod tests {
         );
         assert_eq!(parse_key_name("keypad-0"), Ok("numpad-0".to_owned()));
         assert_eq!(parse_key_name("keypad-9"), Ok("numpad-9".to_owned()));
+        assert_eq!(parse_key_name("arrow-up"), Ok("arrow-up".to_owned()));
+        assert_eq!(parse_key_name("arrow-left"), Ok("arrow-left".to_owned()));
         assert!(parse_key_name("enter").is_err());
     }
 

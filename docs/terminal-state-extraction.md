@@ -88,7 +88,8 @@ only after the backend extraction proves the exact shape needed.
   Local clients also forward focus gained/lost input through `FocusInput` only
   when the daemon-owned pane mode reports focus reporting enabled.
   Local clients forward keypad Enter and digit key names through daemon-owned
-  application-keypad mode encoding. Local clients forward explicit mouse
+  application-keypad mode encoding, and arrow key names through daemon-owned
+  application-cursor mode encoding. Local clients forward explicit mouse
   press/release/motion input only when the daemon-owned pane mode reports mouse
   tracking enabled, with bytes encoded by the live pane terminal engine from its
   current terminal mouse mode and format. Broader terminal-derived key
@@ -153,7 +154,7 @@ palette overrides, and explicit cursor color, alternate-screen entry/restoration
 with alternate scrollback omission, terminal title metadata with OSC 7
 working-directory omission, OSC 133 row semantic prompt state, resize/reflow, styled
 backend-owned scrollback extraction, row-level dirty state, Kitty placeholder
-metadata, hyperlink presence, application-keypad encoder support,
+metadata, hyperlink presence, application-keypad and application-cursor encoder support,
 focus event encoding, paste safety validation, safe-API mode tracking for
 bracketed paste, mouse tracking, focus reporting, application keypad mode, and
 origin/wraparound modes, plus nmux snapshot/patch cursor blink, row semantic

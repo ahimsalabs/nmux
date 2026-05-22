@@ -486,6 +486,11 @@ impl Session {
             .is_some_and(|pane| pane.modes.application_keypad)
     }
 
+    pub fn pane_application_cursor(&self, pane_id: &str) -> bool {
+        self.pane(pane_id)
+            .is_some_and(|pane| pane.modes.application_cursor)
+    }
+
     fn pane(&self, pane_id: &str) -> Option<&Pane> {
         self.tabs.iter().find_map(|tab| {
             if tab.root.id == pane_id {
