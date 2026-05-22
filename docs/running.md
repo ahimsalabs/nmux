@@ -199,7 +199,7 @@ nmux snapshots, patches, and scrollback chunks. Current coverage includes cursor
 position/visibility/shape/blink, alternate-screen entry/restoration with alternate
 scrollback omission, resize/reflow, style-separated visible rows, styled
 scrollback rows, cell widths, combining marks, emoji ZWJ clusters, basic SGR
-style flags, underline color, palette-indexed colors, render-state default
+style flags, underline color, palette-indexed colors, terminal color state, render-state default
 colors/palette, palette overrides, explicit cursor color, terminal title metadata, OSC
 133 row semantic prompt state, per-run semantic content, bracketed paste, paste safety validation, paste forwarding, mouse
 tracking and mode-gated mouse forwarding, focus reporting and mode-gated focus forwarding, application keypad tracking,
@@ -207,7 +207,7 @@ common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-awar
 hyperlink presence, Kitty graphics placeholder metadata, working-directory metadata
 plumbing, mode-aware key encoding, sparse row updates, and mode-only surface patches.
 Backend-populated OSC 7 working-directory extraction, image placement data,
-hyperlink IDs, and broader shell command metadata remain intentionally withheld
+hyperlink IDs, incremental palette diffs, and broader shell command metadata remain intentionally withheld
 until the expected backend behavior
 and nmux protocol shape are clear.
 
@@ -246,7 +246,7 @@ Current behavior:
 - known `pane-1` surface version is patchable: daemon sends a `PaneSurfacePatch`
 - known `pane-1` surface version is stale: daemon sends a full `PaneSurfaceSnapshot`
 
-The CLI can persist its local render state with `--state`. This records the rendered pane surface, cached row runs, the cached style table, and the last known server version, so a later process can request a patch and apply it to the cached surface instead of replaying raw PTY bytes. Older state files that only contain rendered row text still load as default-style rows with the default style table.
+The CLI can persist its local render state with `--state`. This records the rendered pane surface, cached row runs, the cached style table, terminal color state, and the last known server version, so a later process can request a patch and apply it to the cached surface instead of replaying raw PTY bytes. Older state files that only contain rendered row text still load as default-style rows with the default style table and default color state.
 
 Start a long-running command-backed daemon:
 

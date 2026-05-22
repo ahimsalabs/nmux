@@ -134,6 +134,7 @@ table PaneSurfaceSnapshot {
   metadata:TerminalMetadataState;
   styles:[Style];
   rows_data:[SurfaceRow];
+  colors:TerminalColorState;
 }
 
 table PaneSurfacePatch {
@@ -145,6 +146,7 @@ table PaneSurfacePatch {
   cursor:CursorState;
   modes:TerminalModeState;
   metadata:TerminalMetadataState;
+  colors:TerminalColorState;
 }
 
 table CursorState {
@@ -168,6 +170,14 @@ table TerminalModeState {
 table TerminalMetadataState {
   title:string;
   working_directory:string;
+}
+
+table TerminalColorState {
+  default_fg_rgba:uint;
+  default_bg_rgba:uint;
+  cursor_rgba:uint;
+  cursor_rgba_set:bool;
+  palette_rgba:[uint];
 }
 
 table SurfaceRow {
@@ -266,6 +276,7 @@ table ScrollbackChunk {
   total_lines:ulong;
   rows:[ScrollbackRow];
   styles:[Style];
+  colors:TerminalColorState;
 }
 
 table ScrollbackRow {

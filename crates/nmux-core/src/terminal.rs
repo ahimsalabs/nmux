@@ -1,6 +1,6 @@
 use nmux_proto::protocol;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct TerminalInput<'a> {
     pub pane_id: &'a str,
     pub cols: u32,
@@ -10,6 +10,7 @@ pub struct TerminalInput<'a> {
     pub modes: TerminalModes,
     pub title: &'a str,
     pub working_directory: &'a str,
+    pub colors: TerminalColors,
     pub surface_lines: &'a [String],
     pub surface_semantic_prompts: &'a [protocol::RowSemanticPrompt],
     pub surface_dirty_rows: &'a [bool],
@@ -38,6 +39,27 @@ pub struct TerminalModes {
     pub application_cursor: bool,
     pub origin: bool,
     pub wraparound: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalColors {
+    pub default_fg_rgba: u32,
+    pub default_bg_rgba: u32,
+    pub cursor_rgba: u32,
+    pub cursor_rgba_set: bool,
+    pub palette_rgba: Vec<u32>,
+}
+
+impl Default for TerminalColors {
+    fn default() -> Self {
+        Self {
+            default_fg_rgba: 0,
+            default_bg_rgba: 0,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: Vec::new(),
+        }
+    }
 }
 
 impl Default for TerminalModes {
@@ -95,6 +117,7 @@ pub struct TerminalUpdate {
     pub modes: TerminalModes,
     pub title: String,
     pub working_directory: String,
+    pub colors: TerminalColors,
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
@@ -123,6 +146,7 @@ impl TerminalUpdate {
             modes: TerminalModes::default(),
             title: String::new(),
             working_directory: String::new(),
+            colors: TerminalColors::default(),
             styles: vec![PaneStyle::default()],
             surface_row_runs: plain_row_runs(&surface_lines),
             surface_semantic_prompts: plain_row_semantic_prompts(&surface_lines),
@@ -257,6 +281,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
             input.modes,
             input.title,
             input.working_directory,
+            input.colors,
             input.rows,
             scrollback_lines,
         ))
@@ -274,6 +299,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
             input.modes,
             input.title,
             input.working_directory,
+            input.colors,
             rows,
             input.scrollback_lines.to_vec(),
         ))
@@ -360,6 +386,7 @@ fn interim_text_update(
     modes: TerminalModes,
     title: &str,
     working_directory: &str,
+    colors: TerminalColors,
     rows: u32,
     scrollback_lines: Vec<String>,
 ) -> TerminalUpdate {
@@ -383,6 +410,7 @@ fn interim_text_update(
     update.modes = modes;
     update.title = title.to_owned();
     update.working_directory = working_directory.to_owned();
+    update.colors = colors;
     update
 }
 
@@ -445,7 +473,8 @@ mod ghostty_vt {
 
     use super::{
         CellRun, KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneStyle,
-        TerminalCursor, TerminalEngine, TerminalInput, TerminalModes, TerminalUpdate,
+        TerminalColors, TerminalCursor, TerminalEngine, TerminalInput, TerminalModes,
+        TerminalUpdate,
     };
 
     pub struct LibghosttyVtTerminalEngine {
@@ -464,7 +493,7 @@ mod ghostty_vt {
             Self { state: None }
         }
 
-        fn state_mut(&mut self, input: TerminalInput<'_>) -> Option<&mut GhosttyVtState> {
+        fn state_mut(&mut self, input: &TerminalInput<'_>) -> Option<&mut GhosttyVtState> {
             if self.state.is_none() {
                 self.state = Some(GhosttyVtState::new(input.cols, input.rows)?);
             }
@@ -478,7 +507,7 @@ mod ghostty_vt {
             input: TerminalInput<'_>,
             output: &[u8],
         ) -> Option<TerminalUpdate> {
-            let state = self.state_mut(input)?;
+            let state = self.state_mut(&input)?;
             state.terminal.vt_write(output);
             state.extract_update(input, false)
         }
@@ -489,7 +518,7 @@ mod ghostty_vt {
             cols: u32,
             rows: u32,
         ) -> Option<TerminalUpdate> {
-            let state = self.state_mut(input)?;
+            let state = self.state_mut(&input)?;
             let cols = u16::try_from(cols).ok()?;
             let rows = u16::try_from(rows).ok()?;
             state.terminal.resize(cols, rows, 8, 16).ok()?;
@@ -556,6 +585,7 @@ mod ghostty_vt {
             let modes = modes(&self.terminal)?;
             let title = self.terminal.title().ok()?;
             let working_directory = self.terminal.pwd().ok()?;
+            let colors = terminal_colors(&snapshot)?;
             let patch_kind = if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
@@ -566,6 +596,7 @@ mod ghostty_vt {
                 && modes == input.modes
                 && title == input.title
                 && working_directory == input.working_directory
+                && colors == input.colors
             {
                 protocol::PatchKind::CursorOnly
             } else if !force_rows
@@ -574,9 +605,11 @@ mod ghostty_vt {
                 && surface_semantic_prompts == input.surface_semantic_prompts
                 && surface_dirty_rows == input.surface_dirty_rows
                 && surface_kitty_placeholders == input.surface_kitty_placeholders
+                && cursor == input.cursor
                 && modes != input.modes
                 && title == input.title
                 && working_directory == input.working_directory
+                && colors == input.colors
             {
                 protocol::PatchKind::ModeOnly
             } else {
@@ -590,6 +623,7 @@ mod ghostty_vt {
                 modes,
                 title: title.to_owned(),
                 working_directory: working_directory.to_owned(),
+                colors,
                 styles,
                 surface_row_runs: surface_rows.row_runs,
                 scrollback_row_runs: scrollback_rows.row_runs,
@@ -904,6 +938,17 @@ mod ghostty_vt {
         })
     }
 
+    fn terminal_colors(snapshot: &RenderSnapshot<'_, '_>) -> Option<TerminalColors> {
+        let colors = snapshot.colors().ok()?;
+        Some(TerminalColors {
+            default_fg_rgba: rgba(colors.foreground),
+            default_bg_rgba: rgba(colors.background),
+            cursor_rgba: colors.cursor.map_or(0, rgba),
+            cursor_rgba_set: colors.cursor.is_some(),
+            palette_rgba: colors.palette.iter().copied().map(rgba).collect(),
+        })
+    }
+
     fn encode_mouse_input(
         terminal: &Terminal<'_, '_>,
         input: MouseTerminalInput,
@@ -1054,8 +1099,8 @@ mod tests {
     use nmux_proto::protocol;
 
     use super::{
-        InterimTextTerminalEngine, PaneTerminalEngines, TerminalCursor, TerminalEngine,
-        TerminalEngineKind, TerminalInput, TerminalModes,
+        InterimTextTerminalEngine, PaneTerminalEngines, TerminalColors, TerminalCursor,
+        TerminalEngine, TerminalEngineKind, TerminalInput, TerminalModes,
     };
 
     #[cfg(feature = "libghostty-vt")]
@@ -1089,6 +1134,7 @@ mod tests {
             modes: TerminalModes::default(),
             title: "",
             working_directory: "",
+            colors: TerminalColors::default(),
             surface_lines,
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
@@ -1111,6 +1157,7 @@ mod tests {
             modes: update.modes,
             title: &update.title,
             working_directory: &update.working_directory,
+            colors: update.colors.clone(),
             surface_lines: &update.surface_lines,
             surface_semantic_prompts: &update.surface_semantic_prompts,
             surface_dirty_rows: &update.surface_dirty_rows,
@@ -1141,6 +1188,7 @@ mod tests {
             modes: TerminalModes::default(),
             title: "existing title",
             working_directory: "file://localhost/existing",
+            colors: TerminalColors::default(),
             surface_lines: &[],
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
@@ -1197,6 +1245,7 @@ mod tests {
             modes: TerminalModes::default(),
             title: "",
             working_directory: "",
+            colors: TerminalColors::default(),
             surface_lines: &[],
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
@@ -1250,6 +1299,7 @@ mod tests {
             modes: TerminalModes::default(),
             title: "",
             working_directory: "",
+            colors: TerminalColors::default(),
             surface_lines: &scrollback_lines,
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
@@ -1437,6 +1487,22 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_extracts_terminal_color_state() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let update = engine
+            .apply_output(terminal_input_with_size(80, 24, &[], &[]), b"colors")
+            .expect("terminal update");
+
+        assert_ne!(update.colors.default_fg_rgba, 0);
+        assert_ne!(update.colors.default_bg_rgba, 0);
+        assert_ne!(update.colors.default_fg_rgba, update.colors.default_bg_rgba);
+        assert!(update.colors.palette_rgba.len() >= 16);
+        assert_eq!(update.colors.cursor_rgba, 0);
+        assert!(!update.colors.cursor_rgba_set);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_render_state_tracks_explicit_cursor_color_without_protocol_fields() {
         use libghostty_vt::{RenderState, Terminal, TerminalOptions, style::RgbColor};
 
@@ -1458,6 +1524,21 @@ mod tests {
 
         assert_eq!(snapshot.cursor_color().expect("cursor color"), cursor);
         assert_eq!(snapshot.colors().expect("render colors").cursor, cursor);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_tracks_explicit_cursor_color_in_color_state() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b]12;#ff00ff\x1b\\cursor",
+            )
+            .expect("terminal update");
+
+        assert_eq!(update.colors.cursor_rgba, 0xff00_ffff);
+        assert!(update.colors.cursor_rgba_set);
     }
 
     #[cfg(feature = "libghostty-vt")]
@@ -1484,6 +1565,20 @@ mod tests {
                 b: 0x33,
             }
         );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_tracks_palette_override_in_color_state() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b]4;1;#112233\x1b\\palette",
+            )
+            .expect("terminal update");
+
+        assert_eq!(update.colors.palette_rgba.get(1).copied(), Some(0x112233ff));
     }
 
     #[cfg(feature = "libghostty-vt")]

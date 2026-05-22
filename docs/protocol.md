@@ -44,6 +44,10 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
 - `TerminalMetadataState` stores pane terminal title and working-directory
   metadata. The current libghostty-vt path still does not prove OSC 7 byte
   sequences populate the working-directory value.
+- `TerminalColorState` stores backend-observed default foreground/background,
+  optional explicit cursor color, and the active palette. Color-state changes
+  currently require a full surface refresh rather than an incremental palette
+  patch.
 - `RowSemanticPrompt` stores OSC 133 prompt-line metadata on surface rows,
   row updates, and scrollback rows. `CellSemanticContent` stores the
   backend-observed OSC 133 content class for each run: output, input, or
@@ -63,7 +67,7 @@ updates. These are versioned surface changes because future input encoding,
 renderer behavior, and pane chrome can depend on terminal state even when
 visible text does not change.
 
-`PaneSurfacePatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired` and the client must request or wait for a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
+`PaneSurfacePatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, if terminal color state changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired` and the client must request or wait for a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
 
 Scrollback is a separate versioned object. Clients request ranges with `ScrollbackFetch`; the daemon replies with `ScrollbackChunk` rows and the corresponding style table for that chunk.
 

@@ -1014,6 +1014,7 @@ pub fn surface_update_from_frame(
                     .and_then(|metadata| metadata.working_directory())
                     .unwrap_or_default()
                     .to_owned(),
+                colors: decoded_terminal_colors(snapshot.colors()),
                 row_updates,
                 styles,
                 text,
@@ -1062,6 +1063,7 @@ pub fn surface_update_from_frame(
                     .and_then(|metadata| metadata.working_directory())
                     .unwrap_or_default()
                     .to_owned(),
+                colors: decoded_terminal_colors(patch.colors()),
                 row_updates,
                 styles: Vec::new(),
                 text,
@@ -1134,6 +1136,24 @@ fn decoded_styles(
         });
     }
     decoded
+}
+
+fn decoded_terminal_colors(
+    colors: Option<protocol::TerminalColorState<'_>>,
+) -> Option<TerminalColorSummary> {
+    let Some(colors) = colors else {
+        return None;
+    };
+    Some(TerminalColorSummary {
+        default_fg_rgba: colors.default_fg_rgba(),
+        default_bg_rgba: colors.default_bg_rgba(),
+        cursor_rgba: colors.cursor_rgba(),
+        cursor_rgba_set: colors.cursor_rgba_set(),
+        palette_rgba: colors
+            .palette_rgba()
+            .map(|palette| (0..palette.len()).map(|index| palette.get(index)).collect())
+            .unwrap_or_default(),
+    })
 }
 
 fn default_style_summaries() -> Vec<StyleSummary> {
@@ -1450,6 +1470,7 @@ pub fn scrollback_chunk_from_frame(
         .body_as_scrollback_chunk()
         .ok_or("missing scrollback chunk body")?;
     let styles = chunk.styles().map(decoded_styles).unwrap_or_default();
+    let colors = decoded_terminal_colors(chunk.colors()).unwrap_or_default();
     let rows = chunk.rows().ok_or("scrollback chunk has no rows")?;
     let mut lines = Vec::with_capacity(rows.len());
     for index in 0..rows.len() {
@@ -1471,6 +1492,7 @@ pub fn scrollback_chunk_from_frame(
         start_line: chunk.start_line(),
         total_lines: chunk.total_lines(),
         styles,
+        colors,
         lines,
     })
 }
@@ -1704,6 +1726,7 @@ pub struct SurfaceUpdate {
     pub modes: TerminalModeSummary,
     pub title: String,
     pub working_directory: String,
+    pub colors: Option<TerminalColorSummary>,
     pub row_updates: Vec<SurfaceRowUpdate>,
     pub styles: Vec<StyleSummary>,
     pub text: String,
@@ -1753,6 +1776,15 @@ pub struct TerminalModeSummary {
     pub application_cursor: bool,
     pub origin: bool,
     pub wraparound: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TerminalColorSummary {
+    pub default_fg_rgba: u32,
+    pub default_bg_rgba: u32,
+    pub cursor_rgba: u32,
+    pub cursor_rgba_set: bool,
+    pub palette_rgba: Vec<u32>,
 }
 
 impl Default for TerminalModeSummary {
@@ -1823,6 +1855,7 @@ pub struct ClientPaneSurface {
     pub modes: TerminalModeSummary,
     pub title: String,
     pub working_directory: String,
+    pub colors: TerminalColorSummary,
     styles: Vec<StyleSummary>,
     row_text: Vec<String>,
     row_runs: Vec<Vec<CellRunSummary>>,
@@ -1843,6 +1876,7 @@ impl ClientPaneSurface {
             modes: update.modes,
             title: update.title.clone(),
             working_directory: update.working_directory.clone(),
+            colors: update.colors.clone().unwrap_or_default(),
             styles: if update.styles.is_empty() {
                 default_style_summaries()
             } else {
@@ -1900,6 +1934,11 @@ impl ClientPaneSurface {
         }
         if update.patch_kind == Some(protocol::PatchKind::FullRefreshRequired) {
             return Err("surface patch requires full refresh".into());
+        }
+        if let Some(colors) = update.colors.as_ref()
+            && colors != &self.colors
+        {
+            return Err("surface patch changes terminal colors and requires full refresh".into());
         }
         if update.patch_kind == Some(protocol::PatchKind::CursorOnly) {
             self.cursor = update.cursor;
@@ -2079,7 +2118,7 @@ impl ClientAttachState {
     }
 
     fn encode(&self) -> String {
-        let mut encoded = String::from("NMUX_CLIENT_STATE 2\n");
+        let mut encoded = String::from("NMUX_CLIENT_STATE 3\n");
         for surface in &self.surfaces {
             encoded.push_str("surface ");
             encoded.push_str(&hex_encode(surface.pane_id.as_bytes()));
@@ -2149,6 +2188,28 @@ impl ClientAttachState {
             encoded.push_str("pwd ");
             encoded.push_str(&hex_encode(surface.working_directory.as_bytes()));
             encoded.push('\n');
+            encoded.push_str("colors ");
+            encoded.push_str(&surface.colors.default_fg_rgba.to_string());
+            encoded.push(' ');
+            encoded.push_str(&surface.colors.default_bg_rgba.to_string());
+            encoded.push(' ');
+            encoded.push_str(&surface.colors.cursor_rgba.to_string());
+            encoded.push(' ');
+            encoded.push_str(if surface.colors.cursor_rgba_set {
+                "1"
+            } else {
+                "0"
+            });
+            encoded.push(' ');
+            encoded.push_str(&hex_encode(
+                &surface
+                    .colors
+                    .palette_rgba
+                    .iter()
+                    .flat_map(|color| color.to_be_bytes())
+                    .collect::<Vec<_>>(),
+            ));
+            encoded.push('\n');
             for style in &surface.styles {
                 encoded.push_str("style ");
                 encoded.push_str(&style.fg_rgba.to_string());
@@ -2210,7 +2271,10 @@ impl ClientAttachState {
                 "invalid nmux client state header",
             ));
         };
-        if header != "NMUX_CLIENT_STATE 1" && header != "NMUX_CLIENT_STATE 2" {
+        if header != "NMUX_CLIENT_STATE 1"
+            && header != "NMUX_CLIENT_STATE 2"
+            && header != "NMUX_CLIENT_STATE 3"
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid nmux client state header",
@@ -2261,6 +2325,7 @@ impl ClientAttachState {
             let mut modes = TerminalModeSummary::default();
             let mut title = String::new();
             let mut working_directory = String::new();
+            let mut colors = TerminalColorSummary::default();
             let mut styles = Vec::new();
             let mut row_text = vec![String::new(); row_count];
             let mut row_runs = vec![Vec::new(); row_count];
@@ -2327,6 +2392,38 @@ impl ClientAttachState {
                     ["pwd", value] => {
                         working_directory = String::from_utf8(hex_decode(value)?)
                             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+                    }
+                    [
+                        "colors",
+                        default_fg_rgba,
+                        default_bg_rgba,
+                        cursor_rgba,
+                        palette_rgba,
+                    ] => {
+                        let cursor_rgba = parse_state_u32(cursor_rgba)?;
+                        colors = TerminalColorSummary {
+                            default_fg_rgba: parse_state_u32(default_fg_rgba)?,
+                            default_bg_rgba: parse_state_u32(default_bg_rgba)?,
+                            cursor_rgba,
+                            cursor_rgba_set: cursor_rgba != 0,
+                            palette_rgba: decode_palette_rgba(palette_rgba)?,
+                        };
+                    }
+                    [
+                        "colors",
+                        default_fg_rgba,
+                        default_bg_rgba,
+                        cursor_rgba,
+                        cursor_rgba_set,
+                        palette_rgba,
+                    ] => {
+                        colors = TerminalColorSummary {
+                            default_fg_rgba: parse_state_u32(default_fg_rgba)?,
+                            default_bg_rgba: parse_state_u32(default_bg_rgba)?,
+                            cursor_rgba: parse_state_u32(cursor_rgba)?,
+                            cursor_rgba_set: parse_state_bool(cursor_rgba_set)?,
+                            palette_rgba: decode_palette_rgba(palette_rgba)?,
+                        };
                     }
                     ["style", fg_rgba, bg_rgba, underline_rgba, flags] => {
                         styles.push(StyleSummary {
@@ -2484,6 +2581,7 @@ impl ClientAttachState {
                 modes,
                 title,
                 working_directory,
+                colors,
                 styles: if styles.is_empty() {
                     default_style_summaries()
                 } else {
@@ -2534,6 +2632,20 @@ fn parse_state_usize(value: &str) -> io::Result<usize> {
     value
         .parse()
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn decode_palette_rgba(encoded: &str) -> io::Result<Vec<u32>> {
+    let bytes = hex_decode(encoded)?;
+    if !bytes.len().is_multiple_of(4) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "palette color data length is not divisible by four",
+        ));
+    }
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|chunk| u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect())
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -2688,6 +2800,7 @@ pub struct ScrollbackChunkSummary {
     pub start_line: u64,
     pub total_lines: u64,
     pub styles: Vec<StyleSummary>,
+    pub colors: TerminalColorSummary,
     pub lines: Vec<ScrollbackLine>,
 }
 
@@ -2863,6 +2976,7 @@ mod tests {
             modes: TerminalModeSummary::default(),
             title: String::new(),
             working_directory: String::new(),
+            colors: None,
             styles: if kind == SurfaceUpdateKind::Snapshot {
                 default_style_summaries()
             } else {
@@ -2982,6 +3096,7 @@ mod tests {
                 start_line: 1,
                 total_lines: 3,
                 styles: default_style_summaries(),
+                colors: TerminalColorSummary::default(),
                 lines: vec![
                     scrollback_line(1, "nmux pane-1"),
                     scrollback_line(2, "server-owned terminal state"),
@@ -3042,7 +3157,8 @@ mod tests {
         });
         patch.title = "cursor title".to_owned();
         patch.working_directory = "file://localhost/tmp/cursor".to_owned();
-
+        patch.colors = Some(surface.colors.clone());
+        let original_colors = surface.colors.clone();
         surface.apply_patch(&patch).expect("apply patch");
 
         assert_eq!(surface.version, 2);
@@ -3050,6 +3166,46 @@ mod tests {
         assert_eq!(surface.cursor, patch.cursor);
         assert_eq!(surface.title, "cursor title");
         assert_eq!(surface.working_directory, "file://localhost/tmp/cursor");
+        assert_eq!(surface.colors, original_colors);
+    }
+
+    #[test]
+    fn client_surface_rejects_supported_patch_that_changes_colors() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top")],
+        );
+        snapshot.colors = Some(TerminalColorSummary {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x111111ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: vec![0x000000ff],
+        });
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut patch = surface_update(
+            SurfaceUpdateKind::Patch,
+            2,
+            Some(1),
+            vec![surface_row(0, "new top")],
+        );
+        patch.colors = Some(TerminalColorSummary {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x222222ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: vec![0x000000ff],
+        });
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("color-changing patch should be rejected");
+        assert!(
+            err.to_string().contains("requires full refresh"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -3066,6 +3222,8 @@ mod tests {
         patch.modes.bracketed_paste = true;
         patch.title = "mode title".to_owned();
         patch.working_directory = "file://localhost/tmp/mode".to_owned();
+        patch.colors = None;
+        let original_colors = surface.colors.clone();
 
         surface.apply_patch(&patch).expect("apply patch");
 
@@ -3074,6 +3232,7 @@ mod tests {
         assert!(surface.modes.bracketed_paste);
         assert_eq!(surface.title, "mode title");
         assert_eq!(surface.working_directory, "file://localhost/tmp/mode");
+        assert_eq!(surface.colors, original_colors);
     }
 
     #[test]
@@ -3208,6 +3367,13 @@ mod tests {
         snapshot.modes.focus_reporting = true;
         snapshot.title = "cached title".to_owned();
         snapshot.working_directory = "file://localhost/tmp/cached".to_owned();
+        snapshot.colors = Some(TerminalColorSummary {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x111111ff,
+            cursor_rgba: 0xff00ffff,
+            cursor_rgba_set: true,
+            palette_rgba: vec![0x000000ff, 0x112233ff],
+        });
         snapshot.cursor = Some(CursorSummary {
             row: 2,
             col: 4,
@@ -3220,6 +3386,7 @@ mod tests {
         let expected_cursor = snapshot.cursor;
         let expected_title = snapshot.title.clone();
         let expected_working_directory = snapshot.working_directory.clone();
+        let expected_colors = snapshot.colors.clone().expect("snapshot colors");
         state
             .render_attach(AttachSnapshot {
                 workspace: WorkspaceSummary {
@@ -3246,6 +3413,7 @@ mod tests {
             decoded.surfaces[0].working_directory,
             expected_working_directory
         );
+        assert_eq!(decoded.surfaces[0].colors, expected_colors);
         assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
         assert_eq!(
             decoded.surfaces[0].row_semantic_prompts[0],
@@ -3274,6 +3442,7 @@ mod tests {
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
         assert_eq!(decoded.surfaces[0].modes, TerminalModeSummary::default());
         assert_eq!(decoded.surfaces[0].title, "");
+        assert_eq!(decoded.surfaces[0].colors, TerminalColorSummary::default());
         assert_eq!(
             decoded.surfaces[0].row_semantic_prompts[0],
             protocol::RowSemanticPrompt::None
@@ -3326,6 +3495,7 @@ mod tests {
                 start_line: 1,
                 total_lines: 1,
                 styles: default_style_summaries(),
+                colors: TerminalColorSummary::default(),
                 lines: Vec::new(),
             })
         );
@@ -3496,6 +3666,7 @@ mod tests {
                 start_line: 3,
                 total_lines: 4,
                 styles: default_style_summaries(),
+                colors: TerminalColorSummary::default(),
                 lines: vec![scrollback_line(3, "z")],
             }
         );
@@ -3535,6 +3706,7 @@ mod tests {
                 start_line: 3,
                 total_lines: 4,
                 styles: default_style_summaries(),
+                colors: TerminalColorSummary::default(),
                 lines: vec![scrollback_line(3, "custom")],
             })
         );
@@ -3575,6 +3747,7 @@ mod tests {
                 start_line: 3,
                 total_lines: 5,
                 styles: default_style_summaries(),
+                colors: TerminalColorSummary::default(),
                 lines: vec![scrollback_line(3, "pasted"), scrollback_line(4, "text")],
             })
         );
@@ -3903,6 +4076,7 @@ mod tests {
                 start_line: 1,
                 total_lines: 3,
                 styles: default_style_summaries(),
+                colors: TerminalColorSummary::default(),
                 lines: vec![
                     scrollback_line(1, "nmux pane-1"),
                     scrollback_line(2, "server-owned terminal state"),

@@ -114,11 +114,12 @@ only after the backend extraction proves the exact shape needed.
   scrollback remains intentionally withheld until nmux has protocol guidance for
   whether and how clients should request it.
 - Palette and theme state: indexed SGR colors resolve into RGBA style-table
-  entries during `libghostty-vt` extraction, and render-state tests prove the
-  safe API exposes default foreground/background colors, the active palette,
-  palette overrides, and explicit cursor color changes. Default
-  foreground/background ownership in nmux protocol objects and the
-  client-visible shape of dynamic color changes still need protocol decisions.
+  entries during `libghostty-vt` extraction. `TerminalColorState` carries
+  backend-observed default foreground/background colors, the active palette,
+  palette overrides, and explicit cursor color state through surface snapshots,
+  surface patches, scrollback chunks, and cached client state. Dynamic color
+  changes currently require a full surface refresh; incremental palette diffs
+  remain withheld until renderer requirements are clearer.
 - Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, and
   the safe API exposes row/cell hyperlink presence. nmux intentionally leaves
   `hyperlink_id` unset until URI, identifier, range ownership, and lifetime have
@@ -157,7 +158,8 @@ The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, basic SGR style flags, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
 render-state default colors/palette,
-palette overrides, and explicit cursor color, alternate-screen entry/restoration
+palette overrides, explicit cursor color, terminal color state,
+alternate-screen entry/restoration
 with alternate scrollback omission, terminal title and working-directory metadata
 plumbing, OSC 133 row semantic prompt state, per-run semantic content,
 resize/reflow, styled

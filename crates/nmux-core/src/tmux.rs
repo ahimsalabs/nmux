@@ -4,7 +4,7 @@ use nmux_proto::protocol;
 
 use crate::host::{CommandSpec, HostSpec};
 use crate::session::{Cursor, Pane, Session, Tab};
-use crate::terminal::{CellRun, PaneStyle, TerminalModes};
+use crate::terminal::{CellRun, PaneStyle, TerminalColors, TerminalModes};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TmuxSession {
@@ -120,6 +120,7 @@ impl TmuxSession {
                 modes: TerminalModes::default(),
                 terminal_title: String::new(),
                 terminal_working_directory: String::new(),
+                colors: TerminalColors::default(),
                 styles: vec![PaneStyle::default()],
                 surface_lines: Vec::new(),
                 surface_row_runs: Vec::<Vec<CellRun>>::new(),

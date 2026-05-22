@@ -2019,6 +2019,7 @@ impl<'a> PaneSurfaceSnapshot<'a> {
   pub const VT_METADATA: ::flatbuffers::VOffsetT = 18;
   pub const VT_STYLES: ::flatbuffers::VOffsetT = 20;
   pub const VT_ROWS_DATA: ::flatbuffers::VOffsetT = 22;
+  pub const VT_COLORS: ::flatbuffers::VOffsetT = 24;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2031,6 +2032,7 @@ impl<'a> PaneSurfaceSnapshot<'a> {
   ) -> ::flatbuffers::WIPOffset<PaneSurfaceSnapshot<'bldr>> {
     let mut builder = PaneSurfaceSnapshotBuilder::new(_fbb);
     builder.add_version(args.version);
+    if let Some(x) = args.colors { builder.add_colors(x); }
     if let Some(x) = args.rows_data { builder.add_rows_data(x); }
     if let Some(x) = args.styles { builder.add_styles(x); }
     if let Some(x) = args.metadata { builder.add_metadata(x); }
@@ -2114,6 +2116,13 @@ impl<'a> PaneSurfaceSnapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SurfaceRow>>>>(PaneSurfaceSnapshot::VT_ROWS_DATA, None)}
   }
+  #[inline]
+  pub fn colors(&self) -> Option<TerminalColorState<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalColorState>>(PaneSurfaceSnapshot::VT_COLORS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
@@ -2132,6 +2141,7 @@ impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>("metadata", Self::VT_METADATA, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Style>>>>("styles", Self::VT_STYLES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SurfaceRow>>>>("rows_data", Self::VT_ROWS_DATA, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<TerminalColorState>>("colors", Self::VT_COLORS, false)?
      .finish();
     Ok(())
   }
@@ -2147,6 +2157,7 @@ pub struct PaneSurfaceSnapshotArgs<'a> {
     pub metadata: Option<::flatbuffers::WIPOffset<TerminalMetadataState<'a>>>,
     pub styles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>>>,
     pub rows_data: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SurfaceRow<'a>>>>>,
+    pub colors: Option<::flatbuffers::WIPOffset<TerminalColorState<'a>>>,
 }
 impl<'a> Default for PaneSurfaceSnapshotArgs<'a> {
   #[inline]
@@ -2162,6 +2173,7 @@ impl<'a> Default for PaneSurfaceSnapshotArgs<'a> {
       metadata: None,
       styles: None,
       rows_data: None,
+      colors: None,
     }
   }
 }
@@ -2212,6 +2224,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfaceSnapshotBuilder<'a
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneSurfaceSnapshot::VT_ROWS_DATA, rows_data);
   }
   #[inline]
+  pub fn add_colors(&mut self, colors: ::flatbuffers::WIPOffset<TerminalColorState<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalColorState>>(PaneSurfaceSnapshot::VT_COLORS, colors);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PaneSurfaceSnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     PaneSurfaceSnapshotBuilder {
@@ -2239,6 +2255,7 @@ impl ::core::fmt::Debug for PaneSurfaceSnapshot<'_> {
       ds.field("metadata", &self.metadata());
       ds.field("styles", &self.styles());
       ds.field("rows_data", &self.rows_data());
+      ds.field("colors", &self.colors());
       ds.finish()
   }
 }
@@ -2266,6 +2283,7 @@ impl<'a> PaneSurfacePatch<'a> {
   pub const VT_CURSOR: ::flatbuffers::VOffsetT = 14;
   pub const VT_MODES: ::flatbuffers::VOffsetT = 16;
   pub const VT_METADATA: ::flatbuffers::VOffsetT = 18;
+  pub const VT_COLORS: ::flatbuffers::VOffsetT = 20;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2279,6 +2297,7 @@ impl<'a> PaneSurfacePatch<'a> {
     let mut builder = PaneSurfacePatchBuilder::new(_fbb);
     builder.add_version(args.version);
     builder.add_base_version(args.base_version);
+    if let Some(x) = args.colors { builder.add_colors(x); }
     if let Some(x) = args.metadata { builder.add_metadata(x); }
     if let Some(x) = args.modes { builder.add_modes(x); }
     if let Some(x) = args.cursor { builder.add_cursor(x); }
@@ -2345,6 +2364,13 @@ impl<'a> PaneSurfacePatch<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>(PaneSurfacePatch::VT_METADATA, None)}
   }
+  #[inline]
+  pub fn colors(&self) -> Option<TerminalColorState<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalColorState>>(PaneSurfacePatch::VT_COLORS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for PaneSurfacePatch<'_> {
@@ -2361,6 +2387,7 @@ impl ::flatbuffers::Verifiable for PaneSurfacePatch<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<CursorState>>("cursor", Self::VT_CURSOR, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<TerminalModeState>>("modes", Self::VT_MODES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>("metadata", Self::VT_METADATA, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<TerminalColorState>>("colors", Self::VT_COLORS, false)?
      .finish();
     Ok(())
   }
@@ -2374,6 +2401,7 @@ pub struct PaneSurfacePatchArgs<'a> {
     pub cursor: Option<::flatbuffers::WIPOffset<CursorState<'a>>>,
     pub modes: Option<::flatbuffers::WIPOffset<TerminalModeState<'a>>>,
     pub metadata: Option<::flatbuffers::WIPOffset<TerminalMetadataState<'a>>>,
+    pub colors: Option<::flatbuffers::WIPOffset<TerminalColorState<'a>>>,
 }
 impl<'a> Default for PaneSurfacePatchArgs<'a> {
   #[inline]
@@ -2387,6 +2415,7 @@ impl<'a> Default for PaneSurfacePatchArgs<'a> {
       cursor: None,
       modes: None,
       metadata: None,
+      colors: None,
     }
   }
 }
@@ -2429,6 +2458,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfacePatchBuilder<'a, '
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalMetadataState>>(PaneSurfacePatch::VT_METADATA, metadata);
   }
   #[inline]
+  pub fn add_colors(&mut self, colors: ::flatbuffers::WIPOffset<TerminalColorState<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalColorState>>(PaneSurfacePatch::VT_COLORS, colors);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PaneSurfacePatchBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     PaneSurfacePatchBuilder {
@@ -2454,6 +2487,7 @@ impl ::core::fmt::Debug for PaneSurfacePatch<'_> {
       ds.field("cursor", &self.cursor());
       ds.field("modes", &self.modes());
       ds.field("metadata", &self.metadata());
+      ds.field("colors", &self.colors());
       ds.finish()
   }
 }
@@ -2929,6 +2963,170 @@ impl ::core::fmt::Debug for TerminalMetadataState<'_> {
     let mut ds = f.debug_struct("TerminalMetadataState");
       ds.field("title", &self.title());
       ds.field("working_directory", &self.working_directory());
+      ds.finish()
+  }
+}
+pub enum TerminalColorStateOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct TerminalColorState<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for TerminalColorState<'a> {
+  type Inner = TerminalColorState<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> TerminalColorState<'a> {
+  pub const VT_DEFAULT_FG_RGBA: ::flatbuffers::VOffsetT = 4;
+  pub const VT_DEFAULT_BG_RGBA: ::flatbuffers::VOffsetT = 6;
+  pub const VT_CURSOR_RGBA: ::flatbuffers::VOffsetT = 8;
+  pub const VT_CURSOR_RGBA_SET: ::flatbuffers::VOffsetT = 10;
+  pub const VT_PALETTE_RGBA: ::flatbuffers::VOffsetT = 12;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    TerminalColorState { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args TerminalColorStateArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<TerminalColorState<'bldr>> {
+    let mut builder = TerminalColorStateBuilder::new(_fbb);
+    if let Some(x) = args.palette_rgba { builder.add_palette_rgba(x); }
+    builder.add_cursor_rgba(args.cursor_rgba);
+    builder.add_default_bg_rgba(args.default_bg_rgba);
+    builder.add_default_fg_rgba(args.default_fg_rgba);
+    builder.add_cursor_rgba_set(args.cursor_rgba_set);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn default_fg_rgba(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(TerminalColorState::VT_DEFAULT_FG_RGBA, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn default_bg_rgba(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(TerminalColorState::VT_DEFAULT_BG_RGBA, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn cursor_rgba(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(TerminalColorState::VT_CURSOR_RGBA, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn cursor_rgba_set(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(TerminalColorState::VT_CURSOR_RGBA_SET, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn palette_rgba(&self) -> Option<::flatbuffers::Vector<'a, u32>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, u32>>>(TerminalColorState::VT_PALETTE_RGBA, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for TerminalColorState<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u32>("default_fg_rgba", Self::VT_DEFAULT_FG_RGBA, false)?
+     .visit_field::<u32>("default_bg_rgba", Self::VT_DEFAULT_BG_RGBA, false)?
+     .visit_field::<u32>("cursor_rgba", Self::VT_CURSOR_RGBA, false)?
+     .visit_field::<bool>("cursor_rgba_set", Self::VT_CURSOR_RGBA_SET, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, u32>>>("palette_rgba", Self::VT_PALETTE_RGBA, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct TerminalColorStateArgs<'a> {
+    pub default_fg_rgba: u32,
+    pub default_bg_rgba: u32,
+    pub cursor_rgba: u32,
+    pub cursor_rgba_set: bool,
+    pub palette_rgba: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u32>>>,
+}
+impl<'a> Default for TerminalColorStateArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    TerminalColorStateArgs {
+      default_fg_rgba: 0,
+      default_bg_rgba: 0,
+      cursor_rgba: 0,
+      cursor_rgba_set: false,
+      palette_rgba: None,
+    }
+  }
+}
+
+pub struct TerminalColorStateBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> TerminalColorStateBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_default_fg_rgba(&mut self, default_fg_rgba: u32) {
+    self.fbb_.push_slot::<u32>(TerminalColorState::VT_DEFAULT_FG_RGBA, default_fg_rgba, 0);
+  }
+  #[inline]
+  pub fn add_default_bg_rgba(&mut self, default_bg_rgba: u32) {
+    self.fbb_.push_slot::<u32>(TerminalColorState::VT_DEFAULT_BG_RGBA, default_bg_rgba, 0);
+  }
+  #[inline]
+  pub fn add_cursor_rgba(&mut self, cursor_rgba: u32) {
+    self.fbb_.push_slot::<u32>(TerminalColorState::VT_CURSOR_RGBA, cursor_rgba, 0);
+  }
+  #[inline]
+  pub fn add_cursor_rgba_set(&mut self, cursor_rgba_set: bool) {
+    self.fbb_.push_slot::<bool>(TerminalColorState::VT_CURSOR_RGBA_SET, cursor_rgba_set, false);
+  }
+  #[inline]
+  pub fn add_palette_rgba(&mut self, palette_rgba: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , u32>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(TerminalColorState::VT_PALETTE_RGBA, palette_rgba);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> TerminalColorStateBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    TerminalColorStateBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<TerminalColorState<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for TerminalColorState<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("TerminalColorState");
+      ds.field("default_fg_rgba", &self.default_fg_rgba());
+      ds.field("default_bg_rgba", &self.default_bg_rgba());
+      ds.field("cursor_rgba", &self.cursor_rgba());
+      ds.field("cursor_rgba_set", &self.cursor_rgba_set());
+      ds.field("palette_rgba", &self.palette_rgba());
       ds.finish()
   }
 }
@@ -4803,6 +5001,7 @@ impl<'a> ScrollbackChunk<'a> {
   pub const VT_TOTAL_LINES: ::flatbuffers::VOffsetT = 10;
   pub const VT_ROWS: ::flatbuffers::VOffsetT = 12;
   pub const VT_STYLES: ::flatbuffers::VOffsetT = 14;
+  pub const VT_COLORS: ::flatbuffers::VOffsetT = 16;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -4817,6 +5016,7 @@ impl<'a> ScrollbackChunk<'a> {
     builder.add_total_lines(args.total_lines);
     builder.add_start_line(args.start_line);
     builder.add_scrollback_version(args.scrollback_version);
+    if let Some(x) = args.colors { builder.add_colors(x); }
     if let Some(x) = args.styles { builder.add_styles(x); }
     if let Some(x) = args.rows { builder.add_rows(x); }
     if let Some(x) = args.pane_id { builder.add_pane_id(x); }
@@ -4866,6 +5066,13 @@ impl<'a> ScrollbackChunk<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style>>>>(ScrollbackChunk::VT_STYLES, None)}
   }
+  #[inline]
+  pub fn colors(&self) -> Option<TerminalColorState<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalColorState>>(ScrollbackChunk::VT_COLORS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for ScrollbackChunk<'_> {
@@ -4880,6 +5087,7 @@ impl ::flatbuffers::Verifiable for ScrollbackChunk<'_> {
      .visit_field::<u64>("total_lines", Self::VT_TOTAL_LINES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ScrollbackRow>>>>("rows", Self::VT_ROWS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Style>>>>("styles", Self::VT_STYLES, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<TerminalColorState>>("colors", Self::VT_COLORS, false)?
      .finish();
     Ok(())
   }
@@ -4891,6 +5099,7 @@ pub struct ScrollbackChunkArgs<'a> {
     pub total_lines: u64,
     pub rows: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ScrollbackRow<'a>>>>>,
     pub styles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>>>,
+    pub colors: Option<::flatbuffers::WIPOffset<TerminalColorState<'a>>>,
 }
 impl<'a> Default for ScrollbackChunkArgs<'a> {
   #[inline]
@@ -4902,6 +5111,7 @@ impl<'a> Default for ScrollbackChunkArgs<'a> {
       total_lines: 0,
       rows: None,
       styles: None,
+      colors: None,
     }
   }
 }
@@ -4936,6 +5146,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackChunkBuilder<'a, 'b
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackChunk::VT_STYLES, styles);
   }
   #[inline]
+  pub fn add_colors(&mut self, colors: ::flatbuffers::WIPOffset<TerminalColorState<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalColorState>>(ScrollbackChunk::VT_COLORS, colors);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackChunkBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     ScrollbackChunkBuilder {
@@ -4959,6 +5173,7 @@ impl ::core::fmt::Debug for ScrollbackChunk<'_> {
       ds.field("total_lines", &self.total_lines());
       ds.field("rows", &self.rows());
       ds.field("styles", &self.styles());
+      ds.field("colors", &self.colors());
       ds.finish()
   }
 }

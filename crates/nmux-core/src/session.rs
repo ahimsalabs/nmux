@@ -3,8 +3,8 @@ use nmux_proto::{PROTOCOL_VERSION, protocol};
 
 use crate::host::{CommandSpec, HostSpec};
 use crate::terminal::{
-    CellRun, InterimTextTerminalEngine, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput,
-    TerminalModes,
+    CellRun, InterimTextTerminalEngine, PaneStyle, TerminalColors, TerminalCursor, TerminalEngine,
+    TerminalInput, TerminalModes,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +63,7 @@ pub struct Pane {
     pub modes: TerminalModes,
     pub terminal_title: String,
     pub terminal_working_directory: String,
+    pub colors: TerminalColors,
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
@@ -87,6 +88,7 @@ pub struct PaneSurface {
     pub modes: TerminalModes,
     pub title: String,
     pub working_directory: String,
+    pub colors: TerminalColors,
     pub styles: Vec<PaneStyle>,
     pub lines: Vec<String>,
     pub row_runs: Vec<Vec<CellRun>>,
@@ -100,6 +102,7 @@ pub struct PaneScrollback {
     pub pane_id: String,
     pub version: u64,
     pub styles: Vec<PaneStyle>,
+    pub colors: TerminalColors,
     pub lines: Vec<String>,
     pub row_runs: Vec<Vec<CellRun>>,
     pub semantic_prompts: Vec<protocol::RowSemanticPrompt>,
@@ -147,6 +150,7 @@ impl Session {
                     modes: TerminalModes::default(),
                     terminal_title: String::new(),
                     terminal_working_directory: String::new(),
+                    colors: TerminalColors::default(),
                     styles: vec![PaneStyle::default()],
                     surface_lines: vec![
                         "nmux pane-1".to_owned(),
@@ -226,6 +230,7 @@ impl Session {
             modes: pane.modes,
             title: &pane.terminal_title,
             working_directory: &pane.terminal_working_directory,
+            colors: pane.colors.clone(),
             surface_lines: &pane.surface_lines,
             surface_semantic_prompts: &pane.surface_semantic_prompts,
             surface_dirty_rows: &pane.surface_dirty_rows,
@@ -270,6 +275,7 @@ impl Session {
             modes: pane.modes,
             title: &pane.terminal_title,
             working_directory: &pane.terminal_working_directory,
+            colors: pane.colors.clone(),
             surface_lines: &pane.surface_lines,
             surface_semantic_prompts: &pane.surface_semantic_prompts,
             surface_dirty_rows: &pane.surface_dirty_rows,
@@ -419,6 +425,7 @@ impl Session {
             modes: pane.modes,
             title: pane.terminal_title.clone(),
             working_directory: pane.terminal_working_directory.clone(),
+            colors: pane.colors.clone(),
             styles: pane.styles.clone(),
             lines: pane.surface_lines.clone(),
             row_runs: row_runs_for_lines(&pane.surface_lines, &pane.surface_row_runs),
@@ -444,6 +451,7 @@ impl Session {
             pane_id: pane.id.clone(),
             version: pane.scrollback_version,
             styles: pane.styles.clone(),
+            colors: pane.colors.clone(),
             lines: pane.scrollback_lines.clone(),
             row_runs: row_runs_for_lines(&pane.scrollback_lines, &pane.scrollback_row_runs),
             semantic_prompts: row_semantic_prompts_for_lines(
@@ -590,6 +598,7 @@ impl Session {
         let modes = build_terminal_modes(&mut builder, surface.modes);
         let metadata =
             build_terminal_metadata(&mut builder, &surface.title, &surface.working_directory);
+        let colors = build_terminal_colors(&mut builder, &surface.colors);
         let pane_id = builder.create_string(&surface.pane_id);
         let snapshot = protocol::PaneSurfaceSnapshot::create(
             &mut builder,
@@ -602,6 +611,7 @@ impl Session {
                 cursor: Some(cursor),
                 modes: Some(modes),
                 metadata: Some(metadata),
+                colors: Some(colors),
                 styles: Some(styles),
                 rows_data: Some(rows_data),
             },
@@ -704,6 +714,7 @@ impl Session {
         let modes = build_terminal_modes(&mut builder, surface.modes);
         let metadata =
             build_terminal_metadata(&mut builder, &surface.title, &surface.working_directory);
+        let colors = build_terminal_colors(&mut builder, &surface.colors);
         let pane_id = builder.create_string(&surface.pane_id);
         let patch = protocol::PaneSurfacePatch::create(
             &mut builder,
@@ -716,6 +727,7 @@ impl Session {
                 cursor: Some(cursor),
                 modes: Some(modes),
                 metadata: Some(metadata),
+                colors: Some(colors),
             },
         );
 
@@ -815,6 +827,7 @@ impl Session {
             ));
         }
         let styles = builder.create_vector(&style_offsets);
+        let colors = build_terminal_colors(&mut builder, &scrollback.colors);
         let pane_id = builder.create_string(&scrollback.pane_id);
         let chunk = protocol::ScrollbackChunk::create(
             &mut builder,
@@ -825,6 +838,7 @@ impl Session {
                 total_lines: scrollback.lines.len() as u64,
                 rows: Some(rows),
                 styles: Some(styles),
+                colors: Some(colors),
             },
         );
 
@@ -1396,6 +1410,23 @@ fn build_terminal_metadata<'a>(
     )
 }
 
+fn build_terminal_colors<'a>(
+    builder: &mut FlatBufferBuilder<'a>,
+    colors: &TerminalColors,
+) -> flatbuffers::WIPOffset<protocol::TerminalColorState<'a>> {
+    let palette_rgba = builder.create_vector(&colors.palette_rgba);
+    protocol::TerminalColorState::create(
+        builder,
+        &protocol::TerminalColorStateArgs {
+            default_fg_rgba: colors.default_fg_rgba,
+            default_bg_rgba: colors.default_bg_rgba,
+            cursor_rgba: colors.cursor_rgba,
+            cursor_rgba_set: colors.cursor_rgba_set,
+            palette_rgba: Some(palette_rgba),
+        },
+    )
+}
+
 fn apply_terminal_update(
     pane: &mut Pane,
     update: crate::terminal::TerminalUpdate,
@@ -1424,6 +1455,7 @@ fn apply_terminal_update(
     let modes_changed = pane.modes != update.modes;
     let title_changed = pane.terminal_title != update.title;
     let working_directory_changed = pane.terminal_working_directory != update.working_directory;
+    let colors_changed = pane.colors != update.colors;
     let rows_changed = pane.surface_lines != update.surface_lines;
     let surface_kind_changed = pane.surface != update.surface;
     let styles_changed = pane.styles != update.styles;
@@ -1451,7 +1483,8 @@ fn apply_terminal_update(
         || pane.cursor != cursor
         || modes_changed
         || title_changed
-        || working_directory_changed;
+        || working_directory_changed
+        || colors_changed;
     let scrollback_changed = pane.scrollback_lines != update.scrollback_lines
         || pane.scrollback_row_runs != scrollback_row_runs
         || pane.scrollback_semantic_prompts != scrollback_semantic_prompts
@@ -1467,6 +1500,7 @@ fn apply_terminal_update(
     pane.modes = update.modes;
     pane.terminal_title = update.title;
     pane.terminal_working_directory = update.working_directory;
+    pane.colors = update.colors;
     pane.styles = update.styles;
     pane.surface_lines = update.surface_lines;
     pane.surface_row_runs = surface_row_runs;
@@ -1491,6 +1525,7 @@ fn apply_terminal_update(
             surface_kind_changed,
             styles_changed,
             modes_changed,
+            colors_changed,
         );
         pane.last_row_update_indices = if pane.last_patch_kind == protocol::PatchKind::ReplaceRows {
             row_update_indices
@@ -1512,8 +1547,9 @@ fn terminal_patch_kind(
     surface_kind_changed: bool,
     styles_changed: bool,
     modes_changed: bool,
+    colors_changed: bool,
 ) -> protocol::PatchKind {
-    if surface_kind_changed || styles_changed {
+    if surface_kind_changed || styles_changed || colors_changed {
         protocol::PatchKind::FullRefreshRequired
     } else if rows_changed
         || row_runs_changed
@@ -1652,8 +1688,8 @@ fn build_cell_run<'a>(
 mod tests {
     use crate::host::HostKind;
     use crate::terminal::{
-        CellRun, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput, TerminalModes,
-        TerminalUpdate,
+        CellRun, PaneStyle, TerminalColors, TerminalCursor, TerminalEngine, TerminalInput,
+        TerminalModes, TerminalUpdate,
     };
 
     use nmux_proto::{PROTOCOL_VERSION, protocol};
@@ -1901,6 +1937,13 @@ mod tests {
     fn pane_surface_frame_preserves_stored_cell_runs_and_styles() {
         let mut session = Session::initial();
         let pane = session.pane_mut("pane-1").expect("pane");
+        pane.colors = TerminalColors {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x111111ff,
+            cursor_rgba: 0xff00ffff,
+            cursor_rgba_set: true,
+            palette_rgba: vec![0x000000ff, 0x112233ff],
+        };
         pane.styles.push(PaneStyle {
             fg_rgba: 0xff00_0000,
             bg_rgba: 0,
@@ -1928,6 +1971,14 @@ mod tests {
         assert_eq!(styles.len(), 2);
         assert_eq!(styles.get(1).fg_rgba(), 0xff00_0000);
         assert_eq!(styles.get(1).flags(), 1);
+        let colors = snapshot.colors().expect("colors");
+        assert_eq!(colors.default_fg_rgba(), 0xeeeeeeff);
+        assert_eq!(colors.default_bg_rgba(), 0x111111ff);
+        assert_eq!(colors.cursor_rgba(), 0xff00ffff);
+        assert!(colors.cursor_rgba_set());
+        let palette = colors.palette_rgba().expect("palette");
+        assert_eq!(palette.len(), 2);
+        assert_eq!(palette.get(1), 0x112233ff);
 
         let rows = snapshot.rows_data().expect("rows");
         let runs = rows.get(0).runs().expect("runs");
@@ -2143,6 +2194,13 @@ mod tests {
     fn scrollback_chunk_frame_preserves_stored_cell_runs_and_styles() {
         let mut session = Session::initial();
         let pane = session.pane_mut("pane-1").expect("pane");
+        pane.colors = TerminalColors {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x111111ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: vec![0x000000ff, 0x445566ff],
+        };
         pane.styles.push(PaneStyle {
             fg_rgba: 0xff00_0000,
             bg_rgba: 0,
@@ -2172,6 +2230,13 @@ mod tests {
         assert_eq!(styles.len(), 2);
         assert_eq!(styles.get(1).fg_rgba(), 0xff00_0000);
         assert_eq!(styles.get(1).flags(), 1);
+        let colors = chunk.colors().expect("colors");
+        assert_eq!(colors.default_fg_rgba(), 0xeeeeeeff);
+        assert_eq!(colors.default_bg_rgba(), 0x111111ff);
+        assert_eq!(colors.cursor_rgba(), 0);
+        assert!(!colors.cursor_rgba_set());
+        let palette = colors.palette_rgba().expect("palette");
+        assert_eq!(palette.get(1), 0x445566ff);
 
         let rows = chunk.rows().expect("rows");
         let runs = rows.get(0).runs().expect("runs");
@@ -2904,6 +2969,7 @@ mod tests {
                     modes: input.modes,
                     title: input.title.to_owned(),
                     working_directory: input.working_directory.to_owned(),
+                    colors: input.colors.clone(),
                     styles: vec![
                         PaneStyle::default(),
                         PaneStyle {
@@ -2977,6 +3043,7 @@ mod tests {
                     modes: input.modes,
                     title: input.title.to_owned(),
                     working_directory: input.working_directory.to_owned(),
+                    colors: input.colors.clone(),
                     styles: vec![PaneStyle::default()],
                     surface_lines: input.surface_lines.to_vec(),
                     surface_row_runs: input
@@ -3075,6 +3142,118 @@ mod tests {
         let modes = patch.modes().expect("modes");
         assert!(modes.bracketed_paste());
         assert!(modes.wraparound());
+    }
+
+    #[test]
+    fn color_state_change_requires_full_refresh_patch() {
+        struct ColorOnlyEngine;
+
+        impl TerminalEngine for ColorOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"color only");
+                let mut update = TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                );
+                update.modes = input.modes;
+                update.title = input.title.to_owned();
+                update.working_directory = input.working_directory.to_owned();
+                update.colors = TerminalColors {
+                    default_fg_rgba: 0xeeeeeeff,
+                    default_bg_rgba: 0x111111ff,
+                    cursor_rgba: 0xff00ffff,
+                    cursor_rgba_set: true,
+                    palette_rgba: vec![0x000000ff, 0x112233ff],
+                };
+                Some(update)
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = ColorOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"color only", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::FullRefreshRequired)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::FullRefreshRequired);
+        let colors = patch.colors().expect("colors");
+        assert_eq!(colors.default_fg_rgba(), 0xeeeeeeff);
+        assert_eq!(colors.default_bg_rgba(), 0x111111ff);
+        assert_eq!(colors.cursor_rgba(), 0xff00ffff);
+        assert!(colors.cursor_rgba_set());
+    }
+
+    #[test]
+    fn color_state_change_with_row_changes_requires_full_refresh_patch() {
+        struct ColorAndRowsEngine;
+
+        impl TerminalEngine for ColorAndRowsEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"color and rows");
+                let mut update = TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    vec!["repaint with new palette".to_owned()],
+                    input.scrollback_lines.to_vec(),
+                );
+                update.modes = input.modes;
+                update.title = input.title.to_owned();
+                update.working_directory = input.working_directory.to_owned();
+                update.colors = TerminalColors {
+                    default_fg_rgba: 0xeeeeeeff,
+                    default_bg_rgba: 0x111111ff,
+                    cursor_rgba: 0,
+                    cursor_rgba_set: false,
+                    palette_rgba: vec![0x000000ff, 0x112233ff],
+                };
+                Some(update)
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = ColorAndRowsEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"color and rows", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::FullRefreshRequired)
+        );
     }
 
     #[test]
