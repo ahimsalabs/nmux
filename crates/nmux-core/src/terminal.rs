@@ -1001,6 +1001,36 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_safe_api_tracks_mouse_tracking_modes() {
+        use libghostty_vt::{Terminal, TerminalOptions};
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+
+        assert!(!terminal.is_mouse_tracking().expect("mouse tracking"));
+
+        terminal.vt_write(b"\x1b[?1000h");
+        assert!(terminal.is_mouse_tracking().expect("mouse tracking"));
+        terminal.vt_write(b"\x1b[?1000l");
+        assert!(!terminal.is_mouse_tracking().expect("mouse tracking"));
+
+        terminal.vt_write(b"\x1b[?1002h");
+        assert!(terminal.is_mouse_tracking().expect("mouse tracking"));
+        terminal.vt_write(b"\x1b[?1002l");
+        assert!(!terminal.is_mouse_tracking().expect("mouse tracking"));
+
+        terminal.vt_write(b"\x1b[?1003h");
+        assert!(terminal.is_mouse_tracking().expect("mouse tracking"));
+        terminal.vt_write(b"\x1b[?1003l");
+        assert!(!terminal.is_mouse_tracking().expect("mouse tracking"));
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_emits_cursor_only_patch_for_cursor_movement() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();

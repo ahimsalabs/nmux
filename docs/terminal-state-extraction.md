@@ -72,11 +72,11 @@ only after the backend extraction proves the exact shape needed.
   by `libghostty-vt` extraction tests and represented as per-cell run widths.
   Emoji clusters, zero-width continuations, and ambiguous-width policy still
   need broader tests and protocol guidance.
-- Terminal modes: `libghostty-vt` tracks bracketed paste mode through its safe
-  API and can derive key encoder behavior from terminal modes such as
-  application cursor keys, but nmux has no mode fields yet. Origin mode, wrap
-  mode, keypad mode, cursor blink, and the client-visible shape of mode updates
-  still need protocol decisions.
+- Terminal modes: `libghostty-vt` tracks bracketed paste and mouse tracking
+  modes through its safe API and can derive key encoder behavior from terminal
+  modes such as application cursor keys, but nmux has no mode fields yet.
+  Origin mode, wrap mode, keypad mode, cursor blink, mouse input forwarding,
+  and the client-visible shape of mode updates still need protocol decisions.
 - Alternate screen: `libghostty-vt` extraction tests cover entry into the
   alternate buffer and restoration of the primary buffer. Alternate scrollback
   behavior still needs protocol guidance.

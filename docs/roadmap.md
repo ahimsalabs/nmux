@@ -106,6 +106,7 @@ Done:
 - `libghostty-vt` extraction tests now cover combining marks as preserved run text with per-cell widths, alongside existing double-width cell coverage.
 - OSC 8 hyperlink text is preserved while `hyperlink_id` remains unset until nmux has a real hyperlink table.
 - The `libghostty-vt` safe API is now tested for bracketed paste mode tracking, while nmux still withholds mode fields until the protocol shape is explicit.
+- The `libghostty-vt` safe API is now tested for mouse tracking modes, while mouse input forwarding remains a protocol/frontend boundary decision.
 - The `libghostty-vt` key encoder is tested against terminal application-cursor mode, documenting the future frontend path for mode-aware key encoding without raw PTY replay.
 - Persisted `nmux --state` files now retain cached row runs and style tables alongside fallback row text, while still accepting older text-only state files as default-style rows.
 - Client-side scrollback decoding now retains `ScrollbackRow` runs alongside rendered fallback text.
