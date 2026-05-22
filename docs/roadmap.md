@@ -105,6 +105,7 @@ Done:
 - Cursor-only `libghostty-vt` patches now cover cursor movement, visibility changes, and DECSCUSR visual shape changes.
 - `libghostty-vt` extraction tests now cover alternate-screen entry and restoration to the main screen.
 - Palette-indexed SGR colors now have `libghostty-vt` extraction coverage proving they resolve into RGBA style-table entries.
+- `libghostty-vt` render-state colors are tested as backend-observable default foreground/background and palette state, while nmux still withholds default-color protocol fields.
 - `libghostty-vt` extraction tests now cover combining marks and emoji ZWJ clusters as preserved run text with per-cell widths, alongside existing double-width cell coverage.
 - OSC 8 hyperlink text is preserved while `hyperlink_id` remains unset until nmux has a real hyperlink table.
 - The `libghostty-vt` safe API is now tested for bracketed paste mode tracking, while nmux still withholds mode fields until the protocol shape is explicit.
