@@ -1080,6 +1080,30 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_safe_api_tracks_origin_and_wrap_modes() {
+        use libghostty_vt::{Terminal, TerminalOptions, terminal::Mode};
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+
+        assert!(!terminal.mode(Mode::ORIGIN).expect("origin mode"));
+        assert!(terminal.mode(Mode::WRAPAROUND).expect("wrap mode"));
+
+        terminal.vt_write(b"\x1b[?6h\x1b[?7l");
+        assert!(terminal.mode(Mode::ORIGIN).expect("origin mode"));
+        assert!(!terminal.mode(Mode::WRAPAROUND).expect("wrap mode"));
+
+        terminal.vt_write(b"\x1b[?6l\x1b[?7h");
+        assert!(!terminal.mode(Mode::ORIGIN).expect("origin mode"));
+        assert!(terminal.mode(Mode::WRAPAROUND).expect("wrap mode"));
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_safe_api_tracks_mouse_tracking_modes() {
         use libghostty_vt::{Terminal, TerminalOptions};
 

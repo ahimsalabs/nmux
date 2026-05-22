@@ -109,6 +109,7 @@ Done:
 - The `libghostty-vt` safe API is now tested for bracketed paste mode tracking, while nmux still withholds mode fields until the protocol shape is explicit.
 - The `libghostty-vt` safe API is now tested for mouse tracking modes, while mouse input forwarding remains a protocol/frontend boundary decision.
 - The `libghostty-vt` safe API is now tested for application keypad mode tracking, while keypad input forwarding remains a protocol/frontend boundary decision.
+- The `libghostty-vt` safe API is now tested for origin and wraparound modes, while nmux still withholds mode fields until the protocol shape is explicit.
 - `libghostty-vt` render-state cursor blinking is tested as backend-observable state, but remains withheld until nmux has cursor metadata fields.
 - The `libghostty-vt` key encoder is tested against terminal application-cursor mode, documenting the future frontend path for mode-aware key encoding without raw PTY replay.
 - Persisted `nmux --state` files now retain cached row runs and style tables alongside fallback row text, while still accepting older text-only state files as default-style rows.

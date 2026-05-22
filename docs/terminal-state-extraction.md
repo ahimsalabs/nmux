@@ -72,11 +72,11 @@ only after the backend extraction proves the exact shape needed.
   by `libghostty-vt` extraction tests and represented as per-cell run widths.
   Emoji clusters, zero-width continuations, and ambiguous-width policy still
   need broader tests and protocol guidance.
-- Terminal modes: `libghostty-vt` tracks bracketed paste, mouse tracking, and
-  application keypad modes through its safe API and can derive key encoder
-  behavior from terminal modes such as application cursor keys. Its render state
-  also exposes cursor blink state, but nmux has no mode or cursor-metadata
-  fields yet. Origin mode, wrap mode, keypad input forwarding, mouse input
+- Terminal modes: `libghostty-vt` tracks bracketed paste, mouse tracking,
+  application keypad, origin, and wraparound modes through its safe API and can
+  derive key encoder behavior from terminal modes such as application cursor
+  keys. Its render state also exposes cursor blink state, but nmux has no mode
+  or cursor-metadata fields yet. Keypad input forwarding, mouse input
   forwarding, and the client-visible shape of mode updates still need protocol
   decisions.
 - Alternate screen: `libghostty-vt` extraction tests cover entry into the
@@ -120,5 +120,6 @@ cursor-only updates, cursor visibility/shape extraction, backend-observable
 cursor blink state, alternate-screen entry/restoration, resize/reflow, styled
 backend-owned scrollback extraction, and safe-API mode tracking for bracketed
 paste, mouse tracking, and application keypad mode through unit, session, and
-live CLI smoke coverage. It is not the default until the project deliberately
-accepts the native Zig/Ghostty build cost in normal development and CI.
+origin/wraparound modes through unit, session, and live CLI smoke coverage. It
+is not the default until the project deliberately accepts the native
+Zig/Ghostty build cost in normal development and CI.
