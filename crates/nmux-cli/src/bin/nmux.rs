@@ -1084,7 +1084,7 @@ Options:
   --socket PATH              Unix socket path
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send for read-write attach
-  --key-name NAME            Send keypad-enter, keypad-0..9, or arrow keys in live mode
+  --key-name NAME            Send a supported named key in live mode
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send a focus event in live mode when reporting is enabled
   --mouse A:B:R:C            Send mouse press/release/motion in live mode
@@ -1174,9 +1174,29 @@ fn parse_key_name(value: &str) -> Result<String, &'static str> {
         "arrow-down" => Ok("arrow-down".to_owned()),
         "arrow-right" => Ok("arrow-right".to_owned()),
         "arrow-left" => Ok("arrow-left".to_owned()),
-        _ => Err(
-            "--key-name requires keypad-enter, keypad-0..9, or arrow-up|arrow-down|arrow-right|arrow-left",
-        ),
+        "enter" => Ok("enter".to_owned()),
+        "tab" => Ok("tab".to_owned()),
+        "backspace" => Ok("backspace".to_owned()),
+        "escape" => Ok("escape".to_owned()),
+        "insert" => Ok("insert".to_owned()),
+        "delete" => Ok("delete".to_owned()),
+        "home" => Ok("home".to_owned()),
+        "end" => Ok("end".to_owned()),
+        "page-up" => Ok("page-up".to_owned()),
+        "page-down" => Ok("page-down".to_owned()),
+        "f1" => Ok("f1".to_owned()),
+        "f2" => Ok("f2".to_owned()),
+        "f3" => Ok("f3".to_owned()),
+        "f4" => Ok("f4".to_owned()),
+        "f5" => Ok("f5".to_owned()),
+        "f6" => Ok("f6".to_owned()),
+        "f7" => Ok("f7".to_owned()),
+        "f8" => Ok("f8".to_owned()),
+        "f9" => Ok("f9".to_owned()),
+        "f10" => Ok("f10".to_owned()),
+        "f11" => Ok("f11".to_owned()),
+        "f12" => Ok("f12".to_owned()),
+        _ => Err("--key-name requires a supported named key"),
     }
 }
 
@@ -1394,7 +1414,11 @@ mod tests {
         assert_eq!(parse_key_name("keypad-9"), Ok("numpad-9".to_owned()));
         assert_eq!(parse_key_name("arrow-up"), Ok("arrow-up".to_owned()));
         assert_eq!(parse_key_name("arrow-left"), Ok("arrow-left".to_owned()));
-        assert!(parse_key_name("enter").is_err());
+        assert_eq!(parse_key_name("enter"), Ok("enter".to_owned()));
+        assert_eq!(parse_key_name("delete"), Ok("delete".to_owned()));
+        assert_eq!(parse_key_name("page-down"), Ok("page-down".to_owned()));
+        assert_eq!(parse_key_name("f12"), Ok("f12".to_owned()));
+        assert!(parse_key_name("f13").is_err());
     }
 
     #[test]

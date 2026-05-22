@@ -87,9 +87,10 @@ only after the backend extraction proves the exact shape needed.
   bracketed paste and rejecting embedded terminators before forwarding.
   Local clients also forward focus gained/lost input through `FocusInput` only
   when the daemon-owned pane mode reports focus reporting enabled.
-  Local clients forward keypad Enter and digit key names through daemon-owned
-  application-keypad mode encoding, and arrow key names through daemon-owned
-  application-cursor mode encoding. Local clients forward explicit mouse
+  Local clients forward common named keys for Enter, Tab, Backspace, Escape,
+  Insert/Delete, Home/End, PageUp/PageDown, and F1-F12; keypad Enter and digit
+  key names through daemon-owned application-keypad mode encoding; and arrow key
+  names through daemon-owned application-cursor mode encoding. Local clients forward explicit mouse
   press/release/motion input only when the daemon-owned pane mode reports mouse
   tracking enabled, with bytes encoded by the live pane terminal engine from its
   current terminal mouse mode and format. Broader terminal-derived key

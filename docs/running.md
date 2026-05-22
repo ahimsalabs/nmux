@@ -171,7 +171,7 @@ printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socke
 
 `--stdin-bytes` reads stdin on a background thread and sends available chunks during the live polling loop as `InputKind.RawBytes`. This keeps output polling active even while no complete input line is available. When stdin is an interactive TTY, the client temporarily disables canonical input and local echo for this mode; piped stdin is left untouched. Pass `--local-echo tty` to preserve the TTY's existing echo setting while still using noncanonical byte input. Interactive byte mode also listens for `SIGWINCH` and sends resize intents from the current TTY size unless explicit `--cols` and `--rows` were supplied. When both stdin and stdout are TTYs, byte mode warns once on stderr that the interim text surface lacks full VT fidelity; piped and scripted runs stay quiet. Press Ctrl-] to detach from a byte-streamed live session; the client reports that local detach on stderr. When unbounded byte-streamed stdin reaches EOF, the client reports `nmux: stdin EOF; detached`.
 
-For explicit live input events, `--paste TEXT`, `--focus gained|lost`, `--key-name keypad-enter|keypad-0..9|arrow-up|arrow-down|arrow-right|arrow-left`, and `--mouse action:button:row:col` send structured input frames instead of raw text. Mouse actions are `press`, `release`, or `motion`; buttons are `none`, `left`, `middle`, `right`, `wheel-up`, or `wheel-down`; row and column are 1-based cells in the CLI and are converted to zero-based protocol coordinates. Focus, keypad, arrow-key, paste, and mouse forwarding are encoded by the daemon from daemon-owned pane modes rather than cached client mode state.
+For explicit live input events, `--paste TEXT`, `--focus gained|lost`, `--key-name NAME`, and `--mouse action:button:row:col` send structured input frames instead of raw text. Named keys include `enter`, `tab`, `backspace`, `escape`, `insert`, `delete`, `home`, `end`, `page-up`, `page-down`, `f1` through `f12`, `keypad-enter`, `keypad-0` through `keypad-9`, and `arrow-up|arrow-down|arrow-right|arrow-left`. Mouse actions are `press`, `release`, or `motion`; buttons are `none`, `left`, `middle`, `right`, `wheel-up`, or `wheel-down`; row and column are 1-based cells in the CLI and are converted to zero-based protocol coordinates. Focus, keypad, arrow-key, paste, and mouse forwarding are encoded by the daemon from daemon-owned pane modes rather than cached client mode state.
 
 For read-only live observation, use `--no-input`:
 
@@ -203,7 +203,7 @@ style flags, underline color, palette-indexed colors, render-state default
 colors/palette, palette overrides, explicit cursor color, terminal title metadata, OSC
 133 row semantic prompt state, bracketed paste, paste safety validation, paste forwarding, mouse
 tracking and mode-gated mouse forwarding, focus reporting and mode-gated focus forwarding, application keypad tracking,
-mode-aware keypad Enter/digit forwarding, mode-aware arrow-key forwarding, explicit encoder output, origin, wraparound mode state, row-level dirty state,
+common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-aware arrow-key forwarding, explicit encoder output, origin, wraparound mode state, row-level dirty state,
 hyperlink presence, Kitty graphics placeholder metadata, mode-aware key
 encoding, and mode-only surface patches. OSC 7 working-directory metadata,
 image placement data, and hyperlink IDs remain intentionally withheld until the

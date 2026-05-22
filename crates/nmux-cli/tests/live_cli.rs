@@ -166,6 +166,56 @@ fn live_cli_forwards_named_keypad_enter_in_normal_mode() {
 }
 
 #[test]
+fn live_cli_forwards_named_delete_key() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "stty -icanon -echo min 4 time 20; printf 'ready\n'; bytes=$(dd bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'delete:%s\n' \"$bytes\"",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--key-name",
+            "delete",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("delete:1b5b337e"),
+        "missing delete key bytes:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_cli_displays_daemon_resize_policy() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

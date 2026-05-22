@@ -2599,6 +2599,28 @@ fn named_key_bytes(
         ("arrow-right", _, true) => b"\x1bOC",
         ("arrow-left", _, false) => b"\x1b[D",
         ("arrow-left", _, true) => b"\x1bOD",
+        ("enter", _, _) => b"\r",
+        ("tab", _, _) => b"\t",
+        ("backspace", _, _) => b"\x7f",
+        ("escape", _, _) => b"\x1b",
+        ("insert", _, _) => b"\x1b[2~",
+        ("delete", _, _) => b"\x1b[3~",
+        ("home", _, _) => b"\x1b[H",
+        ("end", _, _) => b"\x1b[F",
+        ("page-up", _, _) => b"\x1b[5~",
+        ("page-down", _, _) => b"\x1b[6~",
+        ("f1", _, _) => b"\x1bOP",
+        ("f2", _, _) => b"\x1bOQ",
+        ("f3", _, _) => b"\x1bOR",
+        ("f4", _, _) => b"\x1bOS",
+        ("f5", _, _) => b"\x1b[15~",
+        ("f6", _, _) => b"\x1b[17~",
+        ("f7", _, _) => b"\x1b[18~",
+        ("f8", _, _) => b"\x1b[19~",
+        ("f9", _, _) => b"\x1b[20~",
+        ("f10", _, _) => b"\x1b[21~",
+        ("f11", _, _) => b"\x1b[23~",
+        ("f12", _, _) => b"\x1b[24~",
         _ => return Err(format!("unsupported key name: {key_name}").into()),
     };
     Ok(bytes.to_vec())
@@ -4281,6 +4303,50 @@ mod tests {
                 .expect("application arrow"),
             b"\x1bOA"
         );
+    }
+
+    #[test]
+    fn named_key_input_forwards_common_navigation_and_control_keys() {
+        let session = Session::initial();
+        let cases = [
+            ("enter", b"\r".as_slice()),
+            ("tab", b"\t".as_slice()),
+            ("backspace", b"\x7f".as_slice()),
+            ("escape", b"\x1b".as_slice()),
+            ("insert", b"\x1b[2~".as_slice()),
+            ("delete", b"\x1b[3~".as_slice()),
+            ("home", b"\x1b[H".as_slice()),
+            ("end", b"\x1b[F".as_slice()),
+            ("page-up", b"\x1b[5~".as_slice()),
+            ("page-down", b"\x1b[6~".as_slice()),
+            ("f1", b"\x1bOP".as_slice()),
+            ("f4", b"\x1bOS".as_slice()),
+            ("f5", b"\x1b[15~".as_slice()),
+            ("f10", b"\x1b[21~".as_slice()),
+            ("f12", b"\x1b[24~".as_slice()),
+        ];
+
+        for (key_name, expected) in cases {
+            let input = InputSummary {
+                pane_id: "pane-1".to_owned(),
+                actor_id: "actor-1".to_owned(),
+                input_seq: 1,
+                text: String::new(),
+                bytes: Vec::new(),
+                key_name: Some(key_name.to_owned()),
+                mouse: None,
+                requires_focus_reporting: false,
+                requires_mouse_tracking: false,
+            };
+
+            assert_eq!(
+                input
+                    .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+                    .expect("named key"),
+                expected,
+                "wrong bytes for {key_name}"
+            );
+        }
     }
 
     #[test]
