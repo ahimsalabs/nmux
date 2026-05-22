@@ -11,7 +11,8 @@ M0 defines the smallest useful state-sync envelope:
 - `Envelope` for versioning, sequencing, acknowledgements, and body dispatch.
 - `WorkspaceTreeSnapshot` for sessions, tabs, panes, split layout, pane sizes, and resize policy.
 - `PaneSurfaceSnapshot` for a full visible or alternate screen surface.
-- `PaneSurfacePatch` for row, cursor, or mode updates against a known surface version.
+- `PaneSurfacePatch` for row or cursor updates against a known surface version.
+- `ScrollbackFetch` and `ScrollbackChunk` for pane-scoped history ranges.
 - `InputEvent` for key, raw byte, mouse, and paste input from an actor to a pane.
 - `ResizeIntent` for client-originated size requests.
 - `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time.
@@ -27,15 +28,20 @@ This keeps frontend behavior consistent across native, web, mobile, and automati
 
 ## Surface Model
 
-Pane surfaces are encoded as rows of runs:
+Pane surfaces and scrollback chunks are encoded as rows of runs:
 
 - `SurfaceRow` and `RowUpdate` identify rows by index and include a `dirty_hash`.
+- `ScrollbackRow` identifies history rows by absolute scrollback line and includes a `dirty_hash`.
 - `CellRun` stores UTF-8 text, per-cell widths, a style table reference, flags, and an optional hyperlink reference.
-- `Style` is a compact table referenced by run IDs.
+- `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot` objects and `ScrollbackChunk` objects carry the style table needed by their rows.
 
 This avoids freezing a simplistic per-cell ABI before the project has enough implementation feedback about graphemes, combining marks, double-width characters, terminal modes, hyperlinks, and image protocols.
 
-Clients should maintain a pane-surface render state keyed by pane ID and version. A snapshot initializes the local surface buffer, and a patch is applied only when its `base_version` matches the client's current version. Row patches are applied by encoded row index, not by vector order. If a client cannot apply a patch, it must request or wait for a full snapshot instead of replaying raw PTY bytes.
+Clients should maintain a pane-surface render state keyed by pane ID and version. A snapshot initializes the local surface buffer and style table, and a patch is applied only when its `base_version` matches the client's current version. Row patches are applied by encoded row index, not by vector order. Cursor-only patches update cursor state without row updates.
+
+`PaneSurfacePatch` intentionally does not carry a style table. If the daemon's style table changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired` and the client must request or wait for a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
+
+Scrollback is a separate versioned object. Clients request ranges with `ScrollbackFetch`; the daemon replies with `ScrollbackChunk` rows and the corresponding style table for that chunk.
 
 ## Resize Model
 
