@@ -99,6 +99,7 @@ Done:
 - Pane state now preserves `CellRun` and style-table data internally, and snapshots/patches serialize stored runs instead of flattening every row to one default-style string.
 - The optional `libghostty-vt` engine extracts visible rows as style-separated cell runs with cell-width metadata, while keeping plain rendered text available for current clients.
 - Persisted `nmux --state` files now retain cached row runs alongside fallback row text, while still accepting older text-only state files as default-style rows.
+- Client-side scrollback decoding now retains `ScrollbackRow` runs alongside rendered fallback text.
 
 Next:
 

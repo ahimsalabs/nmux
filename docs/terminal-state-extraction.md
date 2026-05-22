@@ -65,8 +65,8 @@ only after the backend extraction proves the exact shape needed.
 
 - Cell style runs: `libghostty-vt` now supplies foreground/background colors,
   basic SGR flags, style identity, and cell widths for visible rows. Scrollback
-  style-table ownership and richer style semantics still need protocol
-  decisions.
+  chunks are decoded as row runs by clients, but scrollback style-table
+  ownership and richer style semantics still need protocol decisions.
 - Grapheme and cell width: double-width cells are represented in run widths.
   Combining marks, emoji clusters, zero-width continuations, and
   ambiguous-width policy still need broader tests and protocol guidance.
@@ -95,6 +95,8 @@ have tests proving:
 - alternate-screen behavior is either correctly modeled or explicitly withheld
   behind the interim engine flag;
 - visible rows preserve style-separated `CellRun` objects and wide-cell widths;
+- clients preserve decoded surface and scrollback row runs instead of collapsing
+  them to text-only state;
 - unsupported VT features fail by omission with documented limitations, not by
   corrupting the existing nmux state objects.
 
