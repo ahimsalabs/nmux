@@ -977,6 +977,22 @@ fn decoded_cell_runs(
     decoded
 }
 
+fn decoded_styles(
+    styles: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<protocol::Style<'_>>>,
+) -> Vec<StyleSummary> {
+    let mut decoded = Vec::with_capacity(styles.len());
+    for style_index in 0..styles.len() {
+        let style = styles.get(style_index);
+        decoded.push(StyleSummary {
+            fg_rgba: style.fg_rgba(),
+            bg_rgba: style.bg_rgba(),
+            underline_rgba: style.underline_rgba(),
+            flags: style.flags(),
+        });
+    }
+    decoded
+}
+
 fn render_decoded_rows(rows: &[SurfaceRowUpdate]) -> String {
     let mut rendered = String::new();
     for (index, row) in rows.iter().enumerate() {
@@ -1181,6 +1197,7 @@ pub fn scrollback_chunk_from_frame(
     let chunk = envelope
         .body_as_scrollback_chunk()
         .ok_or("missing scrollback chunk body")?;
+    let styles = chunk.styles().map(decoded_styles).unwrap_or_default();
     let rows = chunk.rows().ok_or("scrollback chunk has no rows")?;
     let mut lines = Vec::with_capacity(rows.len());
     for index in 0..rows.len() {
@@ -1198,6 +1215,7 @@ pub fn scrollback_chunk_from_frame(
         scrollback_version: chunk.scrollback_version(),
         start_line: chunk.start_line(),
         total_lines: chunk.total_lines(),
+        styles,
         lines,
     })
 }
@@ -1480,6 +1498,14 @@ pub struct CellRunSummary {
     pub style_id: u32,
     pub flags: u32,
     pub hyperlink_id: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyleSummary {
+    pub fg_rgba: u32,
+    pub bg_rgba: u32,
+    pub underline_rgba: u32,
+    pub flags: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2035,6 +2061,7 @@ pub struct ScrollbackChunkSummary {
     pub scrollback_version: u64,
     pub start_line: u64,
     pub total_lines: u64,
+    pub styles: Vec<StyleSummary>,
     pub lines: Vec<ScrollbackLine>,
 }
 
@@ -2232,6 +2259,15 @@ mod tests {
         }
     }
 
+    fn default_style_summaries() -> Vec<StyleSummary> {
+        vec![StyleSummary {
+            fg_rgba: 0,
+            bg_rgba: 0,
+            underline_rgba: 0,
+            flags: 0,
+        }]
+    }
+
     fn presence_summary(mode: AttachMode) -> PresenceSummary {
         PresenceSummary {
             actor_id: "local-actor".to_owned(),
@@ -2309,6 +2345,7 @@ mod tests {
                 scrollback_version: 1,
                 start_line: 1,
                 total_lines: 3,
+                styles: default_style_summaries(),
                 lines: vec![
                     scrollback_line(1, "nmux pane-1"),
                     scrollback_line(2, "server-owned terminal state"),
@@ -2568,6 +2605,7 @@ mod tests {
                 scrollback_version: 2,
                 start_line: 1,
                 total_lines: 1,
+                styles: default_style_summaries(),
                 lines: Vec::new(),
             })
         );
@@ -2737,6 +2775,7 @@ mod tests {
                 scrollback_version: 2,
                 start_line: 3,
                 total_lines: 4,
+                styles: default_style_summaries(),
                 lines: vec![scrollback_line(3, "z")],
             }
         );
@@ -2775,6 +2814,7 @@ mod tests {
                 scrollback_version: 2,
                 start_line: 3,
                 total_lines: 4,
+                styles: default_style_summaries(),
                 lines: vec![scrollback_line(3, "custom")],
             })
         );
@@ -3101,6 +3141,7 @@ mod tests {
                 scrollback_version: 1,
                 start_line: 1,
                 total_lines: 3,
+                styles: default_style_summaries(),
                 lines: vec![
                     scrollback_line(1, "nmux pane-1"),
                     scrollback_line(2, "server-owned terminal state"),
@@ -3500,6 +3541,7 @@ mod tests {
         assert_eq!(chunk.scrollback_version, 1);
         assert_eq!(chunk.start_line, 1);
         assert_eq!(chunk.total_lines, 3);
+        assert_eq!(chunk.styles, default_style_summaries());
         assert_eq!(
             chunk.lines,
             vec![

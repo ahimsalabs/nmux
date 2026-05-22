@@ -82,6 +82,7 @@ pub struct PaneSurface {
 pub struct PaneScrollback {
     pub pane_id: String,
     pub version: u64,
+    pub styles: Vec<PaneStyle>,
     pub lines: Vec<String>,
     pub row_runs: Vec<Vec<CellRun>>,
 }
@@ -367,6 +368,7 @@ impl Session {
         Some(PaneScrollback {
             pane_id: pane.id.clone(),
             version: pane.scrollback_version,
+            styles: pane.styles.clone(),
             lines: pane.scrollback_lines.clone(),
             row_runs: row_runs_for_lines(&pane.scrollback_lines, &pane.scrollback_row_runs),
         })
@@ -634,6 +636,19 @@ impl Session {
         }
 
         let rows = builder.create_vector(&row_offsets);
+        let mut style_offsets = Vec::with_capacity(scrollback.styles.len());
+        for style in &scrollback.styles {
+            style_offsets.push(protocol::Style::create(
+                &mut builder,
+                &protocol::StyleArgs {
+                    fg_rgba: style.fg_rgba,
+                    bg_rgba: style.bg_rgba,
+                    underline_rgba: style.underline_rgba,
+                    flags: style.flags,
+                },
+            ));
+        }
+        let styles = builder.create_vector(&style_offsets);
         let pane_id = builder.create_string(&scrollback.pane_id);
         let chunk = protocol::ScrollbackChunk::create(
             &mut builder,
@@ -643,6 +658,7 @@ impl Session {
                 start_line,
                 total_lines: scrollback.lines.len() as u64,
                 rows: Some(rows),
+                styles: Some(styles),
             },
         );
 
@@ -1436,6 +1452,48 @@ mod tests {
             second_runs.get(0).text_utf8(),
             Some("server-owned terminal state")
         );
+    }
+
+    #[test]
+    fn scrollback_chunk_frame_preserves_stored_cell_runs_and_styles() {
+        let mut session = Session::initial();
+        let pane = session.pane_mut("pane-1").expect("pane");
+        pane.styles.push(PaneStyle {
+            fg_rgba: 0xff00_0000,
+            bg_rgba: 0,
+            underline_rgba: 0,
+            flags: 1,
+        });
+        pane.scrollback_lines = vec!["red plain".to_owned()];
+        pane.scrollback_row_runs = vec![vec![
+            CellRun {
+                text: "red".to_owned(),
+                cell_widths: vec![1, 1, 1],
+                style_id: 1,
+                flags: 0,
+                hyperlink_id: 0,
+            },
+            CellRun::plain(" plain"),
+        ]];
+
+        let frame = session.scrollback_chunk_frame("conn-1", 11, 0, 1);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let chunk = envelope
+            .body_as_scrollback_chunk()
+            .expect("scrollback chunk");
+
+        let styles = chunk.styles().expect("styles");
+        assert_eq!(styles.len(), 2);
+        assert_eq!(styles.get(1).fg_rgba(), 0xff00_0000);
+        assert_eq!(styles.get(1).flags(), 1);
+
+        let rows = chunk.rows().expect("rows");
+        let runs = rows.get(0).runs().expect("runs");
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs.get(0).text_utf8(), Some("red"));
+        assert_eq!(runs.get(0).style_id(), 1);
+        assert_eq!(runs.get(1).text_utf8(), Some(" plain"));
+        assert_eq!(runs.get(1).style_id(), 0);
     }
 
     #[test]

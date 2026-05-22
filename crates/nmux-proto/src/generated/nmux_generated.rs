@@ -3889,6 +3889,7 @@ impl<'a> ScrollbackChunk<'a> {
   pub const VT_START_LINE: ::flatbuffers::VOffsetT = 8;
   pub const VT_TOTAL_LINES: ::flatbuffers::VOffsetT = 10;
   pub const VT_ROWS: ::flatbuffers::VOffsetT = 12;
+  pub const VT_STYLES: ::flatbuffers::VOffsetT = 14;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -3903,6 +3904,7 @@ impl<'a> ScrollbackChunk<'a> {
     builder.add_total_lines(args.total_lines);
     builder.add_start_line(args.start_line);
     builder.add_scrollback_version(args.scrollback_version);
+    if let Some(x) = args.styles { builder.add_styles(x); }
     if let Some(x) = args.rows { builder.add_rows(x); }
     if let Some(x) = args.pane_id { builder.add_pane_id(x); }
     builder.finish()
@@ -3944,6 +3946,13 @@ impl<'a> ScrollbackChunk<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ScrollbackRow>>>>(ScrollbackChunk::VT_ROWS, None)}
   }
+  #[inline]
+  pub fn styles(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style>>>>(ScrollbackChunk::VT_STYLES, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for ScrollbackChunk<'_> {
@@ -3957,6 +3966,7 @@ impl ::flatbuffers::Verifiable for ScrollbackChunk<'_> {
      .visit_field::<u64>("start_line", Self::VT_START_LINE, false)?
      .visit_field::<u64>("total_lines", Self::VT_TOTAL_LINES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ScrollbackRow>>>>("rows", Self::VT_ROWS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Style>>>>("styles", Self::VT_STYLES, false)?
      .finish();
     Ok(())
   }
@@ -3967,6 +3977,7 @@ pub struct ScrollbackChunkArgs<'a> {
     pub start_line: u64,
     pub total_lines: u64,
     pub rows: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ScrollbackRow<'a>>>>>,
+    pub styles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>>>,
 }
 impl<'a> Default for ScrollbackChunkArgs<'a> {
   #[inline]
@@ -3977,6 +3988,7 @@ impl<'a> Default for ScrollbackChunkArgs<'a> {
       start_line: 0,
       total_lines: 0,
       rows: None,
+      styles: None,
     }
   }
 }
@@ -4007,6 +4019,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackChunkBuilder<'a, 'b
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackChunk::VT_ROWS, rows);
   }
   #[inline]
+  pub fn add_styles(&mut self, styles: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Style<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackChunk::VT_STYLES, styles);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackChunkBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     ScrollbackChunkBuilder {
@@ -4029,6 +4045,7 @@ impl ::core::fmt::Debug for ScrollbackChunk<'_> {
       ds.field("start_line", &self.start_line());
       ds.field("total_lines", &self.total_lines());
       ds.field("rows", &self.rows());
+      ds.field("styles", &self.styles());
       ds.finish()
   }
 }

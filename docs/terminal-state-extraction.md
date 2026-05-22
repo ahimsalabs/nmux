@@ -65,9 +65,9 @@ Do not freeze these into ad hoc string fields. Add protocol fields or objects
 only after the backend extraction proves the exact shape needed.
 
 - Cell style runs: `libghostty-vt` now supplies foreground/background colors,
-  basic SGR flags, style identity, and cell widths for visible rows. Scrollback
-  chunks are decoded as row runs by clients, but scrollback style-table
-  ownership and richer style semantics still need protocol decisions.
+  basic SGR flags, style identity, and cell widths for visible rows. Surface
+  snapshots and scrollback chunks carry a pane style table; richer style
+  semantics still need protocol decisions.
 - Grapheme and cell width: double-width cells are represented in run widths.
   Combining marks, emoji clusters, zero-width continuations, and
   ambiguous-width policy still need broader tests and protocol guidance.

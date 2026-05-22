@@ -213,6 +213,7 @@ table ScrollbackChunk {
   start_line:ulong;
   total_lines:ulong;
   rows:[ScrollbackRow];
+  styles:[Style];
 }
 
 table ScrollbackRow {
