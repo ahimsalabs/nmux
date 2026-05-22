@@ -4,6 +4,10 @@
 
 Accepted.
 
+## Date
+
+2026-05-22
+
 ## Context
 
 M13 already carries OSC 133 row semantic prompt state so clients can distinguish

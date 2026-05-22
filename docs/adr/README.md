@@ -19,3 +19,6 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0011: Live Local Interactive Attach](0011-live-local-interactive-attach.md)
 - [0012: Backend Terminal Engine Boundary](0012-backend-terminal-engine-boundary.md)
 - [0013: Optional libghostty-vt Backend](0013-optional-libghostty-vt-backend.md)
+- [0014: Transport Identity Boundary](0014-transport-identity-boundary.md)
+- [0015: Cell Semantic Content](0015-cell-semantic-content.md)
+- [0016: Terminal Color State](0016-terminal-color-state.md)

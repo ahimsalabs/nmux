@@ -18,7 +18,7 @@ Use `docs/roadmap.md` as the current implementation tracker and next-step source
 Current sequencing:
 
 - M12 live workspace usability is implemented enough for the local daemon/client workflow to support bounded and unbounded sequential live clients, default local socket workflows, persisted reconnect state, explicit validation, and runnable docs.
-- M13 backend `libghostty-vt` extraction is the current terminal-state correctness milestone. The optional engine is imported, feature-tested, and smoke-tested for daemon-owned VT ingestion, cursor state including blink, terminal color state, terminal title metadata, working-directory metadata plumbing, OSC 133 row semantic prompt metadata, OSC 133 per-run semantic content, row dirty flags, Kitty placeholder metadata, styled visible and scrollback rows, cell widths, graphemes, alternate-screen transitions, explicit terminal mode payloads, mode-only surface patches, sparse row updates, hyperlink presence, PasteInput forwarding, mode-gated MouseInput forwarding, mode-gated FocusInput forwarding, common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-aware cursor-arrow forwarding, engine-backed named-key encoding with modifier preservation, and mode-aware key encoding. The default engine remains `interim` until a later decision accepts the native Ghostty/Zig build in the regular path.
+- M13 backend `libghostty-vt` extraction is the current terminal-state correctness milestone. The optional engine is imported, feature-tested, and smoke-tested for daemon-owned VT ingestion, cursor state including blink, terminal color state, terminal title metadata, OSC 7 working-directory metadata, OSC 133 row semantic prompt metadata, OSC 133 per-run semantic content, row dirty flags, Kitty placeholder metadata, styled visible and scrollback rows, cell widths, graphemes, alternate-screen transitions, explicit terminal mode payloads, mode-only surface patches, sparse row updates, hyperlink presence, PasteInput forwarding, mode-gated MouseInput forwarding, mode-gated FocusInput forwarding, common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-aware cursor-arrow forwarding, engine-backed named-key encoding with modifier preservation, and mode-aware key encoding. The default engine remains `interim` until a later decision accepts the native Ghostty/Zig build in the regular path.
 - Frontend Ghostty renderer hydration is a separate upstream/API question; do not reintroduce client-side raw PTY replay to get there.
 
 The current implementation is a Rust workspace:
@@ -29,15 +29,17 @@ The current implementation is a Rust workspace:
 
 ## Working Rules
 
-- Work sequentially. Do not parallelize implementation or documentation steps.
+- Work sequentially. Do not parallelize implementation or documentation steps. If subagents are useful, run them as bounded read-only assistants and integrate their findings in the main worktree yourself.
 - Check `jj status` before starting a step.
 - Commit with `jj` after each coherent implementation or documentation step, after relevant checks pass.
 - Keep commits small enough that each one has a clear review purpose.
 - Preserve user or agent work already present in the worktree unless explicitly told to change it.
 - Prefer documentation under `docs/` once a note needs to outlive the current scratch plan.
 - Keep `WORK.md`, `README.md`, `docs/roadmap.md`, `docs/running.md`, and `docs/terminal-state-extraction.md` aligned when M13 coverage or protocol boundaries change.
+- When adding an ADR under `docs/adr/`, include status and date metadata and update `docs/adr/README.md` in the same commit.
 - Update this file when repo workflow expectations change.
 - Use subagents only for bounded read-only review, research synthesis, or implementation advice. Do not use them for parallel file edits or competing implementation tracks.
+- Do not inspect or copy generated vendored Ghostty source under `target/`; treat it as build output for the `libghostty-vt` dependency, not as nmux source material.
 - Keep generated protocol bindings in `crates/nmux-proto/src/generated` derived from `schema/nmux.fbs`; do not hand-edit generated files.
 
 ## Checks
@@ -76,7 +78,7 @@ native Ghostty/Zig build part of regular CI.
 
 ## Research Rules
 
-Use `oracle --prompt '...'` for deep protocol, architecture, licensing, or upstream-fact questions that should not be guessed. If oracle or external research is unavailable, keep moving on repo-local work that does not depend on the unanswered question. Do not use outside code as implementation source material unless its license is compatible with the intended nmux core licensing posture.
+Use `oracle --prompt '...'` for deep protocol, architecture, licensing, or upstream-fact questions that should not be guessed. If oracle quota or external research is unavailable, keep moving on repo-local work that does not depend on the unanswered question. Do not use outside code as implementation source material unless its license is compatible with the intended nmux core licensing posture.
 
 ## Documentation Rules
 

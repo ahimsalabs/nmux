@@ -2,6 +2,8 @@
 
 Status: Accepted
 
+Date: 2026-05-22
+
 ## Context
 
 ADR 0001 makes `nmuxd` the owner of terminal state. ADR 0006 adds an interim PTY text surface so local process hosting can be exercised before the real terminal engine is integrated.
