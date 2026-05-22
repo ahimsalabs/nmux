@@ -97,5 +97,4 @@ The opt-in engine currently proves dependency and lifecycle wiring. It is not
 the default because the first extraction pass still needs:
 
 - backend-owned scrollback extraction instead of mirroring only the visible
-  render rows into `ScrollbackChunk`;
-- focused tests for resize after scrollback reflow.
+  render rows into `ScrollbackChunk`.

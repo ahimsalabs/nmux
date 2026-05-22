@@ -355,9 +355,19 @@ mod tests {
         surface_lines: &'a [String],
         scrollback_lines: &'a [String],
     ) -> TerminalInput<'a> {
+        terminal_input_with_size(80, rows, surface_lines, scrollback_lines)
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn terminal_input_with_size<'a>(
+        cols: u32,
+        rows: u32,
+        surface_lines: &'a [String],
+        scrollback_lines: &'a [String],
+    ) -> TerminalInput<'a> {
         TerminalInput {
             pane_id: "pane-1",
-            cols: 80,
+            cols,
             rows,
             surface: protocol::SurfaceKind::Main,
             cursor: TerminalCursor {
@@ -586,6 +596,44 @@ mod tests {
             "surface did not contain alternate text: {:?}",
             update.surface_lines
         );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_resizes_after_wrapped_output() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let first = engine
+            .apply_output(
+                terminal_input_with_size(6, 2, &empty, &empty),
+                b"abcdef ghijkl mnopqr",
+            )
+            .expect("initial wrapped terminal update");
+
+        let resized = engine
+            .resize(
+                terminal_input_with_size(6, 2, &first.surface_lines, &first.scrollback_lines),
+                12,
+                3,
+            )
+            .expect("resize update");
+
+        assert_eq!(resized.patch_kind, protocol::PatchKind::ReplaceRows);
+        assert_eq!(resized.surface, protocol::SurfaceKind::Main);
+        assert!(
+            resized.surface_lines.len() <= 3,
+            "resize returned more rows than viewport: {:?}",
+            resized.surface_lines
+        );
+        assert!(
+            resized
+                .surface_lines
+                .iter()
+                .any(|line| line.contains("abcdef")),
+            "resize lost wrapped output: {:?}",
+            resized.surface_lines
+        );
+        assert_ne!(resized.surface_lines, first.surface_lines);
     }
 }
 use std::collections::HashMap;
