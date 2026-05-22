@@ -203,20 +203,31 @@ feature. The dev shell pins Zig 0.15 because the Ghostty commit used by
 The opt-in engine keeps PTY bytes in `nmuxd` and maps Ghostty state back into
 nmux snapshots, patches, and scrollback chunks. The local CLI prints non-empty
 terminal title and OSC 7 working-directory metadata alongside the rendered pane
-surface, including redraw output. Current coverage includes cursor
-position/visibility/shape/blink, alternate-screen entry/restoration with alternate
-scrollback omission, resize/reflow, style-separated visible rows, styled
-scrollback rows, cell widths, combining marks, emoji ZWJ clusters, basic SGR
-style flags, underline color, palette-indexed colors, terminal color state, render-state default
-colors/palette, palette overrides, explicit cursor color, terminal title metadata, OSC
-133 row semantic prompt state, per-run semantic content, bracketed paste, paste safety validation, paste forwarding, mouse
-tracking and mode-gated mouse forwarding with modifiers, focus reporting and mode-gated focus forwarding, application keypad tracking,
-common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-aware arrow-key forwarding, engine-backed key encoding with modifier preservation, explicit encoder output, origin, wraparound mode state, row-level dirty state,
-hyperlink presence, Kitty graphics placeholder metadata, OSC 7 working-directory
-metadata extraction, metadata-only no-row patches, mode-aware key encoding, sparse row updates, and mode-only surface patches.
-Image placement data, hyperlink IDs, incremental palette diffs, and broader shell command metadata remain intentionally withheld
-until the expected backend behavior
-and nmux protocol shape are clear.
+surface, including redraw output.
+
+Current coverage includes:
+
+- cursor position/visibility/shape/blink, terminal title metadata, OSC 7
+  working-directory metadata, terminal color state, render-state default
+  colors/palette, palette overrides, and explicit cursor color;
+- style-separated visible rows, styled scrollback rows, style-bearing trailing
+  blanks, cell widths, combining marks, emoji ZWJ clusters, basic SGR style
+  flags, underline color, palette-indexed colors, row-level dirty state, row
+  state hashes, hyperlink presence, and Kitty graphics placeholder metadata;
+- alternate-screen entry/restoration with alternate scrollback omission,
+  resize/reflow, committed live resize metadata, metadata-only no-row patches,
+  sparse row updates, and mode-only surface patches;
+- OSC 133 row semantic prompt state and per-run semantic content;
+- bracketed paste, paste safety validation, paste forwarding, mouse tracking
+  and mode-gated mouse forwarding with modifiers, focus reporting and
+  mode-gated focus forwarding, application keypad tracking, common named-key
+  forwarding, mode-aware keypad Enter/digit forwarding, mode-aware arrow-key
+  forwarding, engine-backed key encoding with modifier preservation, explicit
+  encoder output, origin mode, wraparound mode, and mode-aware key encoding.
+
+Image placement data, hyperlink IDs, incremental palette diffs, and broader
+shell command metadata remain intentionally withheld until the expected backend
+behavior and nmux protocol shape are clear.
 
 ```sh
 nix develop path:$PWD -c make check-ghostty-vt

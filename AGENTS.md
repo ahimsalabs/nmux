@@ -18,7 +18,7 @@ Use `docs/roadmap.md` as the current implementation tracker and next-step source
 Current sequencing:
 
 - M12 live workspace usability is implemented enough for the local daemon/client workflow to support bounded and unbounded sequential live clients, default local socket workflows, persisted reconnect state, explicit validation, and runnable docs.
-- M13 backend `libghostty-vt` extraction is the current terminal-state correctness milestone. The optional engine is imported, feature-tested, and smoke-tested for daemon-owned VT ingestion, cursor state including blink, terminal color state, terminal title metadata, OSC 7 working-directory metadata, OSC 133 row semantic prompt metadata, OSC 133 per-run semantic content, row dirty flags, Kitty placeholder metadata, styled visible and scrollback rows, cell widths, graphemes, alternate-screen transitions, explicit terminal mode payloads, mode-only surface patches, sparse row updates, hyperlink presence, PasteInput forwarding, mode-gated MouseInput forwarding, mode-gated FocusInput forwarding, common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-aware cursor-arrow forwarding, engine-backed named-key encoding with modifier preservation, and mode-aware key encoding. ADR 0018 keeps the default engine `interim` while requiring full feature-enabled `make check-ghostty-vt` coverage for related changes.
+- M13 backend `libghostty-vt` extraction is the current terminal-state correctness milestone. The optional engine is imported, feature-tested, and smoke-tested for daemon-owned VT ingestion, cursor state including blink, terminal color state, terminal title metadata, OSC 7 working-directory metadata, OSC 133 row semantic prompt metadata, OSC 133 per-run semantic content, row dirty flags, Kitty placeholder metadata, styled visible and scrollback rows, cell widths, graphemes, alternate-screen transitions with scrollback omission, explicit terminal mode payloads, mode-only surface patches, sparse row updates, hyperlink presence, PasteInput forwarding, mode-gated MouseInput forwarding, mode-gated FocusInput forwarding, common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-aware cursor-arrow forwarding, engine-backed named-key encoding with modifier preservation, live CLI resize/reattach behavior, and mode-aware key encoding. ADR 0018 keeps the default engine `interim` while requiring full feature-enabled `make check-ghostty-vt` coverage for related changes.
 - Frontend Ghostty renderer hydration is a separate upstream/API question; do not reintroduce client-side raw PTY replay to get there.
 
 The current implementation is a Rust workspace:
@@ -71,6 +71,11 @@ local GitHub HTTPS-to-SSH rewrites while `libghostty-vt-sys` fetches its pinned
 Ghostty source. The Nix shell pins Zig 0.15 for that native build. Keep this
 path opt-in unless a later ADR explicitly makes the native Ghostty/Zig build
 part of regular CI, default development, and packaging.
+
+If `nix develop` itself is unavailable, do not rewrite the flake or check in
+machine-local store paths. Either use an already entered dev shell, or record the
+environmental failure and keep changes scoped to work that can still be
+validated honestly.
 
 ## Licensing Rules
 
