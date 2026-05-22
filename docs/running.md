@@ -292,10 +292,10 @@ current. It sends the cached scrollback version as a fetch precondition and
 retries once without that precondition if the daemon reports `StaleVersion`.
 Explicit one-shot text, paste, named-key, focus, and mouse input is still
 forwarded before the scrollback fetch when the visible surface is already
-current.
-When a scoped state file is already current and the daemon sends no surface
-frame, explicit live focus input is still sent to the daemon and rejected with
-an Error frame when the daemon-owned pane mode has focus reporting disabled.
+current. When a scoped state file is already current and the daemon sends no
+surface frame, explicit live key, paste, named-key, focus, and mouse input is
+still sent to daemon-owned input handling; disabled focus or mouse modes return
+protocol `Error` frames instead of relying on cached client mode state.
 
 Start a long-running command-backed daemon:
 
