@@ -1383,6 +1383,41 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_key_encoder_supports_application_keypad_mode_without_protocol_fields() {
+        use libghostty_vt::{
+            Terminal, TerminalOptions,
+            key::{Action, Encoder, Event, Key},
+        };
+
+        let terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+        let mut event = Event::new().expect("event");
+        event.set_action(Action::Press).set_key(Key::NumpadEnter);
+
+        let mut normal_encoder = Encoder::new().expect("encoder");
+        normal_encoder.set_options_from_terminal(&terminal);
+        let mut normal = Vec::new();
+        normal_encoder
+            .encode_to_vec(&event, &mut normal)
+            .expect("normal keypad");
+
+        let mut application_encoder = Encoder::new().expect("encoder");
+        application_encoder.set_keypad_key_application(true);
+        let mut application = Vec::new();
+        application_encoder
+            .encode_to_vec(&event, &mut application)
+            .expect("application keypad");
+
+        assert_eq!(normal, b"\r");
+        assert_eq!(application, b"\x1bOM");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_safe_api_tracks_origin_and_wrap_modes() {
         use libghostty_vt::{Terminal, TerminalOptions, terminal::Mode};
 
