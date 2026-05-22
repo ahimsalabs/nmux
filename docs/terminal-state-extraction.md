@@ -220,8 +220,9 @@ libghostty-vt current-surface CLI SGR mouse forwarding, mode-aware
 libghostty-vt current-surface application-keypad and application-cursor
 named-key forwarding,
 protocol-visible host input and live resize failures,
-`PaneNotFound` errors for unknown pane-scoped client intents, consistent
-1-based public scrollback ranges, decoded scrollback row hash metadata, and
+pane/input-attributed `Error` frames, `PaneNotFound` errors for unknown
+pane-scoped client intents, consistent 1-based public scrollback ranges,
+decoded scrollback row hash metadata, and
 feature-gated live CLI smoke paths, committed user-command live resize
 metadata, style-table full-refresh reattach, and restored
 alternate-screen scrollback omission. Client-side tests assert decoded surface

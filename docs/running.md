@@ -185,6 +185,9 @@ If an input event is valid protocol but cannot be encoded by the active terminal
 engine, if the host refuses the forwarded bytes, or if a live resize cannot be
 applied by the host, the daemon returns an `Error` frame and the CLI prints the
 server-provided reason instead of reporting an ambiguous closed connection.
+For pane-scoped failures, the frame also carries `Error.pane_id`; for input
+failures, it carries the originating `InputEvent.input_seq` so clients can
+correlate the failure without parsing the reason text.
 One-shot clients also check for an input error before requesting scrollback, so
 unsafe paste, encoding failures, and host input failures are reported directly.
 Pane-scoped input, resize, and scrollback requests for unknown panes return a
@@ -232,10 +235,11 @@ Current coverage includes:
 - OSC 133 row semantic prompt state and per-run semantic content;
 - bracketed paste, paste safety validation, paste forwarding, mouse tracking
   and pane-bounds/mode-gated mouse forwarding with modifiers, focus reporting and
-  daemon-gated focus forwarding with Error frames, application keypad tracking, common named-key
-  forwarding, mode-aware keypad Enter/digit forwarding, mode-aware arrow-key
-  forwarding, engine-backed key encoding with modifier preservation, explicit
-  encoder output, origin mode, wraparound mode, and mode-aware key encoding.
+  daemon-gated focus forwarding with pane/input-attributed Error frames,
+  application keypad tracking, common named-key forwarding, mode-aware keypad
+  Enter/digit forwarding, mode-aware arrow-key forwarding, engine-backed key
+  encoding with modifier preservation, explicit encoder output, origin mode,
+  wraparound mode, and mode-aware key encoding.
 
 Image placement data, hyperlink IDs, and broader shell command metadata remain
 intentionally withheld until the expected backend behavior and nmux protocol

@@ -25,3 +25,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0017: Terminal Input Mode State](0017-terminal-input-mode-state.md)
 - [0018: libghostty-vt Default And CI Gate](0018-libghostty-vt-default-and-ci-gate.md)
 - [0019: Color-Only Palette Diffs](0019-color-only-palette-diffs.md)
+- [0020: Attributed Error Frames](0020-attributed-error-frames.md)
