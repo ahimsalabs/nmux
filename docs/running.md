@@ -200,9 +200,10 @@ scrollback rows, cell widths, combining marks, emoji ZWJ clusters, basic SGR
 style flags, underline color, palette-indexed colors, render-state default
 colors/palette, palette overrides, explicit cursor color, title metadata, OSC
 133 semantic prompt state, bracketed paste, mouse tracking, application keypad,
-origin, wraparound mode state, row-level dirty state, and mode-aware key
-encoding. OSC 7 working-directory metadata remains intentionally withheld until
-the expected backend behavior and nmux protocol shape are clear.
+origin, wraparound mode state, row-level dirty state, Kitty graphics placeholder
+detection, and mode-aware key encoding. OSC 7 working-directory metadata and
+image placement data remain intentionally withheld until the expected backend
+behavior and nmux protocol shape are clear.
 
 ```sh
 nix develop path:$PWD -c make check-ghostty-vt
