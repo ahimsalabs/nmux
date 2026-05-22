@@ -281,9 +281,9 @@ instead of reusing stale rows from an older daemon. Older state files that only
 contain rendered row text still load as default-style rows with default
 metadata, default modes, default color state, and no scrollback metadata, but
 they also force one fresh snapshot before being rewritten with the current
-socket scope. The scrollback metadata is groundwork for a future cached
-scrollback range path; the current CLI still fetches scrollback ranges from the
-daemon without a version precondition.
+socket scope. When a later request asks for the same scrollback range, the CLI
+sends the cached scrollback version as a fetch precondition and retries once
+without that precondition if the daemon reports `StaleVersion`.
 When a scoped state file is already current and the daemon sends no surface
 frame, live input gating reuses the cached terminal modes for bracketed paste
 and focus reporting until the next surface update arrives.

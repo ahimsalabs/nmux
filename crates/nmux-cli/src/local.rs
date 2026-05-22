@@ -402,7 +402,11 @@ fn serve_live_attached_client(
         let input = loop {
             match read_optional_live_client_frame_from_stream(stream)? {
                 LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
-                    if write_scrollback_fetch_error_if_needed(stream, session, &mut seq, &fetch)? {
+                    if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
+                        write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
+                        if error == protocol::ErrorCode::StaleVersion {
+                            continue;
+                        }
                         return Ok(());
                     }
                     let Some(chunk) = session.scrollback_chunk_frame_for_pane(
@@ -683,50 +687,63 @@ fn serve_attached_client(
                 poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
             }
         }
-        let fetch = read_scrollback_fetch_from_stream(stream)?;
         let mut seq = 5;
-        if write_scrollback_fetch_error_if_needed(stream, session, &mut seq, &fetch)? {
-            return Ok(());
-        }
-        if let Some(chunk) = session.scrollback_chunk_frame_for_pane(
-            "local-client",
-            seq,
-            &fetch.pane_id,
-            fetch.start_line,
-            fetch.line_count,
-        ) {
-            wire::write_default_frame(stream, &chunk)?;
-        } else {
-            write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
+        for _ in 0..2 {
+            let fetch = read_scrollback_fetch_from_stream(stream)?;
+            if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
+                write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
+                if error == protocol::ErrorCode::StaleVersion {
+                    continue;
+                }
+                return Ok(());
+            }
+            if let Some(chunk) = session.scrollback_chunk_frame_for_pane(
+                "local-client",
+                seq,
+                &fetch.pane_id,
+                fetch.start_line,
+                fetch.line_count,
+            ) {
+                wire::write_default_frame(stream, &chunk)?;
+            } else {
+                write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
+            }
+            break;
         }
     }
     Ok(())
 }
 
-fn write_scrollback_fetch_error_if_needed(
+fn scrollback_fetch_error_code(
+    session: &Session,
+    fetch: &ScrollbackFetchSummary,
+) -> Option<protocol::ErrorCode> {
+    let current = session.scrollback_version(&fetch.pane_id)?;
+    (fetch.known_scrollback_version != 0 && fetch.known_scrollback_version != current)
+        .then_some(protocol::ErrorCode::StaleVersion)
+}
+
+fn write_scrollback_fetch_error(
     stream: &mut UnixStream,
     session: &Session,
     seq: &mut u64,
     fetch: &ScrollbackFetchSummary,
-) -> Result<bool, Box<dyn std::error::Error>> {
+    code: protocol::ErrorCode,
+) -> Result<(), Box<dyn std::error::Error>> {
     let Some(current) = session.scrollback_version(&fetch.pane_id) else {
         write_pane_not_found_error(stream, session, seq, &fetch.pane_id)?;
-        return Ok(true);
+        return Ok(());
     };
-    if fetch.known_scrollback_version != 0 && fetch.known_scrollback_version != current {
-        write_protocol_error(
-            stream,
-            session,
-            seq,
-            protocol::ErrorCode::StaleVersion,
-            &format!(
-                "stale scrollback version for {}: client={} server={current}",
-                fetch.pane_id, fetch.known_scrollback_version
-            ),
-        )?;
-        return Ok(true);
-    }
-    Ok(false)
+    write_protocol_error(
+        stream,
+        session,
+        seq,
+        code,
+        &format!(
+            "stale scrollback version for {}: client={} server={current}",
+            fetch.pane_id, fetch.known_scrollback_version
+        ),
+    )
 }
 
 fn write_pane_not_found_error(
@@ -863,6 +880,7 @@ pub struct AttachOptions {
     pub paste_text: Option<String>,
     pub scrollback_start_line: u64,
     pub scrollback_line_count: u32,
+    pub known_scrollback_version: u64,
     pub connect_timeout: Option<Duration>,
 }
 
@@ -881,6 +899,7 @@ impl Default for AttachOptions {
             paste_text: None,
             scrollback_start_line: 1,
             scrollback_line_count: 2,
+            known_scrollback_version: 0,
             connect_timeout: None,
         }
     }
@@ -925,14 +944,21 @@ pub fn attach_with_client_options(
                 read_optional_server_error_from_stream(&mut stream)?;
             }
         }
-        send_scrollback_fetch_with_sequence(
+        send_scrollback_fetch_with_known_version(
+            &mut stream,
+            &mut sequence,
+            "pane-1",
+            options.scrollback_start_line,
+            options.scrollback_line_count,
+            options.known_scrollback_version,
+        )?;
+        let scrollback = read_scrollback_chunk_with_stale_retry(
             &mut stream,
             &mut sequence,
             "pane-1",
             options.scrollback_start_line,
             options.scrollback_line_count,
         )?;
-        let scrollback = read_scrollback_chunk_from_stream(&mut stream)?;
         return Ok(AttachSnapshot {
             scrollback: Some(scrollback),
             ..snapshot
@@ -948,6 +974,14 @@ pub fn attach_render_once(
 ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
     let scope = socket_identity(path).ok();
     options.request.known_surfaces = client_state.known_surfaces_for_scope(scope);
+    options.known_scrollback_version = client_state
+        .cached_scrollback_version_for_scope(
+            scope,
+            "pane-1",
+            options.scrollback_start_line,
+            options.scrollback_line_count,
+        )
+        .unwrap_or(0);
     let snapshot = attach_with_client_options(path, options)?;
     client_state.apply_scope(socket_identity(path).ok());
     client_state.render_attach(snapshot)
@@ -1554,16 +1588,57 @@ pub fn read_scrollback_fetch_from_stream(
 pub fn read_scrollback_chunk_from_stream(
     stream: &mut UnixStream,
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
+    match read_scrollback_response_from_stream(stream)? {
+        ScrollbackRead::Chunk(chunk) => Ok(chunk),
+        ScrollbackRead::Error(error) => Err(format!("server error: {}", error.message).into()),
+    }
+}
+
+pub fn read_scrollback_chunk_with_stale_retry(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    start_line: u64,
+    line_count: u32,
+) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
+    match read_scrollback_response_from_stream(stream)? {
+        ScrollbackRead::Chunk(chunk) => Ok(chunk),
+        ScrollbackRead::Error(error) if error.code == protocol::ErrorCode::StaleVersion => {
+            send_scrollback_fetch_with_known_version(
+                stream, sequence, pane_id, start_line, line_count, 0,
+            )?;
+            match read_scrollback_response_from_stream(stream)? {
+                ScrollbackRead::Chunk(chunk) => Ok(chunk),
+                ScrollbackRead::Error(error) => {
+                    Err(format!("server error: {}", error.message).into())
+                }
+            }
+        }
+        ScrollbackRead::Error(error) => Err(format!("server error: {}", error.message).into()),
+    }
+}
+
+fn read_scrollback_response_from_stream(
+    stream: &mut UnixStream,
+) -> Result<ScrollbackRead, Box<dyn std::error::Error>> {
     let frame = wire::read_default_frame(stream)?;
     let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
     match envelope.body_type() {
-        protocol::EnvelopeBody::ScrollbackChunk => scrollback_chunk_from_frame(&frame),
+        protocol::EnvelopeBody::ScrollbackChunk => {
+            Ok(ScrollbackRead::Chunk(scrollback_chunk_from_frame(&frame)?))
+        }
         protocol::EnvelopeBody::Error => {
             let error = error_summary_from_frame(&frame)?;
-            Err(format!("server error: {}", error.message).into())
+            Ok(ScrollbackRead::Error(error))
         }
         other => Err(format!("unexpected envelope body: {other:?}").into()),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ScrollbackRead {
+    Chunk(ScrollbackChunkSummary),
+    Error(ErrorSummary),
 }
 
 pub fn read_surface_update_from_stream(
@@ -3957,6 +4032,7 @@ mod tests {
             paste_text: None,
             scrollback_start_line: 1,
             scrollback_line_count: 2,
+            known_scrollback_version: 0,
             connect_timeout: None,
         }
     }
@@ -4986,6 +5062,14 @@ mod tests {
                 retryable: false,
             }
         );
+        send_scrollback_fetch_with_known_version(&mut stream, &mut sequence, "pane-1", 1, 1, 0)
+            .expect("retry scrollback fetch without precondition");
+        let scrollback = read_scrollback_chunk_from_stream(&mut stream).expect("scrollback chunk");
+        assert_eq!(scrollback.scrollback_version, 1);
+        assert_eq!(
+            scrollback.lines,
+            vec![scrollback_line(1, "booting nmux workspace")]
+        );
 
         server.join().expect("server thread");
         let _ = fs::remove_file(socket_path);
@@ -5349,6 +5433,16 @@ mod tests {
                 retryable: false,
             })
         );
+        send_scrollback_fetch_with_known_version(&mut stream, &mut sequence, "pane-1", 1, 1, 0)
+            .expect("retry live scrollback fetch without precondition");
+        let scrollback =
+            read_scrollback_chunk_from_stream(&mut stream).expect("live scrollback chunk");
+        assert_eq!(scrollback.scrollback_version, 1);
+        assert_eq!(
+            scrollback.lines,
+            vec![scrollback_line(1, "booting nmux workspace")]
+        );
+        drop(stream);
 
         server.join().expect("server thread");
         let _ = fs::remove_file(socket_path);

@@ -51,8 +51,8 @@ backend terminal state into the same nmux objects:
   changes. Fetch handling must stay pane-scoped, treat version zero as no
   client precondition, and reject nonzero stale client versions with
   `ErrorCode::StaleVersion`. Local persisted client state records the last seen
-  scrollback range/version metadata, but the CLI does not yet render cached
-  scrollback rows or send that metadata as a fetch precondition by default.
+  scrollback range/version metadata; matching later fetches send that version
+  as a precondition and retry once with version zero if it is stale.
 - Resize: feed resize events into the VT engine and publish the resulting pane
   size, cursor, visible rows, and scrollback state.
 - Versions: bump surface versions when the nmux-visible surface, cursor,

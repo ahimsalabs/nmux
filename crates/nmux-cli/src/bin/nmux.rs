@@ -121,7 +121,20 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .surface_text
         .clone()
         .unwrap_or_else(|| current_workspace.display_line());
-    let scrollback = initial_live_scrollback(args, &mut stream, &mut client_sequence)?;
+    let known_scrollback_version = client_state
+        .cached_scrollback_version_for_scope(
+            socket_scope,
+            &rendered.workspace.pane_id,
+            args.scrollback_start_line,
+            args.scrollback_line_count,
+        )
+        .unwrap_or(0);
+    let scrollback = initial_live_scrollback(
+        args,
+        &mut stream,
+        &mut client_sequence,
+        known_scrollback_version,
+    )?;
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
     }
@@ -378,15 +391,23 @@ fn initial_live_scrollback(
     args: &Args,
     stream: &mut UnixStream,
     sequence: &mut local::ClientFrameSequence,
+    known_scrollback_version: u64,
 ) -> Result<Option<local::ScrollbackChunkSummary>, Box<dyn std::error::Error>> {
-    local::send_scrollback_fetch_with_sequence(
+    local::send_scrollback_fetch_with_known_version(
         stream,
         sequence,
         "pane-1",
         args.scrollback_start_line,
         args.scrollback_line_count,
+        known_scrollback_version,
     )?;
-    Ok(Some(local::read_scrollback_chunk_from_stream(stream)?))
+    Ok(Some(local::read_scrollback_chunk_with_stale_retry(
+        stream,
+        sequence,
+        "pane-1",
+        args.scrollback_start_line,
+        args.scrollback_line_count,
+    )?))
 }
 
 fn next_stdin_line(
