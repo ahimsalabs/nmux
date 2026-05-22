@@ -390,16 +390,22 @@ fn serve_live_attached_client(
     wire::write_default_frame(stream, &presence_frame)?;
     seq += 1;
 
-    let mut known_surface_version =
-        if let Some(response) = request.surface_response(session, &pane_id) {
-            if let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq) {
-                wire::write_default_frame(stream, &surface_frame)?;
-                seq += 1;
-            }
-            session.surface_version(&pane_id).unwrap_or_default()
-        } else {
-            session.surface_version(&pane_id).unwrap_or_default()
-        };
+    let response = request.surface_response(session, &pane_id);
+    let status_frame = session.attach_status_frame(
+        "local-client",
+        seq,
+        &pane_id,
+        attach_surface_state(response),
+    );
+    wire::write_default_frame(stream, &status_frame)?;
+    seq += 1;
+    if let Some(response) = response {
+        if let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq) {
+            wire::write_default_frame(stream, &surface_frame)?;
+            seq += 1;
+        }
+    }
+    let mut known_surface_version = session.surface_version(&pane_id).unwrap_or_default();
 
     for _ in 0..cycles {
         let input = loop {
@@ -669,16 +675,26 @@ fn serve_attached_client(
     wire::write_default_frame(stream, &presence_frame)?;
 
     let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
-    if let Some(response) = request.surface_response(session, &pane_id) {
-        if let Some(surface_frame) = surface_response_frame(session, &pane_id, response, 3) {
+    let mut seq = 3;
+    let response = request.surface_response(session, &pane_id);
+    let status_frame = session.attach_status_frame(
+        "local-client",
+        seq,
+        &pane_id,
+        attach_surface_state(response),
+    );
+    wire::write_default_frame(stream, &status_frame)?;
+    seq += 1;
+    if let Some(response) = response {
+        if let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq) {
             wire::write_default_frame(stream, &surface_frame)?;
+            seq += 1;
         }
     }
     let mut pending_fetch = None;
     match read_attached_client_frame_from_stream(stream)? {
         AttachedClientFrame::Input(input) => {
             if !Session::input_allowed(&actor) {
-                let mut seq = 4;
                 write_protocol_error(
                     stream,
                     session,
@@ -700,7 +716,6 @@ fn serve_attached_client(
             pending_fetch = Some(fetch);
         }
     }
-    let mut seq = 5;
     for _ in 0..2 {
         let fetch = match pending_fetch.take() {
             Some(fetch) => fetch,
@@ -1011,7 +1026,16 @@ pub struct AttachOptions {
     pub scrollback_start_line: u64,
     pub scrollback_line_count: u32,
     pub known_scrollback_version: u64,
+    pub known_scrollback_versions: Vec<KnownScrollbackVersion>,
     pub connect_timeout: Option<Duration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownScrollbackVersion {
+    pub pane_id: String,
+    pub start_line: u64,
+    pub line_count: u32,
+    pub version: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1043,6 +1067,7 @@ impl Default for AttachOptions {
             scrollback_start_line: 1,
             scrollback_line_count: 2,
             known_scrollback_version: 0,
+            known_scrollback_versions: Vec::new(),
             connect_timeout: None,
         }
     }
@@ -1127,7 +1152,11 @@ pub fn attach_with_client_options(
         &attached_pane_id,
         options.scrollback_start_line,
         options.scrollback_line_count,
-        options.known_scrollback_version,
+        options.known_scrollback_version_for(
+            &attached_pane_id,
+            options.scrollback_start_line,
+            options.scrollback_line_count,
+        ),
     )?;
     let scrollback = read_scrollback_chunk_with_stale_retry(
         &mut stream,
@@ -1149,22 +1178,23 @@ pub fn attach_render_once(
 ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
     let scope = socket_identity(path).ok();
     options.request.known_surfaces = client_state.known_surfaces_for_scope(scope);
-    let requested_pane_id = options
-        .request
-        .focused_pane_id
-        .as_deref()
-        .unwrap_or("pane-1");
-    options.known_scrollback_version = client_state
-        .cached_scrollback_version_for_scope(
-            scope,
-            requested_pane_id,
-            options.scrollback_start_line,
-            options.scrollback_line_count,
-        )
-        .unwrap_or(0);
+    options.known_scrollback_versions = client_state.known_scrollback_versions_for_scope(scope);
     let snapshot = attach_with_client_options(path, options)?;
     client_state.apply_scope(socket_identity(path).ok());
     client_state.render_attach(snapshot)
+}
+
+impl AttachOptions {
+    fn known_scrollback_version_for(&self, pane_id: &str, start_line: u64, line_count: u32) -> u64 {
+        self.known_scrollback_versions
+            .iter()
+            .find(|known| {
+                known.pane_id == pane_id
+                    && known.start_line == start_line
+                    && known.line_count == line_count
+            })
+            .map_or(self.known_scrollback_version, |known| known.version)
+    }
 }
 
 pub fn attach_from_stream(
@@ -1176,29 +1206,21 @@ pub fn attach_from_stream(
     let presence_frame = wire::read_default_frame(stream)?;
     let presence = presence_from_frame(&presence_frame)?;
 
-    let previous_timeout = stream.read_timeout()?;
-    stream.set_read_timeout(Some(Duration::from_millis(20)))?;
-    let surface_result: Result<Option<SurfaceUpdate>, Box<dyn std::error::Error>> =
-        match wire::read_default_frame(stream) {
-            Ok(surface_frame) => surface_update_from_frame(&surface_frame).map(Some),
-            Err(wire::WireError::Io(err))
-                if matches!(
-                    err.kind(),
-                    io::ErrorKind::UnexpectedEof
-                        | io::ErrorKind::TimedOut
-                        | io::ErrorKind::WouldBlock
-                ) =>
-            {
-                Ok(None)
-            }
-            Err(err) => Err(err.into()),
-        };
-    stream.set_read_timeout(previous_timeout)?;
-    let surface = surface_result?;
+    let status_frame = wire::read_default_frame(stream)?;
+    let status = attach_status_from_frame(&status_frame)?;
+    let surface = match status.surface_state {
+        protocol::AttachSurfaceState::Current => None,
+        protocol::AttachSurfaceState::Snapshot | protocol::AttachSurfaceState::Patch => {
+            let surface_frame = wire::read_default_frame(stream)?;
+            Some(surface_update_from_frame(&surface_frame)?)
+        }
+        other => return Err(format!("unsupported attach surface state: {other:?}").into()),
+    };
 
     Ok(AttachSnapshot {
         workspace,
         presence,
+        status,
         surface,
         scrollback: None,
     })
@@ -2189,6 +2211,24 @@ pub fn presence_from_frame(frame: &[u8]) -> Result<PresenceSummary, Box<dyn std:
     })
 }
 
+pub fn attach_status_from_frame(
+    frame: &[u8],
+) -> Result<AttachStatusSummary, Box<dyn std::error::Error>> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::AttachStatus {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let status = envelope
+        .body_as_attach_status()
+        .ok_or("missing attach status body")?;
+    Ok(AttachStatusSummary {
+        pane_id: status.pane_id().unwrap_or_default().to_owned(),
+        surface_version: status.surface_version(),
+        surface_state: status.surface_state(),
+    })
+}
+
 pub fn scrollback_fetch_from_frame(
     frame: &[u8],
 ) -> Result<ScrollbackFetchSummary, Box<dyn std::error::Error>> {
@@ -2423,6 +2463,14 @@ fn surface_response_for_known_version(
     }
 }
 
+fn attach_surface_state(response: Option<SurfaceResponse>) -> protocol::AttachSurfaceState {
+    match response {
+        Some(SurfaceResponse::Snapshot) => protocol::AttachSurfaceState::Snapshot,
+        Some(SurfaceResponse::Patch { .. }) => protocol::AttachSurfaceState::Patch,
+        None => protocol::AttachSurfaceState::Current,
+    }
+}
+
 fn attach_mode_as_protocol(mode: AttachMode) -> protocol::AttachMode {
     match mode {
         AttachMode::ReadOnly => protocol::AttachMode::ReadOnly,
@@ -2438,7 +2486,7 @@ fn attach_mode_from_protocol(mode: protocol::AttachMode) -> AttachMode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SurfaceResponse {
     Snapshot,
     Patch { base_version: u64 },
@@ -2454,6 +2502,7 @@ pub struct KnownSurfaceVersion {
 pub struct AttachSnapshot {
     pub workspace: WorkspaceSummary,
     pub presence: PresenceSummary,
+    pub status: AttachStatusSummary,
     pub surface: Option<SurfaceUpdate>,
     pub scrollback: Option<ScrollbackChunkSummary>,
 }
@@ -2464,6 +2513,13 @@ pub struct RenderedAttach {
     pub surface_metadata: TerminalMetadataSummary,
     pub surface_text: Option<String>,
     pub scrollback: Option<ScrollbackChunkSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachStatusSummary {
+    pub pane_id: String,
+    pub surface_version: u64,
+    pub surface_state: protocol::AttachSurfaceState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -2969,6 +3025,24 @@ impl ClientAttachState {
             return None;
         }
         self.cached_scrollback_version(pane_id, start_line, line_count)
+    }
+
+    pub fn known_scrollback_versions_for_scope(
+        &self,
+        scope: Option<SocketIdentity>,
+    ) -> Vec<KnownScrollbackVersion> {
+        if self.scope != scope {
+            return Vec::new();
+        }
+        self.scrollbacks
+            .iter()
+            .map(|scrollback| KnownScrollbackVersion {
+                pane_id: scrollback.pane_id.clone(),
+                start_line: scrollback.start_line,
+                line_count: scrollback.line_count,
+                version: scrollback.version,
+            })
+            .collect()
     }
 
     pub fn apply_scope(&mut self, scope: Option<SocketIdentity>) {
@@ -4333,6 +4407,14 @@ mod tests {
         }
     }
 
+    fn attach_status_summary(pane_id: &str, surface_version: u64) -> AttachStatusSummary {
+        AttachStatusSummary {
+            pane_id: pane_id.to_owned(),
+            surface_version,
+            surface_state: protocol::AttachSurfaceState::Snapshot,
+        }
+    }
+
     fn read_only_attach_options() -> AttachOptions {
         AttachOptions {
             request: AttachRequest {
@@ -4352,6 +4434,7 @@ mod tests {
             scrollback_start_line: 1,
             scrollback_line_count: 2,
             known_scrollback_version: 0,
+            known_scrollback_versions: Vec::new(),
             connect_timeout: None,
         }
     }
@@ -4715,6 +4798,7 @@ mod tests {
                     resize_policy: protocol::ResizePolicy::Fixed,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
+                status: attach_status_summary("pane-1", 2),
                 surface: Some(snapshot_update),
                 scrollback: None,
             })
@@ -4741,6 +4825,7 @@ mod tests {
             .render_attach(AttachSnapshot {
                 workspace: rendered.workspace,
                 presence: presence_summary(AttachMode::ReadWrite),
+                status: attach_status_summary("pane-1", 2),
                 surface: Some(patch_update),
                 scrollback: None,
             })
@@ -4838,6 +4923,7 @@ mod tests {
                     resize_policy: protocol::ResizePolicy::Fixed,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
+                status: attach_status_summary("pane-1", 2),
                 surface: Some(snapshot),
                 scrollback: Some(ScrollbackChunkSummary {
                     pane_id: "pane-1".to_owned(),
@@ -4959,6 +5045,7 @@ mod tests {
                     resize_policy: protocol::ResizePolicy::Fixed,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
+                status: attach_status_summary("pane-1", 2),
                 surface: None,
                 scrollback: Some(ScrollbackChunkSummary {
                     pane_id: "pane-1".to_owned(),
@@ -7648,6 +7735,14 @@ mod tests {
 
         assert_eq!(snapshot.workspace.pane_id, "pane-1");
         assert_eq!(snapshot.presence.mode, AttachMode::ReadWrite);
+        assert_eq!(
+            snapshot.status,
+            AttachStatusSummary {
+                pane_id: "pane-1".to_owned(),
+                surface_version: 2,
+                surface_state: protocol::AttachSurfaceState::Current,
+            }
+        );
         assert_eq!(snapshot.surface, None);
         assert_eq!(
             snapshot
@@ -7659,6 +7754,129 @@ mod tests {
                 scrollback_line(2, "nmux pane-1"),
             ])
         );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn current_surface_attach_uses_attached_pane_for_cached_scrollback_precondition() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        rename_initial_pane(&mut session, "pane-2");
+
+        let scope = socket_identity(&socket_path).ok();
+        let mut state = ClientAttachState::default();
+        state.apply_scope(scope);
+        let surface = surface_update_from_frame(
+            &session
+                .pane_surface_frame_for_pane("local-client", 3, "pane-2")
+                .expect("pane-2 surface frame"),
+        )
+        .expect("surface snapshot");
+        state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-2".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                status: attach_status_summary("pane-2", 2),
+                surface: Some(surface),
+                scrollback: Some(ScrollbackChunkSummary {
+                    pane_id: "pane-2".to_owned(),
+                    scrollback_version: 1,
+                    start_line: 1,
+                    total_lines: 1,
+                    styles: default_style_summaries(),
+                    colors: TerminalColorSummary::default(),
+                    lines: vec![
+                        scrollback_line(1, "booting pane-2"),
+                        scrollback_line(2, "nmux pane-2"),
+                    ],
+                }),
+            })
+            .expect("seed pane-2 cached state");
+        {
+            let pane = &mut session.tabs[0].root;
+            pane.scrollback_version = 2;
+            pane.scrollback_lines.push("history only".to_owned());
+            pane.scrollback_row_runs
+                .push(vec![CellRun::plain("history only")]);
+            pane.scrollback_semantic_prompts
+                .push(protocol::RowSemanticPrompt::None);
+            pane.scrollback_dirty_rows.push(false);
+            pane.scrollback_kitty_placeholders.push(false);
+        }
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let request = read_attach_request(&mut stream).expect("read attach request");
+            assert!(
+                request
+                    .known_surfaces
+                    .iter()
+                    .any(|known| { known.pane_id == "pane-2" && known.version == 2 })
+            );
+            wire::write_default_frame(
+                &mut stream,
+                &session.workspace_tree_frame("local-client", 1),
+            )
+            .expect("write workspace");
+            wire::write_default_frame(
+                &mut stream,
+                &session.presence_update_frame("local-client", 2, &request.actor()),
+            )
+            .expect("write presence");
+            wire::write_default_frame(
+                &mut stream,
+                &session.attach_status_frame(
+                    "local-client",
+                    3,
+                    "pane-2",
+                    protocol::AttachSurfaceState::Current,
+                ),
+            )
+            .expect("write attach status");
+
+            let mut seq = 4;
+            let first = read_scrollback_fetch_from_stream(&mut stream).expect("first fetch");
+            assert_eq!(first.pane_id, "pane-2");
+            assert_eq!(first.known_scrollback_version, 1);
+            write_scrollback_fetch_error(
+                &mut stream,
+                &session,
+                &mut seq,
+                &first,
+                protocol::ErrorCode::StaleVersion,
+            )
+            .expect("write stale version");
+
+            let retry = read_scrollback_fetch_from_stream(&mut stream).expect("retry fetch");
+            assert_eq!(retry.pane_id, "pane-2");
+            assert_eq!(retry.known_scrollback_version, 0);
+            let chunk = session
+                .scrollback_chunk_frame_for_pane(
+                    "local-client",
+                    seq,
+                    "pane-2",
+                    retry.start_line,
+                    retry.line_count,
+                )
+                .expect("pane-2 scrollback chunk");
+            wire::write_default_frame(&mut stream, &chunk).expect("write chunk");
+        });
+
+        let rendered = attach_render_once(&socket_path, read_only_attach_options(), &mut state)
+            .expect("attach render");
+        server.join().expect("server thread");
+
+        assert_eq!(rendered.workspace.pane_id, "pane-2");
+        assert_eq!(state.cached_scrollback_version("pane-2", 1, 2), Some(2));
 
         let _ = fs::remove_file(socket_path);
     }
@@ -7695,6 +7913,7 @@ mod tests {
                     resize_policy: protocol::ResizePolicy::Fixed,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
+                status: attach_status_summary("pane-1", 2),
                 surface: Some(surface),
                 scrollback: Some(ScrollbackChunkSummary {
                     pane_id: "pane-1".to_owned(),
@@ -7770,6 +7989,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 known_scrollback_version: 0,
+                known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
             },
         )
@@ -7823,6 +8043,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 known_scrollback_version: 0,
+                known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
             },
         )
@@ -7875,6 +8096,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 known_scrollback_version: 0,
+                known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
             },
         )
@@ -7928,6 +8150,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 known_scrollback_version: 0,
+                known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
             },
         )
@@ -7980,6 +8203,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 known_scrollback_version: 0,
+                known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
             },
         )
@@ -8043,6 +8267,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 known_scrollback_version: 0,
+                known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
             },
         )
@@ -8114,6 +8339,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 known_scrollback_version: 0,
+                known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
             },
         )

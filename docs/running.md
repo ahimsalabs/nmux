@@ -1,6 +1,6 @@
 # Running nmux
 
-The current prototype is a local attach skeleton with a real local PTY host behind the daemon. `nmuxd` owns one workspace tree, one backend-owned pane surface, one scrollback object, and one attached actor. The client sends an `AttachRequest` with actor ID, attach mode, focused pane, and known pane surface versions. The daemon starts the pane command in a local PTY, polls already-pumped PTY output into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`, a `PresenceUpdate`, and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. `nmux` applies those state objects to a client-side pane surface render state before printing. After rendering, it can send one explicit text, paste, named-key, focus, or mouse `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
+The current prototype is a local attach skeleton with a real local PTY host behind the daemon. `nmuxd` owns one workspace tree, one backend-owned pane surface, one scrollback object, and one attached actor. The client sends an `AttachRequest` with actor ID, attach mode, focused pane, and known pane surface versions. The daemon starts the pane command in a local PTY, polls already-pumped PTY output into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`, a `PresenceUpdate`, an `AttachStatus`, and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. `AttachStatus` identifies the attached pane and says whether the client is already current or a surface frame follows. `nmux` applies those state objects to a client-side pane surface render state before printing. After rendering, it can send one explicit text, paste, named-key, focus, or mouse `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
 
 Run all checks:
 
@@ -82,7 +82,7 @@ To keep one local frontend process polling for server-owned surface updates, run
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --follow --iterations 3 --interval-ms 500 --state /tmp/nmux-follow.state --scrollback-start 1 --scrollback-count 1
 ```
 
-`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and renders the scoped cached surface when a current-version reconnect has no newer surface frame. Follow mode is read-only for now, so it rejects input flags instead of repeatedly sending input.
+`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and renders the scoped cached surface when `AttachStatus` reports the attached pane is already current. Follow mode is read-only for now, so it rejects input flags instead of repeatedly sending input.
 
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
@@ -258,7 +258,7 @@ that rewrites GitHub HTTPS URLs to SSH. The
 
 ## Presence And Attach Modes
 
-The FlatBuffers `AttachRequest` carries actor ID, user metadata, focused pane, and attach mode. The daemon replies with `PresenceUpdate`.
+The FlatBuffers `AttachRequest` carries actor ID, user metadata, focused pane, attach mode, and known pane surface versions. The daemon replies with `PresenceUpdate` and `AttachStatus`. `AttachStatus.surface_state = Current` is the explicit no-surface-update attach barrier; `Snapshot` and `Patch` mean the corresponding surface frame follows immediately.
 
 Current behavior:
 
@@ -278,11 +278,11 @@ Reconnect metadata is carried by `AttachRequest.known_surfaces`.
 Current behavior:
 
 - no known surface version: daemon sends a full `PaneSurfaceSnapshot`
-- known `pane-1` surface version is current: daemon sends no surface frame
-- known `pane-1` surface version is patchable: daemon sends a `PaneSurfacePatch`
+- known `pane-1` surface version is current: daemon sends `AttachStatus.surface_state = Current` and no surface frame
+- known `pane-1` surface version is patchable: daemon sends `AttachStatus.surface_state = Patch` followed by a `PaneSurfacePatch`
 - known `pane-1` surface version has a latest `FullRefreshRequired` update:
-  daemon sends a full `PaneSurfaceSnapshot`
-- known `pane-1` surface version is stale: daemon sends a full `PaneSurfaceSnapshot`
+  daemon sends `AttachStatus.surface_state = Snapshot` followed by a full `PaneSurfaceSnapshot`
+- known `pane-1` surface version is stale: daemon sends `AttachStatus.surface_state = Snapshot` followed by a full `PaneSurfaceSnapshot`
 
 The CLI can persist its local render state with `--state`. This records the
 rendered pane surface, terminal title, OSC 7 working directory, terminal modes

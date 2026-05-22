@@ -97,6 +97,12 @@ enum AttachMode : byte {
   ReadWrite = 1,
 }
 
+enum AttachSurfaceState : byte {
+  Current = 0,
+  Snapshot = 1,
+  Patch = 2,
+}
+
 enum RowSemanticPrompt : byte {
   None = 0,
   Prompt = 1,
@@ -343,6 +349,12 @@ table AttachRequest {
   known_surfaces:[KnownPaneSurfaceVersion];
 }
 
+table AttachStatus {
+  pane_id:string;
+  surface_version:ulong;
+  surface_state:AttachSurfaceState = Current;
+}
+
 union EnvelopeBody {
   WorkspaceTreeSnapshot,
   PaneSurfaceSnapshot,
@@ -354,6 +366,7 @@ union EnvelopeBody {
   ScrollbackChunk,
   PresenceUpdate,
   AttachRequest,
+  AttachStatus,
 }
 
 table Envelope {

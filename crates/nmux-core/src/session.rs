@@ -1035,6 +1035,45 @@ impl Session {
         builder.finished_data().to_vec()
     }
 
+    pub fn attach_status_frame(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        pane_id: &str,
+        surface_state: protocol::AttachSurfaceState,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+
+        let pane_id_offset = builder.create_string(pane_id);
+        let status = protocol::AttachStatus::create(
+            &mut builder,
+            &protocol::AttachStatusArgs {
+                pane_id: Some(pane_id_offset),
+                surface_version: self.surface_version(pane_id).unwrap_or_default(),
+                surface_state,
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::AttachStatus,
+                body: Some(status.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+
     pub fn error_frame(
         &self,
         connection_id: &str,

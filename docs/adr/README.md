@@ -26,3 +26,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0018: libghostty-vt Default And CI Gate](0018-libghostty-vt-default-and-ci-gate.md)
 - [0019: Color-Only Palette Diffs](0019-color-only-palette-diffs.md)
 - [0020: Attributed Error Frames](0020-attributed-error-frames.md)
+- [0021: Explicit Attach Status](0021-explicit-attach-status.md)

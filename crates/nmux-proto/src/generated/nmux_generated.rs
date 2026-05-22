@@ -1295,6 +1295,94 @@ impl<'a> ::flatbuffers::Verifiable for AttachMode {
 
 impl ::flatbuffers::SimpleToVerifyInSlice for AttachMode {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ATTACH_SURFACE_STATE: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ATTACH_SURFACE_STATE: i8 = 2;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ATTACH_SURFACE_STATE: [AttachSurfaceState; 3] = [
+  AttachSurfaceState::Current,
+  AttachSurfaceState::Snapshot,
+  AttachSurfaceState::Patch,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct AttachSurfaceState(pub i8);
+#[allow(non_upper_case_globals)]
+impl AttachSurfaceState {
+  pub const Current: Self = Self(0);
+  pub const Snapshot: Self = Self(1);
+  pub const Patch: Self = Self(2);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 2;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Current,
+    Self::Snapshot,
+    Self::Patch,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Current => Some("Current"),
+      Self::Snapshot => Some("Snapshot"),
+      Self::Patch => Some("Patch"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for AttachSurfaceState {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for AttachSurfaceState {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for AttachSurfaceState {
+    type Output = AttachSurfaceState;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for AttachSurfaceState {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for AttachSurfaceState {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for AttachSurfaceState {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_ROW_SEMANTIC_PROMPT: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MAX_ROW_SEMANTIC_PROMPT: i8 = 2;
@@ -1561,10 +1649,10 @@ impl ::flatbuffers::SimpleToVerifyInSlice for PresenceKind {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_ENVELOPE_BODY: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_ENVELOPE_BODY: u8 = 10;
+pub const ENUM_MAX_ENVELOPE_BODY: u8 = 11;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 11] = [
+pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 12] = [
   EnvelopeBody::NONE,
   EnvelopeBody::WorkspaceTreeSnapshot,
   EnvelopeBody::PaneSurfaceSnapshot,
@@ -1576,6 +1664,7 @@ pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 11] = [
   EnvelopeBody::ScrollbackChunk,
   EnvelopeBody::PresenceUpdate,
   EnvelopeBody::AttachRequest,
+  EnvelopeBody::AttachStatus,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -1594,9 +1683,10 @@ impl EnvelopeBody {
   pub const ScrollbackChunk: Self = Self(8);
   pub const PresenceUpdate: Self = Self(9);
   pub const AttachRequest: Self = Self(10);
+  pub const AttachStatus: Self = Self(11);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 10;
+  pub const ENUM_MAX: u8 = 11;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::NONE,
     Self::WorkspaceTreeSnapshot,
@@ -1609,6 +1699,7 @@ impl EnvelopeBody {
     Self::ScrollbackChunk,
     Self::PresenceUpdate,
     Self::AttachRequest,
+    Self::AttachStatus,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -1624,6 +1715,7 @@ impl EnvelopeBody {
       Self::ScrollbackChunk => Some("ScrollbackChunk"),
       Self::PresenceUpdate => Some("PresenceUpdate"),
       Self::AttachRequest => Some("AttachRequest"),
+      Self::AttachStatus => Some("AttachStatus"),
       _ => None,
     }
   }
@@ -6312,6 +6404,136 @@ impl ::core::fmt::Debug for AttachRequest<'_> {
       ds.finish()
   }
 }
+pub enum AttachStatusOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct AttachStatus<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for AttachStatus<'a> {
+  type Inner = AttachStatus<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> AttachStatus<'a> {
+  pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_SURFACE_VERSION: ::flatbuffers::VOffsetT = 6;
+  pub const VT_SURFACE_STATE: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    AttachStatus { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args AttachStatusArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<AttachStatus<'bldr>> {
+    let mut builder = AttachStatusBuilder::new(_fbb);
+    builder.add_surface_version(args.surface_version);
+    if let Some(x) = args.pane_id { builder.add_pane_id(x); }
+    builder.add_surface_state(args.surface_state);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn pane_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AttachStatus::VT_PANE_ID, None)}
+  }
+  #[inline]
+  pub fn surface_version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(AttachStatus::VT_SURFACE_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn surface_state(&self) -> AttachSurfaceState {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<AttachSurfaceState>(AttachStatus::VT_SURFACE_STATE, Some(AttachSurfaceState::Current)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for AttachStatus<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
+     .visit_field::<u64>("surface_version", Self::VT_SURFACE_VERSION, false)?
+     .visit_field::<AttachSurfaceState>("surface_state", Self::VT_SURFACE_STATE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct AttachStatusArgs<'a> {
+    pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub surface_version: u64,
+    pub surface_state: AttachSurfaceState,
+}
+impl<'a> Default for AttachStatusArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    AttachStatusArgs {
+      pane_id: None,
+      surface_version: 0,
+      surface_state: AttachSurfaceState::Current,
+    }
+  }
+}
+
+pub struct AttachStatusBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> AttachStatusBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachStatus::VT_PANE_ID, pane_id);
+  }
+  #[inline]
+  pub fn add_surface_version(&mut self, surface_version: u64) {
+    self.fbb_.push_slot::<u64>(AttachStatus::VT_SURFACE_VERSION, surface_version, 0);
+  }
+  #[inline]
+  pub fn add_surface_state(&mut self, surface_state: AttachSurfaceState) {
+    self.fbb_.push_slot::<AttachSurfaceState>(AttachStatus::VT_SURFACE_STATE, surface_state, AttachSurfaceState::Current);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> AttachStatusBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    AttachStatusBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<AttachStatus<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for AttachStatus<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("AttachStatus");
+      ds.field("pane_id", &self.pane_id());
+      ds.field("surface_version", &self.surface_version());
+      ds.field("surface_state", &self.surface_state());
+      ds.finish()
+  }
+}
 pub enum EnvelopeOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -6565,6 +6787,21 @@ impl<'a> Envelope<'a> {
     }
   }
 
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_attach_status(&self) -> Option<AttachStatus<'a>> {
+    if self.body_type() == EnvelopeBody::AttachStatus {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { AttachStatus::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
 }
 
 impl ::flatbuffers::Verifiable for Envelope<'_> {
@@ -6591,6 +6828,7 @@ impl ::flatbuffers::Verifiable for Envelope<'_> {
           EnvelopeBody::ScrollbackChunk => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ScrollbackChunk>>("EnvelopeBody::ScrollbackChunk", pos),
           EnvelopeBody::PresenceUpdate => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<PresenceUpdate>>("EnvelopeBody::PresenceUpdate", pos),
           EnvelopeBody::AttachRequest => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<AttachRequest>>("EnvelopeBody::AttachRequest", pos),
+          EnvelopeBody::AttachStatus => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<AttachStatus>>("EnvelopeBody::AttachStatus", pos),
           _ => Ok(()),
         }
      })?
@@ -6752,6 +6990,13 @@ impl ::core::fmt::Debug for Envelope<'_> {
         },
         EnvelopeBody::AttachRequest => {
           if let Some(x) = self.body_as_attach_request() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::AttachStatus => {
+          if let Some(x) = self.body_as_attach_status() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")

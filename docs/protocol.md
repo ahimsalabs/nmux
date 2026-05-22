@@ -20,6 +20,8 @@ state-sync envelope bodies:
 - `ResizeIntent` for client-originated size requests.
 - `PresenceUpdate` for actor join/leave-style presence events.
 - `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time.
+- `AttachStatus` for the daemon-selected pane and whether a surface frame
+  follows the attach response.
 - `Error` for protocol-level failures.
 
 Permissions, sandbox hosts, adapters, and image-specific payloads remain outside
@@ -78,6 +80,14 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
 This avoids freezing a simplistic per-cell ABI before the project has enough implementation feedback about graphemes, combining marks, double-width characters, terminal modes, hyperlinks, and image protocols.
 
 Clients should maintain a pane-surface render state keyed by pane ID and version. A snapshot initializes the local surface buffer and style table, and a patch is applied only when its `base_version` matches the client's current version. Row patches are applied by encoded row index, not by vector order. Cursor-only patches update cursor state without row updates.
+
+Attach responses send `WorkspaceTreeSnapshot`, `PresenceUpdate`, and then
+`AttachStatus`. `AttachStatus.pane_id` is the daemon-selected attached pane.
+`AttachStatus.surface_state` is `Current` when the client already has the
+current surface and no surface frame follows; otherwise it is `Snapshot` or
+`Patch` and the next frame is the corresponding pane surface object. Clients
+should use the status pane ID, not a guessed default, for post-attach input,
+resize, and scrollback requests.
 
 Cursor-only, mode-only, and color-only patches can also update
 `TerminalMetadataState` without row updates. Mode-only patches update
