@@ -117,6 +117,7 @@ impl TmuxSession {
                     blinking: true,
                 },
                 modes: TerminalModes::default(),
+                terminal_title: String::new(),
                 styles: vec![PaneStyle::default()],
                 surface_lines: Vec::new(),
                 surface_row_runs: Vec::<Vec<CellRun>>::new(),

@@ -8,6 +8,7 @@ pub struct TerminalInput<'a> {
     pub surface: protocol::SurfaceKind,
     pub cursor: TerminalCursor,
     pub modes: TerminalModes,
+    pub title: &'a str,
     pub surface_lines: &'a [String],
     pub scrollback_lines: &'a [String],
 }
@@ -83,6 +84,7 @@ pub struct TerminalUpdate {
     pub surface: protocol::SurfaceKind,
     pub cursor: TerminalCursor,
     pub modes: TerminalModes,
+    pub title: String,
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
@@ -103,6 +105,7 @@ impl TerminalUpdate {
             surface,
             cursor,
             modes: TerminalModes::default(),
+            title: String::new(),
             styles: vec![PaneStyle::default()],
             surface_row_runs: plain_row_runs(&surface_lines),
             scrollback_row_runs: plain_row_runs(&scrollback_lines),
@@ -185,6 +188,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
             input.surface,
             input.cursor,
             input.modes,
+            input.title,
             input.rows,
             scrollback_lines,
         ))
@@ -200,6 +204,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
             input.surface,
             input.cursor,
             input.modes,
+            input.title,
             rows,
             input.scrollback_lines.to_vec(),
         ))
@@ -210,6 +215,7 @@ fn interim_text_update(
     surface: protocol::SurfaceKind,
     previous_cursor: TerminalCursor,
     modes: TerminalModes,
+    title: &str,
     rows: u32,
     scrollback_lines: Vec<String>,
 ) -> TerminalUpdate {
@@ -231,6 +237,7 @@ fn interim_text_update(
         scrollback_lines,
     );
     update.modes = modes;
+    update.title = title.to_owned();
     update
 }
 
@@ -374,17 +381,20 @@ mod ghostty_vt {
             let surface_lines = surface_rows.lines.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
             let modes = modes(&self.terminal)?;
+            let title = self.terminal.title().ok()?;
             let patch_kind = if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
                 && cursor != input.cursor
                 && modes == input.modes
+                && title == input.title
             {
                 protocol::PatchKind::CursorOnly
             } else if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
                 && modes != input.modes
+                && title == input.title
             {
                 protocol::PatchKind::ModeOnly
             } else {
@@ -396,6 +406,7 @@ mod ghostty_vt {
                 surface,
                 cursor,
                 modes,
+                title: title.to_owned(),
                 styles,
                 surface_row_runs: surface_rows.row_runs,
                 scrollback_row_runs: scrollback_rows.row_runs,
@@ -683,6 +694,7 @@ mod tests {
                 blinking: true,
             },
             modes: TerminalModes::default(),
+            title: "",
             surface_lines,
             scrollback_lines,
         }
@@ -697,6 +709,7 @@ mod tests {
             surface: update.surface,
             cursor: update.cursor,
             modes: update.modes,
+            title: &update.title,
             surface_lines: &update.surface_lines,
             scrollback_lines: &update.scrollback_lines,
         }
@@ -719,6 +732,7 @@ mod tests {
                 blinking: true,
             },
             modes: TerminalModes::default(),
+            title: "existing title",
             surface_lines: &[],
             scrollback_lines: &scrollback_lines,
         };
@@ -747,6 +761,7 @@ mod tests {
             }
         );
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
+        assert_eq!(update.title, "existing title");
     }
 
     #[test]
@@ -766,6 +781,7 @@ mod tests {
                 blinking: true,
             },
             modes: TerminalModes::default(),
+            title: "",
             surface_lines: &[],
             scrollback_lines: &scrollback_lines,
         };
@@ -811,6 +827,7 @@ mod tests {
                 blinking: true,
             },
             modes: TerminalModes::default(),
+            title: "",
             surface_lines: &scrollback_lines,
             scrollback_lines: &scrollback_lines,
         };
@@ -1062,6 +1079,25 @@ mod tests {
             "",
             "OSC 7 working directory is not exposed by the current backend path"
         );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_extracts_title_metadata() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let first = engine
+            .apply_output(terminal_input_with_size(80, 24, &[], &[]), b"ready")
+            .expect("first update");
+        let title = engine
+            .apply_output(
+                terminal_input_from_update(&first),
+                b"\x1b]2;nmux test title\x1b\\",
+            )
+            .expect("title update");
+
+        assert_eq!(title.title, "nmux test title");
+        assert_eq!(title.surface_lines, first.surface_lines);
+        assert_eq!(title.patch_kind, protocol::PatchKind::ReplaceRows);
     }
 
     #[cfg(feature = "libghostty-vt")]

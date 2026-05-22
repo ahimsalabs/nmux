@@ -112,6 +112,7 @@ table PaneSurfaceSnapshot {
   rows:uint;
   cursor:CursorState;
   modes:TerminalModeState;
+  metadata:TerminalMetadataState;
   styles:[Style];
   rows_data:[SurfaceRow];
 }
@@ -124,6 +125,7 @@ table PaneSurfacePatch {
   row_updates:[RowUpdate];
   cursor:CursorState;
   modes:TerminalModeState;
+  metadata:TerminalMetadataState;
 }
 
 table CursorState {
@@ -142,6 +144,10 @@ table TerminalModeState {
   application_cursor:bool;
   origin:bool;
   wraparound:bool = true;
+}
+
+table TerminalMetadataState {
+  title:string;
 }
 
 table SurfaceRow {

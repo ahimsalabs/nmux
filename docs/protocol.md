@@ -36,6 +36,8 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
 - `CellRun` stores UTF-8 text, per-cell widths, a style table reference, flags, and an optional hyperlink reference.
 - `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot` objects and `ScrollbackChunk` objects carry the style table needed by their rows.
 - `CursorState` stores cursor row, column, visibility, shape, and blinking.
+- `TerminalMetadataState` stores pane terminal title metadata. OSC 7 working
+  directory state is not modeled yet.
 - `TerminalModeState` stores terminal modes that clients need for input and
   rendering decisions: bracketed paste, mouse tracking, focus reporting,
   application keypad, application cursor, origin, and wraparound.
@@ -44,9 +46,11 @@ This avoids freezing a simplistic per-cell ABI before the project has enough imp
 
 Clients should maintain a pane-surface render state keyed by pane ID and version. A snapshot initializes the local surface buffer and style table, and a patch is applied only when its `base_version` matches the client's current version. Row patches are applied by encoded row index, not by vector order. Cursor-only patches update cursor state without row updates.
 
-Mode-only patches update `TerminalModeState` without row updates. They are
-versioned surface changes because future input encoding and renderer behavior
-can depend on these modes even when visible text does not change.
+Cursor-only and mode-only patches can also update `TerminalMetadataState`
+without row updates. Mode-only patches update `TerminalModeState` without row
+updates. These are versioned surface changes because future input encoding,
+renderer behavior, and pane chrome can depend on terminal state even when
+visible text does not change.
 
 `PaneSurfacePatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired` and the client must request or wait for a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
 

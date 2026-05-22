@@ -1748,8 +1748,9 @@ impl<'a> PaneSurfaceSnapshot<'a> {
   pub const VT_ROWS: ::flatbuffers::VOffsetT = 12;
   pub const VT_CURSOR: ::flatbuffers::VOffsetT = 14;
   pub const VT_MODES: ::flatbuffers::VOffsetT = 16;
-  pub const VT_STYLES: ::flatbuffers::VOffsetT = 18;
-  pub const VT_ROWS_DATA: ::flatbuffers::VOffsetT = 20;
+  pub const VT_METADATA: ::flatbuffers::VOffsetT = 18;
+  pub const VT_STYLES: ::flatbuffers::VOffsetT = 20;
+  pub const VT_ROWS_DATA: ::flatbuffers::VOffsetT = 22;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -1764,6 +1765,7 @@ impl<'a> PaneSurfaceSnapshot<'a> {
     builder.add_version(args.version);
     if let Some(x) = args.rows_data { builder.add_rows_data(x); }
     if let Some(x) = args.styles { builder.add_styles(x); }
+    if let Some(x) = args.metadata { builder.add_metadata(x); }
     if let Some(x) = args.modes { builder.add_modes(x); }
     if let Some(x) = args.cursor { builder.add_cursor(x); }
     builder.add_rows(args.rows);
@@ -1824,6 +1826,13 @@ impl<'a> PaneSurfaceSnapshot<'a> {
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalModeState>>(PaneSurfaceSnapshot::VT_MODES, None)}
   }
   #[inline]
+  pub fn metadata(&self) -> Option<TerminalMetadataState<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>(PaneSurfaceSnapshot::VT_METADATA, None)}
+  }
+  #[inline]
   pub fn styles(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>> {
     // Safety:
     // Created from valid Table for this object
@@ -1852,6 +1861,7 @@ impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
      .visit_field::<u32>("rows", Self::VT_ROWS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<CursorState>>("cursor", Self::VT_CURSOR, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<TerminalModeState>>("modes", Self::VT_MODES, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>("metadata", Self::VT_METADATA, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Style>>>>("styles", Self::VT_STYLES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SurfaceRow>>>>("rows_data", Self::VT_ROWS_DATA, false)?
      .finish();
@@ -1866,6 +1876,7 @@ pub struct PaneSurfaceSnapshotArgs<'a> {
     pub rows: u32,
     pub cursor: Option<::flatbuffers::WIPOffset<CursorState<'a>>>,
     pub modes: Option<::flatbuffers::WIPOffset<TerminalModeState<'a>>>,
+    pub metadata: Option<::flatbuffers::WIPOffset<TerminalMetadataState<'a>>>,
     pub styles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>>>,
     pub rows_data: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SurfaceRow<'a>>>>>,
 }
@@ -1880,6 +1891,7 @@ impl<'a> Default for PaneSurfaceSnapshotArgs<'a> {
       rows: 0,
       cursor: None,
       modes: None,
+      metadata: None,
       styles: None,
       rows_data: None,
     }
@@ -1920,6 +1932,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfaceSnapshotBuilder<'a
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalModeState>>(PaneSurfaceSnapshot::VT_MODES, modes);
   }
   #[inline]
+  pub fn add_metadata(&mut self, metadata: ::flatbuffers::WIPOffset<TerminalMetadataState<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalMetadataState>>(PaneSurfaceSnapshot::VT_METADATA, metadata);
+  }
+  #[inline]
   pub fn add_styles(&mut self, styles: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Style<'b >>>>) {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneSurfaceSnapshot::VT_STYLES, styles);
   }
@@ -1952,6 +1968,7 @@ impl ::core::fmt::Debug for PaneSurfaceSnapshot<'_> {
       ds.field("rows", &self.rows());
       ds.field("cursor", &self.cursor());
       ds.field("modes", &self.modes());
+      ds.field("metadata", &self.metadata());
       ds.field("styles", &self.styles());
       ds.field("rows_data", &self.rows_data());
       ds.finish()
@@ -1980,6 +1997,7 @@ impl<'a> PaneSurfacePatch<'a> {
   pub const VT_ROW_UPDATES: ::flatbuffers::VOffsetT = 12;
   pub const VT_CURSOR: ::flatbuffers::VOffsetT = 14;
   pub const VT_MODES: ::flatbuffers::VOffsetT = 16;
+  pub const VT_METADATA: ::flatbuffers::VOffsetT = 18;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -1993,6 +2011,7 @@ impl<'a> PaneSurfacePatch<'a> {
     let mut builder = PaneSurfacePatchBuilder::new(_fbb);
     builder.add_version(args.version);
     builder.add_base_version(args.base_version);
+    if let Some(x) = args.metadata { builder.add_metadata(x); }
     if let Some(x) = args.modes { builder.add_modes(x); }
     if let Some(x) = args.cursor { builder.add_cursor(x); }
     if let Some(x) = args.row_updates { builder.add_row_updates(x); }
@@ -2051,6 +2070,13 @@ impl<'a> PaneSurfacePatch<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalModeState>>(PaneSurfacePatch::VT_MODES, None)}
   }
+  #[inline]
+  pub fn metadata(&self) -> Option<TerminalMetadataState<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>(PaneSurfacePatch::VT_METADATA, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for PaneSurfacePatch<'_> {
@@ -2066,6 +2092,7 @@ impl ::flatbuffers::Verifiable for PaneSurfacePatch<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<RowUpdate>>>>("row_updates", Self::VT_ROW_UPDATES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<CursorState>>("cursor", Self::VT_CURSOR, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<TerminalModeState>>("modes", Self::VT_MODES, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>("metadata", Self::VT_METADATA, false)?
      .finish();
     Ok(())
   }
@@ -2078,6 +2105,7 @@ pub struct PaneSurfacePatchArgs<'a> {
     pub row_updates: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<RowUpdate<'a>>>>>,
     pub cursor: Option<::flatbuffers::WIPOffset<CursorState<'a>>>,
     pub modes: Option<::flatbuffers::WIPOffset<TerminalModeState<'a>>>,
+    pub metadata: Option<::flatbuffers::WIPOffset<TerminalMetadataState<'a>>>,
 }
 impl<'a> Default for PaneSurfacePatchArgs<'a> {
   #[inline]
@@ -2090,6 +2118,7 @@ impl<'a> Default for PaneSurfacePatchArgs<'a> {
       row_updates: None,
       cursor: None,
       modes: None,
+      metadata: None,
     }
   }
 }
@@ -2128,6 +2157,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfacePatchBuilder<'a, '
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalModeState>>(PaneSurfacePatch::VT_MODES, modes);
   }
   #[inline]
+  pub fn add_metadata(&mut self, metadata: ::flatbuffers::WIPOffset<TerminalMetadataState<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalMetadataState>>(PaneSurfacePatch::VT_METADATA, metadata);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PaneSurfacePatchBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     PaneSurfacePatchBuilder {
@@ -2152,6 +2185,7 @@ impl ::core::fmt::Debug for PaneSurfacePatch<'_> {
       ds.field("row_updates", &self.row_updates());
       ds.field("cursor", &self.cursor());
       ds.field("modes", &self.modes());
+      ds.field("metadata", &self.metadata());
       ds.finish()
   }
 }
@@ -2514,6 +2548,102 @@ impl ::core::fmt::Debug for TerminalModeState<'_> {
       ds.field("application_cursor", &self.application_cursor());
       ds.field("origin", &self.origin());
       ds.field("wraparound", &self.wraparound());
+      ds.finish()
+  }
+}
+pub enum TerminalMetadataStateOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct TerminalMetadataState<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for TerminalMetadataState<'a> {
+  type Inner = TerminalMetadataState<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> TerminalMetadataState<'a> {
+  pub const VT_TITLE: ::flatbuffers::VOffsetT = 4;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    TerminalMetadataState { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args TerminalMetadataStateArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<TerminalMetadataState<'bldr>> {
+    let mut builder = TerminalMetadataStateBuilder::new(_fbb);
+    if let Some(x) = args.title { builder.add_title(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn title(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(TerminalMetadataState::VT_TITLE, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for TerminalMetadataState<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("title", Self::VT_TITLE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct TerminalMetadataStateArgs<'a> {
+    pub title: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for TerminalMetadataStateArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    TerminalMetadataStateArgs {
+      title: None,
+    }
+  }
+}
+
+pub struct TerminalMetadataStateBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> TerminalMetadataStateBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_title(&mut self, title: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(TerminalMetadataState::VT_TITLE, title);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> TerminalMetadataStateBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    TerminalMetadataStateBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<TerminalMetadataState<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for TerminalMetadataState<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("TerminalMetadataState");
+      ds.field("title", &self.title());
       ds.finish()
   }
 }

@@ -909,6 +909,11 @@ pub fn surface_update_from_frame(
                     .modes()
                     .map(TerminalModeSummary::from_protocol)
                     .unwrap_or_default(),
+                title: snapshot
+                    .metadata()
+                    .and_then(|metadata| metadata.title())
+                    .unwrap_or_default()
+                    .to_owned(),
                 row_updates,
                 styles,
                 text,
@@ -940,6 +945,11 @@ pub fn surface_update_from_frame(
                     .modes()
                     .map(TerminalModeSummary::from_protocol)
                     .unwrap_or_default(),
+                title: patch
+                    .metadata()
+                    .and_then(|metadata| metadata.title())
+                    .unwrap_or_default()
+                    .to_owned(),
                 row_updates,
                 styles: Vec::new(),
                 text,
@@ -1470,6 +1480,7 @@ pub struct SurfaceUpdate {
     pub surface: Option<protocol::SurfaceKind>,
     pub cursor: Option<CursorSummary>,
     pub modes: TerminalModeSummary,
+    pub title: String,
     pub row_updates: Vec<SurfaceRowUpdate>,
     pub styles: Vec<StyleSummary>,
     pub text: String,
@@ -1583,6 +1594,7 @@ pub struct ClientPaneSurface {
     pub surface: protocol::SurfaceKind,
     pub cursor: Option<CursorSummary>,
     pub modes: TerminalModeSummary,
+    pub title: String,
     styles: Vec<StyleSummary>,
     row_text: Vec<String>,
     row_runs: Vec<Vec<CellRunSummary>>,
@@ -1598,6 +1610,7 @@ impl ClientPaneSurface {
             surface: update.surface.unwrap_or(protocol::SurfaceKind::Main),
             cursor: update.cursor,
             modes: update.modes,
+            title: update.title.clone(),
             styles: if update.styles.is_empty() {
                 default_style_summaries()
             } else {
@@ -1650,12 +1663,14 @@ impl ClientPaneSurface {
         }
         if update.patch_kind == Some(protocol::PatchKind::CursorOnly) {
             self.cursor = update.cursor;
+            self.title = update.title.clone();
             self.version = update.version;
             return Ok(());
         }
         if update.patch_kind == Some(protocol::PatchKind::ModeOnly) {
             self.cursor = update.cursor;
             self.modes = update.modes;
+            self.title = update.title.clone();
             self.version = update.version;
             return Ok(());
         }
@@ -1665,6 +1680,7 @@ impl ClientPaneSurface {
         self.apply_rows(&update.row_updates)?;
         self.cursor = update.cursor;
         self.modes = update.modes;
+        self.title = update.title.clone();
         self.version = update.version;
         Ok(())
     }
@@ -1880,6 +1896,9 @@ impl ClientAttachState {
             encoded.push(' ');
             encoded.push_str(if surface.modes.wraparound { "1" } else { "0" });
             encoded.push('\n');
+            encoded.push_str("title ");
+            encoded.push_str(&hex_encode(surface.title.as_bytes()));
+            encoded.push('\n');
             for style in &surface.styles {
                 encoded.push_str("style ");
                 encoded.push_str(&style.fg_rgba.to_string());
@@ -1969,6 +1988,7 @@ impl ClientAttachState {
             })?;
             let mut cursor = None;
             let mut modes = TerminalModeSummary::default();
+            let mut title = String::new();
             let mut styles = Vec::new();
             let mut row_text = vec![String::new(); row_count];
             let mut row_runs = vec![Vec::new(); row_count];
@@ -2024,6 +2044,10 @@ impl ClientAttachState {
                             origin: parse_state_bool(origin)?,
                             wraparound: parse_state_bool(wraparound)?,
                         };
+                    }
+                    ["title", value] => {
+                        title = String::from_utf8(hex_decode(value)?)
+                            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
                     }
                     ["style", fg_rgba, bg_rgba, underline_rgba, flags] => {
                         styles.push(StyleSummary {
@@ -2095,6 +2119,7 @@ impl ClientAttachState {
                 surface,
                 cursor,
                 modes,
+                title,
                 styles: if styles.is_empty() {
                     default_style_summaries()
                 } else {
@@ -2397,6 +2422,7 @@ mod tests {
             },
             cursor: None,
             modes: TerminalModeSummary::default(),
+            title: String::new(),
             styles: if kind == SurfaceUpdateKind::Snapshot {
                 default_style_summaries()
             } else {
@@ -2532,15 +2558,17 @@ mod tests {
         );
         let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
 
-        let patch = surface_update(
+        let mut patch = surface_update(
             SurfaceUpdateKind::Patch,
             2,
             Some(1),
             vec![surface_row(2, "new bottom"), surface_row(0, "new top")],
         );
+        patch.title = "patched title".to_owned();
         surface.apply_patch(&patch).expect("apply patch");
 
         assert_eq!(surface.version, 2);
+        assert_eq!(surface.title, "patched title");
         assert_eq!(surface.render_text(), "new top\nmiddle\nnew bottom");
     }
 
@@ -2562,12 +2590,14 @@ mod tests {
             shape: protocol::CursorShape::Beam,
             blinking: true,
         });
+        patch.title = "cursor title".to_owned();
 
         surface.apply_patch(&patch).expect("apply patch");
 
         assert_eq!(surface.version, 2);
         assert_eq!(surface.render_text(), "top\nbottom");
         assert_eq!(surface.cursor, patch.cursor);
+        assert_eq!(surface.title, "cursor title");
     }
 
     #[test]
@@ -2582,12 +2612,14 @@ mod tests {
         let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
         patch.patch_kind = Some(protocol::PatchKind::ModeOnly);
         patch.modes.bracketed_paste = true;
+        patch.title = "mode title".to_owned();
 
         surface.apply_patch(&patch).expect("apply patch");
 
         assert_eq!(surface.version, 2);
         assert_eq!(surface.render_text(), "top");
         assert!(surface.modes.bracketed_paste);
+        assert_eq!(surface.title, "mode title");
     }
 
     #[test]
@@ -2716,6 +2748,7 @@ mod tests {
         });
         snapshot.modes.bracketed_paste = true;
         snapshot.modes.focus_reporting = true;
+        snapshot.title = "cached title".to_owned();
         snapshot.cursor = Some(CursorSummary {
             row: 2,
             col: 4,
@@ -2726,6 +2759,7 @@ mod tests {
         let expected_styles = snapshot.styles.clone();
         let expected_modes = snapshot.modes;
         let expected_cursor = snapshot.cursor;
+        let expected_title = snapshot.title.clone();
         state
             .render_attach(AttachSnapshot {
                 workspace: WorkspaceSummary {
@@ -2747,6 +2781,7 @@ mod tests {
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
         assert_eq!(decoded.surfaces[0].cursor, expected_cursor);
         assert_eq!(decoded.surfaces[0].modes, expected_modes);
+        assert_eq!(decoded.surfaces[0].title, expected_title);
         assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
         assert_eq!(decoded.surfaces[0].styles, expected_styles);
         assert_eq!(decoded.surfaces[0].row_runs[0].len(), 2);
@@ -2764,6 +2799,7 @@ mod tests {
 
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
         assert_eq!(decoded.surfaces[0].modes, TerminalModeSummary::default());
+        assert_eq!(decoded.surfaces[0].title, "");
         assert_eq!(decoded.surfaces[0].styles, default_style_summaries());
         assert_eq!(decoded.surfaces[0].render_text(), "cached");
     }

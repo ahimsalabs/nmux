@@ -50,9 +50,10 @@ backend terminal state into the same nmux objects:
   changes. Fetch handling must stay pane-scoped.
 - Resize: feed resize events into the VT engine and publish the resulting pane
   size, cursor, visible rows, and scrollback state.
-- Versions: bump surface versions when the nmux-visible surface, cursor, or
-  surface dimensions change; scrollback-only updates should not force a surface
-  version bump. Keep workspace versions for tree metadata changes.
+- Versions: bump surface versions when the nmux-visible surface, cursor,
+  terminal title, or surface dimensions change; scrollback-only updates should
+  not force a surface version bump. Keep workspace versions for tree metadata
+  changes.
 - Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; terminal
   mode-only changes should use `PatchKind::ModeOnly`; row text or row-run-only
   changes should use `PatchKind::ReplaceRows`; changes that cannot be expressed
@@ -83,10 +84,10 @@ only after the backend extraction proves the exact shape needed.
   validator rejects newline and bracketed paste terminator injection sequences.
   Terminal-derived keypad input forwarding, paste forwarding, mouse input
   forwarding, and focus forwarding still need protocol decisions.
-- Terminal metadata: `libghostty-vt` exposes OSC 2 title state through the safe
-  API, but nmux has no title metadata field yet. OSC 7 working-directory state
-  remains unproven in the current backend path and should stay withheld until
-  the expected upstream behavior is clear.
+- Terminal metadata: nmux carries OSC 2 terminal title through pane surface
+  snapshot and patch metadata. OSC 7 working-directory state remains unproven in
+  the current backend path and should stay withheld until the expected upstream
+  behavior is clear.
 - Shell integration metadata: `libghostty-vt` exposes OSC 133 prompt semantics
   on rows, but nmux has no semantic prompt/input/output protocol fields yet.
   Keep this backend-observable state withheld until the row metadata shape is
@@ -140,14 +141,15 @@ extraction, style-separated cell runs, basic SGR style flags, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
 render-state default colors/palette,
 palette overrides, and explicit cursor color, alternate-screen entry/restoration
-with alternate scrollback omission, title metadata with OSC 7 working-directory
-omission, OSC 133 semantic prompt state, resize/reflow, styled backend-owned
-scrollback extraction, row-level dirty state, Kitty graphics placeholder
-detection, hyperlink presence, application-keypad encoder support, focus event
-encoding, paste safety validation, safe-API mode tracking for bracketed paste,
-mouse tracking, focus reporting, application keypad mode, and origin/wraparound
-modes, plus nmux snapshot/patch cursor blink and mode payloads, mode-only patch
-application, and cursor cache compatibility through unit, session, and live CLI
+with alternate scrollback omission, terminal title metadata with OSC 7
+working-directory omission, OSC 133 semantic prompt state, resize/reflow, styled
+backend-owned scrollback extraction, row-level dirty state, Kitty graphics
+placeholder detection, hyperlink presence, application-keypad encoder support,
+focus event encoding, paste safety validation, safe-API mode tracking for
+bracketed paste, mouse tracking, focus reporting, application keypad mode, and
+origin/wraparound modes, plus nmux snapshot/patch cursor blink and mode
+payloads, mode-only patch application, and cursor cache compatibility through
+unit, session, and live CLI
 smoke coverage. It is not the default until
 the project deliberately accepts the native Zig/Ghostty build cost in normal
 development and CI.

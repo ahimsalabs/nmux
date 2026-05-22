@@ -60,6 +60,7 @@ pub struct Pane {
     pub surface: protocol::SurfaceKind,
     pub cursor: Cursor,
     pub modes: TerminalModes,
+    pub terminal_title: String,
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
@@ -76,6 +77,7 @@ pub struct PaneSurface {
     pub surface: protocol::SurfaceKind,
     pub cursor: Cursor,
     pub modes: TerminalModes,
+    pub title: String,
     pub styles: Vec<PaneStyle>,
     pub lines: Vec<String>,
     pub row_runs: Vec<Vec<CellRun>>,
@@ -127,6 +129,7 @@ impl Session {
                         blinking: true,
                     },
                     modes: TerminalModes::default(),
+                    terminal_title: String::new(),
                     styles: vec![PaneStyle::default()],
                     surface_lines: vec![
                         "nmux pane-1".to_owned(),
@@ -185,6 +188,7 @@ impl Session {
             surface: pane.surface,
             cursor: TerminalCursor::from(&pane.cursor),
             modes: pane.modes,
+            title: &pane.terminal_title,
             surface_lines: &pane.surface_lines,
             scrollback_lines: &pane.scrollback_lines,
         };
@@ -221,6 +225,7 @@ impl Session {
             surface: pane.surface,
             cursor: TerminalCursor::from(&pane.cursor),
             modes: pane.modes,
+            title: &pane.terminal_title,
             surface_lines: &pane.surface_lines,
             scrollback_lines: &pane.scrollback_lines,
         };
@@ -362,6 +367,7 @@ impl Session {
             surface: pane.surface,
             cursor: pane.cursor.clone(),
             modes: pane.modes,
+            title: pane.terminal_title.clone(),
             styles: pane.styles.clone(),
             lines: pane.surface_lines.clone(),
             row_runs: row_runs_for_lines(&pane.surface_lines, &pane.surface_row_runs),
@@ -475,6 +481,7 @@ impl Session {
             },
         );
         let modes = build_terminal_modes(&mut builder, surface.modes);
+        let metadata = build_terminal_metadata(&mut builder, &surface.title);
         let pane_id = builder.create_string(&surface.pane_id);
         let snapshot = protocol::PaneSurfaceSnapshot::create(
             &mut builder,
@@ -486,6 +493,7 @@ impl Session {
                 rows: surface.rows,
                 cursor: Some(cursor),
                 modes: Some(modes),
+                metadata: Some(metadata),
                 styles: Some(styles),
                 rows_data: Some(rows_data),
             },
@@ -569,6 +577,7 @@ impl Session {
             },
         );
         let modes = build_terminal_modes(&mut builder, surface.modes);
+        let metadata = build_terminal_metadata(&mut builder, &surface.title);
         let pane_id = builder.create_string(&surface.pane_id);
         let patch = protocol::PaneSurfacePatch::create(
             &mut builder,
@@ -580,6 +589,7 @@ impl Session {
                 row_updates: Some(row_updates),
                 cursor: Some(cursor),
                 modes: Some(modes),
+                metadata: Some(metadata),
             },
         );
 
@@ -980,6 +990,17 @@ fn build_terminal_modes<'a>(
     )
 }
 
+fn build_terminal_metadata<'a>(
+    builder: &mut FlatBufferBuilder<'a>,
+    title: &str,
+) -> flatbuffers::WIPOffset<protocol::TerminalMetadataState<'a>> {
+    let title = builder.create_string(title);
+    protocol::TerminalMetadataState::create(
+        builder,
+        &protocol::TerminalMetadataStateArgs { title: Some(title) },
+    )
+}
+
 fn apply_terminal_update(
     pane: &mut Pane,
     update: crate::terminal::TerminalUpdate,
@@ -987,6 +1008,7 @@ fn apply_terminal_update(
 ) -> bool {
     let cursor = Cursor::from(update.cursor);
     let modes_changed = pane.modes != update.modes;
+    let title_changed = pane.terminal_title != update.title;
     let rows_changed = pane.surface_lines != update.surface_lines;
     let surface_kind_changed = pane.surface != update.surface;
     let styles_changed = pane.styles != update.styles;
@@ -997,7 +1019,8 @@ fn apply_terminal_update(
         || rows_changed
         || row_runs_changed
         || pane.cursor != cursor
-        || modes_changed;
+        || modes_changed
+        || title_changed;
     let scrollback_changed = pane.scrollback_lines != update.scrollback_lines
         || pane.scrollback_row_runs != update.scrollback_row_runs;
 
@@ -1006,6 +1029,7 @@ fn apply_terminal_update(
         row_runs_for_lines(&pane.scrollback_lines, &update.scrollback_row_runs);
     pane.surface = update.surface;
     pane.modes = update.modes;
+    pane.terminal_title = update.title;
     pane.styles = update.styles;
     pane.surface_lines = update.surface_lines;
     pane.surface_row_runs = row_runs_for_lines(&pane.surface_lines, &update.surface_row_runs);
@@ -1271,6 +1295,7 @@ mod tests {
         assert_eq!(snapshot.surface(), protocol::SurfaceKind::Main);
         assert_eq!(snapshot.cols(), 80);
         assert_eq!(snapshot.rows(), 24);
+        assert_eq!(snapshot.metadata().expect("metadata").title(), Some(""));
 
         let cursor = snapshot.cursor().expect("cursor");
         assert_eq!(cursor.row(), 1);
@@ -1411,6 +1436,7 @@ mod tests {
         assert_eq!(patch.base_version(), 1);
         assert_eq!(patch.version(), 2);
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
+        assert_eq!(patch.metadata().expect("metadata").title(), Some(""));
 
         let cursor = patch.cursor().expect("cursor");
         assert_eq!(cursor.row(), 1);
@@ -2142,6 +2168,7 @@ mod tests {
                     surface: input.surface,
                     cursor: input.cursor,
                     modes: input.modes,
+                    title: input.title.to_owned(),
                     styles: vec![
                         PaneStyle::default(),
                         PaneStyle {
@@ -2206,6 +2233,7 @@ mod tests {
                     surface: input.surface,
                     cursor: input.cursor,
                     modes: input.modes,
+                    title: input.title.to_owned(),
                     styles: vec![PaneStyle::default()],
                     surface_lines: input.surface_lines.to_vec(),
                     surface_row_runs: input
@@ -2298,6 +2326,59 @@ mod tests {
         let modes = patch.modes().expect("modes");
         assert!(modes.bracketed_paste());
         assert!(modes.wraparound());
+    }
+
+    #[test]
+    fn title_only_engine_update_emits_replace_rows_patch_with_metadata() {
+        struct TitleOnlyEngine;
+
+        impl TerminalEngine for TitleOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"title only");
+                let mut update = TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                );
+                update.title = "pane title".to_owned();
+                Some(update)
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = TitleOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"title only", &mut engine));
+        let surface = session.initial_pane_surface();
+        assert_eq!(surface.title, "pane title");
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::ReplaceRows)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
+        assert_eq!(
+            patch.metadata().expect("metadata").title(),
+            Some("pane title")
+        );
     }
 
     #[test]
