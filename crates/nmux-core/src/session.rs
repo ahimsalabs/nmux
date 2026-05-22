@@ -1003,6 +1003,62 @@ impl Session {
         builder.finished_data().to_vec()
     }
 
+    pub fn paste_input_frame(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        actor_id: &str,
+        pane_id: &str,
+        input_seq: u64,
+        text: &str,
+        bracketed: bool,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+
+        let text = builder.create_string(text);
+        let paste = protocol::PasteInput::create(
+            &mut builder,
+            &protocol::PasteInputArgs {
+                text_utf8: Some(text),
+                bracketed,
+            },
+        );
+        let pane_id = builder.create_string(pane_id);
+        let actor_id = builder.create_string(actor_id);
+        let input = protocol::InputEvent::create(
+            &mut builder,
+            &protocol::InputEventArgs {
+                pane_id: Some(pane_id),
+                actor_id: Some(actor_id),
+                input_seq,
+                kind: protocol::InputKind::Paste,
+                key: None,
+                mouse: None,
+                paste: Some(paste),
+                raw: None,
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::InputEvent,
+                body: Some(input.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+
     pub fn resize_intent_frame(
         &self,
         connection_id: &str,
@@ -1961,6 +2017,29 @@ mod tests {
         let raw = input.raw().expect("raw input");
         let bytes = raw.bytes().expect("raw input bytes");
         assert_eq!(bytes.bytes(), &[0, 3, 255]);
+    }
+
+    #[test]
+    fn paste_input_frame_decodes_to_input_event() {
+        let frame = Session::initial()
+            .paste_input_frame("conn-1", 9, "actor-1", "pane-1", 3, "hello\n", true);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
+        assert_eq!(envelope.session_id(), Some("local"));
+        assert_eq!(envelope.connection_id(), Some("conn-1"));
+        assert_eq!(envelope.seq(), 9);
+        assert_eq!(envelope.body_type(), protocol::EnvelopeBody::InputEvent);
+
+        let input = envelope.body_as_input_event().expect("input event body");
+        assert_eq!(input.pane_id(), Some("pane-1"));
+        assert_eq!(input.actor_id(), Some("actor-1"));
+        assert_eq!(input.input_seq(), 3);
+        assert_eq!(input.kind(), protocol::InputKind::Paste);
+
+        let paste = input.paste().expect("paste input");
+        assert_eq!(paste.text_utf8(), Some("hello\n"));
+        assert!(paste.bracketed());
     }
 
     #[test]

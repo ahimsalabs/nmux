@@ -66,6 +66,56 @@ fn live_cli_streams_command_output_and_committed_resize() {
 }
 
 #[test]
+fn live_cli_forwards_paste_input() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'ready\n'; while IFS= read -r line; do printf 'paste:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--paste",
+            "clip\n",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("paste:clip"),
+        "missing pasted output:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_cli_displays_daemon_resize_policy() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

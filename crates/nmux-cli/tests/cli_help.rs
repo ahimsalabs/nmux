@@ -20,6 +20,7 @@ fn nmux_help_lists_live_client_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
+    assert!(stdout.contains("--paste TEXT"));
     assert!(stdout.contains("--stdin-bytes"));
     assert!(stdout.contains("--local-echo off|tty"));
     assert!(stdout.contains("--cols COUNT"));
@@ -134,6 +135,14 @@ fn nmux_rejects_conflicting_frontend_modes() {
         "nmux: --key cannot be combined with --stdin-bytes",
     );
     assert_nmux_rejects(
+        &["--live", "--paste", "clip", "--stdin"],
+        "nmux: --paste cannot be combined with --stdin",
+    );
+    assert_nmux_rejects(
+        &["--live", "--paste", "clip", "--stdin-bytes"],
+        "nmux: --paste cannot be combined with --stdin-bytes",
+    );
+    assert_nmux_rejects(
         &["--live", "--no-input", "--stdin"],
         "nmux: --no-input cannot be combined with --stdin",
     );
@@ -144,6 +153,14 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--key", "ping", "--no-input"],
         "nmux: --key cannot be combined with --no-input",
+    );
+    assert_nmux_rejects(
+        &["--key", "ping", "--paste", "clip"],
+        "nmux: --key cannot be combined with --paste",
+    );
+    assert_nmux_rejects(
+        &["--paste", "clip", "--no-input"],
+        "nmux: --paste cannot be combined with --no-input",
     );
 }
 

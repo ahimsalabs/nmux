@@ -678,6 +678,7 @@ pub fn attach_with_known_surfaces(
 pub struct AttachOptions {
     pub request: AttachRequest,
     pub input_text: Option<String>,
+    pub paste_text: Option<String>,
     pub scrollback_start_line: u64,
     pub scrollback_line_count: u32,
     pub connect_timeout: Option<Duration>,
@@ -695,6 +696,7 @@ impl Default for AttachOptions {
                 known_surfaces: Vec::new(),
             },
             input_text: Some("a".to_owned()),
+            paste_text: None,
             scrollback_start_line: 1,
             scrollback_line_count: 2,
             connect_timeout: None,
@@ -728,7 +730,13 @@ pub fn attach_with_client_options(
     let snapshot = attach_from_stream(&mut stream)?;
     if snapshot.surface.is_some() {
         if mode == AttachMode::ReadWrite {
-            if let Some(input_text) = options.input_text.as_deref() {
+            if let Some(paste_text) = options.paste_text.as_deref() {
+                let bracketed = snapshot
+                    .surface
+                    .as_ref()
+                    .is_some_and(|surface| surface.modes.bracketed_paste);
+                send_paste_input(&mut stream, "pane-1", paste_text, bracketed)?;
+            } else if let Some(input_text) = options.input_text.as_deref() {
                 send_key_input(&mut stream, "pane-1", input_text)?;
             }
         }
@@ -805,6 +813,25 @@ pub fn send_raw_input(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame =
         Session::initial().raw_input_frame("local-client", 3, "local-actor", pane_id, 1, bytes);
+    wire::write_default_frame(stream, &frame)?;
+    Ok(())
+}
+
+pub fn send_paste_input(
+    stream: &mut UnixStream,
+    pane_id: &str,
+    text: &str,
+    bracketed: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = Session::initial().paste_input_frame(
+        "local-client",
+        3,
+        "local-actor",
+        pane_id,
+        1,
+        text,
+        bracketed,
+    );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
 }
@@ -1170,6 +1197,13 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
             .and_then(|raw| raw.bytes())
             .map(|bytes| bytes.iter().collect())
             .unwrap_or_default(),
+        protocol::InputKind::Paste => input
+            .paste()
+            .map(|paste| {
+                paste_input_bytes(paste.text_utf8().unwrap_or_default(), paste.bracketed())
+            })
+            .transpose()?
+            .unwrap_or_default(),
         other => return Err(format!("unexpected input kind: {other:?}").into()),
     };
     Ok(InputSummary {
@@ -1179,6 +1213,21 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         text: String::from_utf8_lossy(&bytes).into_owned(),
         bytes,
     })
+}
+
+fn paste_input_bytes(text: &str, bracketed: bool) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    if !bracketed {
+        return Ok(text.as_bytes().to_vec());
+    }
+    if text.contains("\x1b[201~") {
+        return Err("paste input contains a bracketed paste terminator".into());
+    }
+
+    let mut bytes = Vec::with_capacity("\x1b[200~".len() + text.len() + "\x1b[201~".len());
+    bytes.extend_from_slice(b"\x1b[200~");
+    bytes.extend_from_slice(text.as_bytes());
+    bytes.extend_from_slice(b"\x1b[201~");
+    Ok(bytes)
 }
 
 pub fn resize_intent_from_frame(
@@ -2598,6 +2647,7 @@ mod tests {
                 known_surfaces: Vec::new(),
             },
             input_text: None,
+            paste_text: None,
             scrollback_start_line: 1,
             scrollback_line_count: 2,
             connect_timeout: None,
@@ -3192,6 +3242,46 @@ mod tests {
                 total_lines: 4,
                 styles: default_style_summaries(),
                 lines: vec![scrollback_line(3, "custom")],
+            })
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_with_client_options_forwards_paste_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = EchoHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start echo pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+        });
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: None,
+                paste_text: Some("pasted\ntext".to_owned()),
+                scrollback_start_line: 3,
+                scrollback_line_count: 2,
+                ..AttachOptions::default()
+            },
+        )
+        .expect("attach snapshot");
+        server.join().expect("server thread");
+
+        assert_eq!(
+            snapshot.scrollback,
+            Some(ScrollbackChunkSummary {
+                pane_id: "pane-1".to_owned(),
+                scrollback_version: 2,
+                start_line: 3,
+                total_lines: 5,
+                styles: default_style_summaries(),
+                lines: vec![scrollback_line(3, "pasted"), scrollback_line(4, "text")],
             })
         );
 
@@ -3882,6 +3972,68 @@ mod tests {
         assert_eq!(input.actor_id, "actor-1");
         assert_eq!(input.input_seq, 2);
         assert_eq!(input.bytes, vec![0, b'x', 255]);
+    }
+
+    #[test]
+    fn decodes_plain_paste_input_from_client_frame() {
+        let frame = Session::initial().paste_input_frame(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            "hello\n",
+            false,
+        );
+        let input = input_summary_from_frame(&frame).expect("input summary");
+
+        assert_eq!(
+            input,
+            InputSummary {
+                pane_id: "pane-1".to_owned(),
+                actor_id: "actor-1".to_owned(),
+                input_seq: 2,
+                text: "hello\n".to_owned(),
+                bytes: b"hello\n".to_vec(),
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_bracketed_paste_input_from_client_frame() {
+        let frame = Session::initial().paste_input_frame(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            "hello\n",
+            true,
+        );
+        let input = input_summary_from_frame(&frame).expect("input summary");
+
+        assert_eq!(input.bytes, b"\x1b[200~hello\n\x1b[201~".to_vec());
+        assert_eq!(input.text, "\x1b[200~hello\n\x1b[201~");
+    }
+
+    #[test]
+    fn rejects_bracketed_paste_terminator_in_paste_text() {
+        let frame = Session::initial().paste_input_frame(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            "bad\x1b[201~paste",
+            true,
+        );
+        let err = input_summary_from_frame(&frame).expect_err("unsafe paste rejected");
+
+        assert!(
+            err.to_string()
+                .contains("paste input contains a bracketed paste terminator"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -80,6 +80,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
+        paste_text: args.paste_text.clone(),
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
         connect_timeout: connect_timeout_duration(args),
@@ -87,13 +88,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
     if args.stdin_input || args.stdin_bytes {
         options.request.mode = AttachMode::ReadWrite;
-    } else if options.input_text.is_none() {
+    } else if options.input_text.is_none() && options.paste_text.is_none() {
         options.request.mode = AttachMode::ReadOnly;
     }
 
     options.request.known_surfaces = client_state.known_surfaces();
     local::write_attach_request(&mut stream, &options.request)?;
     let snapshot = local::attach_from_stream(&mut stream)?;
+    let mut paste_bracketed = snapshot
+        .surface
+        .as_ref()
+        .is_some_and(|surface| surface.modes.bracketed_paste);
     let mut rendered = client_state.render_attach(snapshot)?;
     if rendered.surface_text.is_none() {
         rendered.surface_text = client_state.cached_surface_text(&rendered.workspace.pane_id);
@@ -158,7 +163,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 options.input_text.as_deref().map(ToOwned::to_owned)
             };
-            if let Some(input_text) = input_text.as_deref() {
+            if let Some(paste_text) = options.paste_text.as_deref() {
+                local::send_paste_input(&mut stream, "pane-1", paste_text, paste_bracketed)?;
+            } else if let Some(input_text) = input_text.as_deref() {
                 local::send_key_input(&mut stream, "pane-1", input_text)?;
             }
         }
@@ -175,6 +182,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::Update(update) => {
+                    paste_bracketed = update.modes.bracketed_paste;
                     current_surface_text = client_state.render_surface_update(&update)?;
                     print_live_surface(&current_workspace, &current_surface_text, args.redraw);
                     flush_stdout()?;
@@ -532,13 +540,15 @@ fn attach_once(
 ) -> Result<local::RenderedAttach, Box<dyn std::error::Error>> {
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
+        paste_text: args.paste_text.clone(),
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
         ..local::AttachOptions::default()
     };
-    if args.follow || options.input_text.is_none() {
+    if args.follow || (options.input_text.is_none() && options.paste_text.is_none()) {
         options.request.mode = AttachMode::ReadOnly;
         options.input_text = None;
+        options.paste_text = None;
     }
 
     local::attach_render_once(&args.socket_path, options, client_state)
@@ -636,6 +646,7 @@ struct Args {
     help: bool,
     socket_path: PathBuf,
     input_text: Option<String>,
+    paste_text: Option<String>,
     scrollback_start_line: u64,
     scrollback_line_count: u32,
     state_path: Option<PathBuf>,
@@ -655,6 +666,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut help = false;
     let mut socket_path = local::default_socket_path();
     let mut input_text = Some("a".to_owned());
+    let mut paste_text = None;
     let mut scrollback_start_line = 1;
     let mut scrollback_line_count = 2;
     let mut state_path = None;
@@ -671,6 +683,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut iterations = None;
     let mut local_echo_set = false;
     let mut key_set = false;
+    let mut paste_set = false;
     let mut no_input_set = false;
     let mut args = std::env::args().skip(1);
 
@@ -688,6 +701,11 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             "--key" => {
                 key_set = true;
                 input_text = Some(args.next().ok_or("--key requires text")?);
+            }
+            "--paste" => {
+                paste_set = true;
+                paste_text = Some(args.next().ok_or("--paste requires text")?);
+                input_text = None;
             }
             "--no-input" => {
                 no_input_set = true;
@@ -778,7 +796,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         interval_ms,
         connect_timeout_ms,
     )?;
-    validate_explicit_input_modes(key_set, no_input_set, stdin_input, stdin_bytes)?;
+    validate_explicit_input_modes(key_set, paste_set, no_input_set, stdin_input, stdin_bytes)?;
     validate_mode_args(
         live,
         follow,
@@ -794,6 +812,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         help,
         socket_path,
         input_text,
+        paste_text,
         scrollback_start_line,
         scrollback_line_count,
         state_path,
@@ -839,6 +858,7 @@ fn validate_positive_numeric_args(
 
 fn validate_explicit_input_modes(
     key_set: bool,
+    paste_set: bool,
     no_input_set: bool,
     stdin_input: bool,
     stdin_bytes: bool,
@@ -846,11 +866,23 @@ fn validate_explicit_input_modes(
     if key_set && no_input_set {
         return Err("--key cannot be combined with --no-input");
     }
+    if key_set && paste_set {
+        return Err("--key cannot be combined with --paste");
+    }
+    if paste_set && no_input_set {
+        return Err("--paste cannot be combined with --no-input");
+    }
     if key_set && stdin_input {
         return Err("--key cannot be combined with --stdin");
     }
     if key_set && stdin_bytes {
         return Err("--key cannot be combined with --stdin-bytes");
+    }
+    if paste_set && stdin_input {
+        return Err("--paste cannot be combined with --stdin");
+    }
+    if paste_set && stdin_bytes {
+        return Err("--paste cannot be combined with --stdin-bytes");
     }
     if no_input_set && stdin_input {
         return Err("--no-input cannot be combined with --stdin");
@@ -909,6 +941,7 @@ Options:
   --socket PATH              Unix socket path
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send for read-write attach
+  --paste TEXT               Paste UTF-8 text through PasteInput
   --no-input                 Attach read-only
   --scrollback-start LINE    First scrollback line to request
   --scrollback-count COUNT   Number of scrollback lines to request
@@ -1092,29 +1125,46 @@ mod tests {
     #[test]
     fn input_mode_validation_rejects_explicit_conflicts() {
         assert_eq!(
-            validate_explicit_input_modes(true, true, false, false),
+            validate_explicit_input_modes(true, false, true, false, false),
             Err("--key cannot be combined with --no-input")
         );
         assert_eq!(
-            validate_explicit_input_modes(true, false, true, false),
+            validate_explicit_input_modes(true, true, false, false, false),
+            Err("--key cannot be combined with --paste")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(false, true, true, false, false),
+            Err("--paste cannot be combined with --no-input")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(true, false, false, true, false),
             Err("--key cannot be combined with --stdin")
         );
         assert_eq!(
-            validate_explicit_input_modes(true, false, false, true),
+            validate_explicit_input_modes(true, false, false, false, true),
             Err("--key cannot be combined with --stdin-bytes")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, true, true, false),
+            validate_explicit_input_modes(false, true, false, true, false),
+            Err("--paste cannot be combined with --stdin")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(false, true, false, false, true),
+            Err("--paste cannot be combined with --stdin-bytes")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(false, false, true, true, false),
             Err("--no-input cannot be combined with --stdin")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, true, false, true),
+            validate_explicit_input_modes(false, false, true, false, true),
             Err("--no-input cannot be combined with --stdin-bytes")
         );
-        assert!(validate_explicit_input_modes(false, false, true, false).is_ok());
-        assert!(validate_explicit_input_modes(false, false, false, true).is_ok());
-        assert!(validate_explicit_input_modes(true, false, false, false).is_ok());
-        assert!(validate_explicit_input_modes(false, true, false, false).is_ok());
+        assert!(validate_explicit_input_modes(false, false, false, true, false).is_ok());
+        assert!(validate_explicit_input_modes(false, false, false, false, true).is_ok());
+        assert!(validate_explicit_input_modes(true, false, false, false, false).is_ok());
+        assert!(validate_explicit_input_modes(false, true, false, false, false).is_ok());
+        assert!(validate_explicit_input_modes(false, false, true, false, false).is_ok());
     }
 
     #[test]

@@ -82,8 +82,11 @@ only after the backend extraction proves the exact shape needed.
   Its key encoder can also emit application-keypad sequences when the option is
   explicit, its focus helper can encode focus gained/lost events, and its paste
   validator rejects newline and bracketed paste terminator injection sequences.
-  Terminal-derived keypad input forwarding, paste forwarding, mouse input
-  forwarding, and focus forwarding still need protocol decisions.
+  Local clients now forward UTF-8 paste input through `PasteInput`, wrapping with
+  bracketed-paste delimiters only when the pane's current mode advertises
+  bracketed paste and rejecting embedded terminators before forwarding.
+  Terminal-derived keypad input forwarding, mouse input forwarding, and focus
+  forwarding still need protocol decisions.
 - Terminal metadata: nmux carries OSC 2 terminal title through pane surface
   snapshot and patch metadata. OSC 7 working-directory state remains unproven in
   the current backend path and should stay withheld until the expected upstream
