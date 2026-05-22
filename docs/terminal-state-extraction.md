@@ -91,10 +91,14 @@ have tests proving:
 - unsupported VT features fail by omission with documented limitations, not by
   corrupting the existing nmux state objects.
 
-## Current libghostty-vt Feature Gaps
+## Current libghostty-vt Default-Enable Gaps
 
-The opt-in engine currently proves dependency and lifecycle wiring. It is not
-the default because the first extraction pass still needs:
+The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
+extraction, cursor-only updates, alternate-screen detection, resize/reflow, and
+backend-owned scrollback extraction. It is not the default because the first
+integration pass still needs:
 
-- backend-owned scrollback extraction instead of mirroring only the visible
-  render rows into `ScrollbackChunk`.
+- session-level feature tests proving `ScrollbackChunk` responses are backed by
+  Ghostty-owned history, not the interim text engine;
+- live CLI smoke coverage for `nmuxd --terminal-engine libghostty-vt` before the
+  flag is documented as usable outside experimental builds.
