@@ -19,6 +19,37 @@ pub struct TerminalCursor {
     pub shape: protocol::CursorShape,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PaneStyle {
+    pub fg_rgba: u32,
+    pub bg_rgba: u32,
+    pub underline_rgba: u32,
+    pub flags: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellRun {
+    pub text: String,
+    pub cell_widths: Vec<u8>,
+    pub style_id: u32,
+    pub flags: u32,
+    pub hyperlink_id: u32,
+}
+
+impl CellRun {
+    pub fn plain(text: impl Into<String>) -> Self {
+        let text = text.into();
+        let cell_widths = vec![1_u8; text.chars().count()];
+        Self {
+            text,
+            cell_widths,
+            style_id: 0,
+            flags: 0,
+            hyperlink_id: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalUpdate {
     pub patch_kind: protocol::PatchKind,

@@ -3,7 +3,8 @@ use std::fmt;
 use nmux_proto::protocol;
 
 use crate::host::{CommandSpec, HostSpec};
-use crate::session::{CellRun, Cursor, Pane, PaneStyle, Session, Tab};
+use crate::session::{Cursor, Pane, Session, Tab};
+use crate::terminal::{CellRun, PaneStyle};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TmuxSession {

@@ -2,7 +2,9 @@ use flatbuffers::FlatBufferBuilder;
 use nmux_proto::{PROTOCOL_VERSION, protocol};
 
 use crate::host::{CommandSpec, HostSpec};
-use crate::terminal::{InterimTextTerminalEngine, TerminalCursor, TerminalEngine, TerminalInput};
+use crate::terminal::{
+    CellRun, InterimTextTerminalEngine, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
@@ -90,37 +92,6 @@ pub struct Cursor {
     pub col: u32,
     pub visible: bool,
     pub shape: protocol::CursorShape,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PaneStyle {
-    pub fg_rgba: u32,
-    pub bg_rgba: u32,
-    pub underline_rgba: u32,
-    pub flags: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CellRun {
-    pub text: String,
-    pub cell_widths: Vec<u8>,
-    pub style_id: u32,
-    pub flags: u32,
-    pub hyperlink_id: u32,
-}
-
-impl CellRun {
-    pub fn plain(text: impl Into<String>) -> Self {
-        let text = text.into();
-        let cell_widths = vec![1_u8; text.chars().count()];
-        Self {
-            text,
-            cell_widths,
-            style_id: 0,
-            flags: 0,
-            hyperlink_id: 0,
-        }
-    }
 }
 
 impl Session {
@@ -1073,11 +1044,13 @@ fn build_cell_run<'a>(
 #[cfg(test)]
 mod tests {
     use crate::host::HostKind;
-    use crate::terminal::{TerminalCursor, TerminalEngine, TerminalInput, TerminalUpdate};
+    use crate::terminal::{
+        CellRun, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput, TerminalUpdate,
+    };
 
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
-    use super::{AttachMode, CellRun, Cursor, PaneStyle, Session};
+    use super::{AttachMode, Cursor, Session};
 
     #[test]
     fn initial_session_has_one_fixed_size_pane() {
