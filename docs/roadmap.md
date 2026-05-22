@@ -144,7 +144,7 @@ Done:
 - Client-side scrollback decoding now retains `ScrollbackRow` runs alongside rendered fallback text.
 - Client-side surface and scrollback coverage now asserts structured `CellRun` style IDs, cell widths, hyperlink-presence flags, and semantic content survive decode/apply paths instead of being reduced to text-only fallback rows.
 - Feature-gated live CLI coverage now proves `libghostty-vt` streams command output and committed user-command resize metadata through `nmuxd` without leaking raw ANSI controls.
-- Feature-gated live CLI coverage now proves restored `libghostty-vt` alternate-screen output stays out of requested scrollback.
+- Feature-gated coverage now proves `libghostty-vt` alternate-screen output stays out of requested scrollback and preserves existing structured main-screen scrollback runs/style IDs while alternate screen is active.
 - Feature-gated live CLI coverage now proves a persisted `libghostty-vt` live client can reattach with a known surface version, trigger a style-table change, and recover through a full surface refresh without leaking raw ANSI controls.
 
 Next:

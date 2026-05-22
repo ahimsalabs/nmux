@@ -125,10 +125,11 @@ only after the backend extraction proves the exact shape needed.
   prompt spans. Semantic command IDs, command ranges, lifecycle, and exit
   metadata remain withheld until that protocol shape is explicit.
 - Alternate screen: `libghostty-vt` extraction tests cover entry into the
-  alternate buffer, restoration of the primary buffer, and preservation of main
-  scrollback while alternate-screen output is active. Alternate-screen
-  scrollback remains intentionally withheld until nmux has protocol guidance for
-  whether and how clients should request it.
+  alternate buffer, restoration of the primary buffer, omission of alternate
+  output from main scrollback, and preservation of existing structured main
+  scrollback runs/style IDs while alternate-screen output is active.
+  Alternate-screen scrollback remains intentionally withheld until nmux has
+  protocol guidance for whether and how clients should request it.
 - Palette and theme state: indexed SGR colors resolve into RGBA style-table
   entries during `libghostty-vt` extraction. `TerminalColorState` carries
   backend-observed default foreground/background colors, the active palette,
@@ -180,8 +181,9 @@ render-state default colors/palette, palette overrides, explicit cursor color,
 terminal color state and color-only patches, alternate-screen entry/restoration with alternate
 scrollback omission, terminal title and OSC 7 working-directory metadata
 extraction, OSC 133 row semantic prompt state, per-run semantic content,
-resize/reflow, styled backend-owned scrollback extraction, row-level dirty
-state, Kitty placeholder metadata, hyperlink presence, application-keypad and
+resize/reflow, styled backend-owned scrollback extraction, structured main
+scrollback preservation while alternate screen is active, row-level dirty state,
+Kitty placeholder metadata, hyperlink presence, application-keypad and
 application-cursor encoder support, modified named-key encoding, focus event
 encoding, mouse event encoding, paste safety validation, safe-API mode tracking
 for bracketed paste, mouse tracking, focus reporting, application keypad mode,

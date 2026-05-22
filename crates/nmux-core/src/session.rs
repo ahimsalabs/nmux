@@ -233,11 +233,14 @@ impl Session {
             title: &pane.terminal_title,
             working_directory: &pane.terminal_working_directory,
             colors: pane.colors.clone(),
+            styles: &pane.styles,
             surface_lines: &pane.surface_lines,
+            surface_row_runs: &pane.surface_row_runs,
             surface_semantic_prompts: &pane.surface_semantic_prompts,
             surface_dirty_rows: &pane.surface_dirty_rows,
             surface_kitty_placeholders: &pane.surface_kitty_placeholders,
             scrollback_lines: &pane.scrollback_lines,
+            scrollback_row_runs: &pane.scrollback_row_runs,
             scrollback_semantic_prompts: &pane.scrollback_semantic_prompts,
             scrollback_dirty_rows: &pane.scrollback_dirty_rows,
             scrollback_kitty_placeholders: &pane.scrollback_kitty_placeholders,
@@ -278,11 +281,14 @@ impl Session {
             title: &pane.terminal_title,
             working_directory: &pane.terminal_working_directory,
             colors: pane.colors.clone(),
+            styles: &pane.styles,
             surface_lines: &pane.surface_lines,
+            surface_row_runs: &pane.surface_row_runs,
             surface_semantic_prompts: &pane.surface_semantic_prompts,
             surface_dirty_rows: &pane.surface_dirty_rows,
             surface_kitty_placeholders: &pane.surface_kitty_placeholders,
             scrollback_lines: &pane.scrollback_lines,
+            scrollback_row_runs: &pane.scrollback_row_runs,
             scrollback_semantic_prompts: &pane.scrollback_semantic_prompts,
             scrollback_dirty_rows: &pane.scrollback_dirty_rows,
             scrollback_kitty_placeholders: &pane.scrollback_kitty_placeholders,
@@ -2563,6 +2569,91 @@ mod tests {
             style.fg_rgba(),
             0,
             "styled Ghostty scrollback should reference a style table entry"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn ghostty_vt_alternate_screen_preserves_styled_main_scrollback_chunk() {
+        let mut session = Session::initial();
+        if let Some(pane) = session.pane_mut("pane-1") {
+            pane.cols = 20;
+            pane.rows = 2;
+            pane.surface_lines.clear();
+            pane.surface_row_runs.clear();
+            pane.scrollback_lines.clear();
+            pane.scrollback_row_runs.clear();
+        }
+
+        let mut engines = crate::terminal::PaneTerminalEngines::new(
+            crate::terminal::TerminalEngineKind::LibghosttyVt,
+        );
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"\x1b[31mmain-red\x1b[0m\r\nmain-plain\r\nmain-tail",
+            engines.engine_mut("pane-1")
+        ));
+        let scrollback_version = session
+            .scrollback_version("pane-1")
+            .expect("scrollback version");
+
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"\x1b[?1049halt-red\r\nalt-tail",
+            engines.engine_mut("pane-1")
+        ));
+        assert_eq!(
+            session.scrollback_version("pane-1"),
+            Some(scrollback_version),
+            "alternate-screen output should not mutate main scrollback"
+        );
+
+        let frame = session
+            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 10)
+            .expect("scrollback chunk");
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+        let rows = chunk.rows().expect("scrollback rows");
+        let row_text = (0..rows.len())
+            .map(|index| {
+                let row = rows.get(index);
+                let runs = row.runs().expect("runs");
+                (0..runs.len())
+                    .filter_map(|run_index| runs.get(run_index).text_utf8())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            row_text.iter().any(|line| line.contains("main-red")),
+            "main scrollback missing styled line: {row_text:?}"
+        );
+        assert!(
+            row_text.iter().all(|line| !line.contains("alt-")),
+            "alternate-screen output leaked into main scrollback: {row_text:?}"
+        );
+
+        let styled_run = (0..rows.len())
+            .flat_map(|row_index| {
+                let row = rows.get(row_index);
+                let runs = row.runs().expect("runs");
+                (0..runs.len()).map(move |run_index| runs.get(run_index))
+            })
+            .find(|run| {
+                run.text_utf8()
+                    .is_some_and(|text| text.contains("main-red"))
+            })
+            .expect("styled main scrollback run");
+        assert_ne!(
+            styled_run.style_id(),
+            0,
+            "styled main scrollback should keep its style ID while alternate screen is active"
+        );
+        let styles = chunk.styles().expect("styles");
+        let style = styles.get(styled_run.style_id() as usize);
+        assert_ne!(
+            style.fg_rgba(),
+            0,
+            "styled main scrollback should reference a style table entry"
         );
     }
 

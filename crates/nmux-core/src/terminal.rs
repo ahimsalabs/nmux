@@ -11,11 +11,14 @@ pub struct TerminalInput<'a> {
     pub title: &'a str,
     pub working_directory: &'a str,
     pub colors: TerminalColors,
+    pub styles: &'a [PaneStyle],
     pub surface_lines: &'a [String],
+    pub surface_row_runs: &'a [Vec<CellRun>],
     pub surface_semantic_prompts: &'a [protocol::RowSemanticPrompt],
     pub surface_dirty_rows: &'a [bool],
     pub surface_kitty_placeholders: &'a [bool],
     pub scrollback_lines: &'a [String],
+    pub scrollback_row_runs: &'a [Vec<CellRun>],
     pub scrollback_semantic_prompts: &'a [protocol::RowSemanticPrompt],
     pub scrollback_dirty_rows: &'a [bool],
     pub scrollback_kitty_placeholders: &'a [bool],
@@ -640,13 +643,23 @@ mod ghostty_vt {
             force_rows: bool,
         ) -> Option<TerminalUpdate> {
             let surface = surface_kind(&self.terminal)?;
-            let mut styles = vec![PaneStyle::default()];
+            let mut styles = if surface == protocol::SurfaceKind::Main {
+                vec![PaneStyle::default()]
+            } else if input.styles.is_empty() {
+                vec![PaneStyle::default()]
+            } else {
+                input.styles.to_vec()
+            };
             let scrollback_rows = if surface == protocol::SurfaceKind::Main {
                 self.scrollback_rows(&mut styles)?
             } else {
                 ExtractedRows {
                     lines: input.scrollback_lines.to_vec(),
-                    row_runs: super::plain_row_runs(input.scrollback_lines),
+                    row_runs: if input.scrollback_row_runs.len() == input.scrollback_lines.len() {
+                        input.scrollback_row_runs.to_vec()
+                    } else {
+                        super::plain_row_runs(input.scrollback_lines)
+                    },
                     semantic_prompts: input.scrollback_semantic_prompts.to_vec(),
                     dirty_rows: input.scrollback_dirty_rows.to_vec(),
                     kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
@@ -1264,11 +1277,14 @@ mod tests {
             title: "",
             working_directory: "",
             colors: TerminalColors::default(),
+            styles: &[],
             surface_lines,
+            surface_row_runs: &[],
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
             surface_kitty_placeholders: &[],
             scrollback_lines,
+            scrollback_row_runs: &[],
             scrollback_semantic_prompts: &[],
             scrollback_dirty_rows: &[],
             scrollback_kitty_placeholders: &[],
@@ -1287,11 +1303,14 @@ mod tests {
             title: &update.title,
             working_directory: &update.working_directory,
             colors: update.colors.clone(),
+            styles: &update.styles,
             surface_lines: &update.surface_lines,
+            surface_row_runs: &update.surface_row_runs,
             surface_semantic_prompts: &update.surface_semantic_prompts,
             surface_dirty_rows: &update.surface_dirty_rows,
             surface_kitty_placeholders: &update.surface_kitty_placeholders,
             scrollback_lines: &update.scrollback_lines,
+            scrollback_row_runs: &update.scrollback_row_runs,
             scrollback_semantic_prompts: &update.scrollback_semantic_prompts,
             scrollback_dirty_rows: &update.scrollback_dirty_rows,
             scrollback_kitty_placeholders: &update.scrollback_kitty_placeholders,
@@ -1318,11 +1337,14 @@ mod tests {
             title: "existing title",
             working_directory: "file://localhost/existing",
             colors: TerminalColors::default(),
+            styles: &[],
             surface_lines: &[],
+            surface_row_runs: &[],
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
             surface_kitty_placeholders: &[],
             scrollback_lines: &scrollback_lines,
+            scrollback_row_runs: &[],
             scrollback_semantic_prompts: &[],
             scrollback_dirty_rows: &[],
             scrollback_kitty_placeholders: &[],
@@ -1375,11 +1397,14 @@ mod tests {
             title: "",
             working_directory: "",
             colors: TerminalColors::default(),
+            styles: &[],
             surface_lines: &[],
+            surface_row_runs: &[],
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
             surface_kitty_placeholders: &[],
             scrollback_lines: &scrollback_lines,
+            scrollback_row_runs: &[],
             scrollback_semantic_prompts: &[],
             scrollback_dirty_rows: &[],
             scrollback_kitty_placeholders: &[],
@@ -1429,11 +1454,14 @@ mod tests {
             title: "",
             working_directory: "",
             colors: TerminalColors::default(),
+            styles: &[],
             surface_lines: &scrollback_lines,
+            surface_row_runs: &[],
             surface_semantic_prompts: &[],
             surface_dirty_rows: &[],
             surface_kitty_placeholders: &[],
             scrollback_lines: &scrollback_lines,
+            scrollback_row_runs: &[],
             scrollback_semantic_prompts: &[],
             scrollback_dirty_rows: &[],
             scrollback_kitty_placeholders: &[],
@@ -3121,6 +3149,66 @@ mod tests {
             .expect("restore update");
         assert_eq!(restored.surface, protocol::SurfaceKind::Main);
         assert_eq!(restored.scrollback_lines, primary.scrollback_lines);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_preserves_styled_scrollback_while_alternate_screen_is_active() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let primary = engine
+            .apply_output(
+                terminal_input_with_size(20, 2, &empty, &empty),
+                b"\x1b[31mmain-red\x1b[0m\r\nmain-plain\r\nmain-tail",
+            )
+            .expect("primary update");
+        let styled_run = primary
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("main-red"))
+            .expect("styled main scrollback run");
+        assert_ne!(
+            styled_run.style_id, 0,
+            "primary scrollback should contain styled runs"
+        );
+
+        let alternate = engine
+            .apply_output(
+                terminal_input_from_update(&primary),
+                b"\x1b[?1049halt-red\r\nalt-tail",
+            )
+            .expect("alternate update");
+
+        assert_eq!(alternate.surface, protocol::SurfaceKind::Alternate);
+        assert_eq!(alternate.scrollback_lines, primary.scrollback_lines);
+        assert_eq!(
+            alternate.scrollback_row_runs, primary.scrollback_row_runs,
+            "alternate screen should preserve structured main scrollback runs"
+        );
+        let preserved_run = alternate
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("main-red"))
+            .expect("preserved styled main scrollback run");
+        let preserved_style = alternate
+            .styles
+            .get(preserved_run.style_id as usize)
+            .expect("preserved style table entry");
+        assert_ne!(
+            preserved_style.fg_rgba, 0,
+            "preserved scrollback run should still reference a style table entry"
+        );
+        assert!(
+            alternate
+                .scrollback_lines
+                .iter()
+                .all(|line| !line.contains("alt-")),
+            "alternate output leaked into main scrollback: {:?}",
+            alternate.scrollback_lines
+        );
     }
 
     #[cfg(feature = "libghostty-vt")]
