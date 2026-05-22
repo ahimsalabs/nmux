@@ -930,6 +930,46 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_extracts_underline_color() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input(2, &empty, &empty),
+                b"\x1b[4;58;2;255;0;128munder\x1b[0m plain",
+            )
+            .expect("terminal update");
+
+        let underline_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("under"))
+            .expect("underline-styled run");
+        let style = update
+            .styles
+            .get(underline_run.style_id as usize)
+            .expect("underline style");
+
+        assert_ne!(underline_run.style_id, 0);
+        assert_ne!(style.flags & (1 << 8), 0, "underline flag missing");
+        assert_ne!(
+            style.underline_rgba, 0,
+            "underline color should resolve to RGBA"
+        );
+
+        let plain_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains(" plain"))
+            .expect("plain run");
+        assert_eq!(plain_run.style_id, 0);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_preserves_combining_mark_cell_widths() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();

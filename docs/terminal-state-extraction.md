@@ -65,9 +65,9 @@ Do not freeze these into ad hoc string fields. Add protocol fields or objects
 only after the backend extraction proves the exact shape needed.
 
 - Cell style runs: `libghostty-vt` now supplies foreground/background colors,
-  basic SGR flags, style identity, and cell widths for visible and scrollback
-  rows. Surface snapshots and scrollback chunks carry a pane style table;
-  richer style semantics still need protocol decisions.
+  underline color, basic SGR flags, style identity, and cell widths for visible
+  and scrollback rows. Surface snapshots and scrollback chunks carry a pane
+  style table; richer style semantics still need protocol decisions.
 - Grapheme and cell width: double-width cells, combining marks, and emoji ZWJ
   clusters are covered by `libghostty-vt` extraction tests and represented as
   per-cell run widths. Ambiguous-width policy and broader grapheme cases still
@@ -115,11 +115,11 @@ have tests proving:
 ## Current libghostty-vt Default-Enable Gate
 
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
-extraction, style-separated cell runs, basic SGR style flags, wide-cell widths,
-cursor-only updates, cursor visibility/shape extraction, backend-observable
-cursor blink state, alternate-screen entry/restoration, resize/reflow, styled
-backend-owned scrollback extraction, and safe-API mode tracking for bracketed
-paste, mouse tracking, application keypad mode, and origin/wraparound modes
-through unit, session, and live CLI smoke coverage. It is not the default until
-the project deliberately accepts the native Zig/Ghostty build cost in normal
-development and CI.
+extraction, style-separated cell runs, basic SGR style flags, underline color,
+wide-cell widths, cursor-only updates, cursor visibility/shape extraction,
+backend-observable cursor blink state, alternate-screen entry/restoration,
+resize/reflow, styled backend-owned scrollback extraction, and safe-API mode
+tracking for bracketed paste, mouse tracking, application keypad mode, and
+origin/wraparound modes through unit, session, and live CLI smoke coverage. It
+is not the default until the project deliberately accepts the native
+Zig/Ghostty build cost in normal development and CI.
