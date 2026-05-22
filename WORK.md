@@ -464,6 +464,7 @@ M12: live workspace usability [done]
   existing socket path errors include a recovery hint
   nmuxd bind failures include the socket path
   nmux --connect-timeout-ms waits for daemon socket startup races across attach modes
+  one-shot and live post-attach input, resize, and scrollback control frames use the attached active pane ID instead of assuming pane-1
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available
   keep runnable docs, help output, and tests aligned with each user-visible behavior change

@@ -126,10 +126,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .surface_text
         .clone()
         .unwrap_or_else(|| current_workspace.display_line());
+    let attached_pane_id = rendered.workspace.pane_id.clone();
     let known_scrollback_version = client_state
         .cached_scrollback_version_for_scope(
             socket_scope,
-            &rendered.workspace.pane_id,
+            &attached_pane_id,
             args.scrollback_start_line,
             args.scrollback_line_count,
         )
@@ -138,6 +139,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         args,
         &mut stream,
         &mut client_sequence,
+        &attached_pane_id,
         known_scrollback_version,
     )?;
     if let Some(scrollback) = scrollback.as_ref() {
@@ -161,7 +163,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::send_resize_intent_with_reason_and_sequence(
                     &mut stream,
                     &mut client_sequence,
-                    "pane-1",
+                    &attached_pane_id,
                     cols,
                     rows,
                     protocol::ResizeReason::UserCommand,
@@ -170,7 +172,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::send_resize_intent_with_reason_and_sequence(
                     &mut stream,
                     &mut client_sequence,
-                    "pane-1",
+                    &attached_pane_id,
                     cols,
                     rows,
                     protocol::ResizeReason::FrontendViewport,
@@ -184,7 +186,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             local::send_raw_input_with_sequence(
                                 &mut stream,
                                 &mut client_sequence,
-                                "pane-1",
+                                &attached_pane_id,
                                 &input,
                             )?;
                         }
@@ -219,7 +221,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::send_named_key_input_with_modifiers_and_sequence(
                     &mut stream,
                     &mut client_sequence,
-                    "pane-1",
+                    &attached_pane_id,
                     key_name,
                     args.key_modifiers,
                 )?;
@@ -227,7 +229,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::send_mouse_input_with_sequence(
                     &mut stream,
                     &mut client_sequence,
-                    "pane-1",
+                    &attached_pane_id,
                     mouse_event.row,
                     mouse_event.col,
                     mouse_event.button,
@@ -238,21 +240,21 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::send_focus_input_with_sequence(
                     &mut stream,
                     &mut client_sequence,
-                    "pane-1",
+                    &attached_pane_id,
                     focus_event.focused(),
                 )?;
             } else if let Some(paste_text) = options.paste_text.as_deref() {
                 local::send_paste_input_with_sequence(
                     &mut stream,
                     &mut client_sequence,
-                    "pane-1",
+                    &attached_pane_id,
                     paste_text,
                 )?;
             } else if let Some(input_text) = input_text.as_deref() {
                 local::send_key_input_with_sequence(
                     &mut stream,
                     &mut client_sequence,
-                    "pane-1",
+                    &attached_pane_id,
                     input_text,
                 )?;
             }
@@ -368,12 +370,13 @@ fn initial_live_scrollback(
     args: &Args,
     stream: &mut UnixStream,
     sequence: &mut local::ClientFrameSequence,
+    pane_id: &str,
     known_scrollback_version: u64,
 ) -> Result<Option<local::ScrollbackChunkSummary>, Box<dyn std::error::Error>> {
     local::send_scrollback_fetch_with_known_version(
         stream,
         sequence,
-        "pane-1",
+        pane_id,
         args.scrollback_start_line,
         args.scrollback_line_count,
         known_scrollback_version,
@@ -381,7 +384,7 @@ fn initial_live_scrollback(
     Ok(Some(local::read_scrollback_chunk_with_stale_retry(
         stream,
         sequence,
-        "pane-1",
+        pane_id,
         args.scrollback_start_line,
         args.scrollback_line_count,
     )?))

@@ -332,7 +332,8 @@ fn serve_next_with_output(
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
     if let Some(output) = output.as_deref_mut() {
-        poll_pane_output_with_engines(session, engines, output, "pane-1")?;
+        let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
+        poll_pane_output_with_engines(session, engines, output, &pane_id)?;
     }
     serve_attached_client(&mut stream, request, session, None, engines)
 }
@@ -348,7 +349,8 @@ where
 {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
-    poll_pane_output_with_host_and_engines(session, engines, host, "pane-1")?;
+    let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
+    poll_pane_output_with_host_and_engines(session, engines, host, &pane_id)?;
     serve_attached_client(&mut stream, request, session, Some(host), engines)
 }
 
@@ -364,7 +366,8 @@ where
 {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
-    poll_pane_output_with_host_and_engines(session, engines, host, "pane-1")?;
+    let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
+    poll_pane_output_with_host_and_engines(session, engines, host, &pane_id)?;
     serve_live_attached_client(&mut stream, request, session, host, engines, cycles)
 }
 
@@ -376,7 +379,7 @@ fn serve_live_attached_client(
     engines: &mut PaneTerminalEngines,
     cycles: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let pane_id = "pane-1";
+    let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
     let mut seq = 1;
     let workspace_frame = session.workspace_tree_frame("local-client", seq);
     wire::write_default_frame(stream, &workspace_frame)?;
@@ -388,14 +391,14 @@ fn serve_live_attached_client(
     seq += 1;
 
     let mut known_surface_version =
-        if let Some(response) = request.surface_response(session, pane_id) {
-            if let Some(surface_frame) = surface_response_frame(session, pane_id, response, seq) {
+        if let Some(response) = request.surface_response(session, &pane_id) {
+            if let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq) {
                 wire::write_default_frame(stream, &surface_frame)?;
                 seq += 1;
             }
-            session.surface_version(pane_id).unwrap_or_default()
+            session.surface_version(&pane_id).unwrap_or_default()
         } else {
-            session.surface_version(pane_id).unwrap_or_default()
+            session.surface_version(&pane_id).unwrap_or_default()
         };
 
     for _ in 0..cycles {
@@ -524,20 +527,20 @@ fn serve_live_attached_client(
                 }
                 poll_pane_output_with_host_until_quiet(session, engines, host, &input.pane_id)?;
             } else {
-                poll_pane_output_with_host_until_quiet(session, engines, host, pane_id)?;
+                poll_pane_output_with_host_until_quiet(session, engines, host, &pane_id)?;
             }
         } else {
-            poll_pane_output_with_host_until_quiet(session, engines, host, pane_id)?;
+            poll_pane_output_with_host_until_quiet(session, engines, host, &pane_id)?;
         }
 
-        let current = session.surface_version(pane_id).unwrap_or_default();
+        let current = session.surface_version(&pane_id).unwrap_or_default();
         let patch_kind = session
-            .surface_patch_kind(pane_id)
+            .surface_patch_kind(&pane_id)
             .unwrap_or(protocol::PatchKind::ReplaceRows);
         if let Some(response) =
             surface_response_for_known_version(current, known_surface_version, patch_kind)
         {
-            if let Some(surface_frame) = surface_response_frame(session, pane_id, response, seq) {
+            if let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq) {
                 wire::write_default_frame(stream, &surface_frame)?;
                 seq += 1;
             }
@@ -647,8 +650,9 @@ fn serve_attached_client(
     let presence_frame = session.presence_update_frame("local-client", 2, &actor);
     wire::write_default_frame(stream, &presence_frame)?;
 
-    if let Some(response) = request.surface_response(session, "pane-1") {
-        if let Some(surface_frame) = surface_response_frame(session, "pane-1", response, 3) {
+    let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
+    if let Some(response) = request.surface_response(session, &pane_id) {
+        if let Some(surface_frame) = surface_response_frame(session, &pane_id, response, 3) {
             wire::write_default_frame(stream, &surface_frame)?;
         }
     }
@@ -703,6 +707,15 @@ fn serve_attached_client(
         break;
     }
     Ok(())
+}
+
+fn active_pane_id(session: &Session) -> Option<&str> {
+    session
+        .tabs
+        .iter()
+        .find(|tab| tab.id == session.active_tab_id)
+        .or_else(|| session.tabs.first())
+        .map(|tab| tab.active_pane_id.as_str())
 }
 
 fn process_one_shot_input(
@@ -1004,13 +1017,14 @@ pub fn attach_with_client_options(
     write_attach_request(&mut stream, &options.request)?;
     let mut sequence = ClientFrameSequence::default();
     let snapshot = attach_from_stream(&mut stream)?;
+    let attached_pane_id = snapshot.workspace.pane_id.clone();
     if mode == AttachMode::ReadWrite {
         let mut sent_input = false;
         if let Some(key_name) = options.key_name.as_deref() {
             send_named_key_input_with_modifiers_and_sequence(
                 &mut stream,
                 &mut sequence,
-                "pane-1",
+                &attached_pane_id,
                 key_name,
                 options.key_modifiers,
             )?;
@@ -1019,7 +1033,7 @@ pub fn attach_with_client_options(
             send_mouse_input_with_sequence(
                 &mut stream,
                 &mut sequence,
-                "pane-1",
+                &attached_pane_id,
                 mouse.row,
                 mouse.col,
                 mouse.button,
@@ -1028,13 +1042,23 @@ pub fn attach_with_client_options(
             )?;
             sent_input = true;
         } else if let Some(focused) = options.focus {
-            send_focus_input_with_sequence(&mut stream, &mut sequence, "pane-1", focused)?;
+            send_focus_input_with_sequence(&mut stream, &mut sequence, &attached_pane_id, focused)?;
             sent_input = true;
         } else if let Some(paste_text) = options.paste_text.as_deref() {
-            send_paste_input_with_sequence(&mut stream, &mut sequence, "pane-1", paste_text)?;
+            send_paste_input_with_sequence(
+                &mut stream,
+                &mut sequence,
+                &attached_pane_id,
+                paste_text,
+            )?;
             sent_input = true;
         } else if let Some(input_text) = options.input_text.as_deref() {
-            send_key_input_with_sequence(&mut stream, &mut sequence, "pane-1", input_text)?;
+            send_key_input_with_sequence(
+                &mut stream,
+                &mut sequence,
+                &attached_pane_id,
+                input_text,
+            )?;
             sent_input = true;
         }
         if sent_input {
@@ -1044,7 +1068,7 @@ pub fn attach_with_client_options(
     send_scrollback_fetch_with_known_version(
         &mut stream,
         &mut sequence,
-        "pane-1",
+        &attached_pane_id,
         options.scrollback_start_line,
         options.scrollback_line_count,
         options.known_scrollback_version,
@@ -1052,7 +1076,7 @@ pub fn attach_with_client_options(
     let scrollback = read_scrollback_chunk_with_stale_retry(
         &mut stream,
         &mut sequence,
-        "pane-1",
+        &attached_pane_id,
         options.scrollback_start_line,
         options.scrollback_line_count,
     )?;
@@ -1069,10 +1093,15 @@ pub fn attach_render_once(
 ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
     let scope = socket_identity(path).ok();
     options.request.known_surfaces = client_state.known_surfaces_for_scope(scope);
+    let requested_pane_id = options
+        .request
+        .focused_pane_id
+        .as_deref()
+        .unwrap_or("pane-1");
     options.known_scrollback_version = client_state
         .cached_scrollback_version_for_scope(
             scope,
-            "pane-1",
+            requested_pane_id,
             options.scrollback_start_line,
             options.scrollback_line_count,
         )
@@ -4123,6 +4152,23 @@ mod tests {
         }
     }
 
+    fn rename_initial_pane(session: &mut Session, pane_id: &str) {
+        session.tabs[0].active_pane_id = pane_id.to_owned();
+        session.tabs[0].root.id = pane_id.to_owned();
+        session.tabs[0].root.surface_lines = vec![format!("nmux {pane_id}")];
+        session.tabs[0].root.surface_row_runs =
+            vec![vec![CellRun::plain(format!("nmux {pane_id}"))]];
+        session.tabs[0].root.surface_semantic_prompts = vec![protocol::RowSemanticPrompt::None];
+        session.tabs[0].root.surface_dirty_rows = vec![false];
+        session.tabs[0].root.surface_kitty_placeholders = vec![false];
+        session.tabs[0].root.scrollback_lines = vec![format!("booting {pane_id}")];
+        session.tabs[0].root.scrollback_row_runs =
+            vec![vec![CellRun::plain(format!("booting {pane_id}"))]];
+        session.tabs[0].root.scrollback_semantic_prompts = vec![protocol::RowSemanticPrompt::None];
+        session.tabs[0].root.scrollback_dirty_rows = vec![false];
+        session.tabs[0].root.scrollback_kitty_placeholders = vec![false];
+    }
+
     fn surface_row_with_runs(row: u32, runs: Vec<CellRunSummary>) -> SurfaceRowUpdate {
         SurfaceRowUpdate {
             row,
@@ -5047,6 +5093,95 @@ mod tests {
             pane_id: "pane-1".to_owned(),
             bytes: b"a".to_vec(),
         }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn serve_one_with_host_uses_active_pane_for_input_and_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        rename_initial_pane(&mut session, "pane-2");
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-2", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                scrollback_start_line: 1,
+                scrollback_line_count: 1,
+                ..AttachOptions::default()
+            },
+        )
+        .expect("attach snapshot");
+        let host = server.join().expect("server thread");
+
+        assert_eq!(snapshot.workspace.pane_id, "pane-2");
+        assert_eq!(
+            snapshot
+                .scrollback
+                .as_ref()
+                .map(|chunk| chunk.pane_id.as_str()),
+            Some("pane-2")
+        );
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-2".to_owned(),
+            bytes: b"a".to_vec(),
+        }));
+        assert!(!host.events().iter().any(|event| matches!(
+            event,
+            HostEvent::Input { pane_id, .. } if pane_id == "pane-1"
+        )));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn serve_live_with_host_uses_active_pane_for_surface_and_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        rename_initial_pane(&mut session, "pane-2");
+        let mut host = ScriptedOutputHost::new(vec![Vec::new()]);
+        host.start_pane("pane-2", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            serve_live_n_with_host(&listener, &mut session, &mut host, 1, 1).expect("serve live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        let mut request = AttachOptions::default().request;
+        request.mode = AttachMode::ReadOnly;
+        request.focused_pane_id = Some("pane-2".to_owned());
+        write_attach_request(&mut stream, &request).expect("write attach request");
+
+        let snapshot = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(snapshot.workspace.pane_id, "pane-2");
+        assert_eq!(
+            snapshot
+                .surface
+                .as_ref()
+                .map(|surface| surface.pane_id.as_str()),
+            Some("pane-2")
+        );
+
+        send_scrollback_fetch(&mut stream, "pane-2", 1, 1).expect("send scrollback fetch");
+        let chunk = read_scrollback_chunk_from_stream(&mut stream).expect("read scrollback");
+        assert_eq!(chunk.pane_id, "pane-2");
+
+        drop(stream);
+        let host = server.join().expect("server thread");
+        assert!(!host.events.iter().any(|event| matches!(
+            event,
+            HostEvent::Input { pane_id, .. } if pane_id == "pane-1"
+        )));
 
         let _ = fs::remove_file(socket_path);
     }
