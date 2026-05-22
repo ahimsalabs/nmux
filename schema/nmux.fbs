@@ -187,6 +187,7 @@ table SurfaceRow {
   semantic_prompt:RowSemanticPrompt = None;
   dirty:bool;
   kitty_virtual_placeholder:bool;
+  row_state_hash:ulong;
 }
 
 table RowUpdate {
@@ -196,6 +197,7 @@ table RowUpdate {
   semantic_prompt:RowSemanticPrompt = None;
   dirty:bool;
   kitty_virtual_placeholder:bool;
+  row_state_hash:ulong;
 }
 
 table CellRun {
@@ -286,6 +288,7 @@ table ScrollbackRow {
   semantic_prompt:RowSemanticPrompt = None;
   dirty:bool;
   kitty_virtual_placeholder:bool;
+  row_state_hash:ulong;
 }
 
 table PresenceUpdate {

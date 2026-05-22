@@ -250,8 +250,8 @@ Current behavior:
 The CLI can persist its local render state with `--state`. This records the
 rendered pane surface, terminal title, OSC 7 working directory, terminal modes,
 cached row runs, the cached style table, terminal color state, OSC 133 row/run
-semantic metadata, row dirty flags, Kitty placeholder row metadata, and the last
-known server version, so a later process can request a patch and apply it to the
+semantic metadata, row dirty flags, row state hashes, Kitty placeholder row
+metadata, and the last known server version, so a later process can request a patch and apply it to the
 cached surface instead of replaying raw PTY bytes. The state file is scoped to
 the daemon socket identity, so a recreated socket path forces a fresh snapshot
 instead of reusing stale rows from an older daemon. Older state files that only

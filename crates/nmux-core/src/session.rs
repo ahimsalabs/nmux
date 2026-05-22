@@ -1,3 +1,5 @@
+use std::hash::{Hash, Hasher};
+
 use flatbuffers::FlatBufferBuilder;
 use nmux_proto::{PROTOCOL_VERSION, protocol};
 
@@ -555,6 +557,20 @@ impl Session {
                     row: row as u32,
                     runs: Some(runs),
                     dirty_hash: stable_row_hash(line),
+                    row_state_hash: row_state_hash(
+                        line_runs,
+                        surface
+                            .semantic_prompts
+                            .get(row)
+                            .copied()
+                            .unwrap_or(protocol::RowSemanticPrompt::None),
+                        surface.dirty_rows.get(row).copied().unwrap_or(false),
+                        surface
+                            .kitty_placeholders
+                            .get(row)
+                            .copied()
+                            .unwrap_or(false),
+                    ),
                     semantic_prompt: surface
                         .semantic_prompts
                         .get(row)
@@ -683,6 +699,20 @@ impl Session {
                         row: row as u32,
                         runs: Some(runs),
                         dirty_hash: stable_row_hash(line),
+                        row_state_hash: row_state_hash(
+                            line_runs,
+                            surface
+                                .semantic_prompts
+                                .get(row)
+                                .copied()
+                                .unwrap_or(protocol::RowSemanticPrompt::None),
+                            surface.dirty_rows.get(row).copied().unwrap_or(false),
+                            surface
+                                .kitty_placeholders
+                                .get(row)
+                                .copied()
+                                .unwrap_or(false),
+                        ),
                         semantic_prompt: surface
                             .semantic_prompts
                             .get(row)
@@ -793,6 +823,24 @@ impl Session {
                     line: start_line + offset as u64,
                     runs: Some(runs),
                     dirty_hash: stable_row_hash(line),
+                    row_state_hash: row_state_hash(
+                        &scrollback.row_runs[start.saturating_add(offset)],
+                        scrollback
+                            .semantic_prompts
+                            .get(start.saturating_add(offset))
+                            .copied()
+                            .unwrap_or(protocol::RowSemanticPrompt::None),
+                        scrollback
+                            .dirty_rows
+                            .get(start.saturating_add(offset))
+                            .copied()
+                            .unwrap_or(false),
+                        scrollback
+                            .kitty_placeholders
+                            .get(start.saturating_add(offset))
+                            .copied()
+                            .unwrap_or(false),
+                    ),
                     semantic_prompt: scrollback
                         .semantic_prompts
                         .get(start.saturating_add(offset))
@@ -1605,6 +1653,48 @@ fn stable_row_hash(line: &str) -> u64 {
     hash
 }
 
+fn row_state_hash(
+    runs: &[CellRun],
+    semantic_prompt: protocol::RowSemanticPrompt,
+    dirty: bool,
+    kitty_virtual_placeholder: bool,
+) -> u64 {
+    let mut hasher = StableHasher::new();
+    for run in runs {
+        run.text.hash(&mut hasher);
+        run.cell_widths.hash(&mut hasher);
+        run.style_id.hash(&mut hasher);
+        run.flags.hash(&mut hasher);
+        run.hyperlink_id.hash(&mut hasher);
+        run.semantic_content.0.hash(&mut hasher);
+    }
+    semantic_prompt.0.hash(&mut hasher);
+    dirty.hash(&mut hasher);
+    kitty_virtual_placeholder.hash(&mut hasher);
+    hasher.finish()
+}
+
+struct StableHasher(u64);
+
+impl StableHasher {
+    fn new() -> Self {
+        Self(0xcbf2_9ce4_8422_2325_u64)
+    }
+}
+
+impl Hasher for StableHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+}
+
 fn row_runs_for_lines(lines: &[String], row_runs: &[Vec<CellRun>]) -> Vec<Vec<CellRun>> {
     if row_runs.len() == lines.len()
         && row_runs
@@ -1996,6 +2086,32 @@ mod tests {
         );
         assert_eq!(runs.get(1).text_utf8(), Some(" plain"));
         assert_eq!(runs.get(1).style_id(), 0);
+    }
+
+    #[test]
+    fn row_state_hash_covers_render_metadata_beyond_text() {
+        let mut session = Session::initial();
+        let pane = session.pane_mut("pane-1").expect("pane");
+        pane.surface_lines = vec!["same".to_owned(), "same".to_owned()];
+        pane.surface_row_runs = vec![
+            vec![CellRun::plain("same")],
+            vec![CellRun {
+                text: "same".to_owned(),
+                cell_widths: vec![1, 1, 1, 1],
+                style_id: 0,
+                flags: crate::terminal::CELL_RUN_FLAG_HYPERLINK_PRESENT,
+                hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Output,
+            }],
+        ];
+
+        let frame = session.pane_surface_frame("conn-1", 8);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        let rows = snapshot.rows_data().expect("rows");
+
+        assert_eq!(rows.get(0).dirty_hash(), rows.get(1).dirty_hash());
+        assert_ne!(rows.get(0).row_state_hash(), rows.get(1).row_state_hash());
     }
 
     #[test]

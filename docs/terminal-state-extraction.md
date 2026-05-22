@@ -133,9 +133,11 @@ only after the backend extraction proves the exact shape needed.
   remain withheld.
 - Damage granularity: row replacement is enough for the prototype, and nmux now
   carries backend row dirty flags on surface snapshots, sparse row-replacement
-  patches, and scrollback chunks. Rich cells may still need run-level or
-  region-level patches beyond cursor-only updates before nmux exposes a richer
-  damage protocol.
+  patches, and scrollback chunks. Rows also carry a `row_state_hash` covering
+  runs, semantic metadata, dirty state, and Kitty placeholder state, while the
+  older `dirty_hash` remains a text-only compatibility fingerprint. Rich cells
+  may still need run-level or region-level patches beyond cursor-only updates
+  before nmux exposes a richer damage protocol.
 
 ## Acceptance Gate
 
@@ -173,9 +175,9 @@ application cursor mode, origin, and wraparound.
 
 The nmux state-sync path now has coverage for snapshot/patch cursor blink, title
 and working-directory metadata, terminal color state, row semantic prompt
-metadata, per-run semantic content, row dirty metadata, Kitty placeholder row
-metadata, mode payloads, mode-only patch application, sparse row replacement,
-cached client-state compatibility, cached terminal metadata reattach, and
+metadata, per-run semantic content, row dirty metadata, row state hashes, Kitty
+placeholder row metadata, mode payloads, mode-only patch application, sparse row
+replacement, cached client-state compatibility, cached terminal metadata reattach, and
 feature-gated live CLI smoke paths. The default engine remains `interim` until a
 later ADR explicitly accepts the native Ghostty/Zig build cost in normal
 development, CI, and packaging.

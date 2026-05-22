@@ -483,13 +483,13 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   local CLI rendering prints non-empty terminal title and OSC 7 working-directory metadata with the current pane surface
   SurfaceRow, RowUpdate, and ScrollbackRow carry OSC 133 row semantic prompt metadata; CellRun carries OSC 133 output/input/prompt semantic content; broader semantic command IDs, ranges, lifecycle, and exit metadata remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk carry TerminalColorState; color-state changes require full refreshes while incremental palette diffs remain withheld
-  ReplaceRows patches now carry only changed rows when the pane geometry is stable; SurfaceRow, RowUpdate, and ScrollbackRow carry backend row dirty flags as metadata, while richer run/region damage protocol fields remain withheld
+  ReplaceRows patches now carry only changed rows when the pane geometry is stable; SurfaceRow, RowUpdate, and ScrollbackRow carry backend row dirty flags and row state hashes as metadata, while richer run/region damage protocol fields remain withheld
   SurfaceRow, RowUpdate, and ScrollbackRow carry Kitty virtual placeholder metadata; image placement and pixel-data protocol fields remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk preserve row runs instead of collapsing state to text-only rows
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal mode state, and mode-only updates no longer force full refreshes
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch
   ScrollbackChunk carries the pane style table so scrollback row runs do not reference missing style IDs
-  nmux --state preserves cached title, OSC 7 working directory, terminal modes, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, and Kitty placeholder row metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot
+  nmux --state preserves cached title, OSC 7 working directory, terminal modes, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, and Kitty placeholder row metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot
   document cursor, mode, alternate-screen, palette, hyperlink, image, grapheme, and cell-width gaps before schema changes
   preserve frontend state-sync semantics; do not introduce client-side raw PTY replay
   keep frontend Ghostty renderer hydration as a separate upstream/API question

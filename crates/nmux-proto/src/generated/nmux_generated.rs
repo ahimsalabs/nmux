@@ -3152,6 +3152,7 @@ impl<'a> SurfaceRow<'a> {
   pub const VT_SEMANTIC_PROMPT: ::flatbuffers::VOffsetT = 10;
   pub const VT_DIRTY: ::flatbuffers::VOffsetT = 12;
   pub const VT_KITTY_VIRTUAL_PLACEHOLDER: ::flatbuffers::VOffsetT = 14;
+  pub const VT_ROW_STATE_HASH: ::flatbuffers::VOffsetT = 16;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -3163,6 +3164,7 @@ impl<'a> SurfaceRow<'a> {
     args: &'args SurfaceRowArgs<'args>
   ) -> ::flatbuffers::WIPOffset<SurfaceRow<'bldr>> {
     let mut builder = SurfaceRowBuilder::new(_fbb);
+    builder.add_row_state_hash(args.row_state_hash);
     builder.add_dirty_hash(args.dirty_hash);
     if let Some(x) = args.runs { builder.add_runs(x); }
     builder.add_row(args.row);
@@ -3215,6 +3217,13 @@ impl<'a> SurfaceRow<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<bool>(SurfaceRow::VT_KITTY_VIRTUAL_PLACEHOLDER, Some(false)).unwrap()}
   }
+  #[inline]
+  pub fn row_state_hash(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(SurfaceRow::VT_ROW_STATE_HASH, Some(0)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for SurfaceRow<'_> {
@@ -3229,6 +3238,7 @@ impl ::flatbuffers::Verifiable for SurfaceRow<'_> {
      .visit_field::<RowSemanticPrompt>("semantic_prompt", Self::VT_SEMANTIC_PROMPT, false)?
      .visit_field::<bool>("dirty", Self::VT_DIRTY, false)?
      .visit_field::<bool>("kitty_virtual_placeholder", Self::VT_KITTY_VIRTUAL_PLACEHOLDER, false)?
+     .visit_field::<u64>("row_state_hash", Self::VT_ROW_STATE_HASH, false)?
      .finish();
     Ok(())
   }
@@ -3240,6 +3250,7 @@ pub struct SurfaceRowArgs<'a> {
     pub semantic_prompt: RowSemanticPrompt,
     pub dirty: bool,
     pub kitty_virtual_placeholder: bool,
+    pub row_state_hash: u64,
 }
 impl<'a> Default for SurfaceRowArgs<'a> {
   #[inline]
@@ -3251,6 +3262,7 @@ impl<'a> Default for SurfaceRowArgs<'a> {
       semantic_prompt: RowSemanticPrompt::None,
       dirty: false,
       kitty_virtual_placeholder: false,
+      row_state_hash: 0,
     }
   }
 }
@@ -3285,6 +3297,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SurfaceRowBuilder<'a, 'b, A> 
     self.fbb_.push_slot::<bool>(SurfaceRow::VT_KITTY_VIRTUAL_PLACEHOLDER, kitty_virtual_placeholder, false);
   }
   #[inline]
+  pub fn add_row_state_hash(&mut self, row_state_hash: u64) {
+    self.fbb_.push_slot::<u64>(SurfaceRow::VT_ROW_STATE_HASH, row_state_hash, 0);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SurfaceRowBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SurfaceRowBuilder {
@@ -3308,6 +3324,7 @@ impl ::core::fmt::Debug for SurfaceRow<'_> {
       ds.field("semantic_prompt", &self.semantic_prompt());
       ds.field("dirty", &self.dirty());
       ds.field("kitty_virtual_placeholder", &self.kitty_virtual_placeholder());
+      ds.field("row_state_hash", &self.row_state_hash());
       ds.finish()
   }
 }
@@ -3333,6 +3350,7 @@ impl<'a> RowUpdate<'a> {
   pub const VT_SEMANTIC_PROMPT: ::flatbuffers::VOffsetT = 10;
   pub const VT_DIRTY: ::flatbuffers::VOffsetT = 12;
   pub const VT_KITTY_VIRTUAL_PLACEHOLDER: ::flatbuffers::VOffsetT = 14;
+  pub const VT_ROW_STATE_HASH: ::flatbuffers::VOffsetT = 16;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -3344,6 +3362,7 @@ impl<'a> RowUpdate<'a> {
     args: &'args RowUpdateArgs<'args>
   ) -> ::flatbuffers::WIPOffset<RowUpdate<'bldr>> {
     let mut builder = RowUpdateBuilder::new(_fbb);
+    builder.add_row_state_hash(args.row_state_hash);
     builder.add_dirty_hash(args.dirty_hash);
     if let Some(x) = args.runs { builder.add_runs(x); }
     builder.add_row(args.row);
@@ -3396,6 +3415,13 @@ impl<'a> RowUpdate<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<bool>(RowUpdate::VT_KITTY_VIRTUAL_PLACEHOLDER, Some(false)).unwrap()}
   }
+  #[inline]
+  pub fn row_state_hash(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(RowUpdate::VT_ROW_STATE_HASH, Some(0)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for RowUpdate<'_> {
@@ -3410,6 +3436,7 @@ impl ::flatbuffers::Verifiable for RowUpdate<'_> {
      .visit_field::<RowSemanticPrompt>("semantic_prompt", Self::VT_SEMANTIC_PROMPT, false)?
      .visit_field::<bool>("dirty", Self::VT_DIRTY, false)?
      .visit_field::<bool>("kitty_virtual_placeholder", Self::VT_KITTY_VIRTUAL_PLACEHOLDER, false)?
+     .visit_field::<u64>("row_state_hash", Self::VT_ROW_STATE_HASH, false)?
      .finish();
     Ok(())
   }
@@ -3421,6 +3448,7 @@ pub struct RowUpdateArgs<'a> {
     pub semantic_prompt: RowSemanticPrompt,
     pub dirty: bool,
     pub kitty_virtual_placeholder: bool,
+    pub row_state_hash: u64,
 }
 impl<'a> Default for RowUpdateArgs<'a> {
   #[inline]
@@ -3432,6 +3460,7 @@ impl<'a> Default for RowUpdateArgs<'a> {
       semantic_prompt: RowSemanticPrompt::None,
       dirty: false,
       kitty_virtual_placeholder: false,
+      row_state_hash: 0,
     }
   }
 }
@@ -3466,6 +3495,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> RowUpdateBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<bool>(RowUpdate::VT_KITTY_VIRTUAL_PLACEHOLDER, kitty_virtual_placeholder, false);
   }
   #[inline]
+  pub fn add_row_state_hash(&mut self, row_state_hash: u64) {
+    self.fbb_.push_slot::<u64>(RowUpdate::VT_ROW_STATE_HASH, row_state_hash, 0);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> RowUpdateBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     RowUpdateBuilder {
@@ -3489,6 +3522,7 @@ impl ::core::fmt::Debug for RowUpdate<'_> {
       ds.field("semantic_prompt", &self.semantic_prompt());
       ds.field("dirty", &self.dirty());
       ds.field("kitty_virtual_placeholder", &self.kitty_virtual_placeholder());
+      ds.field("row_state_hash", &self.row_state_hash());
       ds.finish()
   }
 }
@@ -5199,6 +5233,7 @@ impl<'a> ScrollbackRow<'a> {
   pub const VT_SEMANTIC_PROMPT: ::flatbuffers::VOffsetT = 10;
   pub const VT_DIRTY: ::flatbuffers::VOffsetT = 12;
   pub const VT_KITTY_VIRTUAL_PLACEHOLDER: ::flatbuffers::VOffsetT = 14;
+  pub const VT_ROW_STATE_HASH: ::flatbuffers::VOffsetT = 16;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5210,6 +5245,7 @@ impl<'a> ScrollbackRow<'a> {
     args: &'args ScrollbackRowArgs<'args>
   ) -> ::flatbuffers::WIPOffset<ScrollbackRow<'bldr>> {
     let mut builder = ScrollbackRowBuilder::new(_fbb);
+    builder.add_row_state_hash(args.row_state_hash);
     builder.add_dirty_hash(args.dirty_hash);
     builder.add_line(args.line);
     if let Some(x) = args.runs { builder.add_runs(x); }
@@ -5262,6 +5298,13 @@ impl<'a> ScrollbackRow<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<bool>(ScrollbackRow::VT_KITTY_VIRTUAL_PLACEHOLDER, Some(false)).unwrap()}
   }
+  #[inline]
+  pub fn row_state_hash(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ScrollbackRow::VT_ROW_STATE_HASH, Some(0)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for ScrollbackRow<'_> {
@@ -5276,6 +5319,7 @@ impl ::flatbuffers::Verifiable for ScrollbackRow<'_> {
      .visit_field::<RowSemanticPrompt>("semantic_prompt", Self::VT_SEMANTIC_PROMPT, false)?
      .visit_field::<bool>("dirty", Self::VT_DIRTY, false)?
      .visit_field::<bool>("kitty_virtual_placeholder", Self::VT_KITTY_VIRTUAL_PLACEHOLDER, false)?
+     .visit_field::<u64>("row_state_hash", Self::VT_ROW_STATE_HASH, false)?
      .finish();
     Ok(())
   }
@@ -5287,6 +5331,7 @@ pub struct ScrollbackRowArgs<'a> {
     pub semantic_prompt: RowSemanticPrompt,
     pub dirty: bool,
     pub kitty_virtual_placeholder: bool,
+    pub row_state_hash: u64,
 }
 impl<'a> Default for ScrollbackRowArgs<'a> {
   #[inline]
@@ -5298,6 +5343,7 @@ impl<'a> Default for ScrollbackRowArgs<'a> {
       semantic_prompt: RowSemanticPrompt::None,
       dirty: false,
       kitty_virtual_placeholder: false,
+      row_state_hash: 0,
     }
   }
 }
@@ -5332,6 +5378,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackRowBuilder<'a, 'b, 
     self.fbb_.push_slot::<bool>(ScrollbackRow::VT_KITTY_VIRTUAL_PLACEHOLDER, kitty_virtual_placeholder, false);
   }
   #[inline]
+  pub fn add_row_state_hash(&mut self, row_state_hash: u64) {
+    self.fbb_.push_slot::<u64>(ScrollbackRow::VT_ROW_STATE_HASH, row_state_hash, 0);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackRowBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     ScrollbackRowBuilder {
@@ -5355,6 +5405,7 @@ impl ::core::fmt::Debug for ScrollbackRow<'_> {
       ds.field("semantic_prompt", &self.semantic_prompt());
       ds.field("dirty", &self.dirty());
       ds.field("kitty_virtual_placeholder", &self.kitty_virtual_placeholder());
+      ds.field("row_state_hash", &self.row_state_hash());
       ds.finish()
   }
 }

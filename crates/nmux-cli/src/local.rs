@@ -1011,6 +1011,7 @@ pub fn surface_update_from_frame(
                     row.row(),
                     row.runs(),
                     row.dirty_hash(),
+                    row.row_state_hash(),
                     row.semantic_prompt(),
                     row.dirty(),
                     row.kitty_virtual_placeholder(),
@@ -1060,6 +1061,7 @@ pub fn surface_update_from_frame(
                     row.row(),
                     row.runs(),
                     row.dirty_hash(),
+                    row.row_state_hash(),
                     row.semantic_prompt(),
                     row.dirty(),
                     row.kitty_virtual_placeholder(),
@@ -1111,6 +1113,7 @@ fn decoded_surface_row(
     row: u32,
     runs: Option<flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<protocol::CellRun<'_>>>>,
     dirty_hash: u64,
+    row_state_hash: u64,
     semantic_prompt: protocol::RowSemanticPrompt,
     dirty: bool,
     kitty_virtual_placeholder: bool,
@@ -1121,6 +1124,7 @@ fn decoded_surface_row(
         text: render_run_summaries(&runs),
         runs,
         dirty_hash,
+        row_state_hash,
         semantic_prompt,
         dirty,
         kitty_virtual_placeholder,
@@ -1902,6 +1906,7 @@ pub struct SurfaceRowUpdate {
     pub text: String,
     pub runs: Vec<CellRunSummary>,
     pub dirty_hash: u64,
+    pub row_state_hash: u64,
     pub semantic_prompt: protocol::RowSemanticPrompt,
     pub dirty: bool,
     pub kitty_virtual_placeholder: bool,
@@ -1943,6 +1948,7 @@ pub struct ClientPaneSurface {
     row_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
     row_dirty: Vec<bool>,
     row_kitty_placeholders: Vec<bool>,
+    row_state_hashes: Vec<u64>,
 }
 
 impl ClientPaneSurface {
@@ -1968,6 +1974,7 @@ impl ClientPaneSurface {
             row_semantic_prompts: Vec::new(),
             row_dirty: Vec::new(),
             row_kitty_placeholders: Vec::new(),
+            row_state_hashes: Vec::new(),
         };
         let row_count =
             usize::try_from(surface.rows).map_err(|_| "surface row count does not fit in usize")?;
@@ -1978,6 +1985,7 @@ impl ClientPaneSurface {
             .resize(row_count, protocol::RowSemanticPrompt::None);
         surface.row_dirty.resize(row_count, false);
         surface.row_kitty_placeholders.resize(row_count, false);
+        surface.row_state_hashes.resize(row_count, 0);
         surface.apply_rows(&update.row_updates)?;
         Ok(surface)
     }
@@ -2078,6 +2086,7 @@ impl ClientPaneSurface {
             self.row_semantic_prompts[index] = row.semantic_prompt;
             self.row_dirty[index] = row.dirty;
             self.row_kitty_placeholders[index] = row.kitty_virtual_placeholder;
+            self.row_state_hashes[index] = row.row_state_hash;
         }
         Ok(())
     }
@@ -2357,6 +2366,8 @@ impl ClientAttachState {
                 } else {
                     "0"
                 });
+                encoded.push(' ');
+                encoded.push_str(&surface.row_state_hashes[index].to_string());
                 encoded.push('\n');
                 for run in &surface.row_runs[index] {
                     encoded.push_str("run ");
@@ -2461,6 +2472,7 @@ impl ClientAttachState {
             let mut row_semantic_prompts = vec![protocol::RowSemanticPrompt::None; row_count];
             let mut row_dirty = vec![false; row_count];
             let mut row_kitty_placeholders = vec![false; row_count];
+            let mut row_state_hashes = vec![0; row_count];
 
             loop {
                 let Some(line) = lines.next() else {
@@ -2626,6 +2638,45 @@ impl ClientAttachState {
                         *dirty_target = parse_state_bool(dirty)?;
                         *kitty_target = parse_state_bool(kitty_placeholder)?;
                     }
+                    [
+                        "rowmeta",
+                        row,
+                        semantic_prompt,
+                        dirty,
+                        kitty_placeholder,
+                        row_state_hash,
+                    ] => {
+                        let row = parse_state_usize(row)?;
+                        let Some(semantic_target) = row_semantic_prompts.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        let Some(dirty_target) = row_dirty.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        let Some(kitty_target) = row_kitty_placeholders.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        let Some(hash_target) = row_state_hashes.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        *semantic_target =
+                            protocol::RowSemanticPrompt(parse_state_i8(semantic_prompt)?);
+                        *dirty_target = parse_state_bool(dirty)?;
+                        *kitty_target = parse_state_bool(kitty_placeholder)?;
+                        *hash_target = parse_state_u64(row_state_hash)?;
+                    }
                     ["run", row, text, cell_widths, style_id, flags] => {
                         let row = parse_state_usize(row)?;
                         let Some(target) = row_runs.get_mut(row) else {
@@ -2720,6 +2771,7 @@ impl ClientAttachState {
                 row_semantic_prompts,
                 row_dirty,
                 row_kitty_placeholders,
+                row_state_hashes,
                 row_text,
             });
         }
@@ -3129,6 +3181,7 @@ mod tests {
                 semantic_content: protocol::CellSemanticContent::Output,
             }],
             dirty_hash: u64::from(row),
+            row_state_hash: u64::from(row),
             semantic_prompt: protocol::RowSemanticPrompt::None,
             dirty: false,
             kitty_virtual_placeholder: false,
@@ -3498,6 +3551,7 @@ mod tests {
                         CellRunSummary::plain("d"),
                     ],
                     dirty_hash: 0,
+                    row_state_hash: 1,
                     semantic_prompt: protocol::RowSemanticPrompt::Prompt,
                     dirty: true,
                     kitty_virtual_placeholder: true,
@@ -3578,6 +3632,7 @@ mod tests {
         );
         assert!(decoded.surfaces[0].row_dirty[0]);
         assert!(decoded.surfaces[0].row_kitty_placeholders[0]);
+        assert_eq!(decoded.surfaces[0].row_state_hashes[0], 1);
         assert_eq!(decoded.surfaces[0].styles, expected_styles);
         assert_eq!(decoded.surfaces[0].row_runs[0].len(), 2);
         assert_eq!(decoded.surfaces[0].row_runs[0][0].text, "cache");
