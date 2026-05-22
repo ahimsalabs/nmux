@@ -621,6 +621,11 @@ enum LiveClientFrame {
     Input(InputSummary),
 }
 
+enum AttachedClientFrame {
+    Scrollback(ScrollbackFetchSummary),
+    Input(InputSummary),
+}
+
 fn serve_attached_client(
     stream: &mut UnixStream,
     request: AttachRequest,
@@ -635,67 +640,41 @@ fn serve_attached_client(
     let presence_frame = session.presence_update_frame("local-client", 2, &actor);
     wire::write_default_frame(stream, &presence_frame)?;
 
-    let surface_sent = if let Some(response) = request.surface_response(session, "pane-1") {
+    if let Some(response) = request.surface_response(session, "pane-1") {
         if let Some(surface_frame) = surface_response_frame(session, "pane-1", response, 3) {
             wire::write_default_frame(stream, &surface_frame)?;
-            true
-        } else {
-            false
         }
-    } else {
-        false
-    };
-    if surface_sent && Session::input_allowed(&actor) {
-        let input = read_input_event_from_stream(stream)?;
-        if let Some(host) = host.as_deref_mut() {
-            if session.surface_version(&input.pane_id).is_none() {
-                let mut seq = 4;
-                write_pane_not_found_error(stream, session, &mut seq, &input.pane_id)?;
-                return Ok(());
-            }
-            if let Some(rejection) = input.forwarding_rejection(session) {
+    }
+    let mut pending_fetch = None;
+    match read_attached_client_frame_from_stream(stream)? {
+        AttachedClientFrame::Input(input) => {
+            if !Session::input_allowed(&actor) {
                 let mut seq = 4;
                 write_protocol_error(
                     stream,
                     session,
                     &mut seq,
                     protocol::ErrorCode::PermissionDenied,
-                    rejection.message(),
+                    "input rejected: attach is read-only",
                 )?;
                 return Ok(());
-            } else {
-                let bytes = match input.forwarded_bytes(session, engines) {
-                    Ok(bytes) => bytes,
-                    Err(err) => {
-                        let mut seq = 4;
-                        write_protocol_error(
-                            stream,
-                            session,
-                            &mut seq,
-                            protocol::ErrorCode::Unknown,
-                            &err.to_string(),
-                        )?;
-                        return Ok(());
-                    }
-                };
-                if let Err(err) = host.write_input(&input.pane_id, &bytes) {
-                    let mut seq = 4;
-                    write_protocol_error(
-                        stream,
-                        session,
-                        &mut seq,
-                        protocol::ErrorCode::Unknown,
-                        &format!("input forwarding failed: {err}"),
-                    )?;
+            }
+            if let Some(host) = host.as_deref_mut() {
+                if !process_one_shot_input(stream, session, engines, host, input)? {
                     return Ok(());
                 }
             }
-            poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
+        }
+        AttachedClientFrame::Scrollback(fetch) => {
+            pending_fetch = Some(fetch);
         }
     }
     let mut seq = 5;
     for _ in 0..2 {
-        let fetch = read_scrollback_fetch_from_stream(stream)?;
+        let fetch = match pending_fetch.take() {
+            Some(fetch) => fetch,
+            None => read_scrollback_fetch_from_stream(stream)?,
+        };
         if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
             write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
             if error == protocol::ErrorCode::StaleVersion {
@@ -717,6 +696,59 @@ fn serve_attached_client(
         break;
     }
     Ok(())
+}
+
+fn process_one_shot_input(
+    stream: &mut UnixStream,
+    session: &mut Session,
+    engines: &mut PaneTerminalEngines,
+    host: &mut dyn ProcessHostOutput,
+    input: InputSummary,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if session.surface_version(&input.pane_id).is_none() {
+        let mut seq = 4;
+        write_pane_not_found_error(stream, session, &mut seq, &input.pane_id)?;
+        return Ok(false);
+    }
+    if let Some(rejection) = input.forwarding_rejection(session) {
+        let mut seq = 4;
+        write_protocol_error(
+            stream,
+            session,
+            &mut seq,
+            protocol::ErrorCode::PermissionDenied,
+            rejection.message(),
+        )?;
+        return Ok(false);
+    } else {
+        let bytes = match input.forwarded_bytes(session, engines) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                let mut seq = 4;
+                write_protocol_error(
+                    stream,
+                    session,
+                    &mut seq,
+                    protocol::ErrorCode::Unknown,
+                    &err.to_string(),
+                )?;
+                return Ok(false);
+            }
+        };
+        if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+            let mut seq = 4;
+            write_protocol_error(
+                stream,
+                session,
+                &mut seq,
+                protocol::ErrorCode::Unknown,
+                &format!("input forwarding failed: {err}"),
+            )?;
+            return Ok(false);
+        }
+    }
+    poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
+    Ok(true)
 }
 
 fn scrollback_fetch_error_code(
@@ -935,19 +967,17 @@ pub fn attach_with_client_options(
     write_attach_request(&mut stream, &options.request)?;
     let mut sequence = ClientFrameSequence::default();
     let snapshot = attach_from_stream(&mut stream)?;
-    if snapshot.surface.is_some() {
-        if mode == AttachMode::ReadWrite {
-            let mut sent_input = false;
-            if let Some(paste_text) = options.paste_text.as_deref() {
-                send_paste_input_with_sequence(&mut stream, &mut sequence, "pane-1", paste_text)?;
-                sent_input = true;
-            } else if let Some(input_text) = options.input_text.as_deref() {
-                send_key_input_with_sequence(&mut stream, &mut sequence, "pane-1", input_text)?;
-                sent_input = true;
-            }
-            if sent_input {
-                read_optional_server_error_from_stream(&mut stream)?;
-            }
+    if mode == AttachMode::ReadWrite {
+        let mut sent_input = false;
+        if let Some(paste_text) = options.paste_text.as_deref() {
+            send_paste_input_with_sequence(&mut stream, &mut sequence, "pane-1", paste_text)?;
+            sent_input = true;
+        } else if let Some(input_text) = options.input_text.as_deref() {
+            send_key_input_with_sequence(&mut stream, &mut sequence, "pane-1", input_text)?;
+            sent_input = true;
+        }
+        if sent_input {
+            read_optional_server_error_from_stream(&mut stream)?;
         }
     }
     send_scrollback_fetch_with_known_version(
@@ -1587,6 +1617,22 @@ pub fn read_input_event_from_stream(
 ) -> Result<InputSummary, Box<dyn std::error::Error>> {
     let frame = wire::read_default_frame(stream)?;
     input_summary_from_frame(&frame)
+}
+
+fn read_attached_client_frame_from_stream(
+    stream: &mut UnixStream,
+) -> Result<AttachedClientFrame, Box<dyn std::error::Error>> {
+    let frame = wire::read_default_frame(stream)?;
+    let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+    match envelope.body_type() {
+        protocol::EnvelopeBody::InputEvent => Ok(AttachedClientFrame::Input(
+            input_summary_from_frame(&frame)?,
+        )),
+        protocol::EnvelopeBody::ScrollbackFetch => Ok(AttachedClientFrame::Scrollback(
+            scrollback_fetch_from_frame(&frame)?,
+        )),
+        other => Err(format!("unexpected attached client frame: {other:?}").into()),
+    }
 }
 
 pub fn read_scrollback_fetch_from_stream(
@@ -5896,6 +5942,54 @@ mod tests {
             ]
         );
         assert_eq!(state.cached_scrollback_version("pane-1", 1, 2), Some(2));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn current_surface_attach_forwards_explicit_input_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                request: AttachRequest {
+                    actor_id: "writer".to_owned(),
+                    user_id: "local-user".to_owned(),
+                    display_name: "local".to_owned(),
+                    mode: AttachMode::ReadWrite,
+                    focused_pane_id: Some("pane-1".to_owned()),
+                    known_surfaces: vec![KnownSurfaceVersion {
+                        pane_id: "pane-1".to_owned(),
+                        version: 2,
+                    }],
+                },
+                input_text: Some("current-input".to_owned()),
+                paste_text: None,
+                scrollback_start_line: 1,
+                scrollback_line_count: 2,
+                known_scrollback_version: 0,
+                connect_timeout: None,
+            },
+        )
+        .expect("attach snapshot");
+        let host = server.join().expect("server thread");
+
+        assert_eq!(snapshot.surface, None);
+        assert!(snapshot.scrollback.is_some());
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"current-input".to_vec(),
+        }));
 
         let _ = fs::remove_file(socket_path);
     }

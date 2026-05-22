@@ -82,7 +82,7 @@ To keep one local frontend process polling for server-owned surface updates, run
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --follow --iterations 3 --interval-ms 500 --state /tmp/nmux-follow.state --scrollback-start 1 --scrollback-count 1
 ```
 
-`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and renders the scoped cached surface when a current-version reconnect has no newer surface frame. Follow mode is read-only for now, so it does not repeatedly send default input.
+`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and renders the scoped cached surface when a current-version reconnect has no newer surface frame. Follow mode is read-only for now, so it does not repeatedly send input.
 
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
@@ -286,6 +286,8 @@ socket scope. When a later request asks for the same scrollback range, the CLI
 still fetches daemon-owned scrollback even if the visible surface is already
 current. It sends the cached scrollback version as a fetch precondition and
 retries once without that precondition if the daemon reports `StaleVersion`.
+Explicit one-shot `--key` and `--paste` input is still forwarded before the
+scrollback fetch when the visible surface is already current.
 When a scoped state file is already current and the daemon sends no surface
 frame, live input gating reuses the cached terminal modes for bracketed paste
 and focus reporting until the next surface update arrives.
