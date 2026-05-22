@@ -90,9 +90,19 @@ instead of serving a range from a different history version.
 
 ## Resize Model
 
-Clients do not directly resize PTYs. They send `ResizeIntent` with desired columns, rows, actor, pane, and reason. The daemon applies actor permissions and pane resize policy, then later publishes committed size through workspace or pane state. Read-only actors receive `PermissionDenied` if they send a live resize intent.
+Clients do not directly resize PTYs. They send `ResizeIntent` with desired
+columns, rows, actor, pane, and reason. `ResizeReason::UserCommand` represents
+an explicit user request such as live `--cols`/`--rows`.
+`ResizeReason::FrontendViewport` represents automatic frontend viewport changes
+such as interactive `SIGWINCH` handling. The daemon applies actor permissions
+and pane resize policy, then later publishes committed size through workspace
+or pane state. Read-only actors receive `PermissionDenied` if they send a live
+resize intent.
 
-The policy is part of `PaneNode` so a pane can be fixed-size, leader-controlled, active-client-controlled, or manual.
+The policy is part of `PaneNode` so a pane can be fixed-size,
+leader-controlled, active-client-controlled, or manual. Manual resize policy
+rejects automatic frontend viewport changes while still allowing explicit
+user-command resize intents.
 
 ## Input Model
 
