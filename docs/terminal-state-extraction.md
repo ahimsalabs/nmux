@@ -118,9 +118,10 @@ have tests proving:
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, basic SGR style flags, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape extraction,
-backend-observable cursor blink state, alternate-screen entry/restoration,
-resize/reflow, styled backend-owned scrollback extraction, and safe-API mode
-tracking for bracketed paste, mouse tracking, application keypad mode, and
-origin/wraparound modes through unit, session, and live CLI smoke coverage. It
-is not the default until the project deliberately accepts the native
-Zig/Ghostty build cost in normal development and CI.
+backend-observable cursor blink state, render-state default colors/palette,
+alternate-screen entry/restoration, resize/reflow, styled backend-owned
+scrollback extraction, and safe-API mode tracking for bracketed paste, mouse
+tracking, application keypad mode, and origin/wraparound modes through unit,
+session, and live CLI smoke coverage. It is not the default until the project
+deliberately accepts the native Zig/Ghostty build cost in normal development and
+CI.
