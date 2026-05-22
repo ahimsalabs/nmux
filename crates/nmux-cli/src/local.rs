@@ -8032,6 +8032,50 @@ mod tests {
     }
 
     #[test]
+    fn client_frame_sequence_keeps_input_seq_monotonic_across_live_control_frames() {
+        let (mut client, mut server) = UnixStream::pair().expect("socket pair");
+        let mut sequence = ClientFrameSequence::default();
+
+        send_key_input_with_sequence(&mut client, &mut sequence, "pane-1", "first")
+            .expect("send first key");
+        send_scrollback_fetch_with_sequence(&mut client, &mut sequence, "pane-1", 1, 8)
+            .expect("send scrollback fetch");
+        send_resize_intent_with_sequence(&mut client, &mut sequence, "pane-1", 120, 50)
+            .expect("send resize");
+        send_paste_input_with_sequence(&mut client, &mut sequence, "pane-1", "second")
+            .expect("send paste");
+
+        let first_frame = wire::read_default_frame(&mut server).expect("read first input");
+        let fetch_frame = wire::read_default_frame(&mut server).expect("read fetch");
+        let resize_frame = wire::read_default_frame(&mut server).expect("read resize");
+        let second_frame = wire::read_default_frame(&mut server).expect("read second input");
+
+        let first_envelope =
+            protocol::size_prefixed_root_as_envelope(&first_frame).expect("first envelope");
+        let fetch_envelope =
+            protocol::size_prefixed_root_as_envelope(&fetch_frame).expect("fetch envelope");
+        let resize_envelope =
+            protocol::size_prefixed_root_as_envelope(&resize_frame).expect("resize envelope");
+        let second_envelope =
+            protocol::size_prefixed_root_as_envelope(&second_frame).expect("second envelope");
+        assert_eq!(first_envelope.seq(), 1);
+        assert_eq!(fetch_envelope.seq(), 2);
+        assert_eq!(resize_envelope.seq(), 3);
+        assert_eq!(second_envelope.seq(), 4);
+
+        let first = input_summary_from_frame(&first_frame).expect("first input");
+        let fetch = scrollback_fetch_from_frame(&fetch_frame).expect("scrollback fetch");
+        let resize = resize_intent_from_frame(&resize_frame).expect("resize intent");
+        let second = input_summary_from_frame(&second_frame).expect("second input");
+        assert_eq!(first.input_seq, 1);
+        assert_eq!(fetch.start_line, 1);
+        assert_eq!(fetch.line_count, 8);
+        assert_eq!(resize.cols, 120);
+        assert_eq!(resize.rows, 50);
+        assert_eq!(second.input_seq, 2);
+    }
+
+    #[test]
     fn resize_intent_sequence_can_mark_user_command_reason() {
         let (mut client, mut server) = UnixStream::pair().expect("socket pair");
         let mut sequence = ClientFrameSequence::default();
