@@ -20,6 +20,7 @@ fn nmux_help_lists_live_client_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
+    assert!(stdout.contains("--key-name NAME"));
     assert!(stdout.contains("--paste TEXT"));
     assert!(stdout.contains("--focus gained|lost"));
     assert!(stdout.contains("--stdin-bytes"));
@@ -168,10 +169,22 @@ fn nmux_rejects_conflicting_frontend_modes() {
         "nmux: --key cannot be combined with --paste",
     );
     assert_nmux_rejects(
+        &["--key", "ping", "--key-name", "keypad-enter"],
+        "nmux: --key cannot be combined with --key-name",
+    );
+    assert_nmux_rejects(
         &["--paste", "clip", "--no-input"],
         "nmux: --paste cannot be combined with --no-input",
     );
     assert_nmux_rejects(&["--focus", "gained"], "nmux: --focus requires --live");
+    assert_nmux_rejects(
+        &["--key-name", "keypad-enter"],
+        "nmux: --key-name requires --live",
+    );
+    assert_nmux_rejects(
+        &["--live", "--key-name", "enter"],
+        "nmux: --key-name requires keypad-enter or keypad-0..9",
+    );
     assert_nmux_rejects(
         &["--live", "--focus", "blurred"],
         "nmux: --focus requires gained or lost",
@@ -185,8 +198,20 @@ fn nmux_rejects_conflicting_frontend_modes() {
         "nmux: --paste cannot be combined with --focus",
     );
     assert_nmux_rejects(
+        &["--live", "--key-name", "keypad-enter", "--focus", "gained"],
+        "nmux: --key-name cannot be combined with --focus",
+    );
+    assert_nmux_rejects(
+        &["--live", "--key-name", "keypad-enter", "--paste", "clip"],
+        "nmux: --key-name cannot be combined with --paste",
+    );
+    assert_nmux_rejects(
         &["--live", "--focus", "gained", "--no-input"],
         "nmux: --focus cannot be combined with --no-input",
+    );
+    assert_nmux_rejects(
+        &["--live", "--key-name", "keypad-enter", "--no-input"],
+        "nmux: --key-name cannot be combined with --no-input",
     );
 }
 

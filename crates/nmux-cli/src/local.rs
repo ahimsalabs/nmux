@@ -430,7 +430,8 @@ fn serve_live_attached_client(
         if Session::input_allowed(&actor) {
             if let Some(input) = input {
                 if input.forwarding_allowed(session) {
-                    host.write_input(&input.pane_id, &input.bytes)?;
+                    let bytes = input.forwarded_bytes(session)?;
+                    host.write_input(&input.pane_id, &bytes)?;
                 }
                 poll_pane_output_until_quiet(session, engines, host, &input.pane_id)?;
             } else {
@@ -560,7 +561,8 @@ fn serve_attached_client(
             let input = read_input_event_from_stream(stream)?;
             if let Some(host) = host.as_deref_mut() {
                 if input.forwarding_allowed(session) {
-                    host.write_input(&input.pane_id, &input.bytes)?;
+                    let bytes = input.forwarded_bytes(session)?;
+                    host.write_input(&input.pane_id, &bytes)?;
                 }
                 poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
             }
@@ -806,6 +808,23 @@ pub fn send_key_input(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame =
         Session::initial().key_input_frame("local-client", 3, "local-actor", pane_id, 1, text);
+    wire::write_default_frame(stream, &frame)?;
+    Ok(())
+}
+
+pub fn send_named_key_input(
+    stream: &mut UnixStream,
+    pane_id: &str,
+    key_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = Session::initial().named_key_input_frame(
+        "local-client",
+        3,
+        "local-actor",
+        pane_id,
+        1,
+        key_name,
+    );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
 }
@@ -1200,22 +1219,25 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
     let input = envelope
         .body_as_input_event()
         .ok_or("missing input event body")?;
-    let (bytes, requires_focus_reporting) = match input.kind() {
-        protocol::InputKind::Key => (
-            input
-                .key()
-                .and_then(|key| key.text_utf8())
-                .unwrap_or_default()
-                .as_bytes()
-                .to_vec(),
-            false,
-        ),
+    let (bytes, key_name, requires_focus_reporting) = match input.kind() {
+        protocol::InputKind::Key => {
+            let key = input.key();
+            (
+                key.and_then(|key| key.text_utf8())
+                    .unwrap_or_default()
+                    .as_bytes()
+                    .to_vec(),
+                key.and_then(|key| key.key_name()).map(ToOwned::to_owned),
+                false,
+            )
+        }
         protocol::InputKind::RawBytes => (
             input
                 .raw()
                 .and_then(|raw| raw.bytes())
                 .map(|bytes| bytes.iter().collect())
                 .unwrap_or_default(),
+            None,
             false,
         ),
         protocol::InputKind::Paste => (
@@ -1226,6 +1248,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                 })
                 .transpose()?
                 .unwrap_or_default(),
+            None,
             false,
         ),
         protocol::InputKind::Focus => (
@@ -1234,6 +1257,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
             } else {
                 b"\x1b[O".to_vec()
             },
+            None,
             true,
         ),
         other => return Err(format!("unexpected input kind: {other:?}").into()),
@@ -1244,6 +1268,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         input_seq: input.input_seq(),
         text: String::from_utf8_lossy(&bytes).into_owned(),
         bytes,
+        key_name,
         requires_focus_reporting,
     })
 }
@@ -2410,6 +2435,7 @@ pub struct InputSummary {
     pub input_seq: u64,
     pub text: String,
     pub bytes: Vec<u8>,
+    pub key_name: Option<String>,
     pub requires_focus_reporting: bool,
 }
 
@@ -2417,6 +2443,47 @@ impl InputSummary {
     fn forwarding_allowed(&self, session: &Session) -> bool {
         !self.requires_focus_reporting || session.pane_focus_reporting(&self.pane_id)
     }
+
+    fn forwarded_bytes(&self, session: &Session) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        match self.key_name.as_deref() {
+            Some(key_name) => {
+                keypad_key_bytes(key_name, session.pane_application_keypad(&self.pane_id))
+            }
+            None => Ok(self.bytes.clone()),
+        }
+    }
+}
+
+fn keypad_key_bytes(
+    key_name: &str,
+    application_keypad: bool,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let bytes: &[u8] = match (key_name, application_keypad) {
+        ("numpad-enter", false) => b"\r",
+        ("numpad-enter", true) => b"\x1bOM",
+        ("numpad-0", false) => b"0",
+        ("numpad-0", true) => b"\x1bOp",
+        ("numpad-1", false) => b"1",
+        ("numpad-1", true) => b"\x1bOq",
+        ("numpad-2", false) => b"2",
+        ("numpad-2", true) => b"\x1bOr",
+        ("numpad-3", false) => b"3",
+        ("numpad-3", true) => b"\x1bOs",
+        ("numpad-4", false) => b"4",
+        ("numpad-4", true) => b"\x1bOt",
+        ("numpad-5", false) => b"5",
+        ("numpad-5", true) => b"\x1bOu",
+        ("numpad-6", false) => b"6",
+        ("numpad-6", true) => b"\x1bOv",
+        ("numpad-7", false) => b"7",
+        ("numpad-7", true) => b"\x1bOw",
+        ("numpad-8", false) => b"8",
+        ("numpad-8", true) => b"\x1bOx",
+        ("numpad-9", false) => b"9",
+        ("numpad-9", true) => b"\x1bOy",
+        _ => return Err(format!("unsupported key name: {key_name}").into()),
+    };
+    Ok(bytes.to_vec())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3992,9 +4059,83 @@ mod tests {
                 input_seq: 2,
                 text: "x".to_owned(),
                 bytes: b"x".to_vec(),
+                key_name: None,
                 requires_focus_reporting: false,
             }
         );
+    }
+
+    #[test]
+    fn decodes_named_key_input_from_client_frame() {
+        let frame = Session::initial().named_key_input_frame(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            "numpad-enter",
+        );
+        let input = input_summary_from_frame(&frame).expect("input summary");
+
+        assert_eq!(input.pane_id, "pane-1");
+        assert_eq!(input.actor_id, "actor-1");
+        assert_eq!(input.input_seq, 2);
+        assert_eq!(input.bytes, Vec::<u8>::new());
+        assert_eq!(input.key_name.as_deref(), Some("numpad-enter"));
+        assert!(!input.requires_focus_reporting);
+    }
+
+    #[test]
+    fn named_key_input_uses_daemon_owned_keypad_mode() {
+        let mut session = Session::initial();
+        let enter = InputSummary {
+            pane_id: "pane-1".to_owned(),
+            actor_id: "actor-1".to_owned(),
+            input_seq: 1,
+            text: String::new(),
+            bytes: Vec::new(),
+            key_name: Some("numpad-enter".to_owned()),
+            requires_focus_reporting: false,
+        };
+        let digit = InputSummary {
+            key_name: Some("numpad-7".to_owned()),
+            ..enter.clone()
+        };
+
+        assert_eq!(
+            enter.forwarded_bytes(&session).expect("normal enter"),
+            b"\r"
+        );
+        assert_eq!(digit.forwarded_bytes(&session).expect("normal digit"), b"7");
+
+        session.tabs[0].root.modes.application_keypad = true;
+        assert_eq!(
+            enter.forwarded_bytes(&session).expect("application enter"),
+            b"\x1bOM"
+        );
+        assert_eq!(
+            digit.forwarded_bytes(&session).expect("application digit"),
+            b"\x1bOw"
+        );
+    }
+
+    #[test]
+    fn named_key_input_rejects_unsupported_key_names() {
+        let session = Session::initial();
+        let input = InputSummary {
+            pane_id: "pane-1".to_owned(),
+            actor_id: "actor-1".to_owned(),
+            input_seq: 1,
+            text: String::new(),
+            bytes: Vec::new(),
+            key_name: Some("f13".to_owned()),
+            requires_focus_reporting: false,
+        };
+
+        let err = input
+            .forwarded_bytes(&session)
+            .expect_err("unsupported key name");
+        assert!(err.to_string().contains("unsupported key name: f13"));
     }
 
     #[test]
@@ -4036,6 +4177,7 @@ mod tests {
                 input_seq: 2,
                 text: "hello\n".to_owned(),
                 bytes: b"hello\n".to_vec(),
+                key_name: None,
                 requires_focus_reporting: false,
             }
         );
@@ -4082,6 +4224,7 @@ mod tests {
             input_seq: 1,
             text: "\x1b[I".to_owned(),
             bytes: b"\x1b[I".to_vec(),
+            key_name: None,
             requires_focus_reporting: true,
         };
 

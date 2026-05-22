@@ -89,6 +89,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     if args.stdin_input || args.stdin_bytes {
         options.request.mode = AttachMode::ReadWrite;
     } else if options.input_text.is_none()
+        && args.key_name.is_none()
         && options.paste_text.is_none()
         && args.focus_event.is_none()
     {
@@ -170,7 +171,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 options.input_text.as_deref().map(ToOwned::to_owned)
             };
-            if let Some(focus_event) = args.focus_event {
+            if let Some(key_name) = args.key_name.as_deref() {
+                local::send_named_key_input(&mut stream, "pane-1", key_name)?;
+            } else if let Some(focus_event) = args.focus_event {
                 if focus_reporting {
                     local::send_focus_input(&mut stream, "pane-1", focus_event.focused())?;
                 }
@@ -658,6 +661,7 @@ struct Args {
     help: bool,
     socket_path: PathBuf,
     input_text: Option<String>,
+    key_name: Option<String>,
     paste_text: Option<String>,
     focus_event: Option<FocusEvent>,
     scrollback_start_line: u64,
@@ -679,6 +683,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut help = false;
     let mut socket_path = local::default_socket_path();
     let mut input_text = Some("a".to_owned());
+    let mut key_name = None;
     let mut paste_text = None;
     let mut focus_event = None;
     let mut scrollback_start_line = 1;
@@ -697,6 +702,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut iterations = None;
     let mut local_echo_set = false;
     let mut key_set = false;
+    let mut key_name_set = false;
     let mut paste_set = false;
     let mut focus_set = false;
     let mut no_input_set = false;
@@ -716,6 +722,15 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             "--key" => {
                 key_set = true;
                 input_text = Some(args.next().ok_or("--key requires text")?);
+            }
+            "--key-name" => {
+                key_name_set = true;
+                key_name = Some(parse_key_name(
+                    &args
+                        .next()
+                        .ok_or("--key-name requires keypad-enter or keypad-0..9")?,
+                )?);
+                input_text = None;
             }
             "--paste" => {
                 paste_set = true;
@@ -820,6 +835,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     )?;
     validate_explicit_input_modes(
         key_set,
+        key_name_set,
         paste_set,
         focus_set,
         no_input_set,
@@ -836,12 +852,14 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         live_resize,
         iterations,
         focus_set,
+        key_name_set,
     )?;
 
     Ok(Args {
         help,
         socket_path,
         input_text,
+        key_name,
         paste_text,
         focus_event,
         scrollback_start_line,
@@ -889,6 +907,7 @@ fn validate_positive_numeric_args(
 
 fn validate_explicit_input_modes(
     key_set: bool,
+    key_name_set: bool,
     paste_set: bool,
     focus_set: bool,
     no_input_set: bool,
@@ -898,11 +917,23 @@ fn validate_explicit_input_modes(
     if key_set && no_input_set {
         return Err("--key cannot be combined with --no-input");
     }
+    if key_set && key_name_set {
+        return Err("--key cannot be combined with --key-name");
+    }
     if key_set && paste_set {
         return Err("--key cannot be combined with --paste");
     }
     if key_set && focus_set {
         return Err("--key cannot be combined with --focus");
+    }
+    if key_name_set && paste_set {
+        return Err("--key-name cannot be combined with --paste");
+    }
+    if key_name_set && focus_set {
+        return Err("--key-name cannot be combined with --focus");
+    }
+    if key_name_set && no_input_set {
+        return Err("--key-name cannot be combined with --no-input");
     }
     if paste_set && focus_set {
         return Err("--paste cannot be combined with --focus");
@@ -918,6 +949,12 @@ fn validate_explicit_input_modes(
     }
     if key_set && stdin_bytes {
         return Err("--key cannot be combined with --stdin-bytes");
+    }
+    if key_name_set && stdin_input {
+        return Err("--key-name cannot be combined with --stdin");
+    }
+    if key_name_set && stdin_bytes {
+        return Err("--key-name cannot be combined with --stdin-bytes");
     }
     if paste_set && stdin_input {
         return Err("--paste cannot be combined with --stdin");
@@ -950,6 +987,7 @@ fn validate_mode_args(
     live_resize: Option<(u32, u32)>,
     iterations: Option<usize>,
     focus_set: bool,
+    key_name_set: bool,
 ) -> Result<(), &'static str> {
     if live && follow {
         return Err("--follow cannot be combined with --live");
@@ -972,6 +1010,9 @@ fn validate_mode_args(
     if focus_set && !live {
         return Err("--focus requires --live");
     }
+    if key_name_set && !live {
+        return Err("--key-name requires --live");
+    }
     if iterations.is_some() && !live && !follow {
         return Err("--iterations requires --live or --follow");
     }
@@ -992,6 +1033,7 @@ Options:
   --socket PATH              Unix socket path
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send for read-write attach
+  --key-name NAME            Send keypad-enter or keypad-0..9 in live mode
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send a focus event in live mode when reporting is enabled
   --no-input                 Attach read-only
@@ -1055,11 +1097,28 @@ fn parse_focus_event(value: &str) -> Result<FocusEvent, &'static str> {
     }
 }
 
+fn parse_key_name(value: &str) -> Result<String, &'static str> {
+    match value {
+        "keypad-enter" => Ok("numpad-enter".to_owned()),
+        "keypad-0" => Ok("numpad-0".to_owned()),
+        "keypad-1" => Ok("numpad-1".to_owned()),
+        "keypad-2" => Ok("numpad-2".to_owned()),
+        "keypad-3" => Ok("numpad-3".to_owned()),
+        "keypad-4" => Ok("numpad-4".to_owned()),
+        "keypad-5" => Ok("numpad-5".to_owned()),
+        "keypad-6" => Ok("numpad-6".to_owned()),
+        "keypad-7" => Ok("numpad-7".to_owned()),
+        "keypad-8" => Ok("numpad-8".to_owned()),
+        "keypad-9" => Ok("numpad-9".to_owned()),
+        _ => Err("--key-name requires keypad-enter or keypad-0..9"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         FocusEvent, LocalEcho, interim_surface_fidelity_warning_needed, parse_focus_event,
-        parse_local_echo, raw_terminal_lflag, raw_terminal_mode_needed,
+        parse_key_name, parse_local_echo, raw_terminal_lflag, raw_terminal_mode_needed,
         redraw_terminal_guard_needed, resize_policy_warning, sigwinch_resize_needed,
         split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes, validate_mode_args, validate_positive_numeric_args,
@@ -1146,25 +1205,46 @@ mod tests {
     }
 
     #[test]
+    fn key_name_arg_accepts_keypad_choices() {
+        assert_eq!(
+            parse_key_name("keypad-enter"),
+            Ok("numpad-enter".to_owned())
+        );
+        assert_eq!(parse_key_name("keypad-0"), Ok("numpad-0".to_owned()));
+        assert_eq!(parse_key_name("keypad-9"), Ok("numpad-9".to_owned()));
+        assert!(parse_key_name("enter").is_err());
+    }
+
+    #[test]
     fn mode_validation_rejects_ignored_or_conflicting_flags() {
         assert_eq!(
-            validate_mode_args(true, true, false, false, false, false, None, None, false),
+            validate_mode_args(
+                true, true, false, false, false, false, None, None, false, false
+            ),
             Err("--follow cannot be combined with --live")
         );
         assert_eq!(
-            validate_mode_args(false, false, true, false, false, false, None, None, false),
+            validate_mode_args(
+                false, false, true, false, false, false, None, None, false, false
+            ),
             Err("--stdin requires --live")
         );
         assert_eq!(
-            validate_mode_args(false, false, false, true, false, false, None, None, false),
+            validate_mode_args(
+                false, false, false, true, false, false, None, None, false, false
+            ),
             Err("--stdin-bytes requires --live")
         );
         assert_eq!(
-            validate_mode_args(true, false, false, false, true, false, None, None, false),
+            validate_mode_args(
+                true, false, false, false, true, false, None, None, false, false
+            ),
             Err("--local-echo requires --stdin-bytes")
         );
         assert_eq!(
-            validate_mode_args(false, false, false, false, false, true, None, None, false),
+            validate_mode_args(
+                false, false, false, false, false, true, None, None, false, false
+            ),
             Err("--redraw requires --live")
         );
         assert_eq!(
@@ -1177,6 +1257,7 @@ mod tests {
                 false,
                 Some((80, 24)),
                 None,
+                false,
                 false
             ),
             Err("--cols and --rows require --live")
@@ -1191,6 +1272,7 @@ mod tests {
                 false,
                 None,
                 Some(1),
+                false,
                 false
             ),
             Err("--iterations requires --live or --follow")
@@ -1205,13 +1287,22 @@ mod tests {
                 false,
                 None,
                 Some(0),
+                false,
                 false
             ),
             Err("--iterations must be greater than 0")
         );
         assert_eq!(
-            validate_mode_args(false, false, false, false, false, false, None, None, true),
+            validate_mode_args(
+                false, false, false, false, false, false, None, None, true, false
+            ),
             Err("--focus requires --live")
+        );
+        assert_eq!(
+            validate_mode_args(
+                false, false, false, false, false, false, None, None, false, true
+            ),
+            Err("--key-name requires --live")
         );
         assert!(
             validate_mode_args(
@@ -1223,6 +1314,7 @@ mod tests {
                 true,
                 Some((80, 24)),
                 Some(1),
+                true,
                 true
             )
             .is_ok()
@@ -1237,6 +1329,7 @@ mod tests {
                 false,
                 None,
                 Some(1),
+                false,
                 false
             )
             .is_ok()
@@ -1246,67 +1339,106 @@ mod tests {
     #[test]
     fn input_mode_validation_rejects_explicit_conflicts() {
         assert_eq!(
-            validate_explicit_input_modes(true, false, false, true, false, false),
+            validate_explicit_input_modes(true, false, false, false, true, false, false),
             Err("--key cannot be combined with --no-input")
         );
         assert_eq!(
-            validate_explicit_input_modes(true, true, false, false, false, false),
+            validate_explicit_input_modes(true, true, false, false, false, false, false),
+            Err("--key cannot be combined with --key-name")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(true, false, true, false, false, false, false),
             Err("--key cannot be combined with --paste")
         );
         assert_eq!(
-            validate_explicit_input_modes(true, false, true, false, false, false),
+            validate_explicit_input_modes(true, false, false, true, false, false, false),
             Err("--key cannot be combined with --focus")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, true, true, false, false, false),
+            validate_explicit_input_modes(false, true, true, false, false, false, false),
+            Err("--key-name cannot be combined with --paste")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(false, true, false, true, false, false, false),
+            Err("--key-name cannot be combined with --focus")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(false, true, false, false, true, false, false),
+            Err("--key-name cannot be combined with --no-input")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(false, false, true, true, false, false, false),
             Err("--paste cannot be combined with --focus")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, true, false, true, false, false),
+            validate_explicit_input_modes(false, false, true, false, true, false, false),
             Err("--paste cannot be combined with --no-input")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, false, true, true, false, false),
+            validate_explicit_input_modes(false, false, false, true, true, false, false),
             Err("--focus cannot be combined with --no-input")
         );
         assert_eq!(
-            validate_explicit_input_modes(true, false, false, false, true, false),
+            validate_explicit_input_modes(true, false, false, false, false, true, false),
             Err("--key cannot be combined with --stdin")
         );
         assert_eq!(
-            validate_explicit_input_modes(true, false, false, false, false, true),
+            validate_explicit_input_modes(true, false, false, false, false, false, true),
             Err("--key cannot be combined with --stdin-bytes")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, true, false, false, true, false),
+            validate_explicit_input_modes(false, true, false, false, false, true, false),
+            Err("--key-name cannot be combined with --stdin")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(false, true, false, false, false, false, true),
+            Err("--key-name cannot be combined with --stdin-bytes")
+        );
+        assert_eq!(
+            validate_explicit_input_modes(false, false, true, false, false, true, false),
             Err("--paste cannot be combined with --stdin")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, true, false, false, false, true),
+            validate_explicit_input_modes(false, false, true, false, false, false, true),
             Err("--paste cannot be combined with --stdin-bytes")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, false, true, false, true, false),
+            validate_explicit_input_modes(false, false, false, true, false, true, false),
             Err("--focus cannot be combined with --stdin")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, false, true, false, false, true),
+            validate_explicit_input_modes(false, false, false, true, false, false, true),
             Err("--focus cannot be combined with --stdin-bytes")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, false, false, true, true, false),
+            validate_explicit_input_modes(false, false, false, false, true, true, false),
             Err("--no-input cannot be combined with --stdin")
         );
         assert_eq!(
-            validate_explicit_input_modes(false, false, false, true, false, true),
+            validate_explicit_input_modes(false, false, false, false, true, false, true),
             Err("--no-input cannot be combined with --stdin-bytes")
         );
-        assert!(validate_explicit_input_modes(false, false, false, false, true, false).is_ok());
-        assert!(validate_explicit_input_modes(false, false, false, false, false, true).is_ok());
-        assert!(validate_explicit_input_modes(true, false, false, false, false, false).is_ok());
-        assert!(validate_explicit_input_modes(false, true, false, false, false, false).is_ok());
-        assert!(validate_explicit_input_modes(false, false, true, false, false, false).is_ok());
-        assert!(validate_explicit_input_modes(false, false, false, true, false, false).is_ok());
+        assert!(
+            validate_explicit_input_modes(false, false, false, false, false, true, false).is_ok()
+        );
+        assert!(
+            validate_explicit_input_modes(false, false, false, false, false, false, true).is_ok()
+        );
+        assert!(
+            validate_explicit_input_modes(true, false, false, false, false, false, false).is_ok()
+        );
+        assert!(
+            validate_explicit_input_modes(false, true, false, false, false, false, false).is_ok()
+        );
+        assert!(
+            validate_explicit_input_modes(false, false, true, false, false, false, false).is_ok()
+        );
+        assert!(
+            validate_explicit_input_modes(false, false, false, true, false, false, false).is_ok()
+        );
+        assert!(
+            validate_explicit_input_modes(false, false, false, false, true, false, false).is_ok()
+        );
     }
 
     #[test]

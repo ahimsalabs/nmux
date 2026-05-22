@@ -200,8 +200,8 @@ scrollback rows, cell widths, combining marks, emoji ZWJ clusters, basic SGR
 style flags, underline color, palette-indexed colors, render-state default
 colors/palette, palette overrides, explicit cursor color, terminal title metadata, OSC
 133 row semantic prompt state, bracketed paste, paste safety validation, paste forwarding, mouse
-tracking, focus reporting and mode-gated focus forwarding, application keypad tracking and
-explicit encoder output, origin, wraparound mode state, row-level dirty state,
+tracking, focus reporting and mode-gated focus forwarding, application keypad tracking,
+mode-aware keypad Enter/digit forwarding, explicit encoder output, origin, wraparound mode state, row-level dirty state,
 hyperlink presence, Kitty graphics placeholder metadata, mode-aware key
 encoding, and mode-only surface patches. OSC 7 working-directory metadata,
 image placement data, and hyperlink IDs remain intentionally withheld until the
