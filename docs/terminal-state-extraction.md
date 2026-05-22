@@ -1,8 +1,9 @@
 # Terminal State Extraction Checklist
 
 M13 replaces the interim text engine with daemon-owned backend `libghostty-vt`
-state extraction. This file records the minimum mapping work needed before that
-import so the protocol changes stay deliberate.
+state extraction. This file records the mapping work already proven by the
+opt-in backend and the remaining protocol decisions needed before default/CI
+promotion.
 
 `libghostty-vt` is now present as an optional Cargo feature and compiles through
 the vendored native Ghostty VT build. ADR 0018 keeps the default `nmuxd` engine
@@ -15,11 +16,12 @@ gate for related changes.
 
 - `WorkspaceTreeSnapshot`: session, tab, root pane identity, size, resize policy,
   and current pane surface version.
-- `PaneSurfaceSnapshot`: pane ID, surface version, size, cursor, terminal modes,
-  style table, and rendered row runs.
-- `PaneSurfacePatch`: base/version pair, replacement row runs, cursor, and
-  terminal modes.
-- `ScrollbackChunk`: scrollback row runs by range.
+- `PaneSurfaceSnapshot`: pane ID, surface version, size, cursor, terminal
+  metadata, terminal modes, terminal colors, style table, and rendered row runs.
+- `PaneSurfacePatch`: base/version pair, replacement row runs, cursor, terminal
+  metadata, terminal modes, terminal colors, and patch kind.
+- `ScrollbackChunk`: scrollback row runs, terminal colors, and the style table
+  for the requested range.
 
 The current terminal engine boundary owns:
 
@@ -150,10 +152,11 @@ only after the backend extraction proves the exact shape needed.
   may still need run-level or region-level patches beyond cursor-only updates
   before nmux exposes a richer damage protocol.
 
-## Acceptance Gate
+## Initial Opt-In Acceptance Gate
 
-Before enabling `nmuxd --terminal-engine libghostty-vt`, the repository should
-have tests proving:
+The repository has passed the initial gate for the feature-enabled
+`nmuxd --terminal-engine libghostty-vt` path. That opt-in path is expected to
+keep tests proving:
 
 - the engine is stateful per pane across multiple PTY output reads;
 - cursor movement without printable text updates `PaneSurfacePatch.cursor` using
@@ -168,7 +171,7 @@ have tests proving:
 - unsupported VT features fail by omission with documented limitations, not by
   corrupting the existing nmux state objects.
 
-## Current libghostty-vt Default-Enable Gate
+## Current libghostty-vt Default/CI Promotion Gate
 
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, basic SGR style flags, underline color,
@@ -184,22 +187,23 @@ encoding, mouse event encoding, paste safety validation, safe-API mode tracking
 for bracketed paste, mouse tracking, focus reporting, application keypad mode,
 application cursor mode, origin, and wraparound.
 
-The nmux state-sync path now has coverage for snapshot/patch cursor blink, title
-and working-directory metadata, terminal color state and color-only patches, row semantic prompt
-metadata, per-run semantic content, row dirty metadata, row state hashes, Kitty
-placeholder row metadata, mode payloads, mode-only patch application, sparse row
-replacement, `FullRefreshRequired` snapshot recovery for known-version live
-clients, metadata-only no-row live updates, cached client-state compatibility,
-cached terminal metadata reattach, protocol-visible host input and live resize
-failures, `PaneNotFound` errors for unknown pane-scoped client intents,
-consistent 1-based public scrollback ranges, decoded scrollback row hash
-metadata, and feature-gated live CLI smoke paths, committed live resize
-metadata, style-table full-refresh reattach, and restored alternate-screen
-scrollback omission. Client-side tests assert decoded surface patches and
-scrollback chunks preserve structured `CellRun` style IDs, cell widths,
-hyperlink-presence flags, and semantic content rather than collapsing to
-text-only fallback rows. `make check-ghostty-vt` runs the full `nmux-core` and
-`nmux-cli` test suites with `--features libghostty-vt`, so ordinary
+The nmux state-sync path now has coverage for snapshot/patch cursor blink,
+title and working-directory metadata, terminal color state and color-only
+patches, row semantic prompt metadata, per-run semantic content, row dirty
+metadata, row state hashes, Kitty placeholder row metadata, mode payloads,
+mode-only patch application, sparse row replacement, `FullRefreshRequired`
+snapshot recovery for known-version live clients, metadata-only no-row live
+updates, cached client-state compatibility, cached terminal metadata reattach,
+current-surface live focus forwarding and rejection, protocol-visible host input
+and live resize failures, `PaneNotFound` errors for unknown pane-scoped client
+intents, consistent 1-based public scrollback ranges, decoded scrollback row
+hash metadata, and feature-gated live CLI smoke paths, committed user-command
+live resize metadata, style-table full-refresh reattach, and restored
+alternate-screen scrollback omission. Client-side tests assert decoded surface
+patches and scrollback chunks preserve structured `CellRun` style IDs, cell
+widths, hyperlink-presence flags, and semantic content rather than collapsing
+to text-only fallback rows. `make check-ghostty-vt` runs the full `nmux-core`
+and `nmux-cli` test suites with `--features libghostty-vt`, so ordinary
 feature-sensitive tests are part of the opt-in gate. ADR 0018 keeps the default
 engine `interim` until a later decision explicitly accepts the native
 Ghostty/Zig build cost in normal development, CI, and packaging.
