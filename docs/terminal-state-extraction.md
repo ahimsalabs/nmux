@@ -91,12 +91,10 @@ have tests proving:
 - unsupported VT features fail by omission with documented limitations, not by
   corrupting the existing nmux state objects.
 
-## Current libghostty-vt Default-Enable Gaps
+## Current libghostty-vt Default-Enable Gate
 
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, cursor-only updates, alternate-screen detection, resize/reflow, and
-backend-owned scrollback extraction. It is not the default because the first
-integration pass still needs:
-
-- live CLI smoke coverage for `nmuxd --terminal-engine libghostty-vt` before the
-  flag is documented as usable outside experimental builds.
+backend-owned scrollback extraction through unit, session, and live CLI smoke
+coverage. It is not the default until the project deliberately accepts the
+native Zig/Ghostty build cost in normal development and CI.

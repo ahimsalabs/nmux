@@ -195,14 +195,29 @@ where
     H: ProcessHost + ProcessOutput,
 {
     let mut engines = PaneTerminalEngines::new(terminal_engine_kind);
+    serve_live_n_with_host_and_engines(
+        listener,
+        session,
+        host,
+        clients,
+        cycles_per_client,
+        &mut engines,
+    )
+}
+
+pub fn serve_live_n_with_host_and_engines<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+    clients: usize,
+    cycles_per_client: usize,
+    engines: &mut PaneTerminalEngines,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
     for _ in 0..clients {
-        serve_live_one_with_host_and_engines(
-            listener,
-            session,
-            host,
-            &mut engines,
-            cycles_per_client,
-        )?;
+        serve_live_one_with_host_and_engines(listener, session, host, engines, cycles_per_client)?;
     }
     Ok(())
 }
@@ -261,8 +276,21 @@ where
     H: ProcessHost + ProcessOutput,
 {
     let mut engines = PaneTerminalEngines::new(terminal_engine_kind);
+    serve_n_with_host_and_engines(listener, session, host, clients, &mut engines)
+}
+
+pub fn serve_n_with_host_and_engines<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+    clients: usize,
+    engines: &mut PaneTerminalEngines,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
     for _ in 0..clients {
-        serve_next_with_host(listener, session, host, &mut engines)?;
+        serve_next_with_host(listener, session, host, engines)?;
     }
     Ok(())
 }

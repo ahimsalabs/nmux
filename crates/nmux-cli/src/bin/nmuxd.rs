@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use nmux_cli::local;
 use nmux_core::host::{CommandSpec, LocalPtyHost, ProcessHost};
 use nmux_core::session::Session;
-use nmux_core::terminal::TerminalEngineKind;
+use nmux_core::terminal::{PaneTerminalEngines, TerminalEngineKind};
 use nmux_proto::protocol;
 
 fn main() {
@@ -37,7 +37,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let host_spec = session.tabs[0].root.host.clone();
     let mut pty_host = LocalPtyHost::default();
     pty_host.start_pane(pane_id, &host_spec)?;
-    wait_for_pane_output(&mut session, &mut pty_host, pane_id)?;
+    let mut terminal_engines = PaneTerminalEngines::new(args.terminal_engine_kind);
+    wait_for_pane_output(&mut session, &mut pty_host, pane_id, &mut terminal_engines)?;
 
     if args.live || args.live_forever || args.live_cycles.is_some() || args.live_clients.is_some() {
         let cycles = args.live_cycles.unwrap_or(usize::MAX);
@@ -46,13 +47,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             args.live_clients.unwrap_or(1)
         };
-        let serve_result = local::serve_live_n_with_host_and_terminal_engine_kind(
+        let serve_result = local::serve_live_n_with_host_and_engines(
             &listener,
             &mut session,
             &mut pty_host,
             clients,
             cycles,
-            args.terminal_engine_kind,
+            &mut terminal_engines,
         );
         let stop_result = pty_host.stop_pane(pane_id);
         serve_result?;
@@ -61,12 +62,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.one_shot {
-        let serve_result = local::serve_n_with_host_and_terminal_engine_kind(
+        let serve_result = local::serve_n_with_host_and_engines(
             &listener,
             &mut session,
             &mut pty_host,
             1,
-            args.terminal_engine_kind,
+            &mut terminal_engines,
         );
         let stop_result = pty_host.stop_pane(pane_id);
         serve_result?;
@@ -75,12 +76,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     loop {
-        local::serve_n_with_host_and_terminal_engine_kind(
+        local::serve_n_with_host_and_engines(
             &listener,
             &mut session,
             &mut pty_host,
             1,
-            args.terminal_engine_kind,
+            &mut terminal_engines,
         )?;
     }
 }
@@ -117,6 +118,22 @@ fn socket_identity(path: &PathBuf) -> std::io::Result<SocketIdentity> {
         dev: metadata.dev(),
         ino: metadata.ino(),
     })
+}
+
+fn wait_for_pane_output(
+    session: &mut Session,
+    output: &mut LocalPtyHost,
+    pane_id: &str,
+    engines: &mut PaneTerminalEngines,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < deadline {
+        if local::poll_pane_output_with_engines(session, engines, output, pane_id)? {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
 }
 
 struct Args {
@@ -427,19 +444,4 @@ mod tests {
         );
         let _ = fs::remove_file(socket_path);
     }
-}
-
-fn wait_for_pane_output(
-    session: &mut Session,
-    output: &mut LocalPtyHost,
-    pane_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let deadline = Instant::now() + Duration::from_millis(200);
-    while Instant::now() < deadline {
-        if local::poll_pane_output(session, output, pane_id)? {
-            break;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    Ok(())
 }

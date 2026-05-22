@@ -281,6 +281,71 @@ fn live_cli_renders_initial_scrollback_range() {
     );
 }
 
+#[cfg(feature = "libghostty-vt")]
+#[test]
+fn live_cli_can_use_libghostty_vt_terminal_engine() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "printf '\\033[31mred\\033[0m\nplain\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--scrollback-start",
+            "1",
+            "--scrollback-count",
+            "5",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("red"),
+        "missing VT-rendered red text:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("plain"),
+        "missing VT-rendered plain text:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("[31m") && !stdout.contains("[0m"),
+        "ANSI control sequences leaked into output:\n{stdout}"
+    );
+}
+
 #[test]
 fn live_cli_redraw_includes_initial_scrollback_range() {
     let socket_path = test_socket_path();
