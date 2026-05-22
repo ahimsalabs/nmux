@@ -509,6 +509,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   ADR 0017 documents terminal input mode state and daemon-owned input gating for paste, focus, named keys, and mouse input
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch
   live attach clients with a known surface version receive a PaneSurfaceSnapshot, not a PaneSurfacePatch, when the daemon marks the latest surface update FullRefreshRequired
+  feature-gated live CLI coverage proves libghostty-vt reattach recovers from style-table FullRefreshRequired updates without raw ANSI leakage
   ScrollbackChunk carries the pane style table so scrollback row runs do not reference missing style IDs
   nmux --state preserves cached title, OSC 7 working directory, terminal modes including mouse tracking mode/format, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, Kitty placeholder row metadata, and last-seen scrollback metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot
   current-version live reattach sends explicit focus input to the daemon even when no surface frame arrives, so focus-reporting-disabled cases produce daemon-owned Error frames; paste delimiter selection remains daemon-owned

@@ -219,7 +219,8 @@ Current coverage includes:
   state hashes, hyperlink presence, and Kitty graphics placeholder metadata;
 - alternate-screen entry/restoration with alternate scrollback omission,
   resize/reflow, committed live resize metadata, metadata-only no-row patches,
-  sparse row updates, and mode-only surface patches;
+  style-table full-refresh reattach, sparse row updates, and mode-only surface
+  patches;
 - OSC 133 row semantic prompt state and per-run semantic content;
 - bracketed paste, paste safety validation, paste forwarding, mouse tracking
   and pane-bounds/mode-gated mouse forwarding with modifiers, focus reporting and
