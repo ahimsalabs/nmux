@@ -52,7 +52,14 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
   remains zero until nmux has a URI/ID table. `cell_widths` is one byte per
   rendered cell in the run, so wide characters carry a width of 2 at their
   rendered cell position.
-- `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot` objects and `ScrollbackChunk` objects carry the style table needed by their rows.
+- `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot`
+  objects and `ScrollbackChunk` objects carry the style table needed by their
+  rows. `fg_rgba`, `bg_rgba`, and `underline_rgba` use `0xRRGGBBAA` packing;
+  zero means the backend did not publish an explicit color for that field.
+  `Style.flags` currently reserves bits 0-7 for bold, italic, faint, blink,
+  inverse, invisible, strikethrough, and overline, and bits 8-12 for single,
+  double, curly, dotted, and dashed underline. Unknown bits must be preserved
+  by clients that cache or forward style tables.
 - `CursorState` stores cursor row, column, visibility, shape, and blinking.
 - `TerminalMetadataState` stores pane terminal title and working-directory
   metadata. The libghostty-vt path tracks OSC 7 byte sequences and populates the
@@ -64,7 +71,9 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
   palette diff using `palette_diff_start` and `palette_diff_rgba` against the
   patch base version instead of a full `palette_rgba` vector. Row,
   style-table, or surface-kind changes that also affect colors still require a
-  full surface refresh.
+  full surface refresh. All terminal color fields use the same `0xRRGGBBAA`
+  packing as style colors; `cursor_rgba_set` distinguishes an unset cursor
+  color from an explicit transparent/zero value.
 - `RowSemanticPrompt` stores OSC 133 prompt-line metadata on surface rows,
   row updates, and scrollback rows. `CellSemanticContent` stores the
   backend-observed OSC 133 content class for each run: output, input, or
