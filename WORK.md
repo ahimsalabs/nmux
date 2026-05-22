@@ -489,7 +489,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal title and OSC 7 working-directory metadata
   title/OSC 7-only updates use no-row surface patches, and feature-gated live CLI coverage proves non-redraw clients print metadata-only changes without reprinting unchanged row text and persist those metadata-only changes through --state reattach
   local CLI rendering prints non-empty terminal title and OSC 7 working-directory metadata with the current pane surface
-  feature-gated local live coverage proves libghostty-vt CursorOnly patches stream after attach, avoid row repaint, update ClientAttachState cursor metadata, and survive state encode/decode
+  feature-gated local and live CLI coverage proves libghostty-vt CursorOnly patches stream after attach, avoid row repaint, update ClientAttachState cursor metadata, and survive state encode/decode plus real --state reattach
   libghostty-vt terminal-generated PTY writes are exposed through the terminal engine and host-backed output polling writes DECRQM query replies back to the pane process instead of dropping emulator responses; feature-gated live CLI coverage proves a real PTY command can read the reply
   structured-input encoding failures return protocol Error frames instead of opaque daemon exits, and local one-shot clients surface the server-provided reason before scrollback fetches
   one-shot and live host write failures return protocol Error frames instead of tearing down nmuxd with opaque I/O failures
