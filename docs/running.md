@@ -259,6 +259,9 @@ instead of reusing stale rows from an older daemon. Older state files that only
 contain rendered row text still load as default-style rows with default
 metadata, default modes, and default color state, but they also force one fresh
 snapshot before being rewritten with the current socket scope.
+When a scoped state file is already current and the daemon sends no surface
+frame, live input gating reuses the cached terminal modes for bracketed paste
+and focus reporting until the next surface update arrives.
 
 Start a long-running command-backed daemon:
 

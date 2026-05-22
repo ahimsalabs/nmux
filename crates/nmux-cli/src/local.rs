@@ -2216,6 +2216,13 @@ impl ClientAttachState {
             .map(TerminalMetadataSummary::from_surface)
     }
 
+    pub fn cached_surface_modes(&self, pane_id: &str) -> Option<TerminalModeSummary> {
+        self.surfaces
+            .iter()
+            .find(|surface| surface.pane_id == pane_id)
+            .map(|surface| surface.modes)
+    }
+
     fn apply_surface_update(
         &mut self,
         update: &SurfaceUpdate,
@@ -3675,6 +3682,8 @@ mod tests {
         let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
         assert_eq!(decoded.scope, Some(expected_scope));
         assert_eq!(decoded.known_surfaces(), state.known_surfaces());
+        assert_eq!(decoded.cached_surface_modes("pane-1"), Some(expected_modes));
+        assert_eq!(decoded.cached_surface_modes("missing"), None);
         assert_eq!(
             decoded.known_surfaces_for_scope(Some(expected_scope)),
             state.known_surfaces()
