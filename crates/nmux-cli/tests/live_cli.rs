@@ -1294,6 +1294,111 @@ fn live_libghostty_vt_cli_persists_mode_only_update_to_state() {
 
 #[cfg(feature = "libghostty-vt")]
 #[test]
+fn live_libghostty_vt_cli_persists_replace_rows_metadata_to_state() {
+    let socket_path = test_socket_path();
+    let state_path = socket_path.with_extension("state");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "2",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "printf 'ready\\n'; sleep 0.3; printf '\\033]133;A\\033\\\\prompt \\033]133;B\\033\\\\input\\033]133;C\\033\\\\output\\n\\033]8;;https://example.com\\033\\\\linked\\033]8;;\\033\\\\ text'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let first_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "4",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run first nmux");
+
+    assert!(
+        first_client.status.success(),
+        "first nmux failed: {}",
+        String::from_utf8_lossy(&first_client.stderr)
+    );
+
+    let first_stdout = String::from_utf8_lossy(&first_client.stdout);
+    assert!(
+        first_stdout.contains("ready")
+            && first_stdout.contains("prompt inputoutput")
+            && first_stdout.contains("linked text"),
+        "first client did not render replace-rows output:\n{first_stdout}"
+    );
+    assert!(
+        !first_stdout.contains("]133;") && !first_stdout.contains("]8;;"),
+        "metadata controls leaked into first render:\n{first_stdout}"
+    );
+
+    let first_state = fs::read_to_string(&state_path).expect("read first state");
+    assert_replace_rows_metadata_state(&first_state, "first");
+
+    let second_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run second nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+
+    assert!(
+        second_client.status.success(),
+        "second nmux failed: {}",
+        String::from_utf8_lossy(&second_client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let second_stdout = String::from_utf8_lossy(&second_client.stdout);
+    assert!(
+        second_stdout.contains("ready")
+            && second_stdout.contains("prompt inputoutput")
+            && second_stdout.contains("linked text"),
+        "reattached client did not render cached replace-rows output:\n{second_stdout}"
+    );
+    assert!(
+        !second_stdout.contains("]133;") && !second_stdout.contains("]8;;"),
+        "metadata controls leaked after state reattach:\n{second_stdout}"
+    );
+
+    let second_state = fs::read_to_string(&state_path).expect("read second state");
+    assert_replace_rows_metadata_state(&second_state, "second");
+
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+}
+
+#[cfg(feature = "libghostty-vt")]
+#[test]
 fn live_libghostty_vt_cli_redraw_prints_terminal_metadata() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
@@ -3667,6 +3772,65 @@ fn wait_for_socket(path: &Path) {
         thread::sleep(Duration::from_millis(20));
     }
     panic!("socket did not appear: {}", path.display());
+}
+
+#[cfg(feature = "libghostty-vt")]
+fn assert_replace_rows_metadata_state(state: &str, label: &str) {
+    let prompt_row = state_row_index(state, "70726f6d707420696e7075746f7574707574")
+        .unwrap_or_else(|| panic!("{label} state missing OSC 133 prompt row:\n{state}"));
+    let prompt_rowmeta = format!("rowmeta {prompt_row} 1 1 0 ");
+    assert!(
+        state.contains(&prompt_rowmeta),
+        "{label} state missing prompt row metadata:\n{state}"
+    );
+    assert!(
+        state_contains_run(state, prompt_row, "70726f6d707420", 0, 0, 0, 2)
+            && state_contains_run(state, prompt_row, "696e707574", 0, 0, 0, 1)
+            && state_contains_run(state, prompt_row, "6f7574707574", 0, 0, 0, 0),
+        "{label} state missing OSC 133 semantic content runs:\n{state}"
+    );
+
+    let link_row = state_row_index(state, "6c696e6b65642074657874")
+        .unwrap_or_else(|| panic!("{label} state missing OSC 8 hyperlink row:\n{state}"));
+    assert!(
+        state_contains_run(state, link_row, "6c696e6b6564", 0, 1, 0, 0)
+            && state_contains_run(state, link_row, "2074657874", 0, 0, 0, 0),
+        "{label} state missing OSC 8 hyperlink run flags:\n{state}"
+    );
+}
+
+#[cfg(feature = "libghostty-vt")]
+fn state_row_index<'a>(state: &'a str, text_hex: &str) -> Option<&'a str> {
+    state.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        match (parts.next(), parts.next(), parts.next(), parts.next()) {
+            (Some("row"), Some(row), Some(text), None) if text == text_hex => Some(row),
+            _ => None,
+        }
+    })
+}
+
+#[cfg(feature = "libghostty-vt")]
+fn state_contains_run(
+    state: &str,
+    row: &str,
+    text_hex: &str,
+    style_id: u32,
+    flags: u32,
+    hyperlink_id: u32,
+    semantic_content: i8,
+) -> bool {
+    state.lines().any(|line| {
+        let parts = line.split_whitespace().collect::<Vec<_>>();
+        parts.len() == 8
+            && parts[0] == "run"
+            && parts[1] == row
+            && parts[2] == text_hex
+            && parts[4] == style_id.to_string()
+            && parts[5] == flags.to_string()
+            && parts[6] == hyperlink_id.to_string()
+            && parts[7] == semantic_content.to_string()
+    })
 }
 
 fn read_until_line(rx: &mpsc::Receiver<String>, expected: &str) -> Vec<String> {

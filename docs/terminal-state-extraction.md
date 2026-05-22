@@ -204,8 +204,9 @@ libghostty-vt live cursor-only patch cache persistence through real `--state`
 reattach, terminal query PTY reply routing through a real live PTY, title and working-directory
 metadata, terminal color state, color-only palette diffs, live color-only patch
 cache persistence through real `--state` reattach, row semantic prompt metadata, per-run semantic content,
-live ReplaceRows row-metadata cache persistence, live ReplaceRows hyperlink
-run-flag cache persistence, row dirty metadata, row state hashes, Kitty
+live ReplaceRows row-metadata cache persistence through real `--state` reattach,
+live ReplaceRows hyperlink run-flag cache persistence through real `--state`
+reattach, row dirty metadata, row state hashes, Kitty
 placeholder row metadata, mode payloads, mode-only patch application, sparse
 row replacement, `FullRefreshRequired` snapshot recovery for known-version live
 clients, metadata-only no-row live updates, metadata-only state reattach,
