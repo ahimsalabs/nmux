@@ -103,9 +103,10 @@ only after the backend extraction proves the exact shape needed.
   palette overrides, and explicit cursor color changes. Default
   foreground/background ownership in nmux protocol objects and the
   client-visible shape of dynamic color changes still need protocol decisions.
-- Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, but
-  nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
-  ownership, and lifetime have a protocol object.
+- Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, and
+  the safe API exposes row/cell hyperlink presence. nmux intentionally leaves
+  `hyperlink_id` unset until URI, identifier, range ownership, and lifetime have
+  a protocol object.
 - Images and graphics protocols: `libghostty-vt` build info and row metadata
   can prove Kitty graphics support and virtual placeholder rows, but nmux has no
   image placement, dimensions, persistence, pixel-data, or fallback protocol
@@ -143,10 +144,10 @@ palette overrides, and explicit cursor color, alternate-screen entry/restoration
 with alternate scrollback omission, title metadata with OSC 7 working-directory
 omission, OSC 133 semantic prompt state, resize/reflow, styled backend-owned
 scrollback extraction, row-level dirty state, Kitty graphics placeholder
-detection, application-keypad encoder support, focus event encoding, paste
-safety validation, safe-API mode tracking for bracketed paste, mouse tracking,
-focus reporting, application keypad mode, and origin/wraparound modes, plus
-nmux snapshot/patch mode payloads and mode-only patch application through unit,
-session, and live CLI smoke coverage. It is not the default until the project
-deliberately accepts the native Zig/Ghostty build cost in normal development
-and CI.
+detection, hyperlink presence, application-keypad encoder support, focus event
+encoding, paste safety validation, safe-API mode tracking for bracketed paste,
+mouse tracking, focus reporting, application keypad mode, and origin/wraparound
+modes, plus nmux snapshot/patch mode payloads and mode-only patch application
+through unit, session, and live CLI smoke coverage. It is not the default until
+the project deliberately accepts the native Zig/Ghostty build cost in normal
+development and CI.

@@ -1364,6 +1364,58 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_safe_api_tracks_hyperlink_presence_without_uri_protocol_fields() {
+        use libghostty_vt::{
+            RenderState, Terminal, TerminalOptions,
+            render::{CellIterator, RowIterator},
+        };
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+        terminal.vt_write(b"\x1b]8;;https://example.com\x1b\\linked\x1b]8;;\x1b\\ plain");
+
+        let mut render_state = RenderState::new().expect("render state");
+        let snapshot = render_state.update(&terminal).expect("snapshot");
+        let mut row_iterator = RowIterator::new().expect("row iterator");
+        let mut rows = row_iterator.update(&snapshot).expect("rows");
+        let row = rows.next().expect("first row");
+        assert!(
+            row.raw_row()
+                .expect("raw row")
+                .has_hyperlink()
+                .expect("row hyperlink")
+        );
+
+        let mut cell_iterator = CellIterator::new().expect("cell iterator");
+        let mut cells = cell_iterator.update(row).expect("cells");
+        let mut linked_cells = 0;
+        let mut plain_cells = 0;
+        while cells.next().is_some() {
+            let raw_cell = cells.raw_cell().expect("raw cell");
+            let graphemes = cells.graphemes().expect("graphemes");
+            if graphemes.is_empty() {
+                continue;
+            }
+            if raw_cell.has_hyperlink().expect("cell hyperlink") {
+                linked_cells += 1;
+            } else {
+                plain_cells += 1;
+            }
+        }
+
+        assert!(linked_cells > 0, "expected linked cells in OSC 8 range");
+        assert!(
+            plain_cells > 0,
+            "expected plain cells after hyperlink reset"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_safe_api_tracks_bracketed_paste_mode() {
         use libghostty_vt::{Terminal, TerminalOptions, terminal::Mode};
 
