@@ -1572,6 +1572,53 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_withholds_alternate_screen_scrollback() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let primary = engine
+            .apply_output(
+                terminal_input(2, &empty, &empty),
+                b"main-0\r\nmain-1\r\nmain-2",
+            )
+            .expect("primary update");
+        assert_eq!(primary.surface, protocol::SurfaceKind::Main);
+        assert!(
+            primary
+                .scrollback_lines
+                .iter()
+                .any(|line| line.contains("main-0")),
+            "primary output should create main scrollback: {:?}",
+            primary.scrollback_lines
+        );
+
+        let alternate = engine
+            .apply_output(
+                terminal_input_from_update(&primary),
+                b"\x1b[?1049halt-0\r\nalt-1\r\nalt-2",
+            )
+            .expect("alternate update");
+
+        assert_eq!(alternate.surface, protocol::SurfaceKind::Alternate);
+        assert_eq!(alternate.scrollback_lines, primary.scrollback_lines);
+        assert!(
+            alternate
+                .scrollback_lines
+                .iter()
+                .all(|line| !line.contains("alt-")),
+            "alternate output leaked into main scrollback: {:?}",
+            alternate.scrollback_lines
+        );
+
+        let restored = engine
+            .apply_output(terminal_input_from_update(&alternate), b"\x1b[?1049l")
+            .expect("restore update");
+        assert_eq!(restored.surface, protocol::SurfaceKind::Main);
+        assert_eq!(restored.scrollback_lines, primary.scrollback_lines);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_resizes_after_wrapped_output() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();

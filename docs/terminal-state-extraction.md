@@ -88,8 +88,10 @@ only after the backend extraction proves the exact shape needed.
   Keep this backend-observable state withheld until the row metadata shape is
   explicit.
 - Alternate screen: `libghostty-vt` extraction tests cover entry into the
-  alternate buffer and restoration of the primary buffer. Alternate scrollback
-  behavior still needs protocol guidance.
+  alternate buffer, restoration of the primary buffer, and preservation of main
+  scrollback while alternate-screen output is active. Alternate-screen
+  scrollback remains intentionally withheld until nmux has protocol guidance for
+  whether and how clients should request it.
 - Palette and theme state: indexed SGR colors resolve into RGBA style-table
   entries during `libghostty-vt` extraction, and render-state tests prove the
   safe API exposes default foreground/background colors, the active palette,
@@ -130,11 +132,11 @@ The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, basic SGR style flags, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape extraction,
 backend-observable cursor blink state, render-state default colors/palette,
-palette overrides, and explicit cursor color, alternate-screen
-entry/restoration, title metadata with OSC 7 working-directory omission, OSC
-133 semantic prompt state, resize/reflow, styled backend-owned scrollback
-extraction, row-level dirty state, and safe-API mode tracking for bracketed
-paste, mouse tracking, application keypad mode, and origin/wraparound modes
-through unit, session, and live CLI smoke coverage. It is not the default until
-the project deliberately accepts the native Zig/Ghostty build cost in normal
-development and CI.
+palette overrides, and explicit cursor color, alternate-screen entry/restoration
+with alternate scrollback omission, title metadata with OSC 7 working-directory
+omission, OSC 133 semantic prompt state, resize/reflow, styled backend-owned
+scrollback extraction, row-level dirty state, and safe-API mode tracking for
+bracketed paste, mouse tracking, application keypad mode, and origin/wraparound
+modes through unit, session, and live CLI smoke coverage. It is not the default
+until the project deliberately accepts the native Zig/Ghostty build cost in
+normal development and CI.
