@@ -408,7 +408,7 @@ M11: terminal frontend polish [done]
   runnable docs and help output cover expected live attach workflows
   tests cover changed user-visible terminal output behavior
 
-M12: live workspace usability [next]
+M12: live workspace usability [done]
   nmuxd --live-clients COUNT keeps one workspace and PTY alive across bounded sequential live clients
   nmuxd live mode flags fail fast on ambiguous server modes and zero live counts
   live reattach with --state renders cached current surfaces instead of waiting for raw replay
@@ -429,20 +429,22 @@ M12: live workspace usability [next]
   existing socket path errors include a recovery hint
   nmuxd bind failures include the socket path
   nmux --connect-timeout-ms waits for daemon socket startup races across attach modes
-  choose the next smallest live-workflow improvement from current CLI behavior and roadmap evidence
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available
   keep runnable docs, help output, and tests aligned with each user-visible behavior change
 
-M13: backend libghostty-vt extraction [next correctness milestone]
+M13: backend libghostty-vt extraction [current correctness milestone]
   terminal engine boundary wraps current interim text surface behavior
   terminal engine boundary owns pane cursor state along with surface and scrollback output
   local daemon serving paths keep terminal engines alive per pane across output polls, resize handling, and sequential clients
   nmuxd exposes --terminal-engine interim as an explicit default while libghostty-vt remains opt-in
   keep the terminal-state extraction checklist current while importing libghostty-vt and before expanding protocol fields
-  replace interim backend-owned text surface with backend libghostty-vt terminal-state extraction
-  feed PTY bytes into the daemon-owned libghostty-vt state, not into clients
-  map extracted terminal state into nmux PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk objects
+  optional libghostty-vt feature feeds PTY bytes into daemon-owned VT state, not clients
+  optional libghostty-vt engine maps cursor, surface kind, visible rows, row runs, style IDs, cell widths, resize/reflow, and backend-owned scrollback into nmux objects
+  PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk preserve row runs instead of collapsing state to text-only rows
+  style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch
+  ScrollbackChunk carries the pane style table so scrollback row runs do not reference missing style IDs
+  nmux --state preserves cached row runs and style tables for patchable reconnects
   document cursor, mode, alternate-screen, palette, hyperlink, image, grapheme, and cell-width gaps before schema changes
   preserve frontend state-sync semantics; do not introduce client-side raw PTY replay
   keep frontend Ghostty renderer hydration as a separate upstream/API question
