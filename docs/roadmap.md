@@ -104,7 +104,7 @@ Done:
 - The optional `libghostty-vt` engine extracts visible and scrollback rows as style-separated cell runs with cell-width metadata, while keeping plain rendered text available for current clients. Style-bearing trailing blank cells are preserved so background-colored row regions survive, while default trailing blanks stay trimmed.
 - Basic SGR style flags now have `libghostty-vt` extraction coverage for bold, italic, underline, and strikethrough style-table bits.
 - Underline color now has `libghostty-vt` extraction coverage proving it resolves into an RGBA style-table entry.
-- Cursor-only `libghostty-vt` patches now cover cursor movement, visibility changes, and DECSCUSR visual shape changes.
+- Cursor-only `libghostty-vt` patches now cover cursor movement, visibility changes, and DECSCUSR visual shape changes; feature-gated local live coverage proves cursor-only patches stream after attach, avoid row repaint, update cached client cursor metadata, and survive persisted state encode/decode.
 - `libghostty-vt` extraction tests now cover alternate-screen entry and restoration to the main screen.
 - `libghostty-vt` extraction tests now pin alternate-screen scrollback omission: main scrollback is preserved while alternate-screen output stays out of nmux scrollback until the protocol shape is explicit.
 - Palette-indexed SGR colors now have `libghostty-vt` extraction coverage proving they resolve into RGBA style-table entries.

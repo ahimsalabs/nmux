@@ -192,12 +192,13 @@ for bracketed paste, mouse tracking, focus reporting, application keypad mode,
 application cursor mode, origin, and wraparound.
 
 The nmux state-sync path now has coverage for snapshot/patch cursor blink,
-title and working-directory metadata, terminal color state and color-only
-patches and live color-only patch cache persistence, row semantic prompt
-metadata, per-run semantic content, row dirty metadata, row state hashes, Kitty
-placeholder row metadata, mode payloads, mode-only patch application, sparse row
-replacement, `FullRefreshRequired` snapshot recovery for known-version live
-clients, metadata-only no-row live updates, libghostty-vt live mode-only patch cache persistence,
+libghostty-vt live cursor-only patch cache persistence, title and working-directory
+metadata, terminal color state and color-only patches and live color-only patch
+cache persistence, row semantic prompt metadata, per-run semantic content, row
+dirty metadata, row state hashes, Kitty placeholder row metadata, mode payloads,
+mode-only patch application, sparse row replacement, `FullRefreshRequired`
+snapshot recovery for known-version live clients, metadata-only no-row live
+updates, libghostty-vt live mode-only patch cache persistence,
 cached client-state compatibility, cached terminal metadata reattach,
 current-surface live key, paste, named-key, focus, and mouse forwarding,
 current-surface live focus/mouse rejection, libghostty-vt current-surface
