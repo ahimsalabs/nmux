@@ -1335,6 +1335,37 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_safe_api_tracks_focus_reporting_without_protocol_fields() {
+        use libghostty_vt::{Terminal, TerminalOptions, focus, terminal::Mode};
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+
+        assert!(!terminal.mode(Mode::FOCUS_EVENT).expect("focus mode"));
+
+        terminal.vt_write(b"\x1b[?1004h");
+        assert!(terminal.mode(Mode::FOCUS_EVENT).expect("focus mode"));
+
+        let mut gained = [0; 8];
+        let gained_len = focus::Event::Gained
+            .encode(&mut gained)
+            .expect("focus gained");
+        assert_eq!(&gained[..gained_len], b"\x1b[I");
+
+        let mut lost = [0; 8];
+        let lost_len = focus::Event::Lost.encode(&mut lost).expect("focus lost");
+        assert_eq!(&lost[..lost_len], b"\x1b[O");
+
+        terminal.vt_write(b"\x1b[?1004l");
+        assert!(!terminal.mode(Mode::FOCUS_EVENT).expect("focus mode"));
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_key_encoder_uses_application_cursor_mode() {
         use libghostty_vt::{
             Terminal, TerminalOptions,
