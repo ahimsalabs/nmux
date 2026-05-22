@@ -82,7 +82,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
+        key_name: args.key_name.clone(),
+        key_modifiers: args.key_modifiers,
         paste_text: args.paste_text.clone(),
+        focus: args.focus_event.map(FocusEvent::focused),
+        mouse: args.mouse_event.map(|mouse| local::AttachMouseInput {
+            row: mouse.row,
+            col: mouse.col,
+            button: mouse.button,
+            action: mouse.action,
+            modifiers: mouse.modifiers,
+        }),
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
         connect_timeout: connect_timeout_duration(args),
@@ -663,15 +673,35 @@ fn attach_once(
 ) -> Result<local::RenderedAttach, Box<dyn std::error::Error>> {
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
+        key_name: args.key_name.clone(),
+        key_modifiers: args.key_modifiers,
         paste_text: args.paste_text.clone(),
+        focus: args.focus_event.map(FocusEvent::focused),
+        mouse: args.mouse_event.map(|mouse| local::AttachMouseInput {
+            row: mouse.row,
+            col: mouse.col,
+            button: mouse.button,
+            action: mouse.action,
+            modifiers: mouse.modifiers,
+        }),
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
         ..local::AttachOptions::default()
     };
-    if args.follow || (options.input_text.is_none() && options.paste_text.is_none()) {
+    if args.follow
+        || (options.input_text.is_none()
+            && options.key_name.is_none()
+            && options.paste_text.is_none()
+            && options.focus.is_none()
+            && options.mouse.is_none())
+    {
         options.request.mode = AttachMode::ReadOnly;
         options.input_text = None;
+        options.key_name = None;
+        options.key_modifiers = 0;
         options.paste_text = None;
+        options.focus = None;
+        options.mouse = None;
     }
 
     local::attach_render_once(&args.socket_path, options, client_state)
@@ -1255,6 +1285,15 @@ fn validate_mode_args(
     if follow && paste_set {
         return Err("--follow cannot be combined with --paste");
     }
+    if follow && key_name_set {
+        return Err("--follow cannot be combined with --key-name");
+    }
+    if follow && focus_set {
+        return Err("--follow cannot be combined with --focus");
+    }
+    if follow && mouse_set {
+        return Err("--follow cannot be combined with --mouse");
+    }
     if stdin_input && !live {
         return Err("--stdin requires --live");
     }
@@ -1270,17 +1309,8 @@ fn validate_mode_args(
     if live_resize.is_some() && !live {
         return Err("--cols and --rows require --live");
     }
-    if focus_set && !live {
-        return Err("--focus requires --live");
-    }
-    if key_name_set && !live {
-        return Err("--key-name requires --live");
-    }
     if key_modifiers_set && !key_name_set {
         return Err("--key-modifiers requires --key-name");
-    }
-    if mouse_set && !live {
-        return Err("--mouse requires --live");
     }
     if mouse_modifiers_set && !mouse_set {
         return Err("--mouse-modifiers requires --mouse");
@@ -1305,11 +1335,11 @@ Options:
   --socket PATH              Unix socket path
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send; opts into read-write attach
-  --key-name NAME            Send a supported named key in live mode
+  --key-name NAME            Send a supported named key
   --key-modifiers MODS       Modifiers for --key-name: shift,ctrl,alt,super
   --paste TEXT               Paste UTF-8 text through PasteInput
-  --focus gained|lost        Send a focus event in live mode when reporting is enabled
-  --mouse A:B:R:C            Send mouse press/release/motion in live mode
+  --focus gained|lost        Send a focus event when reporting is enabled
+  --mouse A:B:R:C            Send mouse press/release/motion input
   --mouse-modifiers MODS     Modifiers for --mouse: shift,ctrl,alt,super
   --no-input                 Attach read-only
   --scrollback-start LINE    First scrollback line to request
@@ -1680,6 +1710,30 @@ mod tests {
     }
 
     #[test]
+    fn structured_input_args_do_not_require_live_mode() {
+        let args =
+            args_from_iter(["--key-name", "delete", "--key-modifiers", "ctrl"]).expect("args");
+        assert_eq!(args.key_name.as_deref(), Some("delete"));
+        assert_eq!(args.key_modifiers, 2);
+
+        let args = args_from_iter(["--focus", "gained"]).expect("args");
+        assert_eq!(args.focus_event, Some(FocusEvent::Gained));
+
+        let args = args_from_iter(["--mouse", "press:left:1:2", "--mouse-modifiers", "alt"])
+            .expect("args");
+        assert_eq!(
+            args.mouse_event,
+            Some(MouseEvent {
+                action: protocol::MouseAction::Press,
+                button: protocol::MouseButton::Left,
+                row: 0,
+                col: 1,
+                modifiers: 4,
+            })
+        );
+    }
+
+    #[test]
     fn live_update_print_kind_keeps_non_row_updates_quiet() {
         let previous = local::TerminalMetadataSummary {
             title: "old title".to_owned(),
@@ -1911,6 +1965,25 @@ mod tests {
         );
         assert_eq!(
             validate_mode_args(
+                false, true, false, false, false, false, None, None, false, false, true, false
+            ),
+            Err("--follow cannot be combined with --focus")
+        );
+        assert_eq!(
+            validate_mode_args(
+                false, true, false, false, false, false, None, None, false, false, false, true
+            ),
+            Err("--follow cannot be combined with --key-name")
+        );
+        assert_eq!(
+            super_validate_mode_args(
+                false, true, false, false, false, false, None, None, false, false, false, false,
+                false, true, false
+            ),
+            Err("--follow cannot be combined with --mouse")
+        );
+        assert_eq!(
+            validate_mode_args(
                 false, false, true, false, false, false, None, None, false, false, false, false
             ),
             Err("--stdin requires --live")
@@ -1985,25 +2058,6 @@ mod tests {
             Err("--iterations must be greater than 0")
         );
         assert_eq!(
-            validate_mode_args(
-                false, false, false, false, false, false, None, None, false, false, true, false
-            ),
-            Err("--focus requires --live")
-        );
-        assert_eq!(
-            validate_mode_args(
-                false, false, false, false, false, false, None, None, false, false, false, true
-            ),
-            Err("--key-name requires --live")
-        );
-        assert_eq!(
-            super_validate_mode_args(
-                false, false, false, false, false, false, None, None, false, false, false, false,
-                false, true, false
-            ),
-            Err("--mouse requires --live")
-        );
-        assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
                 true, false, false
@@ -2031,6 +2085,19 @@ mod tests {
                 false,
                 true,
                 true
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_mode_args(
+                false, false, false, false, false, false, None, None, false, false, true, true
+            )
+            .is_ok()
+        );
+        assert!(
+            super_validate_mode_args(
+                false, false, false, false, false, false, None, None, false, false, false, false,
+                false, true, false
             )
             .is_ok()
         );

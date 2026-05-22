@@ -914,11 +914,24 @@ pub fn attach_with_known_surfaces(
 pub struct AttachOptions {
     pub request: AttachRequest,
     pub input_text: Option<String>,
+    pub key_name: Option<String>,
+    pub key_modifiers: u32,
     pub paste_text: Option<String>,
+    pub focus: Option<bool>,
+    pub mouse: Option<AttachMouseInput>,
     pub scrollback_start_line: u64,
     pub scrollback_line_count: u32,
     pub known_scrollback_version: u64,
     pub connect_timeout: Option<Duration>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AttachMouseInput {
+    pub row: u32,
+    pub col: u32,
+    pub button: protocol::MouseButton,
+    pub action: protocol::MouseAction,
+    pub modifiers: u32,
 }
 
 impl Default for AttachOptions {
@@ -933,7 +946,11 @@ impl Default for AttachOptions {
                 known_surfaces: Vec::new(),
             },
             input_text: Some("a".to_owned()),
+            key_name: None,
+            key_modifiers: 0,
             paste_text: None,
+            focus: None,
+            mouse: None,
             scrollback_start_line: 1,
             scrollback_line_count: 2,
             known_scrollback_version: 0,
@@ -969,7 +986,31 @@ pub fn attach_with_client_options(
     let snapshot = attach_from_stream(&mut stream)?;
     if mode == AttachMode::ReadWrite {
         let mut sent_input = false;
-        if let Some(paste_text) = options.paste_text.as_deref() {
+        if let Some(key_name) = options.key_name.as_deref() {
+            send_named_key_input_with_modifiers_and_sequence(
+                &mut stream,
+                &mut sequence,
+                "pane-1",
+                key_name,
+                options.key_modifiers,
+            )?;
+            sent_input = true;
+        } else if let Some(mouse) = options.mouse {
+            send_mouse_input_with_sequence(
+                &mut stream,
+                &mut sequence,
+                "pane-1",
+                mouse.row,
+                mouse.col,
+                mouse.button,
+                mouse.action,
+                mouse.modifiers,
+            )?;
+            sent_input = true;
+        } else if let Some(focused) = options.focus {
+            send_focus_input_with_sequence(&mut stream, &mut sequence, "pane-1", focused)?;
+            sent_input = true;
+        } else if let Some(paste_text) = options.paste_text.as_deref() {
             send_paste_input_with_sequence(&mut stream, &mut sequence, "pane-1", paste_text)?;
             sent_input = true;
         } else if let Some(input_text) = options.input_text.as_deref() {
@@ -4090,7 +4131,11 @@ mod tests {
                 known_surfaces: Vec::new(),
             },
             input_text: None,
+            key_name: None,
+            key_modifiers: 0,
             paste_text: None,
+            focus: None,
+            mouse: None,
             scrollback_start_line: 1,
             scrollback_line_count: 2,
             known_scrollback_version: 0,
@@ -4971,6 +5016,162 @@ mod tests {
                 colors: TerminalColorSummary::default(),
                 lines: vec![scrollback_line(4, "pasted"), scrollback_line(5, "text")],
             })
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn one_shot_attach_forwards_named_key_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: None,
+                key_name: Some("delete".to_owned()),
+                scrollback_start_line: 1,
+                scrollback_line_count: 2,
+                ..AttachOptions::default()
+            },
+        )
+        .expect("attach snapshot");
+        let host = server.join().expect("server thread");
+
+        assert!(snapshot.scrollback.is_some());
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"\x1b[3~".to_vec(),
+        }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn one_shot_attach_forwards_focus_when_reporting_enabled() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        session.tabs[0].root.modes.focus_reporting = true;
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: None,
+                focus: Some(true),
+                scrollback_start_line: 1,
+                scrollback_line_count: 2,
+                ..AttachOptions::default()
+            },
+        )
+        .expect("attach snapshot");
+        let host = server.join().expect("server thread");
+
+        assert!(snapshot.scrollback.is_some());
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"\x1b[I".to_vec(),
+        }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn one_shot_attach_reports_structured_input_errors_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let err = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: None,
+                key_name: Some("delete".to_owned()),
+                key_modifiers: 2,
+                ..AttachOptions::default()
+            },
+        )
+        .expect_err("modified key should report server error");
+        let host = server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("server error: terminal engine cannot encode modified key name: delete"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !host
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn one_shot_attach_reports_mouse_disabled_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let err = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: None,
+                mouse: Some(AttachMouseInput {
+                    row: 0,
+                    col: 0,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                }),
+                ..AttachOptions::default()
+            },
+        )
+        .expect_err("mouse input should report server error");
+        let host = server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("server error: input rejected: mouse tracking is disabled"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !host
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
         );
 
         let _ = fs::remove_file(socket_path);
@@ -5974,7 +6175,11 @@ mod tests {
                     }],
                 },
                 input_text: Some("current-input".to_owned()),
+                key_name: None,
+                key_modifiers: 0,
                 paste_text: None,
+                focus: None,
+                mouse: None,
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 known_scrollback_version: 0,

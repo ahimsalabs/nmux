@@ -21,7 +21,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
     assert!(stdout.contains("--key-name NAME"));
-    assert!(stdout.contains("Send a supported named key in live mode"));
+    assert!(stdout.contains("Send a supported named key"));
     assert!(stdout.contains("--paste TEXT"));
     assert!(stdout.contains("--focus gained|lost"));
     assert!(stdout.contains("--stdin-bytes"));
@@ -92,6 +92,18 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--follow", "--paste", "clip"],
         "nmux: --follow cannot be combined with --paste",
+    );
+    assert_nmux_rejects(
+        &["--follow", "--key-name", "delete"],
+        "nmux: --follow cannot be combined with --key-name",
+    );
+    assert_nmux_rejects(
+        &["--follow", "--focus", "gained"],
+        "nmux: --follow cannot be combined with --focus",
+    );
+    assert_nmux_rejects(
+        &["--follow", "--mouse", "press:left:1:1"],
+        "nmux: --follow cannot be combined with --mouse",
     );
     assert_nmux_rejects(
         &["--local-echo", "tty"],
@@ -184,11 +196,6 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--paste", "clip", "--no-input"],
         "nmux: --paste cannot be combined with --no-input",
-    );
-    assert_nmux_rejects(&["--focus", "gained"], "nmux: --focus requires --live");
-    assert_nmux_rejects(
-        &["--key-name", "keypad-enter"],
-        "nmux: --key-name requires --live",
     );
     assert_nmux_rejects(
         &["--live", "--key-name", "f13"],

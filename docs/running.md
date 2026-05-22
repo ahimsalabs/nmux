@@ -1,6 +1,6 @@
 # Running nmux
 
-The current prototype is a local attach skeleton with a real local PTY host behind the daemon. `nmuxd` owns one workspace tree, one backend-owned pane surface, one scrollback object, and one attached actor. The client sends an `AttachRequest` with actor ID, attach mode, focused pane, and known pane surface versions. The daemon starts the pane command in a local PTY, polls already-pumped PTY output into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`, a `PresenceUpdate`, and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. `nmux` applies those state objects to a client-side pane surface render state before printing. After rendering, it sends one basic `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
+The current prototype is a local attach skeleton with a real local PTY host behind the daemon. `nmuxd` owns one workspace tree, one backend-owned pane surface, one scrollback object, and one attached actor. The client sends an `AttachRequest` with actor ID, attach mode, focused pane, and known pane surface versions. The daemon starts the pane command in a local PTY, polls already-pumped PTY output into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`, a `PresenceUpdate`, and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. `nmux` applies those state objects to a client-side pane surface render state before printing. After rendering, it can send one explicit text, paste, named-key, focus, or mouse `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
 
 Run all checks:
 
@@ -82,7 +82,7 @@ To keep one local frontend process polling for server-owned surface updates, run
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --follow --iterations 3 --interval-ms 500 --state /tmp/nmux-follow.state --scrollback-start 1 --scrollback-count 1
 ```
 
-`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and renders the scoped cached surface when a current-version reconnect has no newer surface frame. Follow mode is read-only for now, so it rejects one-shot input flags instead of repeatedly sending input.
+`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and renders the scoped cached surface when a current-version reconnect has no newer surface frame. Follow mode is read-only for now, so it rejects input flags instead of repeatedly sending input.
 
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
@@ -171,7 +171,7 @@ printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socke
 
 `--stdin-bytes` reads stdin on a background thread and sends available chunks during the live polling loop as `InputKind.RawBytes`. This keeps output polling active even while no complete input line is available. When stdin is an interactive TTY, the client temporarily disables canonical input and local echo for this mode; piped stdin is left untouched. Pass `--local-echo tty` to preserve the TTY's existing echo setting while still using noncanonical byte input. Interactive byte mode also listens for `SIGWINCH` and sends resize intents from the current TTY size unless explicit `--cols` and `--rows` were supplied. When both stdin and stdout are TTYs, byte mode warns once on stderr that the interim text surface lacks full VT fidelity; piped and scripted runs stay quiet. Press Ctrl-] to detach from a byte-streamed live session; the client reports that local detach on stderr. When unbounded byte-streamed stdin reaches EOF, the client reports `nmux: stdin EOF; detached`.
 
-For explicit live input events, `--paste TEXT`, `--focus gained|lost`, `--key-name NAME`, and `--mouse action:button:row:col` send structured input frames instead of raw text. Named keys include `enter`, `tab`, `backspace`, `escape`, `insert`, `delete`, `home`, `end`, `page-up`, `page-down`, `f1` through `f12`, `keypad-enter`, `keypad-0` through `keypad-9`, and `arrow-up|arrow-down|arrow-right|arrow-left`. `--key-modifiers MODS` can accompany `--key-name`; use `shift`, `ctrl`, `alt`, `super`, or a `+`/`,` combination such as `ctrl+shift`. Mouse actions are `press`, `release`, or `motion`; buttons are `none`, `left`, `middle`, `right`, `wheel-up`, or `wheel-down`; row and column are 1-based cells in the CLI and are converted to zero-based protocol coordinates. `--mouse-modifiers MODS` uses the same modifier names for mouse input. Focus, named-key, paste, and mouse forwarding are encoded by the daemon from daemon-owned pane modes rather than cached client mode state.
+For explicit input events, `--paste TEXT`, `--focus gained|lost`, `--key-name NAME`, and `--mouse action:button:row:col` send structured input frames instead of raw text in one-shot and live mode. Named keys include `enter`, `tab`, `backspace`, `escape`, `insert`, `delete`, `home`, `end`, `page-up`, `page-down`, `f1` through `f12`, `keypad-enter`, `keypad-0` through `keypad-9`, and `arrow-up|arrow-down|arrow-right|arrow-left`. `--key-modifiers MODS` can accompany `--key-name`; use `shift`, `ctrl`, `alt`, `super`, or a `+`/`,` combination such as `ctrl+shift`. Mouse actions are `press`, `release`, or `motion`; buttons are `none`, `left`, `middle`, `right`, `wheel-up`, or `wheel-down`; row and column are 1-based cells in the CLI and are converted to zero-based protocol coordinates. `--mouse-modifiers MODS` uses the same modifier names for mouse input. Focus, named-key, paste, and mouse forwarding are encoded by the daemon from daemon-owned pane modes rather than cached client mode state.
 
 If an input event is valid protocol but cannot be encoded by the active terminal
 engine, if the host refuses the forwarded bytes, or if a live resize cannot be
@@ -286,8 +286,9 @@ socket scope. When a later request asks for the same scrollback range, the CLI
 still fetches daemon-owned scrollback even if the visible surface is already
 current. It sends the cached scrollback version as a fetch precondition and
 retries once without that precondition if the daemon reports `StaleVersion`.
-Explicit one-shot `--key` and `--paste` input is still forwarded before the
-scrollback fetch when the visible surface is already current.
+Explicit one-shot text, paste, named-key, focus, and mouse input is still
+forwarded before the scrollback fetch when the visible surface is already
+current.
 When a scoped state file is already current and the daemon sends no surface
 frame, live input gating reuses the cached terminal modes for bracketed paste
 and focus reporting until the next surface update arrives.
