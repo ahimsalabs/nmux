@@ -135,7 +135,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --live --iterations 2 --key $'p
 
 Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached. Bounded live and follow loops reject `--iterations 0` before connecting, and `--interval-ms` must be greater than zero.
 
-Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error.
+Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. In non-redraw mode, metadata-only updates print changed title or working-directory lines without reprinting unchanged pane text.
 
 By default, live mode prints each rendered update as plain text. Add `--redraw` to clear the terminal and repaint the latest workspace summary plus the current client-side pane surface on each update. When stdout is a TTY, `--redraw` uses the alternate screen and hides the cursor for the live session, then restores both on exit. Captured or piped stdout stays as plain clear/home escape output:
 
@@ -207,7 +207,7 @@ colors/palette, palette overrides, explicit cursor color, terminal title metadat
 tracking and mode-gated mouse forwarding, focus reporting and mode-gated focus forwarding, application keypad tracking,
 common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-aware arrow-key forwarding, engine-backed key encoding with modifier preservation, explicit encoder output, origin, wraparound mode state, row-level dirty state,
 hyperlink presence, Kitty graphics placeholder metadata, OSC 7 working-directory
-metadata extraction, mode-aware key encoding, sparse row updates, and mode-only surface patches.
+metadata extraction, metadata-only no-row patches, mode-aware key encoding, sparse row updates, and mode-only surface patches.
 Image placement data, hyperlink IDs, incremental palette diffs, and broader shell command metadata remain intentionally withheld
 until the expected backend behavior
 and nmux protocol shape are clear.
