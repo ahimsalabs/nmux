@@ -6372,6 +6372,142 @@ mod tests {
     }
 
     #[test]
+    fn live_current_surface_attach_forwards_key_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 2)
+                .expect("serve current key live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: vec![KnownSurfaceVersion {
+                    pane_id: "pane-1".to_owned(),
+                    version: 2,
+                }],
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadWrite);
+        assert_eq!(initial.surface, None);
+
+        send_key_input(&mut stream, "pane-1", "current-key").expect("send key input");
+        let host = server.join().expect("server thread");
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"current-key".to_vec(),
+        }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_current_surface_attach_forwards_paste_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        session.tabs[0].root.modes.bracketed_paste = true;
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 2)
+                .expect("serve current paste live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: vec![KnownSurfaceVersion {
+                    pane_id: "pane-1".to_owned(),
+                    version: 2,
+                }],
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadWrite);
+        assert_eq!(initial.surface, None);
+
+        send_paste_input(&mut stream, "pane-1", "current-paste").expect("send paste input");
+        let host = server.join().expect("server thread");
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"\x1b[200~current-paste\x1b[201~".to_vec(),
+        }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_current_surface_attach_forwards_named_key_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 2)
+                .expect("serve current named-key live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: vec![KnownSurfaceVersion {
+                    pane_id: "pane-1".to_owned(),
+                    version: 2,
+                }],
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadWrite);
+        assert_eq!(initial.surface, None);
+
+        send_named_key_input(&mut stream, "pane-1", "delete").expect("send named-key input");
+        let host = server.join().expect("server thread");
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"\x1b[3~".to_vec(),
+        }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn live_current_surface_attach_reports_mouse_disabled_with_error_frame() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");

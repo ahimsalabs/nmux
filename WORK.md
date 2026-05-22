@@ -514,7 +514,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   nmux --state preserves cached title, OSC 7 working directory, terminal modes including mouse tracking mode/format, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, Kitty placeholder row metadata, and last-seen scrollback metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot
   current-version reattach sends explicit paste input before scrollback fetch and keeps bracketed-paste delimiter selection daemon-owned
   current-version live reattach sends explicit focus input to the daemon even when no surface frame arrives, and CLI integration coverage proves focus-reporting-disabled cases produce daemon-owned Error frames
-  current-version live reattach covers mouse disabled-mode rejection and libghostty-vt SGR mouse forwarding when no surface frame arrives
+  current-version live reattach covers key, paste, named-key, focus, and mouse input when no surface frame arrives, including disabled-mode rejection and libghostty-vt SGR mouse forwarding
   local clients maintain monotonic Envelope.seq and InputEvent.input_seq values across one-shot and live post-attach frames, including repeated structured live input
   document cursor, mode, alternate-screen, palette, hyperlink, image, grapheme, and cell-width gaps before schema changes
   preserve frontend state-sync semantics; do not introduce client-side raw PTY replay
