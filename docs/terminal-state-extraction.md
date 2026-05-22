@@ -83,6 +83,10 @@ only after the backend extraction proves the exact shape needed.
   API, but nmux has no title metadata field yet. OSC 7 working-directory state
   remains unproven in the current backend path and should stay withheld until
   the expected upstream behavior is clear.
+- Shell integration metadata: `libghostty-vt` exposes OSC 133 prompt semantics
+  on rows, but nmux has no semantic prompt/input/output protocol fields yet.
+  Keep this backend-observable state withheld until the row metadata shape is
+  explicit.
 - Alternate screen: `libghostty-vt` extraction tests cover entry into the
   alternate buffer and restoration of the primary buffer. Alternate scrollback
   behavior still needs protocol guidance.
@@ -125,9 +129,9 @@ extraction, style-separated cell runs, basic SGR style flags, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape extraction,
 backend-observable cursor blink state, render-state default colors/palette,
 palette overrides, and explicit cursor color, alternate-screen
-entry/restoration, title metadata with OSC 7 working-directory omission,
-resize/reflow, styled backend-owned scrollback extraction, and safe-API mode
-tracking for bracketed paste, mouse tracking, application keypad mode, and
-origin/wraparound modes through unit, session, and live CLI smoke coverage. It
-is not the default until the project deliberately accepts the native Zig/Ghostty
-build cost in normal development and CI.
+entry/restoration, title metadata with OSC 7 working-directory omission, OSC
+133 semantic prompt state, resize/reflow, styled backend-owned scrollback
+extraction, and safe-API mode tracking for bracketed paste, mouse tracking,
+application keypad mode, and origin/wraparound modes through unit, session, and
+live CLI smoke coverage. It is not the default until the project deliberately
+accepts the native Zig/Ghostty build cost in normal development and CI.

@@ -995,6 +995,37 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_safe_api_tracks_semantic_prompt_without_protocol_fields() {
+        use libghostty_vt::{
+            RenderState, Terminal, TerminalOptions, render::RowIterator, screen::RowSemanticPrompt,
+        };
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+        let mut render_state = RenderState::new().expect("render state");
+        let mut rows = RowIterator::new().expect("row iterator");
+
+        terminal.vt_write(b"\x1b]133;A\x1b\\prompt> ");
+        let snapshot = render_state.update(&terminal).expect("snapshot");
+        let mut row_iter = rows.update(&snapshot).expect("row iteration");
+        let first_row = row_iter.next().expect("first row");
+
+        assert_eq!(
+            first_row
+                .raw_row()
+                .expect("raw row")
+                .semantic_prompt()
+                .expect("semantic prompt"),
+            RowSemanticPrompt::Prompt
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_extracts_basic_sgr_style_flags() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();
