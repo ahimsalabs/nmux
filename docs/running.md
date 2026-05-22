@@ -282,8 +282,9 @@ contain rendered row text still load as default-style rows with default
 metadata, default modes, default color state, and no scrollback metadata, but
 they also force one fresh snapshot before being rewritten with the current
 socket scope. When a later request asks for the same scrollback range, the CLI
-sends the cached scrollback version as a fetch precondition and retries once
-without that precondition if the daemon reports `StaleVersion`.
+still fetches daemon-owned scrollback even if the visible surface is already
+current. It sends the cached scrollback version as a fetch precondition and
+retries once without that precondition if the daemon reports `StaleVersion`.
 When a scoped state file is already current and the daemon sends no surface
 frame, live input gating reuses the cached terminal modes for bracketed paste
 and focus reporting until the next surface update arrives.

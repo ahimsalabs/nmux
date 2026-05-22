@@ -61,7 +61,7 @@ Use `nmuxd --live-forever` for an unbounded sequential local workspace that surv
 State load/save failures include the state path in the error.
 Bounded client loops require `--iterations` greater than zero.
 Without an explicit input flag, `nmux` attaches read-only; use `--key`, `--paste`, `--stdin`, or `--stdin-bytes` to opt into sending input.
-Scrollback ranges are 1-based from the oldest retained row and require positive `--scrollback-start` and `--scrollback-count` values. Local clients persist last-seen scrollback range metadata in `--state`, send matching cached versions as fetch preconditions, and retry once without a precondition if the daemon reports a stale scrollback version.
+Scrollback ranges are 1-based from the oldest retained row and require positive `--scrollback-start` and `--scrollback-count` values. Local clients persist last-seen scrollback range metadata in `--state`, fetch scrollback even when the visible surface is already current, send matching cached versions as fetch preconditions, and retry once without a precondition if the daemon reports a stale scrollback version.
 Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.
 Live polling intervals must be greater than zero, and explicit resize dimensions must be between 1 and 65535.
 

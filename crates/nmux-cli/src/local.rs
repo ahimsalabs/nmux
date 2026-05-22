@@ -635,81 +635,86 @@ fn serve_attached_client(
     let presence_frame = session.presence_update_frame("local-client", 2, &actor);
     wire::write_default_frame(stream, &presence_frame)?;
 
-    if let Some(response) = request.surface_response(session, "pane-1") {
+    let surface_sent = if let Some(response) = request.surface_response(session, "pane-1") {
         if let Some(surface_frame) = surface_response_frame(session, "pane-1", response, 3) {
             wire::write_default_frame(stream, &surface_frame)?;
+            true
+        } else {
+            false
         }
-        if Session::input_allowed(&actor) {
-            let input = read_input_event_from_stream(stream)?;
-            if let Some(host) = host.as_deref_mut() {
-                if session.surface_version(&input.pane_id).is_none() {
-                    let mut seq = 4;
-                    write_pane_not_found_error(stream, session, &mut seq, &input.pane_id)?;
-                    return Ok(());
-                }
-                if let Some(rejection) = input.forwarding_rejection(session) {
-                    let mut seq = 4;
-                    write_protocol_error(
-                        stream,
-                        session,
-                        &mut seq,
-                        protocol::ErrorCode::PermissionDenied,
-                        rejection.message(),
-                    )?;
-                    return Ok(());
-                } else {
-                    let bytes = match input.forwarded_bytes(session, engines) {
-                        Ok(bytes) => bytes,
-                        Err(err) => {
-                            let mut seq = 4;
-                            write_protocol_error(
-                                stream,
-                                session,
-                                &mut seq,
-                                protocol::ErrorCode::Unknown,
-                                &err.to_string(),
-                            )?;
-                            return Ok(());
-                        }
-                    };
-                    if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+    } else {
+        false
+    };
+    if surface_sent && Session::input_allowed(&actor) {
+        let input = read_input_event_from_stream(stream)?;
+        if let Some(host) = host.as_deref_mut() {
+            if session.surface_version(&input.pane_id).is_none() {
+                let mut seq = 4;
+                write_pane_not_found_error(stream, session, &mut seq, &input.pane_id)?;
+                return Ok(());
+            }
+            if let Some(rejection) = input.forwarding_rejection(session) {
+                let mut seq = 4;
+                write_protocol_error(
+                    stream,
+                    session,
+                    &mut seq,
+                    protocol::ErrorCode::PermissionDenied,
+                    rejection.message(),
+                )?;
+                return Ok(());
+            } else {
+                let bytes = match input.forwarded_bytes(session, engines) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
                         let mut seq = 4;
                         write_protocol_error(
                             stream,
                             session,
                             &mut seq,
                             protocol::ErrorCode::Unknown,
-                            &format!("input forwarding failed: {err}"),
+                            &err.to_string(),
                         )?;
                         return Ok(());
                     }
+                };
+                if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+                    let mut seq = 4;
+                    write_protocol_error(
+                        stream,
+                        session,
+                        &mut seq,
+                        protocol::ErrorCode::Unknown,
+                        &format!("input forwarding failed: {err}"),
+                    )?;
+                    return Ok(());
                 }
-                poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
             }
+            poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
         }
-        let mut seq = 5;
-        for _ in 0..2 {
-            let fetch = read_scrollback_fetch_from_stream(stream)?;
-            if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
-                write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
-                if error == protocol::ErrorCode::StaleVersion {
-                    continue;
-                }
-                return Ok(());
+    }
+    let mut seq = 5;
+    for _ in 0..2 {
+        let fetch = read_scrollback_fetch_from_stream(stream)?;
+        if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
+            write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
+            if error == protocol::ErrorCode::StaleVersion {
+                continue;
             }
-            if let Some(chunk) = session.scrollback_chunk_frame_for_pane(
-                "local-client",
-                seq,
-                &fetch.pane_id,
-                fetch.start_line,
-                fetch.line_count,
-            ) {
-                wire::write_default_frame(stream, &chunk)?;
-            } else {
-                write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
-            }
-            break;
+            return Ok(());
         }
+        if let Some(chunk) = session.scrollback_chunk_frame_for_pane(
+            "local-client",
+            seq,
+            &fetch.pane_id,
+            fetch.start_line,
+            fetch.line_count,
+        ) {
+            wire::write_default_frame(stream, &chunk)?;
+        } else {
+            write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
+        }
+        break;
     }
     Ok(())
 }
@@ -944,27 +949,26 @@ pub fn attach_with_client_options(
                 read_optional_server_error_from_stream(&mut stream)?;
             }
         }
-        send_scrollback_fetch_with_known_version(
-            &mut stream,
-            &mut sequence,
-            "pane-1",
-            options.scrollback_start_line,
-            options.scrollback_line_count,
-            options.known_scrollback_version,
-        )?;
-        let scrollback = read_scrollback_chunk_with_stale_retry(
-            &mut stream,
-            &mut sequence,
-            "pane-1",
-            options.scrollback_start_line,
-            options.scrollback_line_count,
-        )?;
-        return Ok(AttachSnapshot {
-            scrollback: Some(scrollback),
-            ..snapshot
-        });
     }
-    Ok(snapshot)
+    send_scrollback_fetch_with_known_version(
+        &mut stream,
+        &mut sequence,
+        "pane-1",
+        options.scrollback_start_line,
+        options.scrollback_line_count,
+        options.known_scrollback_version,
+    )?;
+    let scrollback = read_scrollback_chunk_with_stale_retry(
+        &mut stream,
+        &mut sequence,
+        "pane-1",
+        options.scrollback_start_line,
+        options.scrollback_line_count,
+    )?;
+    Ok(AttachSnapshot {
+        scrollback: Some(scrollback),
+        ..snapshot
+    })
 }
 
 pub fn attach_render_once(
@@ -996,18 +1000,25 @@ pub fn attach_from_stream(
     let presence_frame = wire::read_default_frame(stream)?;
     let presence = presence_from_frame(&presence_frame)?;
 
-    let surface = match wire::read_default_frame(stream) {
-        Ok(surface_frame) => Some(surface_update_from_frame(&surface_frame)?),
-        Err(wire::WireError::Io(err))
-            if matches!(
-                err.kind(),
-                io::ErrorKind::UnexpectedEof | io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
-            ) =>
-        {
-            None
-        }
-        Err(err) => return Err(err.into()),
-    };
+    let previous_timeout = stream.read_timeout()?;
+    stream.set_read_timeout(Some(Duration::from_millis(20)))?;
+    let surface_result: Result<Option<SurfaceUpdate>, Box<dyn std::error::Error>> =
+        match wire::read_default_frame(stream) {
+            Ok(surface_frame) => surface_update_from_frame(&surface_frame).map(Some),
+            Err(wire::WireError::Io(err))
+                if matches!(
+                    err.kind(),
+                    io::ErrorKind::UnexpectedEof
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(err) => Err(err.into()),
+        };
+    stream.set_read_timeout(previous_timeout)?;
+    let surface = surface_result?;
 
     Ok(AttachSnapshot {
         workspace,
@@ -5781,7 +5792,7 @@ mod tests {
     }
 
     #[test]
-    fn serves_no_surface_when_client_has_current_surface_version() {
+    fn current_surface_attach_still_fetches_scrollback() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
@@ -5800,7 +5811,84 @@ mod tests {
         assert_eq!(snapshot.workspace.pane_id, "pane-1");
         assert_eq!(snapshot.presence.mode, AttachMode::ReadWrite);
         assert_eq!(snapshot.surface, None);
-        assert_eq!(snapshot.scrollback, None);
+        assert_eq!(
+            snapshot
+                .scrollback
+                .as_ref()
+                .map(|chunk| chunk.lines.clone()),
+            Some(vec![
+                scrollback_line(1, "booting nmux workspace"),
+                scrollback_line(2, "nmux pane-1"),
+            ])
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn current_surface_attach_retries_stale_cached_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        {
+            let pane = &mut session.tabs[0].root;
+            pane.scrollback_version = 2;
+            pane.scrollback_lines.push("history only".to_owned());
+            pane.scrollback_row_runs
+                .push(vec![CellRun::plain("history only")]);
+            pane.scrollback_semantic_prompts
+                .push(protocol::RowSemanticPrompt::None);
+            pane.scrollback_dirty_rows.push(false);
+            pane.scrollback_kitty_placeholders.push(false);
+        }
+        let scope = socket_identity(&socket_path).ok();
+        let mut state = ClientAttachState::default();
+        state.apply_scope(scope);
+        let surface = surface_update_from_frame(&session.pane_surface_frame("local-client", 3))
+            .expect("surface snapshot");
+        state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                surface: Some(surface),
+                scrollback: Some(ScrollbackChunkSummary {
+                    pane_id: "pane-1".to_owned(),
+                    scrollback_version: 1,
+                    start_line: 1,
+                    total_lines: 3,
+                    styles: default_style_summaries(),
+                    colors: TerminalColorSummary::default(),
+                    lines: vec![
+                        scrollback_line(1, "booting nmux workspace"),
+                        scrollback_line(2, "nmux pane-1"),
+                    ],
+                }),
+            })
+            .expect("seed cached state");
+
+        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let rendered = attach_render_once(&socket_path, read_only_attach_options(), &mut state)
+            .expect("attach render");
+        server.join().expect("server thread");
+
+        assert_eq!(rendered.surface_text, None);
+        let scrollback = rendered.scrollback.expect("fresh scrollback after retry");
+        assert_eq!(scrollback.scrollback_version, 2);
+        assert_eq!(
+            scrollback.lines,
+            vec![
+                scrollback_line(1, "booting nmux workspace"),
+                scrollback_line(2, "nmux pane-1"),
+            ]
+        );
+        assert_eq!(state.cached_scrollback_version("pane-1", 1, 2), Some(2));
 
         let _ = fs::remove_file(socket_path);
     }
