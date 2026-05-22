@@ -536,5 +536,35 @@ mod tests {
             update.surface_lines
         );
     }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_emits_cursor_only_patch_for_cursor_movement() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let first = engine
+            .apply_output(terminal_input(2, &empty, &empty), b"alpha\r\nbeta")
+            .expect("initial terminal update");
+
+        let cursor_move = engine
+            .apply_output(
+                terminal_input(2, &first.surface_lines, &first.scrollback_lines),
+                b"\x1b[1;3H",
+            )
+            .expect("cursor movement update");
+
+        assert_eq!(cursor_move.patch_kind, protocol::PatchKind::CursorOnly);
+        assert_eq!(cursor_move.surface_lines, first.surface_lines);
+        assert_eq!(cursor_move.scrollback_lines, first.scrollback_lines);
+        assert_eq!(
+            cursor_move.cursor,
+            TerminalCursor {
+                row: 0,
+                col: 2,
+                visible: true,
+                shape: protocol::CursorShape::Block
+            }
+        );
+    }
 }
 use std::collections::HashMap;
