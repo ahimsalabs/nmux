@@ -1530,7 +1530,7 @@ mod tests {
         );
         assert!(session.apply_pane_output_with_engine(
             "pane-1",
-            b"one\r\ntwo\r\nthree\r\nfour",
+            b"\x1b[31mone\x1b[0m\r\ntwo\r\nthree\r\nfour",
             engines.engine_mut("pane-1")
         ));
 
@@ -1559,6 +1559,27 @@ mod tests {
                 "scrollback chunk missing {expected}: {row_text:?}"
             );
         }
+
+        let styled_run = (0..rows.len())
+            .flat_map(|row_index| {
+                let row = rows.get(row_index);
+                let runs = row.runs().expect("runs");
+                (0..runs.len()).map(move |run_index| runs.get(run_index))
+            })
+            .find(|run| run.text_utf8().is_some_and(|text| text.contains("one")))
+            .expect("styled scrollback run");
+        assert_ne!(
+            styled_run.style_id(),
+            0,
+            "styled Ghostty scrollback should survive ScrollbackChunk encoding"
+        );
+        let styles = chunk.styles().expect("styles");
+        let style = styles.get(styled_run.style_id() as usize);
+        assert_ne!(
+            style.fg_rgba(),
+            0,
+            "styled Ghostty scrollback should reference a style table entry"
+        );
     }
 
     #[test]
