@@ -561,6 +561,75 @@ fn live_cli_can_use_libghostty_vt_terminal_engine() {
 
 #[cfg(feature = "libghostty-vt")]
 #[test]
+fn live_libghostty_vt_cli_omits_alternate_screen_from_scrollback() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "printf 'main-before\n\\033[?1049h\\033[Halt-only\n\\033[?1049lmain-after\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--scrollback-start",
+            "1",
+            "--scrollback-count",
+            "10",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("main-before"),
+        "missing main-screen history before alternate screen:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("main-after"),
+        "missing restored main-screen output:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("alt-only"),
+        "alternate-screen output leaked into libghostty-vt scrollback:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("[?1049h") && !stdout.contains("[?1049l"),
+        "alternate-screen controls leaked into libghostty-vt output:\n{stdout}"
+    );
+}
+
+#[cfg(feature = "libghostty-vt")]
+#[test]
 fn live_libghostty_vt_cli_prints_terminal_metadata() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
