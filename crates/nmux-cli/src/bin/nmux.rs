@@ -173,7 +173,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 options.input_text.as_deref().map(ToOwned::to_owned)
             };
             if let Some(key_name) = args.key_name.as_deref() {
-                local::send_named_key_input(&mut stream, "pane-1", key_name)?;
+                local::send_named_key_input_with_modifiers(
+                    &mut stream,
+                    "pane-1",
+                    key_name,
+                    args.key_modifiers,
+                )?;
             } else if let Some(mouse_event) = args.mouse_event {
                 local::send_mouse_input(
                     &mut stream,
@@ -672,6 +677,7 @@ struct Args {
     socket_path: PathBuf,
     input_text: Option<String>,
     key_name: Option<String>,
+    key_modifiers: u32,
     paste_text: Option<String>,
     focus_event: Option<FocusEvent>,
     mouse_event: Option<MouseEvent>,
@@ -695,6 +701,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut socket_path = local::default_socket_path();
     let mut input_text = Some("a".to_owned());
     let mut key_name = None;
+    let mut key_modifiers = 0;
     let mut paste_text = None;
     let mut focus_event = None;
     let mut mouse_event = None;
@@ -715,6 +722,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut local_echo_set = false;
     let mut key_set = false;
     let mut key_name_set = false;
+    let mut key_modifiers_set = false;
     let mut paste_set = false;
     let mut focus_set = false;
     let mut mouse_set = false;
@@ -744,6 +752,12 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                         .ok_or("--key-name requires a supported key name")?,
                 )?);
                 input_text = None;
+            }
+            "--key-modifiers" => {
+                key_modifiers_set = true;
+                key_modifiers =
+                    parse_key_modifiers(&args.next().ok_or("--key-modifiers requires modifiers")?)
+                        .map_err(|err| format!("--key-modifiers {err}"))?;
             }
             "--paste" => {
                 paste_set = true;
@@ -876,6 +890,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         iterations,
         focus_set,
         key_name_set,
+        key_modifiers_set,
         mouse_set,
     )?;
 
@@ -884,6 +899,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         socket_path,
         input_text,
         key_name,
+        key_modifiers,
         paste_text,
         focus_event,
         mouse_event,
@@ -1035,6 +1051,7 @@ fn validate_mode_args(
     iterations: Option<usize>,
     focus_set: bool,
     key_name_set: bool,
+    key_modifiers_set: bool,
     mouse_set: bool,
 ) -> Result<(), &'static str> {
     if live && follow {
@@ -1061,6 +1078,9 @@ fn validate_mode_args(
     if key_name_set && !live {
         return Err("--key-name requires --live");
     }
+    if key_modifiers_set && !key_name_set {
+        return Err("--key-modifiers requires --key-name");
+    }
     if mouse_set && !live {
         return Err("--mouse requires --live");
     }
@@ -1085,6 +1105,7 @@ Options:
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send for read-write attach
   --key-name NAME            Send a supported named key in live mode
+  --key-modifiers MODS       Modifiers for --key-name: shift,ctrl,alt,super
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send a focus event in live mode when reporting is enabled
   --mouse A:B:R:C            Send mouse press/release/motion in live mode
@@ -1200,6 +1221,29 @@ fn parse_key_name(value: &str) -> Result<String, &'static str> {
     }
 }
 
+fn parse_key_modifiers(value: &str) -> Result<u32, &'static str> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("requires shift, ctrl, alt, super, or none");
+    }
+    if value == "none" {
+        return Ok(0);
+    }
+
+    let mut modifiers = 0;
+    for part in value.split([',', '+']) {
+        match part.trim() {
+            "shift" => modifiers |= 1,
+            "ctrl" | "control" => modifiers |= 2,
+            "alt" | "option" => modifiers |= 4,
+            "super" | "cmd" | "command" | "meta" => modifiers |= 8,
+            "" | "none" => return Err("requires shift, ctrl, alt, super, or none"),
+            _ => return Err("contains an unsupported modifier"),
+        }
+    }
+    Ok(modifiers)
+}
+
 fn parse_mouse_event(value: &str) -> Result<MouseEvent, &'static str> {
     let mut parts = value.split(':');
     let action = parse_mouse_action(
@@ -1268,9 +1312,10 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 mod tests {
     use super::{
         FocusEvent, LocalEcho, MouseEvent, interim_surface_fidelity_warning_needed,
-        parse_focus_event, parse_key_name, parse_local_echo, parse_mouse_event, raw_terminal_lflag,
-        raw_terminal_mode_needed, redraw_terminal_guard_needed, resize_policy_warning,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
+        parse_mouse_event, raw_terminal_lflag, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, resize_policy_warning, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_positive_numeric_args,
     };
@@ -1299,6 +1344,7 @@ mod tests {
             iterations,
             focus_set,
             key_name_set,
+            false,
             false,
         )
     }
@@ -1422,6 +1468,21 @@ mod tests {
     }
 
     #[test]
+    fn key_modifiers_arg_accepts_named_modifier_bits() {
+        assert_eq!(parse_key_modifiers("none"), Ok(0));
+        assert_eq!(parse_key_modifiers("shift"), Ok(1));
+        assert_eq!(parse_key_modifiers("ctrl"), Ok(2));
+        assert_eq!(parse_key_modifiers("alt"), Ok(4));
+        assert_eq!(parse_key_modifiers("super"), Ok(8));
+        assert_eq!(parse_key_modifiers("ctrl+shift"), Ok(3));
+        assert_eq!(parse_key_modifiers(" shift, alt "), Ok(5));
+        assert_eq!(parse_key_modifiers("control+option+cmd"), Ok(14));
+        assert!(parse_key_modifiers("").is_err());
+        assert!(parse_key_modifiers("none+ctrl").is_err());
+        assert!(parse_key_modifiers("hyper").is_err());
+    }
+
+    #[test]
     fn mouse_arg_accepts_action_button_and_one_based_cells() {
         assert_eq!(
             parse_mouse_event("press:left:1:2"),
@@ -1537,9 +1598,15 @@ mod tests {
         );
         assert_eq!(
             super_validate_mode_args(
-                false, false, false, false, false, false, None, None, false, false, true
+                false, false, false, false, false, false, None, None, false, false, false, true
             ),
             Err("--mouse requires --live")
+        );
+        assert_eq!(
+            super_validate_mode_args(
+                true, false, false, false, false, false, None, None, false, false, true, false
+            ),
+            Err("--key-modifiers requires --key-name")
         );
         assert!(
             validate_mode_args(
@@ -1769,6 +1836,7 @@ mod tests {
         assert!(usage.contains("--stdin-bytes"));
         assert!(usage.contains("--connect-timeout-ms MS"));
         assert!(usage.contains("--local-echo off|tty"));
+        assert!(usage.contains("--key-modifiers MODS"));
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));
         assert!(usage.contains("interim text surface"));

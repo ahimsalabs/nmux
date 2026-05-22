@@ -820,13 +820,23 @@ pub fn send_named_key_input(
     pane_id: &str,
     key_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let frame = Session::initial().named_key_input_frame(
+    send_named_key_input_with_modifiers(stream, pane_id, key_name, 0)
+}
+
+pub fn send_named_key_input_with_modifiers(
+    stream: &mut UnixStream,
+    pane_id: &str,
+    key_name: &str,
+    modifiers: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = Session::initial().named_key_input_frame_with_modifiers(
         "local-client",
         3,
         "local-actor",
         pane_id,
         1,
         key_name,
+        modifiers,
     );
     wire::write_default_frame(stream, &frame)?;
     Ok(())

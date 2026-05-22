@@ -116,7 +116,7 @@ Done:
 - The `libghostty-vt` safe API is now tested for application keypad mode tracking, and local clients can forward keypad Enter and digit key names through daemon-owned application-keypad mode encoding.
 - The `libghostty-vt` safe API is now tested for application cursor mode tracking, and local clients can forward arrow key names through daemon-owned application-cursor mode encoding.
 - Local clients can forward common named keys for Enter, Tab, Backspace, Escape, Insert/Delete, Home/End, PageUp/PageDown, and F1-F12 without requiring clients to inject raw PTY bytes.
-- Named-key forwarding now goes through the live pane terminal engine; the `libghostty-vt` key encoder is tested for application-cursor state and modified named keys, while broader physical-key/text-event forwarding remains a protocol/frontend boundary decision.
+- Named-key forwarding now goes through the live pane terminal engine; the `libghostty-vt` key encoder is tested for application-cursor state and modified named keys, and `nmux --key-modifiers` exposes `shift`, `ctrl`, `alt`, and `super` for live named-key input while broader physical-key/text-event forwarding remains a protocol/frontend boundary decision.
 - The `libghostty-vt` safe API is now tested for origin and wraparound modes, and nmux carries those mode states in pane surface snapshots and patches.
 - `libghostty-vt` render-state cursor blinking is carried in `CursorState` and cursor-only patches, with old client cache entries defaulting to blinking enabled.
 - Terminal title and working-directory metadata are carried through pane surface snapshots, patches, and cached client state; backend-populated OSC 7 working-directory extraction remains unproven until the libghostty-vt path demonstrates it.

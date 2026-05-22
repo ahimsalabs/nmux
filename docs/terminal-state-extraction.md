@@ -93,8 +93,8 @@ only after the backend extraction proves the exact shape needed.
   terminal engine. The interim engine preserves existing unmodified
   keypad/application-cursor behavior, and the libghostty-vt engine uses its key
   encoder from daemon-owned terminal state while preserving protocol modifiers.
-  Public CLI modifier syntax remains withheld until modifier bit semantics are
-  documented. Local clients forward explicit mouse press/release/motion input
+  Public CLI modifier syntax maps `shift`, `ctrl`, `alt`, and `super` to the
+  protocol modifier bits for named keys. Local clients forward explicit mouse press/release/motion input
   only when the daemon-owned pane mode reports mouse tracking enabled, with
   bytes encoded by the live pane terminal engine from its current terminal mouse
   mode and format. Broader physical-key/text-event forwarding and frontend
