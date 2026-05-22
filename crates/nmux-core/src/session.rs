@@ -490,6 +490,11 @@ impl Session {
             .is_some_and(|pane| pane.modes.focus_reporting)
     }
 
+    pub fn pane_bracketed_paste(&self, pane_id: &str) -> bool {
+        self.pane(pane_id)
+            .is_some_and(|pane| pane.modes.bracketed_paste)
+    }
+
     pub fn pane_mouse_tracking(&self, pane_id: &str) -> bool {
         self.pane(pane_id)
             .is_some_and(|pane| pane.modes.mouse_tracking)

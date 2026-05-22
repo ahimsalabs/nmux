@@ -755,11 +755,7 @@ pub fn attach_with_client_options(
     if snapshot.surface.is_some() {
         if mode == AttachMode::ReadWrite {
             if let Some(paste_text) = options.paste_text.as_deref() {
-                let bracketed = snapshot
-                    .surface
-                    .as_ref()
-                    .is_some_and(|surface| surface.modes.bracketed_paste);
-                send_paste_input(&mut stream, "pane-1", paste_text, bracketed)?;
+                send_paste_input(&mut stream, "pane-1", paste_text)?;
             } else if let Some(input_text) = options.input_text.as_deref() {
                 send_key_input(&mut stream, "pane-1", input_text)?;
             }
@@ -874,7 +870,6 @@ pub fn send_paste_input(
     stream: &mut UnixStream,
     pane_id: &str,
     text: &str,
-    bracketed: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().paste_input_frame(
         "local-client",
@@ -883,7 +878,7 @@ pub fn send_paste_input(
         pane_id,
         1,
         text,
-        bracketed,
+        false,
     );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
@@ -1308,85 +1303,99 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
     let input = envelope
         .body_as_input_event()
         .ok_or("missing input event body")?;
-    let (bytes, key_name, key_modifiers, mouse, requires_focus_reporting, requires_mouse_tracking) =
-        match input.kind() {
-            protocol::InputKind::Key => {
-                let key = input.key();
-                (
-                    key.and_then(|key| key.text_utf8())
-                        .unwrap_or_default()
-                        .as_bytes()
-                        .to_vec(),
-                    key.and_then(|key| key.key_name()).map(ToOwned::to_owned),
-                    key.map_or(0, |key| key.modifiers()),
-                    None,
-                    false,
-                    false,
-                )
-            }
-            protocol::InputKind::RawBytes => (
-                input
-                    .raw()
-                    .and_then(|raw| raw.bytes())
-                    .map(|bytes| bytes.iter().collect())
-                    .unwrap_or_default(),
+    let (
+        bytes,
+        paste_text,
+        key_name,
+        key_modifiers,
+        mouse,
+        requires_focus_reporting,
+        requires_mouse_tracking,
+    ) = match input.kind() {
+        protocol::InputKind::Key => {
+            let key = input.key();
+            (
+                key.and_then(|key| key.text_utf8())
+                    .unwrap_or_default()
+                    .as_bytes()
+                    .to_vec(),
+                None,
+                key.and_then(|key| key.key_name()).map(ToOwned::to_owned),
+                key.map_or(0, |key| key.modifiers()),
+                None,
+                false,
+                false,
+            )
+        }
+        protocol::InputKind::RawBytes => (
+            input
+                .raw()
+                .and_then(|raw| raw.bytes())
+                .map(|bytes| bytes.iter().collect())
+                .unwrap_or_default(),
+            None,
+            None,
+            0,
+            None,
+            false,
+            false,
+        ),
+        protocol::InputKind::Paste => {
+            let paste_text = input
+                .paste()
+                .and_then(|paste| paste.text_utf8())
+                .unwrap_or_default()
+                .to_owned();
+            (
+                paste_text.as_bytes().to_vec(),
+                Some(paste_text),
                 None,
                 0,
                 None,
                 false,
                 false,
-            ),
-            protocol::InputKind::Paste => (
-                input
-                    .paste()
-                    .map(|paste| {
-                        paste_input_bytes(paste.text_utf8().unwrap_or_default(), paste.bracketed())
-                    })
-                    .transpose()?
-                    .unwrap_or_default(),
+            )
+        }
+        protocol::InputKind::Focus => (
+            if input.focus().is_some_and(|focus| focus.focused()) {
+                b"\x1b[I".to_vec()
+            } else {
+                b"\x1b[O".to_vec()
+            },
+            None,
+            None,
+            0,
+            None,
+            true,
+            false,
+        ),
+        protocol::InputKind::Mouse => {
+            let mouse = input.mouse().ok_or("missing mouse input")?;
+            (
+                Vec::new(),
+                None,
                 None,
                 0,
-                None,
+                Some(MouseSummary {
+                    row: mouse.row(),
+                    col: mouse.col(),
+                    button: mouse_button_from_protocol(mouse.button()),
+                    action: mouse_action_from_protocol(mouse.action()),
+                    modifiers: mouse.modifiers(),
+                }),
                 false,
-                false,
-            ),
-            protocol::InputKind::Focus => (
-                if input.focus().is_some_and(|focus| focus.focused()) {
-                    b"\x1b[I".to_vec()
-                } else {
-                    b"\x1b[O".to_vec()
-                },
-                None,
-                0,
-                None,
                 true,
-                false,
-            ),
-            protocol::InputKind::Mouse => {
-                let mouse = input.mouse().ok_or("missing mouse input")?;
-                (
-                    Vec::new(),
-                    None,
-                    0,
-                    Some(MouseSummary {
-                        row: mouse.row(),
-                        col: mouse.col(),
-                        button: mouse_button_from_protocol(mouse.button()),
-                        action: mouse_action_from_protocol(mouse.action()),
-                        modifiers: mouse.modifiers(),
-                    }),
-                    false,
-                    true,
-                )
-            }
-            other => return Err(format!("unexpected input kind: {other:?}").into()),
-        };
+            )
+        }
+        other => return Err(format!("unexpected input kind: {other:?}").into()),
+    };
     Ok(InputSummary {
         pane_id: input.pane_id().unwrap_or_default().to_owned(),
         actor_id: input.actor_id().unwrap_or_default().to_owned(),
         input_seq: input.input_seq(),
         text: String::from_utf8_lossy(&bytes).into_owned(),
         bytes,
+        paste_text,
         key_name,
         key_modifiers,
         mouse,
@@ -1417,11 +1426,11 @@ fn mouse_button_from_protocol(button: protocol::MouseButton) -> MouseButton {
 }
 
 fn paste_input_bytes(text: &str, bracketed: bool) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    if !bracketed {
-        return Ok(text.as_bytes().to_vec());
-    }
     if text.contains("\x1b[201~") {
         return Err("paste input contains a bracketed paste terminator".into());
+    }
+    if !bracketed {
+        return Ok(text.as_bytes().to_vec());
     }
 
     let mut bytes = Vec::with_capacity("\x1b[200~".len() + text.len() + "\x1b[201~".len());
@@ -2921,6 +2930,7 @@ pub struct InputSummary {
     pub input_seq: u64,
     pub text: String,
     pub bytes: Vec<u8>,
+    pub paste_text: Option<String>,
     pub key_name: Option<String>,
     pub key_modifiers: u32,
     pub mouse: Option<MouseSummary>,
@@ -2997,6 +3007,9 @@ impl InputSummary {
                     rows,
                 })
                 .ok_or_else(|| "terminal engine cannot encode mouse input".into());
+        }
+        if let Some(paste_text) = self.paste_text.as_deref() {
+            return paste_input_bytes(paste_text, session.pane_bracketed_paste(&self.pane_id));
         }
         Ok(self.bytes.clone())
     }
@@ -4713,6 +4726,7 @@ mod tests {
                 input_seq: 2,
                 text: "x".to_owned(),
                 bytes: b"x".to_vec(),
+                paste_text: None,
                 key_name: None,
                 key_modifiers: 0,
                 mouse: None,
@@ -4770,6 +4784,7 @@ mod tests {
             input_seq: 1,
             text: String::new(),
             bytes: Vec::new(),
+            paste_text: None,
             key_name: Some("numpad-enter".to_owned()),
             key_modifiers: 0,
             mouse: None,
@@ -4818,6 +4833,7 @@ mod tests {
             input_seq: 1,
             text: String::new(),
             bytes: Vec::new(),
+            paste_text: None,
             key_name: Some("arrow-up".to_owned()),
             key_modifiers: 0,
             mouse: None,
@@ -4869,6 +4885,7 @@ mod tests {
                 input_seq: 1,
                 text: String::new(),
                 bytes: Vec::new(),
+                paste_text: None,
                 key_name: Some(key_name.to_owned()),
                 key_modifiers: 0,
                 mouse: None,
@@ -4895,6 +4912,7 @@ mod tests {
             input_seq: 1,
             text: String::new(),
             bytes: Vec::new(),
+            paste_text: None,
             key_name: Some("f13".to_owned()),
             key_modifiers: 0,
             mouse: None,
@@ -4917,6 +4935,7 @@ mod tests {
             input_seq: 1,
             text: String::new(),
             bytes: Vec::new(),
+            paste_text: None,
             key_name: Some("arrow-up".to_owned()),
             key_modifiers: 2,
             mouse: None,
@@ -4972,6 +4991,7 @@ mod tests {
                 input_seq: 2,
                 text: "hello\n".to_owned(),
                 bytes: b"hello\n".to_vec(),
+                paste_text: Some("hello\n".to_owned()),
                 key_name: None,
                 key_modifiers: 0,
                 mouse: None,
@@ -4994,8 +5014,40 @@ mod tests {
         );
         let input = input_summary_from_frame(&frame).expect("input summary");
 
-        assert_eq!(input.bytes, b"\x1b[200~hello\n\x1b[201~".to_vec());
-        assert_eq!(input.text, "\x1b[200~hello\n\x1b[201~");
+        assert_eq!(input.bytes, b"hello\n".to_vec());
+        assert_eq!(input.text, "hello\n");
+        assert_eq!(input.paste_text.as_deref(), Some("hello\n"));
+    }
+
+    #[test]
+    fn paste_input_wrapping_uses_daemon_owned_mode() {
+        let mut session = Session::initial();
+        let bracketed_client_frame = Session::initial().paste_input_frame(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            "hello\n",
+            true,
+        );
+        let input =
+            input_summary_from_frame(&bracketed_client_frame).expect("bracketed input summary");
+
+        assert_eq!(
+            input
+                .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+                .expect("plain paste"),
+            b"hello\n"
+        );
+
+        session.tabs[0].root.modes.bracketed_paste = true;
+        assert_eq!(
+            input
+                .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+                .expect("daemon bracketed paste"),
+            b"\x1b[200~hello\n\x1b[201~"
+        );
     }
 
     #[test]
@@ -5054,6 +5106,7 @@ mod tests {
             input_seq: 1,
             text: "\x1b[I".to_owned(),
             bytes: b"\x1b[I".to_vec(),
+            paste_text: None,
             key_name: None,
             key_modifiers: 0,
             mouse: None,
@@ -5075,6 +5128,7 @@ mod tests {
             input_seq: 1,
             text: String::new(),
             bytes: Vec::new(),
+            paste_text: None,
             key_name: None,
             key_modifiers: 0,
             mouse: Some(MouseSummary {
@@ -5162,9 +5216,12 @@ mod tests {
             "pane-1",
             2,
             "bad\x1b[201~paste",
-            true,
+            false,
         );
-        let err = input_summary_from_frame(&frame).expect_err("unsafe paste rejected");
+        let input = input_summary_from_frame(&frame).expect("input summary");
+        let err = input
+            .forwarded_bytes(&Session::initial(), &mut PaneTerminalEngines::interim())
+            .expect_err("unsafe paste rejected");
 
         assert!(
             err.to_string()

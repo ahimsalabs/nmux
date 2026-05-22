@@ -87,9 +87,9 @@ only after the backend extraction proves the exact shape needed.
   Its key encoder can also emit application-keypad sequences when the option is
   explicit, its focus helper can encode focus gained/lost events, and its paste
   validator rejects newline and bracketed paste terminator injection sequences.
-  Local clients now forward UTF-8 paste input through `PasteInput`, wrapping with
-  bracketed-paste delimiters only when the pane's current mode advertises
-  bracketed paste and rejecting embedded terminators before forwarding.
+  Local clients now forward UTF-8 paste input through `PasteInput`; the daemon
+  rejects embedded bracketed-paste terminators, then wraps with bracketed-paste
+  delimiters only when daemon-owned pane mode advertises bracketed paste.
   Local clients also forward focus gained/lost input through `FocusInput` only
   when the daemon-owned pane mode reports focus reporting enabled.
   Local clients forward common named keys for Enter, Tab, Backspace, Escape,

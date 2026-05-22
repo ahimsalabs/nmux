@@ -112,7 +112,6 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     let initial_modes =
         initial_live_terminal_modes(snapshot_modes, &client_state, &rendered.workspace.pane_id);
-    let mut paste_bracketed = initial_modes.bracketed_paste;
     let mut focus_reporting = initial_modes.focus_reporting;
     warn_if_resize_intent_conflicts_with_policy(args.live_resize, rendered.workspace.resize_policy);
     let mut current_workspace = rendered.workspace.clone();
@@ -196,7 +195,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     local::send_focus_input(&mut stream, "pane-1", focus_event.focused())?;
                 }
             } else if let Some(paste_text) = options.paste_text.as_deref() {
-                local::send_paste_input(&mut stream, "pane-1", paste_text, paste_bracketed)?;
+                local::send_paste_input(&mut stream, "pane-1", paste_text)?;
             } else if let Some(input_text) = input_text.as_deref() {
                 local::send_key_input(&mut stream, "pane-1", input_text)?;
             }
@@ -220,7 +219,6 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 local::LiveSurfaceRead::Update(update) => {
                     let previous_metadata = current_surface_metadata.clone();
-                    paste_bracketed = update.modes.bracketed_paste;
                     focus_reporting = update.modes.focus_reporting;
                     current_surface_metadata = local::TerminalMetadataSummary {
                         title: update.title.clone(),
