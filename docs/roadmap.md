@@ -105,6 +105,7 @@ Done:
 - Basic SGR style flags now have `libghostty-vt` extraction coverage for bold, italic, underline, and strikethrough style-table bits.
 - Underline color now has `libghostty-vt` extraction coverage proving it resolves into an RGBA style-table entry.
 - Cursor-only `libghostty-vt` patches now cover cursor movement, visibility changes, and DECSCUSR visual shape changes; feature-gated local live coverage proves cursor-only patches stream after attach, avoid row repaint, update cached client cursor metadata, and survive persisted state encode/decode.
+- `libghostty-vt` terminal-generated PTY writes are drained from the terminal engine and routed back through host-backed output polling, with coverage for a DECRQM wrap-mode query reply.
 - `libghostty-vt` extraction tests now cover alternate-screen entry and restoration to the main screen.
 - `libghostty-vt` extraction tests now pin alternate-screen scrollback omission: main scrollback is preserved while alternate-screen output stays out of nmux scrollback until the protocol shape is explicit.
 - Palette-indexed SGR colors now have `libghostty-vt` extraction coverage proving they resolve into RGBA style-table entries.

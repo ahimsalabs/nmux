@@ -182,6 +182,10 @@ pub trait TerminalEngine {
     fn apply_output(&mut self, input: TerminalInput<'_>, output: &[u8]) -> Option<TerminalUpdate>;
     fn resize(&mut self, input: TerminalInput<'_>, cols: u32, rows: u32) -> Option<TerminalUpdate>;
 
+    fn drain_pty_writes(&mut self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
     fn encode_key_input(&mut self, _input: KeyTerminalInput<'_>) -> Option<Vec<u8>> {
         None
     }
@@ -471,6 +475,8 @@ fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
 
 #[cfg(feature = "libghostty-vt")]
 mod ghostty_vt {
+    use std::{cell::RefCell, rc::Rc};
+
     use libghostty_vt::{
         RenderState, Terminal, TerminalOptions, key, mouse,
         render::{CellIterator, CursorVisualStyle, RowIterator, Snapshot as RenderSnapshot},
@@ -498,6 +504,7 @@ mod ghostty_vt {
         row_iterator: RowIterator<'static>,
         cell_iterator: CellIterator<'static>,
         osc7: Osc7Tracker,
+        pty_writes: Rc<RefCell<Vec<Vec<u8>>>>,
     }
 
     #[derive(Default)]
@@ -619,22 +626,44 @@ mod ghostty_vt {
             let state = self.state.as_ref()?;
             encode_key_input(&state.terminal, input)
         }
+
+        fn drain_pty_writes(&mut self) -> Vec<Vec<u8>> {
+            let Some(state) = self.state.as_mut() else {
+                return Vec::new();
+            };
+            state.drain_pty_writes()
+        }
     }
 
     impl GhosttyVtState {
         fn new(cols: u32, rows: u32) -> Option<Self> {
-            Some(Self {
-                terminal: Terminal::new(TerminalOptions {
-                    cols: u16::try_from(cols).ok()?,
-                    rows: u16::try_from(rows).ok()?,
-                    max_scrollback: 10000,
+            let pty_writes = Rc::new(RefCell::new(Vec::new()));
+            let mut terminal = Terminal::new(TerminalOptions {
+                cols: u16::try_from(cols).ok()?,
+                rows: u16::try_from(rows).ok()?,
+                max_scrollback: 10000,
+            })
+            .ok()?;
+            terminal
+                .on_pty_write({
+                    let pty_writes = Rc::clone(&pty_writes);
+                    move |_terminal, bytes| {
+                        pty_writes.borrow_mut().push(bytes.to_vec());
+                    }
                 })
-                .ok()?,
+                .ok()?;
+            Some(Self {
+                terminal,
                 render_state: RenderState::new().ok()?,
                 row_iterator: RowIterator::new().ok()?,
                 cell_iterator: CellIterator::new().ok()?,
                 osc7: Osc7Tracker::default(),
+                pty_writes,
             })
+        }
+
+        fn drain_pty_writes(&mut self) -> Vec<Vec<u8>> {
+            self.pty_writes.borrow_mut().drain(..).collect()
         }
 
         fn extract_update(
@@ -2570,6 +2599,25 @@ mod tests {
         assert_eq!(mode_change.cursor, first.cursor);
         assert!(mode_change.modes.bracketed_paste);
         assert!(mode_change.modes.focus_reporting);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_exposes_terminal_query_pty_writes() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let _ = engine
+            .apply_output(terminal_input(2, &empty, &empty), b"\x1b[?7$p")
+            .expect("terminal update");
+
+        let writes = engine.drain_pty_writes();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0], b"\x1b[?7;1$y");
+        assert!(
+            engine.drain_pty_writes().is_empty(),
+            "pty writes should drain exactly once"
+        );
     }
 
     #[cfg(feature = "libghostty-vt")]

@@ -348,7 +348,7 @@ where
 {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
-    poll_pane_output_with_engines(session, engines, host, "pane-1")?;
+    poll_pane_output_with_host_and_engines(session, engines, host, "pane-1")?;
     serve_attached_client(&mut stream, request, session, Some(host), engines)
 }
 
@@ -364,7 +364,7 @@ where
 {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
-    poll_pane_output_with_engines(session, engines, host, "pane-1")?;
+    poll_pane_output_with_host_and_engines(session, engines, host, "pane-1")?;
     serve_live_attached_client(&mut stream, request, session, host, engines, cycles)
 }
 
@@ -522,12 +522,12 @@ fn serve_live_attached_client(
                         return Ok(());
                     }
                 }
-                poll_pane_output_until_quiet(session, engines, host, &input.pane_id)?;
+                poll_pane_output_with_host_until_quiet(session, engines, host, &input.pane_id)?;
             } else {
-                poll_pane_output_until_quiet(session, engines, host, pane_id)?;
+                poll_pane_output_with_host_until_quiet(session, engines, host, pane_id)?;
             }
         } else {
-            poll_pane_output_until_quiet(session, engines, host, pane_id)?;
+            poll_pane_output_with_host_until_quiet(session, engines, host, pane_id)?;
         }
 
         let current = session.surface_version(pane_id).unwrap_or_default();
@@ -754,7 +754,7 @@ fn process_one_shot_input(
             return Ok(false);
         }
     }
-    poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
+    poll_pane_output_with_host_and_engines(session, engines, host, &input.pane_id)?;
     Ok(true)
 }
 
@@ -866,10 +866,23 @@ pub fn poll_pane_output_with_engines(
     Ok(session.apply_pane_output_with_engine(pane_id, &pumped, engines.engine_mut(pane_id)))
 }
 
-fn poll_pane_output_until_quiet(
+pub fn poll_pane_output_with_host_and_engines(
     session: &mut Session,
     engines: &mut PaneTerminalEngines,
-    output: &mut dyn ProcessOutput,
+    host: &mut dyn ProcessHostOutput,
+    pane_id: &str,
+) -> Result<bool, HostError> {
+    let changed = poll_pane_output_with_engines(session, engines, host, pane_id)?;
+    for bytes in engines.engine_mut(pane_id).drain_pty_writes() {
+        host.write_input(pane_id, &bytes)?;
+    }
+    Ok(changed)
+}
+
+fn poll_pane_output_with_host_until_quiet(
+    session: &mut Session,
+    engines: &mut PaneTerminalEngines,
+    host: &mut dyn ProcessHostOutput,
     pane_id: &str,
 ) -> Result<bool, HostError> {
     let deadline = Instant::now() + Duration::from_millis(120);
@@ -877,7 +890,7 @@ fn poll_pane_output_until_quiet(
     let mut changed = false;
 
     loop {
-        if poll_pane_output_with_engines(session, engines, output, pane_id)? {
+        if poll_pane_output_with_host_and_engines(session, engines, host, pane_id)? {
             changed = true;
             quiet_since = None;
         } else if changed {
@@ -7140,6 +7153,31 @@ mod tests {
         );
 
         let _ = fs::remove_file(socket_path);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_poll_writes_terminal_query_reply_to_host() {
+        let mut session = Session::initial();
+        let mut engines = PaneTerminalEngines::new(TerminalEngineKind::LibghosttyVt);
+        let mut host = ScriptedOutputHost::new(vec![b"\x1b[?7$p".to_vec()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        assert!(
+            poll_pane_output_with_host_and_engines(&mut session, &mut engines, &mut host, "pane-1")
+                .expect("poll output")
+        );
+
+        let replies = host
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                HostEvent::Input { bytes, .. } => Some(bytes.as_slice()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(replies, vec![b"\x1b[?7;1$y".as_slice()]);
     }
 
     #[test]

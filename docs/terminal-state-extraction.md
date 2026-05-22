@@ -115,6 +115,11 @@ only after the backend extraction proves the exact shape needed.
   engine from its current terminal mouse mode, format, and modifiers. Broader
   physical-key/text-event forwarding and frontend
   pointer integration still need protocol decisions.
+- Terminal replies: `libghostty-vt` terminal-generated PTY writes are drained
+  from the terminal engine and written back to the pane process from
+  host-backed output polling. Current coverage pins a DECRQM wrap-mode query
+  reply; broader device-attributes, version, and window-operation replies remain
+  product choices before nmux should promise exact identities or dimensions.
 - Terminal metadata: nmux carries terminal title and OSC 7 working-directory
   metadata through pane surface snapshot and patch metadata. Title/OSC 7-only
   changes use no-row surface patches so live clients can update pane metadata
@@ -192,7 +197,8 @@ for bracketed paste, mouse tracking, focus reporting, application keypad mode,
 application cursor mode, origin, and wraparound.
 
 The nmux state-sync path now has coverage for snapshot/patch cursor blink,
-libghostty-vt live cursor-only patch cache persistence, title and working-directory
+libghostty-vt live cursor-only patch cache persistence, terminal query PTY
+reply routing, title and working-directory
 metadata, terminal color state and color-only patches and live color-only patch
 cache persistence, row semantic prompt metadata, per-run semantic content,
 live ReplaceRows row-metadata cache persistence, live ReplaceRows hyperlink
