@@ -1495,6 +1495,7 @@ pub struct ClientPaneSurface {
     pub surface: protocol::SurfaceKind,
     pub cursor: Option<CursorSummary>,
     row_text: Vec<String>,
+    row_runs: Vec<Vec<CellRunSummary>>,
 }
 
 impl ClientPaneSurface {
@@ -1507,10 +1508,12 @@ impl ClientPaneSurface {
             surface: update.surface.unwrap_or(protocol::SurfaceKind::Main),
             cursor: update.cursor,
             row_text: Vec::new(),
+            row_runs: Vec::new(),
         };
         let row_count =
             usize::try_from(surface.rows).map_err(|_| "surface row count does not fit in usize")?;
         surface.row_text.resize(row_count, String::new());
+        surface.row_runs.resize(row_count, Vec::new());
         surface.apply_rows(&update.row_updates)?;
         Ok(surface)
     }
@@ -1585,9 +1588,38 @@ impl ClientPaneSurface {
                 .into());
             };
             *target = row.text.clone();
+            self.row_runs[index] = if row.runs.is_empty() {
+                vec![CellRunSummary::plain(&row.text)]
+            } else {
+                row.runs.clone()
+            };
         }
         Ok(())
     }
+}
+
+impl CellRunSummary {
+    fn plain(text: &str) -> Self {
+        Self {
+            text: text.to_owned(),
+            cell_widths: text.chars().map(|_| 1).collect(),
+            style_id: 0,
+            flags: 0,
+            hyperlink_id: 0,
+        }
+    }
+}
+
+fn row_runs_for_text(
+    row_text: &[String],
+    mut row_runs: Vec<Vec<CellRunSummary>>,
+) -> Vec<Vec<CellRunSummary>> {
+    for (index, text) in row_text.iter().enumerate() {
+        if row_runs[index].is_empty() || render_run_summaries(&row_runs[index]) != *text {
+            row_runs[index] = vec![CellRunSummary::plain(text)];
+        }
+    }
+    row_runs
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1714,6 +1746,21 @@ impl ClientAttachState {
                 encoded.push(' ');
                 encoded.push_str(&hex_encode(row.as_bytes()));
                 encoded.push('\n');
+                for run in &surface.row_runs[index] {
+                    encoded.push_str("run ");
+                    encoded.push_str(&index.to_string());
+                    encoded.push(' ');
+                    encoded.push_str(&hex_encode(run.text.as_bytes()));
+                    encoded.push(' ');
+                    encoded.push_str(&hex_encode(&run.cell_widths));
+                    encoded.push(' ');
+                    encoded.push_str(&run.style_id.to_string());
+                    encoded.push(' ');
+                    encoded.push_str(&run.flags.to_string());
+                    encoded.push(' ');
+                    encoded.push_str(&run.hyperlink_id.to_string());
+                    encoded.push('\n');
+                }
             }
             encoded.push_str("end\n");
         }
@@ -1771,6 +1818,7 @@ impl ClientAttachState {
             })?;
             let mut cursor = None;
             let mut row_text = vec![String::new(); row_count];
+            let mut row_runs = vec![Vec::new(); row_count];
 
             loop {
                 let Some(line) = lines.next() else {
@@ -1791,9 +1839,18 @@ impl ClientAttachState {
                     parts.next(),
                     parts.next(),
                     parts.next(),
+                    parts.next(),
                 ) {
-                    (Some("cursor"), Some("none"), None, None, None, None) => cursor = None,
-                    (Some("cursor"), Some(row), Some(col), Some(visible), Some(shape), None) => {
+                    (Some("cursor"), Some("none"), None, None, None, None, None) => cursor = None,
+                    (
+                        Some("cursor"),
+                        Some(row),
+                        Some(col),
+                        Some(visible),
+                        Some(shape),
+                        None,
+                        None,
+                    ) => {
                         cursor = Some(CursorSummary {
                             row: parse_state_u32(row)?,
                             col: parse_state_u32(col)?,
@@ -1801,7 +1858,7 @@ impl ClientAttachState {
                             shape: protocol::CursorShape(parse_state_i8(shape)?),
                         });
                     }
-                    (Some("row"), Some(row), Some(text), None, None, None) => {
+                    (Some("row"), Some(row), Some(text), None, None, None, None) => {
                         let row = parse_state_usize(row)?;
                         let Some(target) = row_text.get_mut(row) else {
                             return Err(io::Error::new(
@@ -1811,6 +1868,34 @@ impl ClientAttachState {
                         };
                         *target = String::from_utf8(hex_decode(text)?)
                             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+                    }
+                    (
+                        Some("run"),
+                        Some(row),
+                        Some(text),
+                        Some(cell_widths),
+                        Some(style_id),
+                        Some(flags),
+                        hyperlink_id,
+                    ) => {
+                        let row = parse_state_usize(row)?;
+                        let Some(target) = row_runs.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state run row index outside surface",
+                            ));
+                        };
+                        target.push(CellRunSummary {
+                            text: String::from_utf8(hex_decode(text)?)
+                                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
+                            cell_widths: hex_decode(cell_widths)?,
+                            style_id: parse_state_u32(style_id)?,
+                            flags: parse_state_u32(flags)?,
+                            hyperlink_id: hyperlink_id
+                                .map(parse_state_u32)
+                                .transpose()?
+                                .unwrap_or(0),
+                        });
                     }
                     _ => {
                         return Err(io::Error::new(
@@ -1828,6 +1913,7 @@ impl ClientAttachState {
                 rows,
                 surface,
                 cursor,
+                row_runs: row_runs_for_text(&row_text, row_runs),
                 row_text,
             });
         }
@@ -2405,7 +2491,24 @@ mod tests {
             SurfaceUpdateKind::Snapshot,
             7,
             None,
-            vec![surface_row(0, "cached"), surface_row(2, "tail")],
+            vec![
+                SurfaceRowUpdate {
+                    row: 0,
+                    text: "cached".to_owned(),
+                    runs: vec![
+                        CellRunSummary {
+                            text: "cache".to_owned(),
+                            cell_widths: vec![1, 1, 1, 1, 1],
+                            style_id: 1,
+                            flags: 1,
+                            hyperlink_id: 0,
+                        },
+                        CellRunSummary::plain("d"),
+                    ],
+                    dirty_hash: 0,
+                },
+                surface_row(2, "tail"),
+            ],
         );
         state
             .render_attach(AttachSnapshot {
@@ -2427,6 +2530,10 @@ mod tests {
         assert_eq!(decoded.known_surfaces(), state.known_surfaces());
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
         assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
+        assert_eq!(decoded.surfaces[0].row_runs[0].len(), 2);
+        assert_eq!(decoded.surfaces[0].row_runs[0][0].text, "cache");
+        assert_eq!(decoded.surfaces[0].row_runs[0][0].style_id, 1);
+        assert_eq!(decoded.surfaces[0].row_runs[0][0].flags, 1);
     }
 
     #[test]
