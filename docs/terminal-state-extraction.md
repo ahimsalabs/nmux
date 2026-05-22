@@ -114,7 +114,8 @@ have tests proving:
 
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, wide-cell widths, cursor-only updates,
-alternate-screen detection, resize/reflow, and backend-owned scrollback
-extraction through unit, session, and live CLI smoke coverage. It is not the
-default until the project deliberately accepts the native Zig/Ghostty build cost
-in normal development and CI.
+cursor visibility and shape extraction, alternate-screen detection,
+resize/reflow, and backend-owned scrollback extraction through unit, session,
+and live CLI smoke coverage. It is not the default until the project
+deliberately accepts the native Zig/Ghostty build cost in normal development and
+CI.

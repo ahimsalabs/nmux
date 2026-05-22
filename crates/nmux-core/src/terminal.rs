@@ -608,6 +608,19 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "libghostty-vt")]
+    fn terminal_input_from_update<'a>(update: &'a super::TerminalUpdate) -> TerminalInput<'a> {
+        TerminalInput {
+            pane_id: "pane-1",
+            cols: 80,
+            rows: update.surface_lines.len() as u32,
+            surface: update.surface,
+            cursor: update.cursor,
+            surface_lines: &update.surface_lines,
+            scrollback_lines: &update.scrollback_lines,
+        }
+    }
+
     #[test]
     fn interim_text_engine_normalizes_process_output() {
         let mut engine = InterimTextTerminalEngine;
@@ -1012,6 +1025,56 @@ mod tests {
                 col: 2,
                 visible: true,
                 shape: protocol::CursorShape::Block
+            }
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_emits_cursor_only_patch_for_cursor_visibility_and_shape() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let first = engine
+            .apply_output(terminal_input(2, &empty, &empty), b"alpha\r\nbeta")
+            .expect("initial terminal update");
+
+        let hidden_beam = engine
+            .apply_output(terminal_input_from_update(&first), b"\x1b[?25l\x1b[6 q")
+            .expect("hidden beam cursor update");
+
+        assert_eq!(hidden_beam.patch_kind, protocol::PatchKind::CursorOnly);
+        assert_eq!(hidden_beam.surface_lines, first.surface_lines);
+        assert_eq!(hidden_beam.scrollback_lines, first.scrollback_lines);
+        assert_eq!(
+            hidden_beam.cursor,
+            TerminalCursor {
+                row: first.cursor.row,
+                col: first.cursor.col,
+                visible: false,
+                shape: protocol::CursorShape::Beam,
+            }
+        );
+
+        let visible_underline = engine
+            .apply_output(
+                terminal_input_from_update(&hidden_beam),
+                b"\x1b[?25h\x1b[4 q",
+            )
+            .expect("visible underline cursor update");
+
+        assert_eq!(
+            visible_underline.patch_kind,
+            protocol::PatchKind::CursorOnly
+        );
+        assert_eq!(visible_underline.surface_lines, first.surface_lines);
+        assert_eq!(visible_underline.scrollback_lines, first.scrollback_lines);
+        assert_eq!(
+            visible_underline.cursor,
+            TerminalCursor {
+                row: first.cursor.row,
+                col: first.cursor.col,
+                visible: true,
+                shape: protocol::CursorShape::Underline,
             }
         );
     }
