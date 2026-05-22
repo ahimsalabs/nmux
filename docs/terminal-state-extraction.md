@@ -5,8 +5,9 @@ state extraction. This file records the minimum mapping work needed before that
 import so the protocol changes stay deliberate.
 
 `libghostty-vt` is now present as an optional Cargo feature and compiles through
-the vendored native Ghostty VT build. The default `nmuxd` engine remains
-`interim` until the acceptance gate below is complete.
+the vendored native Ghostty VT build. ADR 0018 keeps the default `nmuxd` engine
+as `interim` while requiring the full feature-enabled `make check-ghostty-vt`
+gate for related changes.
 
 ## Current nmux Surface
 
@@ -184,6 +185,6 @@ replacement, metadata-only no-row live updates, cached client-state
 compatibility, cached terminal metadata reattach, and feature-gated live CLI
 smoke paths. `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli`
 test suites with `--features libghostty-vt`, so ordinary feature-sensitive
-tests are part of the opt-in gate. The default engine remains `interim` until a
-later ADR explicitly accepts the native Ghostty/Zig build cost in normal
-development, CI, and packaging.
+tests are part of the opt-in gate. ADR 0018 keeps the default engine `interim`
+until a later decision explicitly accepts the native Ghostty/Zig build cost in
+normal development, CI, and packaging.

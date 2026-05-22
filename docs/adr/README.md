@@ -23,3 +23,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0015: Cell Semantic Content](0015-cell-semantic-content.md)
 - [0016: Terminal Color State](0016-terminal-color-state.md)
 - [0017: Terminal Input Mode State](0017-terminal-input-mode-state.md)
+- [0018: libghostty-vt Default And CI Gate](0018-libghostty-vt-default-and-ci-gate.md)
