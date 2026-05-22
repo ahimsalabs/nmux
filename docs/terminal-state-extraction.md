@@ -76,10 +76,11 @@ only after the backend extraction proves the exact shape needed.
   application keypad, origin, and wraparound modes through its safe API and can
   derive key encoder behavior from terminal modes such as application cursor
   keys. Its key encoder can also emit application-keypad sequences when the
-  option is explicit. Its render state exposes cursor blink state, but nmux has
-  no mode or cursor-metadata fields yet. Terminal-derived keypad input
-  forwarding, mouse input forwarding, and the client-visible shape of mode
-  updates still need protocol decisions.
+  option is explicit, and its paste validator rejects newline and bracketed
+  paste terminator injection sequences. Its render state exposes cursor blink
+  state, but nmux has no mode or cursor-metadata fields yet. Terminal-derived
+  keypad input forwarding, paste forwarding, mouse input forwarding, and the
+  client-visible shape of mode updates still need protocol decisions.
 - Terminal metadata: `libghostty-vt` exposes OSC 2 title state through the safe
   API, but nmux has no title metadata field yet. OSC 7 working-directory state
   remains unproven in the current backend path and should stay withheld until
@@ -139,8 +140,8 @@ palette overrides, and explicit cursor color, alternate-screen entry/restoration
 with alternate scrollback omission, title metadata with OSC 7 working-directory
 omission, OSC 133 semantic prompt state, resize/reflow, styled backend-owned
 scrollback extraction, row-level dirty state, Kitty graphics placeholder
-detection, application-keypad encoder support, and safe-API mode tracking for
-bracketed paste, mouse tracking, application keypad mode, and origin/wraparound
-modes through unit, session, and live CLI smoke coverage. It is not the default
-until the project deliberately accepts the native Zig/Ghostty build cost in
-normal development and CI.
+detection, application-keypad encoder support, paste safety validation, and
+safe-API mode tracking for bracketed paste, mouse tracking, application keypad
+mode, and origin/wraparound modes through unit, session, and live CLI smoke
+coverage. It is not the default until the project deliberately accepts the
+native Zig/Ghostty build cost in normal development and CI.

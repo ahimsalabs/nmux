@@ -1325,6 +1325,16 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_paste_safety_detects_injection_sequences_without_protocol_fields() {
+        use libghostty_vt::paste;
+
+        assert!(paste::is_safe("safe paste text"));
+        assert!(!paste::is_safe("unsafe\npaste"));
+        assert!(!paste::is_safe("escape bracketed paste \x1b[201~ then run"));
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_key_encoder_uses_application_cursor_mode() {
         use libghostty_vt::{
             Terminal, TerminalOptions,
