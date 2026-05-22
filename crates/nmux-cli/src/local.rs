@@ -6756,6 +6756,86 @@ mod tests {
         let _ = fs::remove_file(socket_path);
     }
 
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn live_libghostty_vt_color_only_patch_updates_cached_colors() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![
+            b"ready\n".to_vec(),
+            Vec::new(),
+            b"\x1b]12;#ff00ff\x1b\\\x1b]4;1;#112233\x1b\\".to_vec(),
+        ]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            serve_live_n_with_host_and_terminal_engine_kind(
+                &listener,
+                &mut session,
+                &mut host,
+                1,
+                2,
+                TerminalEngineKind::LibghosttyVt,
+            )
+            .expect("serve color-only live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        let mut state = ClientAttachState::default();
+        let rendered = state.render_attach(initial).expect("render initial attach");
+        let initial_text = rendered.surface_text.expect("initial surface text");
+        assert!(initial_text.contains("ready"));
+        assert!(
+            !state.surfaces[0].colors.cursor_rgba_set,
+            "initial cursor color should not be explicit"
+        );
+
+        let update = loop {
+            match read_live_surface_update_from_stream(&mut stream).expect("live update") {
+                LiveSurfaceRead::Update(update) => break update,
+                LiveSurfaceRead::NoFrame => continue,
+                other => panic!("expected color-only surface update, got {other:?}"),
+            }
+        };
+        assert_eq!(update.kind, SurfaceUpdateKind::Patch);
+        assert_eq!(update.patch_kind, Some(protocol::PatchKind::ColorOnly));
+        assert_eq!(update.row_updates, Vec::new());
+        let update_colors = update.colors.clone().expect("color-only colors");
+        assert_eq!(update_colors.cursor_rgba, 0xff00_ffff);
+        assert!(update_colors.cursor_rgba_set);
+        assert_eq!(update_colors.palette_rgba.get(1), Some(&0x112233ff));
+
+        let updated_text = state
+            .render_surface_update(&update)
+            .expect("render color-only update");
+        assert_eq!(updated_text, initial_text);
+        assert_eq!(Some(updated_text), state.cached_surface_text("pane-1"));
+        assert_eq!(state.surfaces[0].colors, update_colors);
+
+        let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
+        assert_eq!(decoded.surfaces[0].colors, update_colors);
+        assert_eq!(
+            decoded.cached_surface_text("pane-1"),
+            state.cached_surface_text("pane-1")
+        );
+
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
     #[test]
     fn live_attach_reports_mouse_out_of_bounds_with_error_frame() {
         let socket_path = test_socket_path();
