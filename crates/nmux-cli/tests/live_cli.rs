@@ -1414,7 +1414,7 @@ fn test_runtime_dir() -> PathBuf {
 }
 
 #[test]
-fn live_cli_warns_when_resize_request_conflicts_with_manual_policy() {
+fn live_cli_commits_explicit_resize_with_manual_policy() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
@@ -1463,8 +1463,8 @@ fn live_cli_warns_when_resize_request_conflicts_with_manual_policy() {
 
     let stderr = String::from_utf8_lossy(&client.stderr);
     assert!(
-        stderr.contains("nmux: resize request ignored by manual resize policy"),
-        "missing resize policy warning:\n{stderr}"
+        !stderr.contains("resize request ignored by manual resize policy"),
+        "unexpected resize policy warning:\n{stderr}"
     );
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -1472,8 +1472,8 @@ fn live_cli_warns_when_resize_request_conflicts_with_manual_policy() {
         "missing manual resize policy summary:\n{stdout}"
     );
     assert!(
-        !stdout.contains("size=100x30"),
-        "manual policy should not publish committed resize:\n{stdout}"
+        stdout.contains("session=local tab=tab-1 pane=pane-1 size=100x30 resize=manual"),
+        "manual policy should allow explicit user-command resize:\n{stdout}"
     );
 }
 

@@ -1324,6 +1324,24 @@ pub fn send_resize_intent_with_sequence(
     cols: u32,
     rows: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    send_resize_intent_with_reason_and_sequence(
+        stream,
+        sequence,
+        pane_id,
+        cols,
+        rows,
+        protocol::ResizeReason::FrontendViewport,
+    )
+}
+
+pub fn send_resize_intent_with_reason_and_sequence(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    cols: u32,
+    rows: u32,
+    reason: protocol::ResizeReason,
+) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().resize_intent_frame(
         "local-client",
         sequence.next_envelope_seq(),
@@ -1331,7 +1349,7 @@ pub fn send_resize_intent_with_sequence(
         pane_id,
         cols,
         rows,
-        protocol::ResizeReason::FrontendViewport,
+        reason,
     );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
@@ -6844,7 +6862,30 @@ mod tests {
         let mouse = input_summary_from_frame(&mouse_frame).expect("mouse input");
         assert_eq!(key.input_seq, 1);
         assert_eq!(resize.cols, 100);
+        assert_eq!(resize.reason, protocol::ResizeReason::FrontendViewport);
         assert_eq!(mouse.input_seq, 2);
+    }
+
+    #[test]
+    fn resize_intent_sequence_can_mark_user_command_reason() {
+        let (mut client, mut server) = UnixStream::pair().expect("socket pair");
+        let mut sequence = ClientFrameSequence::default();
+
+        send_resize_intent_with_reason_and_sequence(
+            &mut client,
+            &mut sequence,
+            "pane-1",
+            100,
+            40,
+            protocol::ResizeReason::UserCommand,
+        )
+        .expect("send resize");
+
+        let resize_frame = wire::read_default_frame(&mut server).expect("read resize");
+        let resize = resize_intent_from_frame(&resize_frame).expect("resize intent");
+        assert_eq!(resize.cols, 100);
+        assert_eq!(resize.rows, 40);
+        assert_eq!(resize.reason, protocol::ResizeReason::UserCommand);
     }
 
     #[test]

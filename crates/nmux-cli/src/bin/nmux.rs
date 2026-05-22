@@ -120,7 +120,6 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             .cached_surface_metadata(&rendered.workspace.pane_id)
             .unwrap_or_default();
     }
-    warn_if_resize_intent_conflicts_with_policy(args.live_resize, rendered.workspace.resize_policy);
     let mut current_workspace = rendered.workspace.clone();
     let mut current_surface_metadata = rendered.surface_metadata.clone();
     let mut current_surface_text = rendered
@@ -159,20 +158,22 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
         if options.request.mode == AttachMode::ReadWrite {
             if let Some((cols, rows)) = args.live_resize {
-                local::send_resize_intent_with_sequence(
+                local::send_resize_intent_with_reason_and_sequence(
                     &mut stream,
                     &mut client_sequence,
                     "pane-1",
                     cols,
                     rows,
+                    protocol::ResizeReason::UserCommand,
                 )?;
             } else if let Some((cols, rows)) = sigwinch_resize.next_resize()? {
-                local::send_resize_intent_with_sequence(
+                local::send_resize_intent_with_reason_and_sequence(
                     &mut stream,
                     &mut client_sequence,
                     "pane-1",
                     cols,
                     rows,
+                    protocol::ResizeReason::FrontendViewport,
                 )?;
             }
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
@@ -318,15 +319,6 @@ fn flush_stdout() -> io::Result<()> {
     io::stdout().flush()
 }
 
-fn warn_if_resize_intent_conflicts_with_policy(
-    live_resize: Option<(u32, u32)>,
-    resize_policy: protocol::ResizePolicy,
-) {
-    if let Some(message) = resize_policy_warning(live_resize, resize_policy) {
-        eprintln!("{message}");
-    }
-}
-
 fn warn_if_interim_surface_fidelity_is_visible(stdin_bytes: bool) {
     if interim_surface_fidelity_warning_needed(stdin_bytes, stdin_is_tty(), stdout_is_tty()) {
         eprintln!("{}", INTERIM_SURFACE_FIDELITY_WARNING);
@@ -341,14 +333,6 @@ fn interim_surface_fidelity_warning_needed(
     stdout_is_tty: bool,
 ) -> bool {
     stdin_bytes && stdin_is_tty && stdout_is_tty
-}
-
-fn resize_policy_warning(
-    live_resize: Option<(u32, u32)>,
-    resize_policy: protocol::ResizePolicy,
-) -> Option<&'static str> {
-    (live_resize.is_some() && resize_policy == protocol::ResizePolicy::Manual)
-        .then_some("nmux: resize request ignored by manual resize policy")
 }
 
 fn save_live_state(
@@ -1548,8 +1532,7 @@ mod tests {
         interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
         parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
         raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        resize_policy_warning, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args,
@@ -2255,22 +2238,6 @@ mod tests {
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));
         assert!(usage.contains("interim text surface"));
-    }
-
-    #[test]
-    fn resize_policy_warning_only_applies_to_manual_policy_with_resize_request() {
-        assert_eq!(
-            resize_policy_warning(None, nmux_proto::protocol::ResizePolicy::Manual),
-            None
-        );
-        assert_eq!(
-            resize_policy_warning(Some((100, 30)), nmux_proto::protocol::ResizePolicy::Fixed),
-            None
-        );
-        assert_eq!(
-            resize_policy_warning(Some((100, 30)), nmux_proto::protocol::ResizePolicy::Manual),
-            Some("nmux: resize request ignored by manual resize policy")
-        );
     }
 
     #[test]

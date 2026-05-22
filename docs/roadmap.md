@@ -73,7 +73,7 @@ Done:
 - `nmux --help` and `nmuxd --help` include runnable local one-shot and live examples.
 - The client flushes rendered output after live updates and reports local Ctrl-] detach on stderr.
 - The client reports stdin EOF and live server socket close reasons on stderr for unbounded live exits.
-- The client warns when an explicit live resize request conflicts with daemon-published `manual` resize policy.
+- Explicit live `--cols`/`--rows` requests are sent as `UserCommand` resize intents, while automatic terminal viewport changes remain `FrontendViewport` intents.
 - `nmux --help` calls out that the current renderer uses an interim text surface, not a VT-correct terminal emulator.
 - Interactive TTY byte mode warns once on stderr that the interim text surface lacks full VT fidelity; scripted and piped runs stay quiet.
 - Live-only frontend flags now fail fast outside `--live` instead of being silently ignored, and `--follow --live` is rejected as an ambiguous client mode.
@@ -294,7 +294,7 @@ Exit evidence:
 - Runnable docs and help output cover the expected live attach workflows.
 - Tests cover any changed user-visible terminal output behavior.
 
-Status: Done. M11 kept the local frontend prototype honest while making live attach easier to use. The client now flushes live and redraw output after render updates; reports Ctrl-] detach, stdin EOF, and live server close reasons on stderr; warns when explicit live resize requests conflict with daemon-published `manual` resize policy; calls out interim text-surface and non-VT-correct renderer limitations in help and interactive byte mode; rejects live-only flags outside `--live`; renders requested initial scrollback context before streaming updates, including the initial redraw paint; uses the alternate screen for interactive TTY redraw and restores it on exit; keeps the current workspace summary visible in redraw mode; and includes runnable one-shot and live examples in help output. Unit and CLI integration tests cover the changed user-visible terminal output behavior, and `nix develop path:$PWD -c make check` is the full verification gate.
+Status: Done. M11 kept the local frontend prototype honest while making live attach easier to use. The client now flushes live and redraw output after render updates; reports Ctrl-] detach, stdin EOF, and live server close reasons on stderr; sends explicit live resize requests as user-command resize intents while leaving automatic terminal viewport changes policy-gated as frontend viewport intents; calls out interim text-surface and non-VT-correct renderer limitations in help and interactive byte mode; rejects live-only flags outside `--live`; renders requested initial scrollback context before streaming updates, including the initial redraw paint; uses the alternate screen for interactive TTY redraw and restores it on exit; keeps the current workspace summary visible in redraw mode; and includes runnable one-shot and live examples in help output. Unit and CLI integration tests cover the changed user-visible terminal output behavior, and `nix develop path:$PWD -c make check` is the full verification gate.
 
 ### M12: Live Workspace Usability
 

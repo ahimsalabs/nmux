@@ -434,7 +434,7 @@ M11: terminal frontend polish [done]
   live and redraw output is explicitly flushed after render updates
   Ctrl-] detach reports a local detach status on stderr
   stdin EOF and live server socket close exits report status on stderr
-  explicit live resize requests warn when daemon-published manual policy will ignore them
+  explicit live resize requests are sent as user-command resize intents so daemon-published manual policy can accept them
   resize-only live clients can commit explicit ResizeIntent without sending pane input
   --live --no-input rejects explicit --cols/--rows before connecting because resize control requires a writable actor
   nmux --help and interactive TTY byte mode call out interim text surface / non-VT-correct renderer limitations
