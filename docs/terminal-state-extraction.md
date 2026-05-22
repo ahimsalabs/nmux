@@ -115,9 +115,10 @@ have tests proving:
 ## Current libghostty-vt Default-Enable Gate
 
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
-extraction, style-separated cell runs, wide-cell widths, cursor-only updates,
-cursor visibility and shape extraction, alternate-screen detection,
-resize/reflow, and styled backend-owned scrollback extraction through unit,
-session, and live CLI smoke coverage. It is not the default until the project
-deliberately accepts the native Zig/Ghostty build cost in normal development and
-CI.
+extraction, style-separated cell runs, basic SGR style flags, wide-cell widths,
+cursor-only updates, cursor visibility/shape extraction, backend-observable
+cursor blink state, alternate-screen entry/restoration, resize/reflow, styled
+backend-owned scrollback extraction, and safe-API mode tracking for bracketed
+paste, mouse tracking, and application keypad mode through unit, session, and
+live CLI smoke coverage. It is not the default until the project deliberately
+accepts the native Zig/Ghostty build cost in normal development and CI.
