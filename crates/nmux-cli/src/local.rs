@@ -6744,6 +6744,126 @@ mod tests {
         let _ = fs::remove_file(socket_path);
     }
 
+    #[test]
+    fn current_surface_attach_reports_focus_disabled_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let err = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                request: AttachRequest {
+                    actor_id: "writer".to_owned(),
+                    user_id: "local-user".to_owned(),
+                    display_name: "local".to_owned(),
+                    mode: AttachMode::ReadWrite,
+                    focused_pane_id: Some("pane-1".to_owned()),
+                    known_surfaces: vec![KnownSurfaceVersion {
+                        pane_id: "pane-1".to_owned(),
+                        version: 2,
+                    }],
+                },
+                input_text: None,
+                key_name: None,
+                key_modifiers: 0,
+                paste_text: None,
+                focus: Some(true),
+                mouse: None,
+                scrollback_start_line: 1,
+                scrollback_line_count: 2,
+                known_scrollback_version: 0,
+                connect_timeout: None,
+            },
+        )
+        .expect_err("focus input should report server error");
+        let host = server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("server error: input rejected: focus reporting is disabled"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !host
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn current_surface_attach_reports_mouse_disabled_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let err = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                request: AttachRequest {
+                    actor_id: "writer".to_owned(),
+                    user_id: "local-user".to_owned(),
+                    display_name: "local".to_owned(),
+                    mode: AttachMode::ReadWrite,
+                    focused_pane_id: Some("pane-1".to_owned()),
+                    known_surfaces: vec![KnownSurfaceVersion {
+                        pane_id: "pane-1".to_owned(),
+                        version: 2,
+                    }],
+                },
+                input_text: None,
+                key_name: None,
+                key_modifiers: 0,
+                paste_text: None,
+                focus: None,
+                mouse: Some(AttachMouseInput {
+                    row: 0,
+                    col: 0,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                }),
+                scrollback_start_line: 1,
+                scrollback_line_count: 2,
+                known_scrollback_version: 0,
+                connect_timeout: None,
+            },
+        )
+        .expect_err("mouse input should report server error");
+        let host = server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("server error: input rejected: mouse tracking is disabled"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !host
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
     #[cfg(feature = "libghostty-vt")]
     #[test]
     fn current_surface_attach_forwards_mouse_before_scrollback() {
