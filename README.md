@@ -15,7 +15,7 @@ The current implementation is a Rust workspace with:
 - `nmux-proto`, `nmux-core`, and `nmux-cli` crates;
 - ADRs under [docs/adr](docs/adr);
 - runnable notes in [docs/running.md](docs/running.md);
-- the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on live workspace usability.
+- the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on backend `libghostty-vt` extraction.
 
 ## Check
 
@@ -94,6 +94,6 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 
 Expected output includes `resize=active-client`.
 
-This is still a prototype. It has an interactive byte-streamed live path, but the default temporary text surface is not a VT-correct terminal emulator; ANSI styling, cursor motion, alternate screen, images, and grapheme/cell-width correctness are not complete in the default engine. Backend `libghostty-vt` extraction is available as an experimental opt-in engine for correctness work.
+This is still a prototype. It has an interactive byte-streamed live path, but the default temporary text surface is not a VT-correct terminal emulator; ANSI styling, cursor motion, alternate screen, images, and grapheme/cell-width correctness are not complete in the default engine. Backend `libghostty-vt` extraction is available as an experimental opt-in engine for correctness work. The opt-in engine now covers VT byte ingestion, cursor updates, alternate-screen detection, resize/reflow, backend-owned scrollback, style-separated row runs, cell widths, combining marks, palette-indexed SGR colors, mode-aware key encoding, and intentional omissions such as hyperlink IDs before nmux has a hyperlink table.
 The core now routes pane output through a daemon-owned terminal engine boundary so that interim behavior can be replaced without changing client-side state-sync semantics.
 `nmuxd --terminal-engine interim` makes the default engine explicit. `nmuxd --terminal-engine libghostty-vt` is available only in `--features libghostty-vt` builds; it is compile-checked and smoke-tested, but not yet the default because it pulls in the native Ghostty/Zig build path.
