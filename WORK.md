@@ -447,6 +447,7 @@ M12: live workspace usability [done]
   nmuxd live mode flags fail fast on ambiguous server modes and zero live counts
   live reattach with --state renders cached current surfaces instead of waiting for raw replay
   nmux client bounded live/follow iterations fail fast on zero counts
+  nmux attaches read-only by default unless an explicit input flag is provided
   explicit nmux input modes fail fast on conflicting --key/--stdin/--stdin-bytes/--no-input combinations
   nmux live loop timing and explicit resize dimensions fail fast on zero or out-of-range values
   nmux --state load/save failures include the state path before socket connection work

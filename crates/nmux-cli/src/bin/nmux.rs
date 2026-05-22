@@ -863,9 +863,17 @@ struct Args {
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
+    args_from_iter(std::env::args().skip(1))
+}
+
+fn args_from_iter<I, S>(args: I) -> Result<Args, Box<dyn std::error::Error>>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
     let mut help = false;
     let mut socket_path = local::default_socket_path();
-    let mut input_text = Some("a".to_owned());
+    let mut input_text = None;
     let mut key_name = None;
     let mut key_modifiers = 0;
     let mut paste_text = None;
@@ -895,7 +903,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut focus_set = false;
     let mut mouse_set = false;
     let mut no_input_set = false;
-    let mut args = std::env::args().skip(1);
+    let mut args = args.into_iter().map(Into::into);
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -1286,7 +1294,7 @@ Usage:
 Options:
   --socket PATH              Unix socket path
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
-  --key TEXT                 Text input to send for read-write attach
+  --key TEXT                 Text input to send; opts into read-write attach
   --key-name NAME            Send a supported named key in live mode
   --key-modifiers MODS       Modifiers for --key-name: shift,ctrl,alt,super
   --paste TEXT               Paste UTF-8 text through PasteInput
@@ -1311,10 +1319,12 @@ Options:
 
 Notes:
   Default socket: valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+  Without an explicit input flag, nmux attaches read-only.
   The current renderer uses an interim text surface, not a VT-correct terminal emulator.
 
 Examples:
-  nmux --no-input
+  nmux
+  nmux --key 'ping\n'
   nmux --live --iterations 2 --key 'ping\n'
   nmux --live --stdin-bytes --redraw
 "
@@ -1497,12 +1507,12 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FocusEvent, LiveUpdatePrintKind, LocalEcho, MouseEvent, initial_live_terminal_modes,
-        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        resize_policy_warning, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        FocusEvent, LiveUpdatePrintKind, LocalEcho, MouseEvent, args_from_iter,
+        initial_live_terminal_modes, interim_surface_fidelity_warning_needed,
+        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, raw_terminal_lflag, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, resize_policy_warning, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_positive_numeric_args,
     };
@@ -1636,6 +1646,23 @@ mod tests {
             initial_live_terminal_modes(None, &client_state, "missing"),
             local::TerminalModeSummary::default()
         );
+    }
+
+    #[test]
+    fn default_args_attach_read_only_without_implicit_input() {
+        let args = args_from_iter(std::iter::empty::<&str>()).expect("args");
+        assert_eq!(args.input_text, None);
+        assert_eq!(args.key_name, None);
+        assert_eq!(args.paste_text, None);
+        assert!(!args.stdin_input);
+        assert!(!args.stdin_bytes);
+        assert!(!args.live);
+    }
+
+    #[test]
+    fn explicit_key_args_opt_into_text_input() {
+        let args = args_from_iter(["--key", "ping\n"]).expect("args");
+        assert_eq!(args.input_text.as_deref(), Some("ping\n"));
     }
 
     #[test]

@@ -2193,7 +2193,6 @@ fn live_read_only_cli_observes_output_without_input() {
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--live",
-            "--no-input",
             "--iterations",
             "3",
             "--interval-ms",
@@ -2247,7 +2246,6 @@ fn live_read_only_cli_without_iterations_runs_until_server_closes() {
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--live",
-            "--no-input",
             "--interval-ms",
             "1000",
         ])
