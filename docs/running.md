@@ -174,9 +174,10 @@ printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socke
 For explicit live input events, `--paste TEXT`, `--focus gained|lost`, `--key-name NAME`, and `--mouse action:button:row:col` send structured input frames instead of raw text. Named keys include `enter`, `tab`, `backspace`, `escape`, `insert`, `delete`, `home`, `end`, `page-up`, `page-down`, `f1` through `f12`, `keypad-enter`, `keypad-0` through `keypad-9`, and `arrow-up|arrow-down|arrow-right|arrow-left`. `--key-modifiers MODS` can accompany `--key-name`; use `shift`, `ctrl`, `alt`, `super`, or a `+`/`,` combination such as `ctrl+shift`. Mouse actions are `press`, `release`, or `motion`; buttons are `none`, `left`, `middle`, `right`, `wheel-up`, or `wheel-down`; row and column are 1-based cells in the CLI and are converted to zero-based protocol coordinates. `--mouse-modifiers MODS` uses the same modifier names for mouse input. Focus, named-key, paste, and mouse forwarding are encoded by the daemon from daemon-owned pane modes rather than cached client mode state.
 
 If a structured input event is valid protocol but cannot be encoded by the
-active terminal engine, the daemon returns a live `Error` frame and the CLI
-prints the server-provided reason instead of reporting an ambiguous closed
-connection.
+active terminal engine, the daemon returns an `Error` frame and the CLI prints
+the server-provided reason instead of reporting an ambiguous closed connection.
+One-shot clients also check for an input error before requesting scrollback, so
+unsafe paste or encoding failures are reported directly.
 
 For read-only live observation, use `--no-input`:
 

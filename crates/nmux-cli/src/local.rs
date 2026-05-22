@@ -820,10 +820,16 @@ pub fn attach_with_client_options(
     let snapshot = attach_from_stream(&mut stream)?;
     if snapshot.surface.is_some() {
         if mode == AttachMode::ReadWrite {
+            let mut sent_input = false;
             if let Some(paste_text) = options.paste_text.as_deref() {
                 send_paste_input(&mut stream, "pane-1", paste_text)?;
+                sent_input = true;
             } else if let Some(input_text) = options.input_text.as_deref() {
                 send_key_input(&mut stream, "pane-1", input_text)?;
+                sent_input = true;
+            }
+            if sent_input {
+                read_optional_server_error_from_stream(&mut stream)?;
             }
         }
         send_scrollback_fetch(
@@ -1295,7 +1301,15 @@ pub fn read_scrollback_chunk_from_stream(
     stream: &mut UnixStream,
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
     let frame = wire::read_default_frame(stream)?;
-    scrollback_chunk_from_frame(&frame)
+    let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+    match envelope.body_type() {
+        protocol::EnvelopeBody::ScrollbackChunk => scrollback_chunk_from_frame(&frame),
+        protocol::EnvelopeBody::Error => {
+            let error = error_summary_from_frame(&frame)?;
+            Err(format!("server error: {}", error.message).into())
+        }
+        other => Err(format!("unexpected envelope body: {other:?}").into()),
+    }
 }
 
 pub fn read_surface_update_from_stream(
@@ -1319,6 +1333,61 @@ pub fn read_optional_surface_update_from_stream(
             Ok(None)
         }
         Err(err) => Err(err.into()),
+    }
+}
+
+fn read_optional_server_error_from_stream(
+    stream: &mut UnixStream,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let previous_timeout = match stream.read_timeout() {
+        Ok(timeout) => timeout,
+        Err(err) if socket_closed_error(&err) => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    if let Err(err) = stream.set_read_timeout(Some(Duration::from_millis(20))) {
+        if socket_closed_error(&err) {
+            return Ok(());
+        }
+        return Err(err.into());
+    }
+    let read_result = match wire::read_default_frame(stream) {
+        Ok(frame) => {
+            let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+            match envelope.body_type() {
+                protocol::EnvelopeBody::Error => {
+                    let error = error_summary_from_frame(&frame)?;
+                    Err(format!("server error: {}", error.message).into())
+                }
+                other => Err(
+                    format!("unexpected server frame before scrollback fetch: {other:?}").into(),
+                ),
+            }
+        }
+        Err(wire::WireError::Io(err))
+            if matches!(
+                err.kind(),
+                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ) =>
+        {
+            Ok(())
+        }
+        Err(wire::WireError::Io(err))
+            if matches!(
+                err.kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+            ) =>
+        {
+            Ok(())
+        }
+        Err(err) => Err(err.into()),
+    };
+    match (read_result, stream.set_read_timeout(previous_timeout)) {
+        (Err(err), _) => Err(err),
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(err)) if socket_closed_error(&err) => Ok(()),
+        (Ok(()), Err(err)) => Err(err.into()),
     }
 }
 
@@ -4190,6 +4259,45 @@ mod tests {
                 colors: TerminalColorSummary::default(),
                 lines: vec![scrollback_line(3, "pasted"), scrollback_line(4, "text")],
             })
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_with_client_options_reports_input_error_frames() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let err = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: None,
+                paste_text: Some("bad\x1b[201~paste".to_owned()),
+                ..AttachOptions::default()
+            },
+        )
+        .expect_err("unsafe paste should report server error");
+        let host = server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("server error: paste input contains a bracketed paste terminator"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !host
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
         );
 
         let _ = fs::remove_file(socket_path);
