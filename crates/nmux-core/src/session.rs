@@ -3618,6 +3618,70 @@ mod tests {
         assert_eq!(palette.get(1), 0x112233ff);
     }
 
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn ghostty_vt_palette_change_for_existing_styled_row_requires_full_refresh() {
+        let mut session = Session::initial();
+        if let Some(pane) = session.pane_mut("pane-1") {
+            pane.surface_lines.clear();
+            pane.surface_row_runs.clear();
+            pane.scrollback_lines.clear();
+            pane.scrollback_row_runs.clear();
+        }
+        let mut engines = crate::terminal::PaneTerminalEngines::new(
+            crate::terminal::TerminalEngineKind::LibghosttyVt,
+        );
+
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"\x1b[38;5;1mpalette-red\x1b[0m",
+            engines.engine_mut("pane-1")
+        ));
+        let base_version = session.surface_version("pane-1").expect("surface version");
+
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"\x1b]4;1;#112233\x1b\\",
+            engines.engine_mut("pane-1")
+        ));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::FullRefreshRequired),
+            "palette changes that alter existing row styles need a full snapshot"
+        );
+
+        let patch_frame = session.pane_surface_patch_frame("conn-1", 9, base_version);
+        let envelope =
+            protocol::size_prefixed_root_as_envelope(&patch_frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::FullRefreshRequired);
+        assert_eq!(patch.row_updates().expect("row updates").len(), 0);
+
+        let snapshot_frame = session.pane_surface_frame("conn-1", 10);
+        let envelope =
+            protocol::size_prefixed_root_as_envelope(&snapshot_frame).expect("valid envelope");
+        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        let rows = snapshot.rows_data().expect("rows");
+        let styled_run = (0..rows.len())
+            .flat_map(|row_index| {
+                let row = rows.get(row_index);
+                let runs = row.runs().expect("runs");
+                (0..runs.len()).map(move |run_index| runs.get(run_index))
+            })
+            .find(|run| {
+                run.text_utf8()
+                    .is_some_and(|text| text.contains("palette-red"))
+            })
+            .expect("palette styled run");
+        let styles = snapshot.styles().expect("styles");
+        let style = styles.get(styled_run.style_id() as usize);
+        assert_eq!(
+            style.fg_rgba(),
+            0x112233ff,
+            "full snapshot should carry the updated style table entry"
+        );
+    }
+
     #[test]
     fn color_state_change_with_row_changes_requires_full_refresh_patch() {
         struct ColorAndRowsEngine;

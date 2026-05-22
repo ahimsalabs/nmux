@@ -1802,6 +1802,45 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_updates_palette_indexed_style_after_palette_override() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let styled = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b[38;5;1mpalette-red\x1b[0m",
+            )
+            .expect("styled update");
+
+        let palette_override = engine
+            .apply_output(
+                terminal_input_from_update(&styled),
+                b"\x1b]4;1;#112233\x1b\\",
+            )
+            .expect("palette override update");
+
+        assert_eq!(palette_override.surface_lines, styled.surface_lines);
+        assert_eq!(
+            palette_override.colors.palette_rgba.get(1).copied(),
+            Some(0x112233ff)
+        );
+        let styled_run = palette_override
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("palette-red"))
+            .expect("palette styled run");
+        let style = palette_override
+            .styles
+            .get(styled_run.style_id as usize)
+            .expect("palette style");
+        assert_eq!(
+            style.fg_rgba, 0x112233ff,
+            "palette-indexed style should resolve through the new palette color"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_safe_api_has_pwd_accessor_but_does_not_populate_osc7() {
         use libghostty_vt::{Terminal, TerminalOptions};
 

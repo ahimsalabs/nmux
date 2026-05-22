@@ -135,8 +135,9 @@ only after the backend extraction proves the exact shape needed.
   backend-observed default foreground/background colors, the active palette,
   palette overrides, and explicit cursor color state through surface snapshots,
   color-only surface patches, scrollback chunks, and cached client state.
-  Incremental palette diffs remain withheld until renderer requirements are
-  clearer.
+  Palette overrides that alter existing row style-table entries force full
+  surface refreshes because incremental palette diffs remain withheld until
+  renderer requirements are clearer.
 - Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, and
   backend row/cell hyperlink presence is carried as bit 0 in `CellRun.flags`.
   nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
@@ -178,7 +179,7 @@ The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, basic SGR style flags, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
 render-state default colors/palette, palette overrides, explicit cursor color,
-terminal color state and color-only patches, alternate-screen entry/restoration with alternate
+palette-indexed style refreshes after palette overrides, terminal color state and color-only patches, alternate-screen entry/restoration with alternate
 scrollback omission, terminal title and OSC 7 working-directory metadata
 extraction, OSC 133 row semantic prompt state, per-run semantic content,
 resize/reflow, styled backend-owned scrollback extraction, structured main
