@@ -6640,6 +6640,177 @@ mod tests {
     }
 
     #[test]
+    fn current_surface_attach_forwards_named_key_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                request: AttachRequest {
+                    actor_id: "writer".to_owned(),
+                    user_id: "local-user".to_owned(),
+                    display_name: "local".to_owned(),
+                    mode: AttachMode::ReadWrite,
+                    focused_pane_id: Some("pane-1".to_owned()),
+                    known_surfaces: vec![KnownSurfaceVersion {
+                        pane_id: "pane-1".to_owned(),
+                        version: 2,
+                    }],
+                },
+                input_text: None,
+                key_name: Some("delete".to_owned()),
+                key_modifiers: 0,
+                paste_text: None,
+                focus: None,
+                mouse: None,
+                scrollback_start_line: 1,
+                scrollback_line_count: 2,
+                known_scrollback_version: 0,
+                connect_timeout: None,
+            },
+        )
+        .expect("attach snapshot");
+        let host = server.join().expect("server thread");
+
+        assert_eq!(snapshot.surface, None);
+        assert!(snapshot.scrollback.is_some());
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"\x1b[3~".to_vec(),
+        }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn current_surface_attach_forwards_focus_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        session.tabs[0].root.modes.focus_reporting = true;
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                request: AttachRequest {
+                    actor_id: "writer".to_owned(),
+                    user_id: "local-user".to_owned(),
+                    display_name: "local".to_owned(),
+                    mode: AttachMode::ReadWrite,
+                    focused_pane_id: Some("pane-1".to_owned()),
+                    known_surfaces: vec![KnownSurfaceVersion {
+                        pane_id: "pane-1".to_owned(),
+                        version: 2,
+                    }],
+                },
+                input_text: None,
+                key_name: None,
+                key_modifiers: 0,
+                paste_text: None,
+                focus: Some(true),
+                mouse: None,
+                scrollback_start_line: 1,
+                scrollback_line_count: 2,
+                known_scrollback_version: 0,
+                connect_timeout: None,
+            },
+        )
+        .expect("attach snapshot");
+        let host = server.join().expect("server thread");
+
+        assert_eq!(snapshot.surface, None);
+        assert!(snapshot.scrollback.is_some());
+        assert!(host.events().contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"\x1b[I".to_vec(),
+        }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn current_surface_attach_forwards_mouse_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![b"\x1b[?1000h\x1b[?1006h".to_vec()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            serve_n_with_host_and_terminal_engine_kind(
+                &listener,
+                &mut session,
+                &mut host,
+                1,
+                TerminalEngineKind::LibghosttyVt,
+            )
+            .expect("serve one");
+            host
+        });
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                request: AttachRequest {
+                    actor_id: "writer".to_owned(),
+                    user_id: "local-user".to_owned(),
+                    display_name: "local".to_owned(),
+                    mode: AttachMode::ReadWrite,
+                    focused_pane_id: Some("pane-1".to_owned()),
+                    known_surfaces: vec![KnownSurfaceVersion {
+                        pane_id: "pane-1".to_owned(),
+                        version: 3,
+                    }],
+                },
+                input_text: None,
+                key_name: None,
+                key_modifiers: 0,
+                paste_text: None,
+                focus: None,
+                mouse: Some(AttachMouseInput {
+                    row: 0,
+                    col: 0,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                }),
+                scrollback_start_line: 1,
+                scrollback_line_count: 2,
+                known_scrollback_version: 0,
+                connect_timeout: None,
+            },
+        )
+        .expect("attach snapshot");
+        let host = server.join().expect("server thread");
+
+        assert_eq!(snapshot.surface, None);
+        assert!(snapshot.scrollback.is_some());
+        assert!(host.events.contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"\x1b[<0;1;1M".to_vec(),
+        }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn attach_request_round_trips_read_only_mode() {
         let request = AttachRequest {
             actor_id: "spectator".to_owned(),

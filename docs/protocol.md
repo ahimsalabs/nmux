@@ -14,7 +14,8 @@ M0 defines the smallest useful state-sync envelope:
 - `PaneSurfacePatch` for row, cursor, or terminal-mode updates against a known
   surface version.
 - `ScrollbackFetch` and `ScrollbackChunk` for pane-scoped history ranges.
-- `InputEvent` for key, raw byte, mouse, and paste input from an actor to a pane.
+- `InputEvent` for key, raw byte, paste, focus, and mouse input from an actor
+  to a pane.
 - `ResizeIntent` for client-originated size requests.
 - `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time.
 - `Error` for protocol-level failures.
