@@ -1778,6 +1778,83 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
 }
 
 #[test]
+fn live_current_surface_reattach_reports_focus_rejection() {
+    let socket_path = test_socket_path();
+    let state_path = socket_path.with_extension("state");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "2",
+            "--command",
+            "printf 'ready\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let first_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run first nmux");
+
+    assert!(
+        first_client.status.success(),
+        "first nmux failed: {}",
+        String::from_utf8_lossy(&first_client.stderr)
+    );
+
+    let second_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--focus",
+            "gained",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run second nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    assert!(
+        !second_client.status.success(),
+        "second nmux unexpectedly succeeded"
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stderr = String::from_utf8_lossy(&second_client.stderr);
+    assert!(
+        stderr.contains("nmux: live server error: input rejected: focus reporting is disabled"),
+        "missing current-surface focus rejection:\n{stderr}"
+    );
+}
+
+#[test]
 fn live_state_file_is_scoped_to_socket_identity() {
     let socket_path = test_socket_path();
     let state_path = socket_path.with_extension("state");
