@@ -194,7 +194,7 @@ feature. The dev shell pins Zig 0.15 because the Ghostty commit used by
 
 The opt-in engine keeps PTY bytes in `nmuxd` and maps Ghostty state back into
 nmux snapshots, patches, and scrollback chunks. Current coverage includes cursor
-position/visibility/shape, alternate-screen entry/restoration with alternate
+position/visibility/shape/blink, alternate-screen entry/restoration with alternate
 scrollback omission, resize/reflow, style-separated visible rows, styled
 scrollback rows, cell widths, combining marks, emoji ZWJ clusters, basic SGR
 style flags, underline color, palette-indexed colors, render-state default

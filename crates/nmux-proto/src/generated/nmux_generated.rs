@@ -2175,6 +2175,7 @@ impl<'a> CursorState<'a> {
   pub const VT_COL: ::flatbuffers::VOffsetT = 6;
   pub const VT_VISIBLE: ::flatbuffers::VOffsetT = 8;
   pub const VT_SHAPE: ::flatbuffers::VOffsetT = 10;
+  pub const VT_BLINKING: ::flatbuffers::VOffsetT = 12;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2188,6 +2189,7 @@ impl<'a> CursorState<'a> {
     let mut builder = CursorStateBuilder::new(_fbb);
     builder.add_col(args.col);
     builder.add_row(args.row);
+    builder.add_blinking(args.blinking);
     builder.add_shape(args.shape);
     builder.add_visible(args.visible);
     builder.finish()
@@ -2222,6 +2224,13 @@ impl<'a> CursorState<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<CursorShape>(CursorState::VT_SHAPE, Some(CursorShape::Block)).unwrap()}
   }
+  #[inline]
+  pub fn blinking(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(CursorState::VT_BLINKING, Some(true)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for CursorState<'_> {
@@ -2234,6 +2243,7 @@ impl ::flatbuffers::Verifiable for CursorState<'_> {
      .visit_field::<u32>("col", Self::VT_COL, false)?
      .visit_field::<bool>("visible", Self::VT_VISIBLE, false)?
      .visit_field::<CursorShape>("shape", Self::VT_SHAPE, false)?
+     .visit_field::<bool>("blinking", Self::VT_BLINKING, false)?
      .finish();
     Ok(())
   }
@@ -2243,6 +2253,7 @@ pub struct CursorStateArgs {
     pub col: u32,
     pub visible: bool,
     pub shape: CursorShape,
+    pub blinking: bool,
 }
 impl<'a> Default for CursorStateArgs {
   #[inline]
@@ -2252,6 +2263,7 @@ impl<'a> Default for CursorStateArgs {
       col: 0,
       visible: true,
       shape: CursorShape::Block,
+      blinking: true,
     }
   }
 }
@@ -2278,6 +2290,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CursorStateBuilder<'a, 'b, A>
     self.fbb_.push_slot::<CursorShape>(CursorState::VT_SHAPE, shape, CursorShape::Block);
   }
   #[inline]
+  pub fn add_blinking(&mut self, blinking: bool) {
+    self.fbb_.push_slot::<bool>(CursorState::VT_BLINKING, blinking, true);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> CursorStateBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     CursorStateBuilder {
@@ -2299,6 +2315,7 @@ impl ::core::fmt::Debug for CursorState<'_> {
       ds.field("col", &self.col());
       ds.field("visible", &self.visible());
       ds.field("shape", &self.shape());
+      ds.field("blinking", &self.blinking());
       ds.finish()
   }
 }

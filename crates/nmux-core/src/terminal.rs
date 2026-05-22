@@ -18,6 +18,7 @@ pub struct TerminalCursor {
     pub col: u32,
     pub visible: bool,
     pub shape: protocol::CursorShape,
+    pub blinking: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,6 +220,7 @@ fn interim_text_update(
         col: 0,
         visible: previous_cursor.visible,
         shape: previous_cursor.shape,
+        blinking: previous_cursor.blinking,
     };
 
     let mut update = TerminalUpdate::plain(
@@ -605,6 +607,7 @@ mod ghostty_vt {
             return Some(TerminalCursor {
                 visible: false,
                 shape,
+                blinking: snapshot.cursor_blinking().ok()?,
                 ..previous
             });
         };
@@ -614,6 +617,7 @@ mod ghostty_vt {
             col: u32::from(viewport.x),
             visible: snapshot.cursor_visible().ok()?,
             shape,
+            blinking: snapshot.cursor_blinking().ok()?,
         })
     }
 
@@ -676,6 +680,7 @@ mod tests {
                 col: 0,
                 visible: true,
                 shape: protocol::CursorShape::Block,
+                blinking: true,
             },
             modes: TerminalModes::default(),
             surface_lines,
@@ -711,6 +716,7 @@ mod tests {
                 col: 0,
                 visible: true,
                 shape: protocol::CursorShape::Block,
+                blinking: true,
             },
             modes: TerminalModes::default(),
             surface_lines: &[],
@@ -736,7 +742,8 @@ mod tests {
                 row: 2,
                 col: 0,
                 visible: true,
-                shape: protocol::CursorShape::Block
+                shape: protocol::CursorShape::Block,
+                blinking: true
             }
         );
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
@@ -756,6 +763,7 @@ mod tests {
                 col: 0,
                 visible: false,
                 shape: protocol::CursorShape::Beam,
+                blinking: true,
             },
             modes: TerminalModes::default(),
             surface_lines: &[],
@@ -780,7 +788,8 @@ mod tests {
                 row: 1,
                 col: 0,
                 visible: false,
-                shape: protocol::CursorShape::Beam
+                shape: protocol::CursorShape::Beam,
+                blinking: true
             }
         );
     }
@@ -799,6 +808,7 @@ mod tests {
                 col: 0,
                 visible: true,
                 shape: protocol::CursorShape::Underline,
+                blinking: true,
             },
             modes: TerminalModes::default(),
             surface_lines: &scrollback_lines,
@@ -819,7 +829,8 @@ mod tests {
                 row: 1,
                 col: 0,
                 visible: true,
-                shape: protocol::CursorShape::Underline
+                shape: protocol::CursorShape::Underline,
+                blinking: true
             }
         );
     }
@@ -1671,7 +1682,8 @@ mod tests {
                 row: 0,
                 col: 2,
                 visible: true,
-                shape: protocol::CursorShape::Block
+                shape: protocol::CursorShape::Block,
+                blinking: false
             }
         );
     }
@@ -1699,6 +1711,7 @@ mod tests {
                 col: first.cursor.col,
                 visible: false,
                 shape: protocol::CursorShape::Beam,
+                blinking: first.cursor.blinking,
             }
         );
 
@@ -1722,13 +1735,41 @@ mod tests {
                 col: first.cursor.col,
                 visible: true,
                 shape: protocol::CursorShape::Underline,
+                blinking: first.cursor.blinking,
             }
         );
     }
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
-    fn libghostty_vt_render_state_tracks_cursor_blinking_without_protocol_fields() {
+    fn libghostty_vt_engine_emits_cursor_only_patch_for_cursor_blinking() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let first = engine
+            .apply_output(terminal_input(2, &empty, &empty), b"alpha\r\nbeta")
+            .expect("initial terminal update");
+
+        assert!(!first.cursor.blinking);
+
+        let blink_on = engine
+            .apply_output(terminal_input_from_update(&first), b"\x1b[?12h")
+            .expect("cursor blink update");
+
+        assert_eq!(blink_on.patch_kind, protocol::PatchKind::CursorOnly);
+        assert_eq!(blink_on.surface_lines, first.surface_lines);
+        assert_eq!(blink_on.scrollback_lines, first.scrollback_lines);
+        assert_eq!(
+            blink_on.cursor,
+            TerminalCursor {
+                blinking: true,
+                ..first.cursor
+            }
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_render_state_tracks_cursor_blinking() {
         use libghostty_vt::{RenderState, Terminal, TerminalOptions};
 
         let mut terminal = Terminal::new(TerminalOptions {

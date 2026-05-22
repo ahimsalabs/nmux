@@ -96,6 +96,7 @@ pub struct Cursor {
     pub col: u32,
     pub visible: bool,
     pub shape: protocol::CursorShape,
+    pub blinking: bool,
 }
 
 impl Session {
@@ -123,6 +124,7 @@ impl Session {
                         col: 0,
                         visible: true,
                         shape: protocol::CursorShape::Block,
+                        blinking: true,
                     },
                     modes: TerminalModes::default(),
                     styles: vec![PaneStyle::default()],
@@ -469,6 +471,7 @@ impl Session {
                 col: surface.cursor.col,
                 visible: surface.cursor.visible,
                 shape: surface.cursor.shape,
+                blinking: surface.cursor.blinking,
             },
         );
         let modes = build_terminal_modes(&mut builder, surface.modes);
@@ -562,6 +565,7 @@ impl Session {
                 col: surface.cursor.col,
                 visible: surface.cursor.visible,
                 shape: surface.cursor.shape,
+                blinking: surface.cursor.blinking,
             },
         );
         let modes = build_terminal_modes(&mut builder, surface.modes);
@@ -941,6 +945,7 @@ impl From<&Cursor> for TerminalCursor {
             col: cursor.col,
             visible: cursor.visible,
             shape: cursor.shape,
+            blinking: cursor.blinking,
         }
     }
 }
@@ -952,6 +957,7 @@ impl From<TerminalCursor> for Cursor {
             col: cursor.col,
             visible: cursor.visible,
             shape: cursor.shape,
+            blinking: cursor.blinking,
         }
     }
 }
@@ -1271,6 +1277,7 @@ mod tests {
         assert_eq!(cursor.col(), 0);
         assert!(cursor.visible());
         assert_eq!(cursor.shape(), protocol::CursorShape::Block);
+        assert!(cursor.blinking());
         let modes = snapshot.modes().expect("modes");
         assert!(!modes.bracketed_paste());
         assert!(!modes.mouse_tracking());
@@ -1307,6 +1314,7 @@ mod tests {
             col: 4,
             visible: false,
             shape: protocol::CursorShape::Beam,
+            blinking: true,
         };
         second.root.surface_lines = vec!["pane two".to_owned()];
         session.tabs.push(second);
@@ -1332,6 +1340,7 @@ mod tests {
         assert_eq!(cursor.col(), 4);
         assert!(!cursor.visible());
         assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
+        assert!(cursor.blinking());
         let rows = snapshot.rows_data().expect("rows");
         assert_eq!(rows.len(), 1);
         assert_eq!(
@@ -1406,6 +1415,7 @@ mod tests {
         let cursor = patch.cursor().expect("cursor");
         assert_eq!(cursor.row(), 1);
         assert_eq!(cursor.col(), 0);
+        assert!(cursor.blinking());
         let modes = patch.modes().expect("modes");
         assert!(!modes.bracketed_paste());
         assert!(!modes.focus_reporting());
@@ -1434,6 +1444,7 @@ mod tests {
             col: 8,
             visible: true,
             shape: protocol::CursorShape::Underline,
+            blinking: true,
         };
         session.tabs.push(second);
 
@@ -1457,6 +1468,7 @@ mod tests {
         assert_eq!(cursor.row(), 1);
         assert_eq!(cursor.col(), 8);
         assert_eq!(cursor.shape(), protocol::CursorShape::Underline);
+        assert!(cursor.blinking());
     }
 
     #[test]
@@ -1797,7 +1809,8 @@ mod tests {
                         row: 1,
                         col: 0,
                         visible: true,
-                        shape: protocol::CursorShape::Block
+                        shape: protocol::CursorShape::Block,
+                        blinking: true
                     }
                 );
                 assert_eq!(input.surface_lines.len(), 2);
@@ -1811,6 +1824,7 @@ mod tests {
                         col: 8,
                         visible: false,
                         shape: protocol::CursorShape::Beam,
+                        blinking: true,
                     },
                     vec!["engine surface".to_owned()],
                     vec!["engine scrollback".to_owned()],
@@ -1847,7 +1861,8 @@ mod tests {
                 row: 7,
                 col: 8,
                 visible: false,
-                shape: protocol::CursorShape::Beam
+                shape: protocol::CursorShape::Beam,
+                blinking: true
             }
         );
         let frame = session.pane_surface_frame("conn-1", 1);
@@ -1855,6 +1870,7 @@ mod tests {
         let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
         let cursor = snapshot.cursor().expect("cursor");
         assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
+        assert!(cursor.blinking());
         assert_eq!(snapshot.surface(), protocol::SurfaceKind::Alternate);
         assert_eq!(scrollback.lines, vec!["engine scrollback".to_owned()]);
     }
@@ -1892,6 +1908,7 @@ mod tests {
                         col: 4,
                         visible: true,
                         shape: protocol::CursorShape::Underline,
+                        blinking: true,
                     },
                     vec!["resized surface".to_owned()],
                     vec!["resized scrollback".to_owned()],
@@ -1916,7 +1933,8 @@ mod tests {
                 row: 3,
                 col: 4,
                 visible: true,
-                shape: protocol::CursorShape::Underline
+                shape: protocol::CursorShape::Underline,
+                blinking: true
             }
         );
         assert_eq!(surface.lines, vec!["resized surface".to_owned()]);
@@ -1952,6 +1970,7 @@ mod tests {
                                 col: 5,
                                 visible: true,
                                 shape: input.cursor.shape,
+                                blinking: input.cursor.blinking,
                             },
                             vec!["first".to_owned()],
                             vec!["first".to_owned()],
@@ -1973,6 +1992,7 @@ mod tests {
                                 col: 6,
                                 visible: true,
                                 shape: protocol::CursorShape::Beam,
+                                blinking: input.cursor.blinking,
                             },
                             vec!["first resized".to_owned(), "second".to_owned()],
                             vec!["first".to_owned(), "second".to_owned()],
@@ -2005,6 +2025,7 @@ mod tests {
                         col: 5,
                         visible: true,
                         shape: input.cursor.shape,
+                        blinking: input.cursor.blinking,
                     },
                     vec!["first resized".to_owned()],
                     input.scrollback_lines.to_vec(),
@@ -2031,7 +2052,8 @@ mod tests {
                 row: 1,
                 col: 6,
                 visible: true,
-                shape: protocol::CursorShape::Beam
+                shape: protocol::CursorShape::Beam,
+                blinking: true
             }
         );
         assert_eq!(
@@ -2063,6 +2085,7 @@ mod tests {
                         col: 12,
                         visible: true,
                         shape: protocol::CursorShape::Beam,
+                        blinking: input.cursor.blinking,
                     },
                     input.surface_lines.to_vec(),
                     input.scrollback_lines.to_vec(),
@@ -2100,6 +2123,7 @@ mod tests {
         assert_eq!(cursor.row(), 1);
         assert_eq!(cursor.col(), 12);
         assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
+        assert!(cursor.blinking());
     }
 
     #[test]

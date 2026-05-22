@@ -24,7 +24,7 @@ The current terminal engine boundary owns:
 
 - pane identity;
 - old and new pane size;
-- cursor state;
+- cursor state, including visibility, shape, and blinking;
 - visible surface rows;
 - scrollback rows;
 - row runs, cell widths, and the pane style table;
@@ -81,9 +81,8 @@ only after the backend extraction proves the exact shape needed.
   Its key encoder can also emit application-keypad sequences when the option is
   explicit, its focus helper can encode focus gained/lost events, and its paste
   validator rejects newline and bracketed paste terminator injection sequences.
-  Its render state exposes cursor blink state, but nmux has no cursor-metadata
-  fields yet. Terminal-derived keypad input forwarding, paste forwarding, mouse
-  input forwarding, and focus forwarding still need protocol decisions.
+  Terminal-derived keypad input forwarding, paste forwarding, mouse input
+  forwarding, and focus forwarding still need protocol decisions.
 - Terminal metadata: `libghostty-vt` exposes OSC 2 title state through the safe
   API, but nmux has no title metadata field yet. OSC 7 working-directory state
   remains unproven in the current backend path and should stay withheld until
@@ -138,8 +137,8 @@ have tests proving:
 
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, basic SGR style flags, underline color,
-wide-cell widths, cursor-only updates, cursor visibility/shape extraction,
-backend-observable cursor blink state, render-state default colors/palette,
+wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
+render-state default colors/palette,
 palette overrides, and explicit cursor color, alternate-screen entry/restoration
 with alternate scrollback omission, title metadata with OSC 7 working-directory
 omission, OSC 133 semantic prompt state, resize/reflow, styled backend-owned
@@ -147,7 +146,8 @@ scrollback extraction, row-level dirty state, Kitty graphics placeholder
 detection, hyperlink presence, application-keypad encoder support, focus event
 encoding, paste safety validation, safe-API mode tracking for bracketed paste,
 mouse tracking, focus reporting, application keypad mode, and origin/wraparound
-modes, plus nmux snapshot/patch mode payloads and mode-only patch application
-through unit, session, and live CLI smoke coverage. It is not the default until
+modes, plus nmux snapshot/patch cursor blink and mode payloads, mode-only patch
+application, and cursor cache compatibility through unit, session, and live CLI
+smoke coverage. It is not the default until
 the project deliberately accepts the native Zig/Ghostty build cost in normal
 development and CI.

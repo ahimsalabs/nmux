@@ -131,6 +131,7 @@ table CursorState {
   col:uint;
   visible:bool = true;
   shape:CursorShape = Block;
+  blinking:bool = true;
 }
 
 table TerminalModeState {

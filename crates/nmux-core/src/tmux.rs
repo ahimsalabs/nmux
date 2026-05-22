@@ -114,6 +114,7 @@ impl TmuxSession {
                     col: 0,
                     visible: true,
                     shape: protocol::CursorShape::Block,
+                    blinking: true,
                 },
                 modes: TerminalModes::default(),
                 styles: vec![PaneStyle::default()],

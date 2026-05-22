@@ -1495,6 +1495,7 @@ pub struct CursorSummary {
     pub col: u32,
     pub visible: bool,
     pub shape: protocol::CursorShape,
+    pub blinking: bool,
 }
 
 impl CursorSummary {
@@ -1504,6 +1505,7 @@ impl CursorSummary {
             col: cursor.col(),
             visible: cursor.visible(),
             shape: cursor.shape(),
+            blinking: cursor.blinking(),
         }
     }
 }
@@ -1837,6 +1839,8 @@ impl ClientAttachState {
                     encoded.push_str(if cursor.visible { "1" } else { "0" });
                     encoded.push(' ');
                     encoded.push_str(&cursor.shape.0.to_string());
+                    encoded.push(' ');
+                    encoded.push_str(if cursor.blinking { "1" } else { "0" });
                     encoded.push('\n');
                 }
                 None => encoded.push_str("cursor none\n"),
@@ -1989,6 +1993,16 @@ impl ClientAttachState {
                             col: parse_state_u32(col)?,
                             visible: parse_state_bool(visible)?,
                             shape: protocol::CursorShape(parse_state_i8(shape)?),
+                            blinking: true,
+                        });
+                    }
+                    ["cursor", row, col, visible, shape, blinking] => {
+                        cursor = Some(CursorSummary {
+                            row: parse_state_u32(row)?,
+                            col: parse_state_u32(col)?,
+                            visible: parse_state_bool(visible)?,
+                            shape: protocol::CursorShape(parse_state_i8(shape)?),
+                            blinking: parse_state_bool(blinking)?,
                         });
                     }
                     [
@@ -2546,6 +2560,7 @@ mod tests {
             col: 6,
             visible: true,
             shape: protocol::CursorShape::Beam,
+            blinking: true,
         });
 
         surface.apply_patch(&patch).expect("apply patch");
@@ -2701,8 +2716,16 @@ mod tests {
         });
         snapshot.modes.bracketed_paste = true;
         snapshot.modes.focus_reporting = true;
+        snapshot.cursor = Some(CursorSummary {
+            row: 2,
+            col: 4,
+            visible: true,
+            shape: protocol::CursorShape::Beam,
+            blinking: false,
+        });
         let expected_styles = snapshot.styles.clone();
         let expected_modes = snapshot.modes;
+        let expected_cursor = snapshot.cursor;
         state
             .render_attach(AttachSnapshot {
                 workspace: WorkspaceSummary {
@@ -2722,6 +2745,7 @@ mod tests {
         let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
         assert_eq!(decoded.known_surfaces(), state.known_surfaces());
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
+        assert_eq!(decoded.surfaces[0].cursor, expected_cursor);
         assert_eq!(decoded.surfaces[0].modes, expected_modes);
         assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
         assert_eq!(decoded.surfaces[0].styles, expected_styles);
@@ -2742,6 +2766,25 @@ mod tests {
         assert_eq!(decoded.surfaces[0].modes, TerminalModeSummary::default());
         assert_eq!(decoded.surfaces[0].styles, default_style_summaries());
         assert_eq!(decoded.surfaces[0].render_text(), "cached");
+    }
+
+    #[test]
+    fn client_attach_state_decodes_cached_cursor_without_blinking() {
+        let decoded = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 1\nsurface 70616e652d31 7 80 24\ncursor 2 4 1 1\nrow 0 636163686564\nend\n",
+        )
+        .expect("decode old cursor state");
+
+        assert_eq!(
+            decoded.surfaces[0].cursor,
+            Some(CursorSummary {
+                row: 2,
+                col: 4,
+                visible: true,
+                shape: protocol::CursorShape::Beam,
+                blinking: true,
+            })
+        );
     }
 
     #[test]
@@ -3142,6 +3185,7 @@ mod tests {
                 col: 0,
                 visible: true,
                 shape: protocol::CursorShape::Block,
+                blinking: true,
             })
         );
         assert_eq!(

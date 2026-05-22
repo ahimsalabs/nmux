@@ -35,6 +35,7 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
 - `ScrollbackRow` identifies history rows by absolute scrollback line and includes a `dirty_hash`.
 - `CellRun` stores UTF-8 text, per-cell widths, a style table reference, flags, and an optional hyperlink reference.
 - `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot` objects and `ScrollbackChunk` objects carry the style table needed by their rows.
+- `CursorState` stores cursor row, column, visibility, shape, and blinking.
 - `TerminalModeState` stores terminal modes that clients need for input and
   rendering decisions: bracketed paste, mouse tracking, focus reporting,
   application keypad, application cursor, origin, and wraparound.
