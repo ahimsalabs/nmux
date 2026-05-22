@@ -495,6 +495,11 @@ impl Session {
             .is_some_and(|pane| pane.modes.mouse_tracking)
     }
 
+    pub fn pane_mouse_tracking_mode(&self, pane_id: &str) -> Option<protocol::MouseTrackingMode> {
+        self.pane(pane_id)
+            .map(|pane| pane.modes.mouse_tracking_mode)
+    }
+
     pub fn pane_size(&self, pane_id: &str) -> Option<(u32, u32)> {
         self.pane(pane_id).map(|pane| (pane.cols, pane.rows))
     }
@@ -1438,6 +1443,8 @@ fn build_terminal_modes<'a>(
             application_cursor: modes.application_cursor,
             origin: modes.origin,
             wraparound: modes.wraparound,
+            mouse_tracking_mode: modes.mouse_tracking_mode,
+            mouse_format: modes.mouse_format,
         },
     )
 }
@@ -1949,6 +1956,11 @@ mod tests {
         let modes = snapshot.modes().expect("modes");
         assert!(!modes.bracketed_paste());
         assert!(!modes.mouse_tracking());
+        assert_eq!(
+            modes.mouse_tracking_mode(),
+            protocol::MouseTrackingMode::None
+        );
+        assert_eq!(modes.mouse_format(), protocol::MouseFormat::X10);
         assert!(!modes.focus_reporting());
         assert!(modes.wraparound());
 
@@ -3273,6 +3285,9 @@ mod tests {
                 );
                 update.modes = TerminalModes {
                     bracketed_paste: true,
+                    mouse_tracking: true,
+                    mouse_tracking_mode: protocol::MouseTrackingMode::Button,
+                    mouse_format: protocol::MouseFormat::Sgr,
                     ..input.modes
                 };
                 Some(update)
@@ -3303,6 +3318,12 @@ mod tests {
         assert_eq!(patch.row_updates().expect("row updates").len(), 0);
         let modes = patch.modes().expect("modes");
         assert!(modes.bracketed_paste());
+        assert!(modes.mouse_tracking());
+        assert_eq!(
+            modes.mouse_tracking_mode(),
+            protocol::MouseTrackingMode::Button
+        );
+        assert_eq!(modes.mouse_format(), protocol::MouseFormat::Sgr);
         assert!(modes.wraparound());
     }
 

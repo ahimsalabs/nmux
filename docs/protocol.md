@@ -60,7 +60,10 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
   withheld until that object model is explicit.
 - `TerminalModeState` stores terminal modes that clients need for input and
   rendering decisions: bracketed paste, mouse tracking, focus reporting,
-  application keypad, application cursor, origin, and wraparound.
+  application keypad, application cursor, origin, and wraparound. Mouse
+  tracking keeps a compatibility boolean and also carries the backend-observed
+  tracking mode (`None`, `X10`, `Normal`, `Button`, or `Any`) plus mouse
+  encoding format (`X10`, `Utf8`, `Sgr`, `Urxvt`, or `SgrPixels`).
 
 This avoids freezing a simplistic per-cell ABI before the project has enough implementation feedback about graphemes, combining marks, double-width characters, terminal modes, hyperlinks, and image protocols.
 

@@ -39,6 +39,8 @@ pub struct TerminalModes {
     pub application_cursor: bool,
     pub origin: bool,
     pub wraparound: bool,
+    pub mouse_tracking_mode: protocol::MouseTrackingMode,
+    pub mouse_format: protocol::MouseFormat,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +74,8 @@ impl Default for TerminalModes {
             application_cursor: false,
             origin: false,
             wraparound: true,
+            mouse_tracking_mode: protocol::MouseTrackingMode::None,
+            mouse_format: protocol::MouseFormat::X10,
         }
     }
 }
@@ -1034,7 +1038,37 @@ mod ghostty_vt {
             application_cursor: terminal.mode(Mode::DECCKM).ok()?,
             origin: terminal.mode(Mode::ORIGIN).ok()?,
             wraparound: terminal.mode(Mode::WRAPAROUND).ok()?,
+            mouse_tracking_mode: mouse_tracking_mode(terminal)?,
+            mouse_format: mouse_format(terminal)?,
         })
+    }
+
+    fn mouse_tracking_mode(terminal: &Terminal<'_, '_>) -> Option<protocol::MouseTrackingMode> {
+        if terminal.mode(Mode::ANY_MOUSE).ok()? {
+            Some(protocol::MouseTrackingMode::Any)
+        } else if terminal.mode(Mode::BUTTON_MOUSE).ok()? {
+            Some(protocol::MouseTrackingMode::Button)
+        } else if terminal.mode(Mode::NORMAL_MOUSE).ok()? {
+            Some(protocol::MouseTrackingMode::Normal)
+        } else if terminal.mode(Mode::X10_MOUSE).ok()? {
+            Some(protocol::MouseTrackingMode::X10)
+        } else {
+            Some(protocol::MouseTrackingMode::None)
+        }
+    }
+
+    fn mouse_format(terminal: &Terminal<'_, '_>) -> Option<protocol::MouseFormat> {
+        if terminal.mode(Mode::SGR_PIXELS_MOUSE).ok()? {
+            Some(protocol::MouseFormat::SgrPixels)
+        } else if terminal.mode(Mode::URXVT_MOUSE).ok()? {
+            Some(protocol::MouseFormat::Urxvt)
+        } else if terminal.mode(Mode::SGR_MOUSE).ok()? {
+            Some(protocol::MouseFormat::Sgr)
+        } else if terminal.mode(Mode::UTF8_MOUSE).ok()? {
+            Some(protocol::MouseFormat::Utf8)
+        } else {
+            Some(protocol::MouseFormat::X10)
+        }
     }
 
     fn terminal_colors(snapshot: &RenderSnapshot<'_, '_>) -> Option<TerminalColors> {
@@ -2636,7 +2670,7 @@ mod tests {
     #[cfg(feature = "libghostty-vt")]
     #[test]
     fn libghostty_vt_safe_api_tracks_mouse_tracking_modes() {
-        use libghostty_vt::{Terminal, TerminalOptions};
+        use libghostty_vt::{Terminal, TerminalOptions, terminal::Mode};
 
         let mut terminal = Terminal::new(TerminalOptions {
             cols: 80,
@@ -2649,16 +2683,19 @@ mod tests {
 
         terminal.vt_write(b"\x1b[?1000h");
         assert!(terminal.is_mouse_tracking().expect("mouse tracking"));
+        assert!(terminal.mode(Mode::NORMAL_MOUSE).expect("normal mouse"));
         terminal.vt_write(b"\x1b[?1000l");
         assert!(!terminal.is_mouse_tracking().expect("mouse tracking"));
 
         terminal.vt_write(b"\x1b[?1002h");
         assert!(terminal.is_mouse_tracking().expect("mouse tracking"));
+        assert!(terminal.mode(Mode::BUTTON_MOUSE).expect("button mouse"));
         terminal.vt_write(b"\x1b[?1002l");
         assert!(!terminal.is_mouse_tracking().expect("mouse tracking"));
 
         terminal.vt_write(b"\x1b[?1003h");
         assert!(terminal.is_mouse_tracking().expect("mouse tracking"));
+        assert!(terminal.mode(Mode::ANY_MOUSE).expect("any mouse"));
         terminal.vt_write(b"\x1b[?1003l");
         assert!(!terminal.is_mouse_tracking().expect("mouse tracking"));
     }
@@ -2677,6 +2714,11 @@ mod tests {
             )
             .expect("terminal update");
         assert!(update.modes.mouse_tracking);
+        assert_eq!(
+            update.modes.mouse_tracking_mode,
+            protocol::MouseTrackingMode::Normal
+        );
+        assert_eq!(update.modes.mouse_format, protocol::MouseFormat::Sgr);
 
         let bytes = engine
             .encode_mouse_input(MouseTerminalInput {

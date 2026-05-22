@@ -248,7 +248,8 @@ Current behavior:
 - known `pane-1` surface version is stale: daemon sends a full `PaneSurfaceSnapshot`
 
 The CLI can persist its local render state with `--state`. This records the
-rendered pane surface, terminal title, OSC 7 working directory, terminal modes,
+rendered pane surface, terminal title, OSC 7 working directory, terminal modes
+including mouse tracking mode/format,
 cached row runs, the cached style table, terminal color state, OSC 133 row/run
 semantic metadata, row dirty flags, row state hashes, Kitty placeholder row
 metadata, and the last known server version, so a later process can request a patch and apply it to the

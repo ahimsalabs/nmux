@@ -355,6 +355,198 @@ impl<'a> ::flatbuffers::Verifiable for CursorShape {
 
 impl ::flatbuffers::SimpleToVerifyInSlice for CursorShape {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_MOUSE_TRACKING_MODE: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_MOUSE_TRACKING_MODE: i8 = 4;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_MOUSE_TRACKING_MODE: [MouseTrackingMode; 5] = [
+  MouseTrackingMode::None,
+  MouseTrackingMode::X10,
+  MouseTrackingMode::Normal,
+  MouseTrackingMode::Button,
+  MouseTrackingMode::Any,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct MouseTrackingMode(pub i8);
+#[allow(non_upper_case_globals)]
+impl MouseTrackingMode {
+  pub const None: Self = Self(0);
+  pub const X10: Self = Self(1);
+  pub const Normal: Self = Self(2);
+  pub const Button: Self = Self(3);
+  pub const Any: Self = Self(4);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 4;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::None,
+    Self::X10,
+    Self::Normal,
+    Self::Button,
+    Self::Any,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::None => Some("None"),
+      Self::X10 => Some("X10"),
+      Self::Normal => Some("Normal"),
+      Self::Button => Some("Button"),
+      Self::Any => Some("Any"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for MouseTrackingMode {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for MouseTrackingMode {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for MouseTrackingMode {
+    type Output = MouseTrackingMode;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for MouseTrackingMode {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for MouseTrackingMode {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for MouseTrackingMode {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_MOUSE_FORMAT: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_MOUSE_FORMAT: i8 = 4;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_MOUSE_FORMAT: [MouseFormat; 5] = [
+  MouseFormat::X10,
+  MouseFormat::Utf8,
+  MouseFormat::Sgr,
+  MouseFormat::Urxvt,
+  MouseFormat::SgrPixels,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct MouseFormat(pub i8);
+#[allow(non_upper_case_globals)]
+impl MouseFormat {
+  pub const X10: Self = Self(0);
+  pub const Utf8: Self = Self(1);
+  pub const Sgr: Self = Self(2);
+  pub const Urxvt: Self = Self(3);
+  pub const SgrPixels: Self = Self(4);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 4;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::X10,
+    Self::Utf8,
+    Self::Sgr,
+    Self::Urxvt,
+    Self::SgrPixels,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::X10 => Some("X10"),
+      Self::Utf8 => Some("Utf8"),
+      Self::Sgr => Some("Sgr"),
+      Self::Urxvt => Some("Urxvt"),
+      Self::SgrPixels => Some("SgrPixels"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for MouseFormat {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for MouseFormat {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for MouseFormat {
+    type Output = MouseFormat;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for MouseFormat {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for MouseFormat {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for MouseFormat {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_INPUT_KIND: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MAX_INPUT_KIND: i8 = 4;
@@ -2678,6 +2870,8 @@ impl<'a> TerminalModeState<'a> {
   pub const VT_APPLICATION_CURSOR: ::flatbuffers::VOffsetT = 12;
   pub const VT_ORIGIN: ::flatbuffers::VOffsetT = 14;
   pub const VT_WRAPAROUND: ::flatbuffers::VOffsetT = 16;
+  pub const VT_MOUSE_TRACKING_MODE: ::flatbuffers::VOffsetT = 18;
+  pub const VT_MOUSE_FORMAT: ::flatbuffers::VOffsetT = 20;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2689,6 +2883,8 @@ impl<'a> TerminalModeState<'a> {
     args: &'args TerminalModeStateArgs
   ) -> ::flatbuffers::WIPOffset<TerminalModeState<'bldr>> {
     let mut builder = TerminalModeStateBuilder::new(_fbb);
+    builder.add_mouse_format(args.mouse_format);
+    builder.add_mouse_tracking_mode(args.mouse_tracking_mode);
     builder.add_wraparound(args.wraparound);
     builder.add_origin(args.origin);
     builder.add_application_cursor(args.application_cursor);
@@ -2749,6 +2945,20 @@ impl<'a> TerminalModeState<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<bool>(TerminalModeState::VT_WRAPAROUND, Some(true)).unwrap()}
   }
+  #[inline]
+  pub fn mouse_tracking_mode(&self) -> MouseTrackingMode {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<MouseTrackingMode>(TerminalModeState::VT_MOUSE_TRACKING_MODE, Some(MouseTrackingMode::None)).unwrap()}
+  }
+  #[inline]
+  pub fn mouse_format(&self) -> MouseFormat {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<MouseFormat>(TerminalModeState::VT_MOUSE_FORMAT, Some(MouseFormat::X10)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for TerminalModeState<'_> {
@@ -2764,6 +2974,8 @@ impl ::flatbuffers::Verifiable for TerminalModeState<'_> {
      .visit_field::<bool>("application_cursor", Self::VT_APPLICATION_CURSOR, false)?
      .visit_field::<bool>("origin", Self::VT_ORIGIN, false)?
      .visit_field::<bool>("wraparound", Self::VT_WRAPAROUND, false)?
+     .visit_field::<MouseTrackingMode>("mouse_tracking_mode", Self::VT_MOUSE_TRACKING_MODE, false)?
+     .visit_field::<MouseFormat>("mouse_format", Self::VT_MOUSE_FORMAT, false)?
      .finish();
     Ok(())
   }
@@ -2776,6 +2988,8 @@ pub struct TerminalModeStateArgs {
     pub application_cursor: bool,
     pub origin: bool,
     pub wraparound: bool,
+    pub mouse_tracking_mode: MouseTrackingMode,
+    pub mouse_format: MouseFormat,
 }
 impl<'a> Default for TerminalModeStateArgs {
   #[inline]
@@ -2788,6 +3002,8 @@ impl<'a> Default for TerminalModeStateArgs {
       application_cursor: false,
       origin: false,
       wraparound: true,
+      mouse_tracking_mode: MouseTrackingMode::None,
+      mouse_format: MouseFormat::X10,
     }
   }
 }
@@ -2826,6 +3042,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> TerminalModeStateBuilder<'a, 
     self.fbb_.push_slot::<bool>(TerminalModeState::VT_WRAPAROUND, wraparound, true);
   }
   #[inline]
+  pub fn add_mouse_tracking_mode(&mut self, mouse_tracking_mode: MouseTrackingMode) {
+    self.fbb_.push_slot::<MouseTrackingMode>(TerminalModeState::VT_MOUSE_TRACKING_MODE, mouse_tracking_mode, MouseTrackingMode::None);
+  }
+  #[inline]
+  pub fn add_mouse_format(&mut self, mouse_format: MouseFormat) {
+    self.fbb_.push_slot::<MouseFormat>(TerminalModeState::VT_MOUSE_FORMAT, mouse_format, MouseFormat::X10);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> TerminalModeStateBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     TerminalModeStateBuilder {
@@ -2850,6 +3074,8 @@ impl ::core::fmt::Debug for TerminalModeState<'_> {
       ds.field("application_cursor", &self.application_cursor());
       ds.field("origin", &self.origin());
       ds.field("wraparound", &self.wraparound());
+      ds.field("mouse_tracking_mode", &self.mouse_tracking_mode());
+      ds.field("mouse_format", &self.mouse_format());
       ds.finish()
   }
 }

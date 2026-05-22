@@ -79,8 +79,9 @@ only after the backend extraction proves the exact shape needed.
   per-cell run widths. Ambiguous-width policy and broader grapheme cases still
   need protocol guidance.
 - Terminal modes: nmux snapshots and patches now carry bracketed paste, mouse
-  tracking, focus reporting, application keypad, application cursor, origin,
-  and wraparound state. `libghostty-vt` tracks those modes through its safe API,
+  tracking, detailed mouse tracking mode, mouse encoding format, focus
+  reporting, application keypad, application cursor, origin, and wraparound
+  state. `libghostty-vt` tracks those modes through its safe API,
   can derive key encoder behavior from terminal modes such as application
   cursor keys, and emits mode-only patches when only the mode payload changes.
   Its key encoder can also emit application-keypad sequences when the option is
@@ -97,8 +98,8 @@ only after the backend extraction proves the exact shape needed.
   keypad/application-cursor behavior, and the libghostty-vt engine uses its key
   encoder from daemon-owned terminal state while preserving protocol modifiers.
   Public CLI modifier syntax maps `shift`, `ctrl`, `alt`, and `super` to the
-  protocol modifier bits for named keys. Local clients forward explicit mouse press/release/motion input
-  only when the daemon-owned pane mode reports mouse tracking enabled, with
+  protocol modifier bits for named keys. Local clients forward explicit mouse
+  press/release/motion input only when the daemon-owned pane mode reports mouse tracking enabled, with
   bytes encoded by the live pane terminal engine from its current terminal mouse
   mode and format. Broader physical-key/text-event forwarding and frontend
   pointer integration still need protocol decisions.

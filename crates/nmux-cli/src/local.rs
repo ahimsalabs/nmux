@@ -1861,6 +1861,8 @@ pub struct TerminalModeSummary {
     pub application_cursor: bool,
     pub origin: bool,
     pub wraparound: bool,
+    pub mouse_tracking_mode: protocol::MouseTrackingMode,
+    pub mouse_format: protocol::MouseFormat,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1882,6 +1884,8 @@ impl Default for TerminalModeSummary {
             application_cursor: false,
             origin: false,
             wraparound: true,
+            mouse_tracking_mode: protocol::MouseTrackingMode::None,
+            mouse_format: protocol::MouseFormat::X10,
         }
     }
 }
@@ -1896,6 +1900,8 @@ impl TerminalModeSummary {
             application_cursor: modes.application_cursor(),
             origin: modes.origin(),
             wraparound: modes.wraparound(),
+            mouse_tracking_mode: modes.mouse_tracking_mode(),
+            mouse_format: modes.mouse_format(),
         }
     }
 }
@@ -2238,7 +2244,7 @@ impl ClientAttachState {
     }
 
     fn encode(&self) -> String {
-        let mut encoded = String::from("NMUX_CLIENT_STATE 4\n");
+        let mut encoded = String::from("NMUX_CLIENT_STATE 5\n");
         if let Some(scope) = self.scope {
             encoded.push_str("scope socket ");
             encoded.push_str(&scope.dev.to_string());
@@ -2308,6 +2314,10 @@ impl ClientAttachState {
             encoded.push_str(if surface.modes.origin { "1" } else { "0" });
             encoded.push(' ');
             encoded.push_str(if surface.modes.wraparound { "1" } else { "0" });
+            encoded.push(' ');
+            encoded.push_str(&surface.modes.mouse_tracking_mode.0.to_string());
+            encoded.push(' ');
+            encoded.push_str(&surface.modes.mouse_format.0.to_string());
             encoded.push('\n');
             encoded.push_str("title ");
             encoded.push_str(&hex_encode(surface.title.as_bytes()));
@@ -2404,6 +2414,7 @@ impl ClientAttachState {
             && header != "NMUX_CLIENT_STATE 2"
             && header != "NMUX_CLIENT_STATE 3"
             && header != "NMUX_CLIENT_STATE 4"
+            && header != "NMUX_CLIENT_STATE 5"
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -2524,6 +2535,33 @@ impl ClientAttachState {
                             application_cursor: parse_state_bool(application_cursor)?,
                             origin: parse_state_bool(origin)?,
                             wraparound: parse_state_bool(wraparound)?,
+                            ..TerminalModeSummary::default()
+                        };
+                    }
+                    [
+                        "modes",
+                        bracketed_paste,
+                        mouse_tracking,
+                        focus_reporting,
+                        application_keypad,
+                        application_cursor,
+                        origin,
+                        wraparound,
+                        mouse_tracking_mode,
+                        mouse_format,
+                    ] => {
+                        modes = TerminalModeSummary {
+                            bracketed_paste: parse_state_bool(bracketed_paste)?,
+                            mouse_tracking: parse_state_bool(mouse_tracking)?,
+                            focus_reporting: parse_state_bool(focus_reporting)?,
+                            application_keypad: parse_state_bool(application_keypad)?,
+                            application_cursor: parse_state_bool(application_cursor)?,
+                            origin: parse_state_bool(origin)?,
+                            wraparound: parse_state_bool(wraparound)?,
+                            mouse_tracking_mode: protocol::MouseTrackingMode(parse_state_i8(
+                                mouse_tracking_mode,
+                            )?),
+                            mouse_format: protocol::MouseFormat(parse_state_i8(mouse_format)?),
                         };
                     }
                     ["title", value] => {
@@ -2895,7 +2933,17 @@ pub struct MouseSummary {
 impl InputSummary {
     fn forwarding_allowed(&self, session: &Session) -> bool {
         (!self.requires_focus_reporting || session.pane_focus_reporting(&self.pane_id))
-            && (!self.requires_mouse_tracking || session.pane_mouse_tracking(&self.pane_id))
+            && (!self.requires_mouse_tracking || self.mouse_forwarding_allowed(session))
+    }
+
+    fn mouse_forwarding_allowed(&self, session: &Session) -> bool {
+        let Some(mouse) = self.mouse else {
+            return session.pane_mouse_tracking(&self.pane_id);
+        };
+        let Some(mode) = session.pane_mouse_tracking_mode(&self.pane_id) else {
+            return false;
+        };
+        mouse_input_allowed(mode, mouse)
     }
 
     fn forwarded_bytes(
@@ -2944,6 +2992,22 @@ impl InputSummary {
                 .ok_or_else(|| "terminal engine cannot encode mouse input".into());
         }
         Ok(self.bytes.clone())
+    }
+}
+
+fn mouse_input_allowed(mode: protocol::MouseTrackingMode, mouse: MouseSummary) -> bool {
+    match mode {
+        protocol::MouseTrackingMode::None => false,
+        protocol::MouseTrackingMode::X10 => mouse.action == MouseAction::Press,
+        protocol::MouseTrackingMode::Normal => {
+            matches!(mouse.action, MouseAction::Press | MouseAction::Release)
+        }
+        protocol::MouseTrackingMode::Button => match mouse.action {
+            MouseAction::Press | MouseAction::Release => true,
+            MouseAction::Motion => mouse.button != MouseButton::None,
+        },
+        protocol::MouseTrackingMode::Any => true,
+        _ => false,
     }
 }
 
@@ -3567,6 +3631,9 @@ mod tests {
         });
         snapshot.modes.bracketed_paste = true;
         snapshot.modes.focus_reporting = true;
+        snapshot.modes.mouse_tracking = true;
+        snapshot.modes.mouse_tracking_mode = protocol::MouseTrackingMode::Any;
+        snapshot.modes.mouse_format = protocol::MouseFormat::SgrPixels;
         snapshot.title = "cached title".to_owned();
         snapshot.working_directory = "file://localhost/tmp/cached".to_owned();
         snapshot.colors = Some(TerminalColorSummary {
@@ -5014,7 +5081,67 @@ mod tests {
 
         assert!(!input.forwarding_allowed(&session));
         session.tabs[0].root.modes.mouse_tracking = true;
+        assert!(!input.forwarding_allowed(&session));
+        session.tabs[0].root.modes.mouse_tracking_mode = protocol::MouseTrackingMode::Normal;
         assert!(input.forwarding_allowed(&session));
+    }
+
+    #[test]
+    fn mouse_input_forwarding_uses_daemon_owned_tracking_mode() {
+        let press = MouseSummary {
+            row: 0,
+            col: 0,
+            button: MouseButton::Left,
+            action: MouseAction::Press,
+            modifiers: 0,
+        };
+        let release = MouseSummary {
+            action: MouseAction::Release,
+            ..press
+        };
+        let button_motion = MouseSummary {
+            action: MouseAction::Motion,
+            ..press
+        };
+        let any_motion = MouseSummary {
+            button: MouseButton::None,
+            action: MouseAction::Motion,
+            ..press
+        };
+
+        assert!(!mouse_input_allowed(
+            protocol::MouseTrackingMode::None,
+            press
+        ));
+        assert!(mouse_input_allowed(protocol::MouseTrackingMode::X10, press));
+        assert!(!mouse_input_allowed(
+            protocol::MouseTrackingMode::X10,
+            release
+        ));
+        assert!(mouse_input_allowed(
+            protocol::MouseTrackingMode::Normal,
+            press
+        ));
+        assert!(mouse_input_allowed(
+            protocol::MouseTrackingMode::Normal,
+            release
+        ));
+        assert!(!mouse_input_allowed(
+            protocol::MouseTrackingMode::Normal,
+            button_motion
+        ));
+        assert!(mouse_input_allowed(
+            protocol::MouseTrackingMode::Button,
+            button_motion
+        ));
+        assert!(!mouse_input_allowed(
+            protocol::MouseTrackingMode::Button,
+            any_motion
+        ));
+        assert!(mouse_input_allowed(
+            protocol::MouseTrackingMode::Any,
+            any_motion
+        ));
     }
 
     #[test]

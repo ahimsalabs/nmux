@@ -22,6 +22,22 @@ enum CursorShape : byte {
   Underline = 2,
 }
 
+enum MouseTrackingMode : byte {
+  None = 0,
+  X10 = 1,
+  Normal = 2,
+  Button = 3,
+  Any = 4,
+}
+
+enum MouseFormat : byte {
+  X10 = 0,
+  Utf8 = 1,
+  Sgr = 2,
+  Urxvt = 3,
+  SgrPixels = 4,
+}
+
 enum InputKind : byte {
   Key = 0,
   Mouse = 1,
@@ -165,6 +181,8 @@ table TerminalModeState {
   application_cursor:bool;
   origin:bool;
   wraparound:bool = true;
+  mouse_tracking_mode:MouseTrackingMode = None;
+  mouse_format:MouseFormat = X10;
 }
 
 table TerminalMetadataState {
