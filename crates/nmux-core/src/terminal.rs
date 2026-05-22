@@ -69,6 +69,7 @@ pub struct CellRun {
     pub style_id: u32,
     pub flags: u32,
     pub hyperlink_id: u32,
+    pub semantic_content: protocol::CellSemanticContent,
 }
 
 impl CellRun {
@@ -81,6 +82,7 @@ impl CellRun {
             style_id: 0,
             flags: 0,
             hyperlink_id: 0,
+            semantic_content: protocol::CellSemanticContent::Output,
         }
     }
 }
@@ -435,7 +437,7 @@ mod ghostty_vt {
     use libghostty_vt::{
         RenderState, Terminal, TerminalOptions, key, mouse,
         render::{CellIterator, CursorVisualStyle, RowIterator, Snapshot as RenderSnapshot},
-        screen::CellWide,
+        screen::{CellSemanticContent, CellWide},
         style::{RgbColor, Style, StyleColor, Underline},
         terminal::{Mode, ScrollViewport},
     };
@@ -700,10 +702,12 @@ mod ghostty_vt {
 
                 let text = cell_text(&cells)?;
                 let style_id = style_id(styles, pane_style(&cells)?);
+                let semantic_content = cell_semantic_content(raw_cell.semantic_content().ok()?);
                 if let Some(last) = runs.last_mut()
                     && last.style_id == style_id
                     && last.flags == 0
                     && last.hyperlink_id == 0
+                    && last.semantic_content == semantic_content
                 {
                     last.text.push_str(&text);
                     last.cell_widths.push(width);
@@ -714,6 +718,7 @@ mod ghostty_vt {
                         style_id,
                         flags: 0,
                         hyperlink_id: 0,
+                        semantic_content,
                     });
                 }
             }
@@ -742,6 +747,14 @@ mod ghostty_vt {
             libghostty_vt::screen::RowSemanticPrompt::Continuation => {
                 protocol::RowSemanticPrompt::Continuation
             }
+        }
+    }
+
+    fn cell_semantic_content(content: CellSemanticContent) -> protocol::CellSemanticContent {
+        match content {
+            CellSemanticContent::Output => protocol::CellSemanticContent::Output,
+            CellSemanticContent::Input => protocol::CellSemanticContent::Input,
+            CellSemanticContent::Prompt => protocol::CellSemanticContent::Prompt,
         }
     }
 
@@ -1519,7 +1532,9 @@ mod tests {
     #[test]
     fn libghostty_vt_safe_api_tracks_semantic_prompt() {
         use libghostty_vt::{
-            RenderState, Terminal, TerminalOptions, render::RowIterator, screen::RowSemanticPrompt,
+            RenderState, Terminal, TerminalOptions,
+            render::{CellIterator, RowIterator},
+            screen::{CellSemanticContent, RowSemanticPrompt},
         };
 
         let mut terminal = Terminal::new(TerminalOptions {
@@ -1530,6 +1545,7 @@ mod tests {
         .expect("terminal");
         let mut render_state = RenderState::new().expect("render state");
         let mut rows = RowIterator::new().expect("row iterator");
+        let mut cells = CellIterator::new().expect("cell iterator");
 
         terminal.vt_write(b"\x1b]133;A\x1b\\prompt> ");
         let snapshot = render_state.update(&terminal).expect("snapshot");
@@ -1543,6 +1559,16 @@ mod tests {
                 .semantic_prompt()
                 .expect("semantic prompt"),
             RowSemanticPrompt::Prompt
+        );
+        let mut cell_iter = cells.update(first_row).expect("cell iteration");
+        cell_iter.next().expect("first cell");
+        assert_eq!(
+            cell_iter
+                .raw_cell()
+                .expect("raw cell")
+                .semantic_content()
+                .expect("semantic content"),
+            CellSemanticContent::Prompt
         );
     }
 
@@ -1564,6 +1590,49 @@ mod tests {
         assert_eq!(
             update.surface_semantic_prompts.first().copied(),
             Some(protocol::RowSemanticPrompt::Prompt)
+        );
+        assert_eq!(
+            update
+                .surface_row_runs
+                .first()
+                .and_then(|runs| runs.first())
+                .map(|run| run.semantic_content),
+            Some(protocol::CellSemanticContent::Prompt)
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_splits_runs_by_semantic_content() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b]133;A\x1b\\prompt \x1b]133;B\x1b\\input\x1b]133;C\x1b\\output",
+            )
+            .expect("semantic content update");
+
+        assert_eq!(
+            update.surface_lines.first().map(String::as_str),
+            Some("prompt inputoutput")
+        );
+        let runs = update.surface_row_runs.first().expect("first row runs");
+        let semantic_content: Vec<_> = runs.iter().map(|run| run.semantic_content).collect();
+        assert_eq!(
+            semantic_content,
+            vec![
+                protocol::CellSemanticContent::Prompt,
+                protocol::CellSemanticContent::Input,
+                protocol::CellSemanticContent::Output,
+            ]
+        );
+        assert_eq!(
+            runs.iter().map(|run| run.style_id).collect::<Vec<_>>(),
+            vec![0, 0, 0]
+        );
+        assert_eq!(
+            runs.iter().map(|run| run.text.as_str()).collect::<Vec<_>>(),
+            vec!["prompt ", "input", "output"]
         );
     }
 

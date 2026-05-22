@@ -1187,6 +1187,94 @@ impl<'a> ::flatbuffers::Verifiable for RowSemanticPrompt {
 
 impl ::flatbuffers::SimpleToVerifyInSlice for RowSemanticPrompt {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_CELL_SEMANTIC_CONTENT: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_CELL_SEMANTIC_CONTENT: i8 = 2;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_CELL_SEMANTIC_CONTENT: [CellSemanticContent; 3] = [
+  CellSemanticContent::Output,
+  CellSemanticContent::Input,
+  CellSemanticContent::Prompt,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct CellSemanticContent(pub i8);
+#[allow(non_upper_case_globals)]
+impl CellSemanticContent {
+  pub const Output: Self = Self(0);
+  pub const Input: Self = Self(1);
+  pub const Prompt: Self = Self(2);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 2;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Output,
+    Self::Input,
+    Self::Prompt,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Output => Some("Output"),
+      Self::Input => Some("Input"),
+      Self::Prompt => Some("Prompt"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for CellSemanticContent {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for CellSemanticContent {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for CellSemanticContent {
+    type Output = CellSemanticContent;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for CellSemanticContent {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for CellSemanticContent {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for CellSemanticContent {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_PRESENCE_KIND: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MAX_PRESENCE_KIND: i8 = 2;
@@ -3227,6 +3315,7 @@ impl<'a> CellRun<'a> {
   pub const VT_STYLE_ID: ::flatbuffers::VOffsetT = 8;
   pub const VT_FLAGS: ::flatbuffers::VOffsetT = 10;
   pub const VT_HYPERLINK_ID: ::flatbuffers::VOffsetT = 12;
+  pub const VT_SEMANTIC_CONTENT: ::flatbuffers::VOffsetT = 14;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -3243,6 +3332,7 @@ impl<'a> CellRun<'a> {
     builder.add_style_id(args.style_id);
     if let Some(x) = args.cell_widths { builder.add_cell_widths(x); }
     if let Some(x) = args.text_utf8 { builder.add_text_utf8(x); }
+    builder.add_semantic_content(args.semantic_content);
     builder.finish()
   }
 
@@ -3282,6 +3372,13 @@ impl<'a> CellRun<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u32>(CellRun::VT_HYPERLINK_ID, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn semantic_content(&self) -> CellSemanticContent {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<CellSemanticContent>(CellRun::VT_SEMANTIC_CONTENT, Some(CellSemanticContent::Output)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for CellRun<'_> {
@@ -3295,6 +3392,7 @@ impl ::flatbuffers::Verifiable for CellRun<'_> {
      .visit_field::<u32>("style_id", Self::VT_STYLE_ID, false)?
      .visit_field::<u32>("flags", Self::VT_FLAGS, false)?
      .visit_field::<u32>("hyperlink_id", Self::VT_HYPERLINK_ID, false)?
+     .visit_field::<CellSemanticContent>("semantic_content", Self::VT_SEMANTIC_CONTENT, false)?
      .finish();
     Ok(())
   }
@@ -3305,6 +3403,7 @@ pub struct CellRunArgs<'a> {
     pub style_id: u32,
     pub flags: u32,
     pub hyperlink_id: u32,
+    pub semantic_content: CellSemanticContent,
 }
 impl<'a> Default for CellRunArgs<'a> {
   #[inline]
@@ -3315,6 +3414,7 @@ impl<'a> Default for CellRunArgs<'a> {
       style_id: 0,
       flags: 0,
       hyperlink_id: 0,
+      semantic_content: CellSemanticContent::Output,
     }
   }
 }
@@ -3345,6 +3445,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CellRunBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<u32>(CellRun::VT_HYPERLINK_ID, hyperlink_id, 0);
   }
   #[inline]
+  pub fn add_semantic_content(&mut self, semantic_content: CellSemanticContent) {
+    self.fbb_.push_slot::<CellSemanticContent>(CellRun::VT_SEMANTIC_CONTENT, semantic_content, CellSemanticContent::Output);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> CellRunBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     CellRunBuilder {
@@ -3367,6 +3471,7 @@ impl ::core::fmt::Debug for CellRun<'_> {
       ds.field("style_id", &self.style_id());
       ds.field("flags", &self.flags());
       ds.field("hyperlink_id", &self.hyperlink_id());
+      ds.field("semantic_content", &self.semantic_content());
       ds.finish()
   }
 }

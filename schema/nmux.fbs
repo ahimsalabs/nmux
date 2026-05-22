@@ -86,6 +86,12 @@ enum RowSemanticPrompt : byte {
   Continuation = 2,
 }
 
+enum CellSemanticContent : byte {
+  Output = 0,
+  Input = 1,
+  Prompt = 2,
+}
+
 enum PresenceKind : byte {
   Joined = 0,
   Updated = 1,
@@ -188,6 +194,7 @@ table CellRun {
   style_id:uint;
   flags:uint;
   hyperlink_id:uint;
+  semantic_content:CellSemanticContent = Output;
 }
 
 table Style {

@@ -104,9 +104,10 @@ only after the backend extraction proves the exact shape needed.
   path exposes a `pwd()` accessor, but OSC 7 byte-sequence population remains
   unproven and should not be claimed as covered until a backend test proves it.
 - Shell integration metadata: nmux carries OSC 133 row semantic prompt state on
-  surface snapshots, surface patches, and scrollback chunks. Semantic
-  input/output command-range metadata remains withheld until that protocol shape
-  is explicit.
+  surface snapshots, surface patches, and scrollback chunks. `CellRun` also
+  carries backend-observed OSC 133 semantic content for output, input, and
+  prompt spans. Semantic command IDs, command ranges, lifecycle, and exit
+  metadata remain withheld until that protocol shape is explicit.
 - Alternate screen: `libghostty-vt` extraction tests cover entry into the
   alternate buffer, restoration of the primary buffer, and preservation of main
   scrollback while alternate-screen output is active. Alternate-screen
@@ -158,7 +159,8 @@ wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
 render-state default colors/palette,
 palette overrides, and explicit cursor color, alternate-screen entry/restoration
 with alternate scrollback omission, terminal title and working-directory metadata
-plumbing, OSC 133 row semantic prompt state, resize/reflow, styled
+plumbing, OSC 133 row semantic prompt state, per-run semantic content,
+resize/reflow, styled
 backend-owned scrollback extraction, row-level dirty state, Kitty placeholder
 metadata, hyperlink presence, application-keypad and application-cursor encoder support,
 focus event encoding, paste safety validation, safe-API mode tracking for

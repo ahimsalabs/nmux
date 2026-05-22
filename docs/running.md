@@ -201,13 +201,14 @@ scrollback omission, resize/reflow, style-separated visible rows, styled
 scrollback rows, cell widths, combining marks, emoji ZWJ clusters, basic SGR
 style flags, underline color, palette-indexed colors, render-state default
 colors/palette, palette overrides, explicit cursor color, terminal title metadata, OSC
-133 row semantic prompt state, bracketed paste, paste safety validation, paste forwarding, mouse
+133 row semantic prompt state, per-run semantic content, bracketed paste, paste safety validation, paste forwarding, mouse
 tracking and mode-gated mouse forwarding, focus reporting and mode-gated focus forwarding, application keypad tracking,
 common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-aware arrow-key forwarding, engine-backed key encoding with modifier preservation, explicit encoder output, origin, wraparound mode state, row-level dirty state,
 hyperlink presence, Kitty graphics placeholder metadata, working-directory metadata
 plumbing, mode-aware key encoding, sparse row updates, and mode-only surface patches.
-Backend-populated OSC 7 working-directory extraction, image placement data, and
-hyperlink IDs remain intentionally withheld until the expected backend behavior
+Backend-populated OSC 7 working-directory extraction, image placement data,
+hyperlink IDs, and broader shell command metadata remain intentionally withheld
+until the expected backend behavior
 and nmux protocol shape are clear.
 
 ```sh

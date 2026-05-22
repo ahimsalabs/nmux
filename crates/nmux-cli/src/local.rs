@@ -1114,6 +1114,7 @@ fn decoded_cell_runs(
             style_id: run.style_id(),
             flags: run.flags(),
             hyperlink_id: run.hyperlink_id(),
+            semantic_content: run.semantic_content(),
         });
     }
     decoded
@@ -1800,6 +1801,7 @@ pub struct CellRunSummary {
     pub style_id: u32,
     pub flags: u32,
     pub hyperlink_id: u32,
+    pub semantic_content: protocol::CellSemanticContent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1969,6 +1971,7 @@ impl CellRunSummary {
             style_id: 0,
             flags: 0,
             hyperlink_id: 0,
+            semantic_content: protocol::CellSemanticContent::Output,
         }
     }
 }
@@ -2189,6 +2192,8 @@ impl ClientAttachState {
                     encoded.push_str(&run.flags.to_string());
                     encoded.push(' ');
                     encoded.push_str(&run.hyperlink_id.to_string());
+                    encoded.push(' ');
+                    encoded.push_str(&run.semantic_content.0.to_string());
                     encoded.push('\n');
                 }
             }
@@ -2410,6 +2415,7 @@ impl ClientAttachState {
                             style_id: parse_state_u32(style_id)?,
                             flags: parse_state_u32(flags)?,
                             hyperlink_id: 0,
+                            semantic_content: protocol::CellSemanticContent::Output,
                         });
                     }
                     ["run", row, text, cell_widths, style_id, flags, hyperlink_id] => {
@@ -2427,6 +2433,36 @@ impl ClientAttachState {
                             style_id: parse_state_u32(style_id)?,
                             flags: parse_state_u32(flags)?,
                             hyperlink_id: parse_state_u32(hyperlink_id)?,
+                            semantic_content: protocol::CellSemanticContent::Output,
+                        });
+                    }
+                    [
+                        "run",
+                        row,
+                        text,
+                        cell_widths,
+                        style_id,
+                        flags,
+                        hyperlink_id,
+                        semantic_content,
+                    ] => {
+                        let row = parse_state_usize(row)?;
+                        let Some(target) = row_runs.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state run row index outside surface",
+                            ));
+                        };
+                        target.push(CellRunSummary {
+                            text: String::from_utf8(hex_decode(text)?)
+                                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
+                            cell_widths: hex_decode(cell_widths)?,
+                            style_id: parse_state_u32(style_id)?,
+                            flags: parse_state_u32(flags)?,
+                            hyperlink_id: parse_state_u32(hyperlink_id)?,
+                            semantic_content: protocol::CellSemanticContent(parse_state_i8(
+                                semantic_content,
+                            )?),
                         });
                     }
                     _ => {
@@ -2847,6 +2883,7 @@ mod tests {
                 style_id: 0,
                 flags: 0,
                 hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Output,
             }],
             dirty_hash: u64::from(row),
             semantic_prompt: protocol::RowSemanticPrompt::None,
@@ -3149,6 +3186,7 @@ mod tests {
                             style_id: 1,
                             flags: 1,
                             hyperlink_id: 0,
+                            semantic_content: protocol::CellSemanticContent::Prompt,
                         },
                         CellRunSummary::plain("d"),
                     ],
@@ -3220,6 +3258,10 @@ mod tests {
         assert_eq!(decoded.surfaces[0].row_runs[0][0].text, "cache");
         assert_eq!(decoded.surfaces[0].row_runs[0][0].style_id, 1);
         assert_eq!(decoded.surfaces[0].row_runs[0][0].flags, 1);
+        assert_eq!(
+            decoded.surfaces[0].row_runs[0][0].semantic_content,
+            protocol::CellSemanticContent::Prompt
+        );
     }
 
     #[test]

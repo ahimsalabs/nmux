@@ -1643,6 +1643,7 @@ fn build_cell_run<'a>(
             style_id: run.style_id,
             flags: run.flags,
             hyperlink_id: run.hyperlink_id,
+            semantic_content: run.semantic_content,
         },
     )
 }
@@ -1914,6 +1915,7 @@ mod tests {
                 style_id: 1,
                 flags: 0,
                 hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Prompt,
             },
             CellRun::plain(" plain"),
         ]];
@@ -1933,6 +1935,10 @@ mod tests {
         assert_eq!(runs.get(0).text_utf8(), Some("red"));
         assert_eq!(runs.get(0).style_id(), 1);
         assert_eq!(runs.get(0).cell_widths().expect("widths").len(), 3);
+        assert_eq!(
+            runs.get(0).semantic_content(),
+            protocol::CellSemanticContent::Prompt
+        );
         assert_eq!(runs.get(1).text_utf8(), Some(" plain"));
         assert_eq!(runs.get(1).style_id(), 0);
     }
@@ -1981,6 +1987,10 @@ mod tests {
             protocol::RowSemanticPrompt::None
         );
         assert!(!first_row.dirty());
+        assert_eq!(
+            first_row.runs().expect("runs").get(0).semantic_content(),
+            protocol::CellSemanticContent::Output
+        );
         assert!(!first_row.kitty_virtual_placeholder());
         let first_runs = first_row.runs().expect("runs");
         assert_eq!(first_runs.get(0).text_utf8(), Some("nmux pane-1"));
@@ -2123,6 +2133,10 @@ mod tests {
             second_runs.get(0).text_utf8(),
             Some("server-owned terminal state")
         );
+        assert_eq!(
+            second_runs.get(0).semantic_content(),
+            protocol::CellSemanticContent::Output
+        );
     }
 
     #[test]
@@ -2143,6 +2157,7 @@ mod tests {
                 style_id: 1,
                 flags: 0,
                 hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Input,
             },
             CellRun::plain(" plain"),
         ]];
@@ -2163,6 +2178,10 @@ mod tests {
         assert_eq!(runs.len(), 2);
         assert_eq!(runs.get(0).text_utf8(), Some("red"));
         assert_eq!(runs.get(0).style_id(), 1);
+        assert_eq!(
+            runs.get(0).semantic_content(),
+            protocol::CellSemanticContent::Input
+        );
         assert_eq!(runs.get(1).text_utf8(), Some(" plain"));
         assert_eq!(runs.get(1).style_id(), 0);
     }
@@ -2905,6 +2924,7 @@ mod tests {
                                 style_id: 1,
                                 flags: 0,
                                 hyperlink_id: 0,
+                                semantic_content: protocol::CellSemanticContent::Output,
                             }]
                         })
                         .collect(),
@@ -3169,6 +3189,64 @@ mod tests {
         assert_eq!(
             rows.get(0).semantic_prompt(),
             protocol::RowSemanticPrompt::Prompt
+        );
+    }
+
+    #[test]
+    fn semantic_content_only_engine_update_emits_replace_rows_patch() {
+        struct SemanticContentOnlyEngine;
+
+        impl TerminalEngine for SemanticContentOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"semantic content");
+                let mut update = TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                );
+                update.surface_row_runs = input
+                    .surface_lines
+                    .iter()
+                    .map(|line| vec![CellRun::plain(line.clone())])
+                    .collect();
+                update.surface_row_runs[0][0].semantic_content =
+                    protocol::CellSemanticContent::Prompt;
+                Some(update)
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = SemanticContentOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"semantic content", &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::ReplaceRows)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
+        let rows = patch.row_updates().expect("row updates");
+        assert_eq!(
+            rows.get(0).runs().expect("runs").get(0).semantic_content(),
+            protocol::CellSemanticContent::Prompt
         );
     }
 
