@@ -61,12 +61,13 @@ backend terminal state into the same nmux objects:
   not force a surface version bump. Keep workspace versions for tree metadata
   changes.
 - Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; terminal
-  mode-only changes should use `PatchKind::ModeOnly`; row text or row-run-only
-  changes should use `PatchKind::ReplaceRows` with only changed rows when pane
-  geometry is stable; changes that cannot be expressed by the current patch
-  schema, including style-table changes, should force a full snapshot. Clients
-  must reject unsupported patch kinds rather than applying them as cursor-only
-  updates.
+  mode-only changes should use `PatchKind::ModeOnly`; terminal color-only
+  changes should use `PatchKind::ColorOnly`; row text or row-run-only changes
+  should use `PatchKind::ReplaceRows` with only changed rows when pane geometry
+  is stable; changes that cannot be expressed by the current patch schema,
+  including style-table changes and row changes coupled to color changes, should
+  force a full snapshot. Clients must reject unsupported patch kinds rather
+  than applying them as cursor-only updates.
 
 ## Known Schema Gaps
 
@@ -129,9 +130,9 @@ only after the backend extraction proves the exact shape needed.
   entries during `libghostty-vt` extraction. `TerminalColorState` carries
   backend-observed default foreground/background colors, the active palette,
   palette overrides, and explicit cursor color state through surface snapshots,
-  surface patches, scrollback chunks, and cached client state. Dynamic color
-  changes currently require a full surface refresh; incremental palette diffs
-  remain withheld until renderer requirements are clearer.
+  color-only surface patches, scrollback chunks, and cached client state.
+  Incremental palette diffs remain withheld until renderer requirements are
+  clearer.
 - Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, and
   backend row/cell hyperlink presence is carried as bit 0 in `CellRun.flags`.
   nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
@@ -172,7 +173,7 @@ The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, basic SGR style flags, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
 render-state default colors/palette, palette overrides, explicit cursor color,
-terminal color state, alternate-screen entry/restoration with alternate
+terminal color state and color-only patches, alternate-screen entry/restoration with alternate
 scrollback omission, terminal title and OSC 7 working-directory metadata
 extraction, OSC 133 row semantic prompt state, per-run semantic content,
 resize/reflow, styled backend-owned scrollback extraction, row-level dirty
@@ -183,7 +184,7 @@ for bracketed paste, mouse tracking, focus reporting, application keypad mode,
 application cursor mode, origin, and wraparound.
 
 The nmux state-sync path now has coverage for snapshot/patch cursor blink, title
-and working-directory metadata, terminal color state, row semantic prompt
+and working-directory metadata, terminal color state and color-only patches, row semantic prompt
 metadata, per-run semantic content, row dirty metadata, row state hashes, Kitty
 placeholder row metadata, mode payloads, mode-only patch application, sparse row
 replacement, metadata-only no-row live updates, cached client-state

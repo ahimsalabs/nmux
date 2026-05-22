@@ -2628,12 +2628,12 @@ impl ClientPaneSurface {
         if update.patch_kind == Some(protocol::PatchKind::FullRefreshRequired) {
             return Err("surface patch requires full refresh".into());
         }
-        if let Some(colors) = update.colors.as_ref()
-            && colors != &self.colors
-        {
-            return Err("surface patch changes terminal colors and requires full refresh".into());
-        }
         if update.patch_kind == Some(protocol::PatchKind::CursorOnly) {
+            if let Some(colors) = update.colors.as_ref()
+                && colors != &self.colors
+            {
+                return Err("cursor-only patch changes terminal colors".into());
+            }
             self.cursor = update.cursor;
             self.title = update.title.clone();
             self.working_directory = update.working_directory.clone();
@@ -2641,6 +2641,11 @@ impl ClientPaneSurface {
             return Ok(());
         }
         if update.patch_kind == Some(protocol::PatchKind::ModeOnly) {
+            if let Some(colors) = update.colors.as_ref()
+                && colors != &self.colors
+            {
+                return Err("mode-only patch changes terminal colors".into());
+            }
             self.cursor = update.cursor;
             self.modes = update.modes;
             self.title = update.title.clone();
@@ -2648,8 +2653,24 @@ impl ClientPaneSurface {
             self.version = update.version;
             return Ok(());
         }
+        if update.patch_kind == Some(protocol::PatchKind::ColorOnly) {
+            let Some(colors) = update.colors.as_ref() else {
+                return Err("color-only patch is missing terminal colors".into());
+            };
+            self.cursor = update.cursor;
+            self.colors = colors.clone();
+            self.title = update.title.clone();
+            self.working_directory = update.working_directory.clone();
+            self.version = update.version;
+            return Ok(());
+        }
         if update.patch_kind != Some(protocol::PatchKind::ReplaceRows) {
             return Err(format!("unsupported surface patch kind: {:?}", update.patch_kind).into());
+        }
+        if let Some(colors) = update.colors.as_ref()
+            && colors != &self.colors
+        {
+            return Err("replace-rows patch changes terminal colors".into());
         }
         self.apply_rows(&update.row_updates)?;
         self.cursor = update.cursor;
@@ -4343,7 +4364,40 @@ mod tests {
     }
 
     #[test]
-    fn client_surface_rejects_supported_patch_that_changes_colors() {
+    fn client_surface_applies_color_only_patch_without_rows() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top")],
+        );
+        snapshot.colors = Some(TerminalColorSummary {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x111111ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: vec![0x000000ff],
+        });
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        patch.patch_kind = Some(protocol::PatchKind::ColorOnly);
+        patch.colors = Some(TerminalColorSummary {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x222222ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: vec![0x000000ff],
+        });
+
+        surface.apply_patch(&patch).expect("apply color-only patch");
+
+        assert_eq!(surface.version, 2);
+        assert_eq!(surface.render_text(), "top");
+        assert_eq!(surface.colors, patch.colors.expect("patch colors"));
+    }
+
+    #[test]
+    fn client_surface_rejects_replace_rows_patch_that_changes_colors() {
         let mut snapshot = surface_update(
             SurfaceUpdateKind::Snapshot,
             1,
@@ -4374,9 +4428,10 @@ mod tests {
 
         let err = surface
             .apply_patch(&patch)
-            .expect_err("color-changing patch should be rejected");
+            .expect_err("replace-rows color-changing patch should be rejected");
         assert!(
-            err.to_string().contains("requires full refresh"),
+            err.to_string()
+                .contains("replace-rows patch changes terminal colors"),
             "unexpected error: {err}"
         );
     }

@@ -1660,15 +1660,17 @@ fn terminal_patch_kind(
     working_directory_changed: bool,
     colors_changed: bool,
 ) -> protocol::PatchKind {
-    if surface_kind_changed || styles_changed || colors_changed {
-        protocol::PatchKind::FullRefreshRequired
-    } else if rows_changed
+    let rows_or_row_metadata_changed = rows_changed
         || row_runs_changed
         || semantic_prompts_changed
         || dirty_rows_changed
-        || kitty_placeholders_changed
-    {
+        || kitty_placeholders_changed;
+    if surface_kind_changed || styles_changed || (colors_changed && rows_or_row_metadata_changed) {
+        protocol::PatchKind::FullRefreshRequired
+    } else if rows_or_row_metadata_changed {
         protocol::PatchKind::ReplaceRows
+    } else if colors_changed {
+        protocol::PatchKind::ColorOnly
     } else if modes_changed {
         protocol::PatchKind::ModeOnly
     } else if cursor_changed || title_changed || working_directory_changed {
@@ -3431,7 +3433,7 @@ mod tests {
     }
 
     #[test]
-    fn color_state_change_requires_full_refresh_patch() {
+    fn color_state_change_emits_color_only_patch() {
         struct ColorOnlyEngine;
 
         impl TerminalEngine for ColorOnlyEngine {
@@ -3477,13 +3479,13 @@ mod tests {
         assert!(session.apply_pane_output_with_engine("pane-1", b"color only", &mut engine));
         assert_eq!(
             session.surface_patch_kind("pane-1"),
-            Some(protocol::PatchKind::FullRefreshRequired)
+            Some(protocol::PatchKind::ColorOnly)
         );
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let patch = envelope.body_as_pane_surface_patch().expect("patch");
-        assert_eq!(patch.kind(), protocol::PatchKind::FullRefreshRequired);
+        assert_eq!(patch.kind(), protocol::PatchKind::ColorOnly);
         let colors = patch.colors().expect("colors");
         assert_eq!(colors.default_fg_rgba(), 0xeeeeeeff);
         assert_eq!(colors.default_bg_rgba(), 0x111111ff);
@@ -3493,7 +3495,7 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
-    fn ghostty_vt_color_state_change_requires_full_refresh_patch() {
+    fn ghostty_vt_color_state_change_emits_color_only_patch() {
         let mut session = Session::initial();
         let mut engines = crate::terminal::PaneTerminalEngines::new(
             crate::terminal::TerminalEngineKind::LibghosttyVt,
@@ -3513,13 +3515,13 @@ mod tests {
         ));
         assert_eq!(
             session.surface_patch_kind("pane-1"),
-            Some(protocol::PatchKind::FullRefreshRequired)
+            Some(protocol::PatchKind::ColorOnly)
         );
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, base_version);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let patch = envelope.body_as_pane_surface_patch().expect("patch");
-        assert_eq!(patch.kind(), protocol::PatchKind::FullRefreshRequired);
+        assert_eq!(patch.kind(), protocol::PatchKind::ColorOnly);
         let colors = patch.colors().expect("colors");
         let palette = colors.palette_rgba().expect("palette");
         assert_eq!(palette.get(1), 0x112233ff);

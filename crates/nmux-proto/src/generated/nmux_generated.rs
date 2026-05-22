@@ -1017,14 +1017,15 @@ impl ::flatbuffers::SimpleToVerifyInSlice for ResizePolicy {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_PATCH_KIND: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_PATCH_KIND: i8 = 3;
+pub const ENUM_MAX_PATCH_KIND: i8 = 4;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_PATCH_KIND: [PatchKind; 4] = [
+pub const ENUM_VALUES_PATCH_KIND: [PatchKind; 5] = [
   PatchKind::ReplaceRows,
   PatchKind::CursorOnly,
   PatchKind::ModeOnly,
   PatchKind::FullRefreshRequired,
+  PatchKind::ColorOnly,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -1036,14 +1037,16 @@ impl PatchKind {
   pub const CursorOnly: Self = Self(1);
   pub const ModeOnly: Self = Self(2);
   pub const FullRefreshRequired: Self = Self(3);
+  pub const ColorOnly: Self = Self(4);
 
   pub const ENUM_MIN: i8 = 0;
-  pub const ENUM_MAX: i8 = 3;
+  pub const ENUM_MAX: i8 = 4;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::ReplaceRows,
     Self::CursorOnly,
     Self::ModeOnly,
     Self::FullRefreshRequired,
+    Self::ColorOnly,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -1052,6 +1055,7 @@ impl PatchKind {
       Self::CursorOnly => Some("CursorOnly"),
       Self::ModeOnly => Some("ModeOnly"),
       Self::FullRefreshRequired => Some("FullRefreshRequired"),
+      Self::ColorOnly => Some("ColorOnly"),
       _ => None,
     }
   }

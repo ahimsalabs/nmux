@@ -80,6 +80,7 @@ enum PatchKind : byte {
   CursorOnly = 1,
   ModeOnly = 2,
   FullRefreshRequired = 3,
+  ColorOnly = 4,
 }
 
 enum ErrorCode : ushort {
