@@ -82,6 +82,10 @@ Scrollback is a separate versioned object. Clients request ranges with
 corresponding style table for that chunk. `ScrollbackFetch.start_line`,
 `ScrollbackChunk.start_line`, and `ScrollbackRow.line` are 1-based public line
 numbers, so line 1 is the oldest retained row in the chunk's pane history.
+`ScrollbackFetch.known_scrollback_version = 0` means the client is not asserting
+a cached scrollback version. Nonzero known versions must match the daemon's
+current pane scrollback version; mismatches return `ErrorCode::StaleVersion`
+instead of serving a range from a different history version.
 
 ## Resize Model
 

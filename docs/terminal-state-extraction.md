@@ -48,7 +48,9 @@ backend terminal state into the same nmux objects:
   while keeping rendered row text available as a client fallback.
 - Scrollback: expose historical rows through the existing `ScrollbackChunk`
   range model and advance scrollback versions when backend-owned history
-  changes. Fetch handling must stay pane-scoped.
+  changes. Fetch handling must stay pane-scoped, treat version zero as no
+  client precondition, and reject nonzero stale client versions with
+  `ErrorCode::StaleVersion`.
 - Resize: feed resize events into the VT engine and publish the resulting pane
   size, cursor, visible rows, and scrollback state.
 - Versions: bump surface versions when the nmux-visible surface, cursor,

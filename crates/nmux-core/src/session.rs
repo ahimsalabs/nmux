@@ -481,6 +481,10 @@ impl Session {
         })
     }
 
+    pub fn scrollback_version(&self, pane_id: &str) -> Option<u64> {
+        self.pane(pane_id).map(|pane| pane.scrollback_version)
+    }
+
     pub fn surface_patch_kind(&self, pane_id: &str) -> Option<protocol::PatchKind> {
         self.pane(pane_id).map(|pane| pane.last_patch_kind)
     }
@@ -2633,6 +2637,14 @@ mod tests {
 
         assert_eq!(session.surface_version("pane-1"), Some(2));
         assert_eq!(session.surface_version("missing"), None);
+    }
+
+    #[test]
+    fn finds_initial_pane_scrollback_version() {
+        let session = Session::initial();
+
+        assert_eq!(session.scrollback_version("pane-1"), Some(1));
+        assert_eq!(session.scrollback_version("missing"), None);
     }
 
     #[test]

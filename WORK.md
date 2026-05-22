@@ -487,6 +487,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   live host resize failures return protocol Error frames instead of tearing down nmuxd with opaque I/O failures
   pane-scoped one-shot and live client intents for unknown panes return protocol PaneNotFound errors instead of hanging or falling through to process-host behavior
   public scrollback ranges consistently use 1-based line numbers from ScrollbackFetch through ScrollbackChunk and decoded client summaries
+  ScrollbackFetch known_scrollback_version 0 means no client precondition, and nonzero stale scrollback versions return protocol StaleVersion errors
   SurfaceRow, RowUpdate, and ScrollbackRow carry OSC 133 row semantic prompt metadata; CellRun carries OSC 133 output/input/prompt semantic content; broader semantic command IDs, ranges, lifecycle, and exit metadata remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk carry TerminalColorState; color-state changes require full refreshes while incremental palette diffs remain withheld
   ReplaceRows patches now carry only changed rows when the pane geometry is stable; SurfaceRow, RowUpdate, and ScrollbackRow carry backend row dirty flags and row state hashes as metadata, while richer run/region damage protocol fields remain withheld
