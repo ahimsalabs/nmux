@@ -512,7 +512,8 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   feature-gated live CLI coverage proves libghostty-vt reattach recovers from style-table FullRefreshRequired updates without raw ANSI leakage
   ScrollbackChunk carries the pane style table so scrollback row runs do not reference missing style IDs
   nmux --state preserves cached title, OSC 7 working directory, terminal modes including mouse tracking mode/format, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, Kitty placeholder row metadata, and last-seen scrollback metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot
-  current-version live reattach sends explicit focus input to the daemon even when no surface frame arrives, so focus-reporting-disabled cases produce daemon-owned Error frames; paste delimiter selection remains daemon-owned
+  current-version reattach sends explicit paste input before scrollback fetch and keeps bracketed-paste delimiter selection daemon-owned
+  current-version live reattach sends explicit focus input to the daemon even when no surface frame arrives, so focus-reporting-disabled cases produce daemon-owned Error frames
   local clients maintain monotonic Envelope.seq and InputEvent.input_seq values across one-shot and live post-attach frames, including repeated structured live input
   document cursor, mode, alternate-screen, palette, hyperlink, image, grapheme, and cell-width gaps before schema changes
   preserve frontend state-sync semantics; do not introduce client-side raw PTY replay
