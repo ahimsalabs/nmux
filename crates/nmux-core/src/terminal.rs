@@ -921,6 +921,31 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_render_state_tracks_explicit_cursor_color_without_protocol_fields() {
+        use libghostty_vt::{RenderState, Terminal, TerminalOptions, style::RgbColor};
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+        let mut render_state = RenderState::new().expect("render state");
+
+        terminal.vt_write(b"\x1b]12;#ff00ff\x1b\\");
+        let snapshot = render_state.update(&terminal).expect("snapshot");
+        let cursor = Some(RgbColor {
+            r: 255,
+            g: 0,
+            b: 255,
+        });
+
+        assert_eq!(snapshot.cursor_color().expect("cursor color"), cursor);
+        assert_eq!(snapshot.colors().expect("render colors").cursor, cursor);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_extracts_basic_sgr_style_flags() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();

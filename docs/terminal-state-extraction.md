@@ -84,9 +84,10 @@ only after the backend extraction proves the exact shape needed.
   behavior still needs protocol guidance.
 - Palette and theme state: indexed SGR colors resolve into RGBA style-table
   entries during `libghostty-vt` extraction, and render-state tests prove the
-  safe API exposes default foreground/background colors plus the active palette.
-  Palette overrides, default foreground/background ownership in nmux protocol
-  objects, and dynamic color changes still need protocol decisions.
+  safe API exposes default foreground/background colors, the active palette, and
+  explicit cursor color changes. Palette overrides, default foreground/background
+  ownership in nmux protocol objects, and dynamic color changes still need
+  protocol decisions.
 - Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, but
   nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
   ownership, and lifetime have a protocol object.
