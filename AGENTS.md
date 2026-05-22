@@ -67,8 +67,9 @@ nix develop path:$PWD -c make check-ghostty-vt
 
 The target sets `GIT_CONFIG_GLOBAL=/dev/null` to avoid local GitHub HTTPS-to-SSH rewrites while
 `libghostty-vt-sys` fetches its pinned Ghostty source. The Nix shell pins Zig
-0.15 for that native build. Keep this path opt-in unless a later ADR makes the
-native Ghostty/Zig build part of regular CI.
+0.15 for that native build. Keep this path opt-in unless a later ADR explicitly
+makes the native Ghostty/Zig build part of regular CI, default development, and
+packaging.
 
 ## Licensing Rules
 

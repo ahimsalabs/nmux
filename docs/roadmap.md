@@ -129,7 +129,7 @@ Done:
 
 Next:
 
-- Decide when the optional `libghostty-vt` feature should enter regular CI and whether `nmuxd --terminal-engine libghostty-vt` should become the documented default.
+- Decide, with a later ADR, when the optional `libghostty-vt` feature should enter regular CI and whether `nmuxd --terminal-engine libghostty-vt` should become the documented default.
 - Use [the terminal state extraction checklist](terminal-state-extraction.md) as the gate for making `libghostty-vt` the default engine or expanding protocol fields.
 - Keep client attach, reconnect, live streaming, and scrollback fetch semantics on nmux state objects.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.

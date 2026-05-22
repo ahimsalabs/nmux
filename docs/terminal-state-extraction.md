@@ -160,19 +160,22 @@ have tests proving:
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, basic SGR style flags, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
-render-state default colors/palette,
-palette overrides, explicit cursor color, terminal color state,
-alternate-screen entry/restoration
-with alternate scrollback omission, terminal title and OSC 7 working-directory
-metadata extraction, OSC 133 row semantic prompt state, per-run semantic content,
-resize/reflow, styled
-backend-owned scrollback extraction, row-level dirty state, Kitty placeholder
-metadata, hyperlink presence, application-keypad and application-cursor encoder support,
-focus event encoding, paste safety validation, safe-API mode tracking for
-bracketed paste, mouse tracking, focus reporting, application keypad mode, and
-origin/wraparound modes, plus nmux snapshot/patch cursor blink, row semantic
-prompt, row dirty, and mode payloads, mode-only patch application, and cursor
-cache compatibility through unit, session, and live CLI
-smoke coverage. It is not the default until
-the project deliberately accepts the native Zig/Ghostty build cost in normal
-development and CI.
+render-state default colors/palette, palette overrides, explicit cursor color,
+terminal color state, alternate-screen entry/restoration with alternate
+scrollback omission, terminal title and OSC 7 working-directory metadata
+extraction, OSC 133 row semantic prompt state, per-run semantic content,
+resize/reflow, styled backend-owned scrollback extraction, row-level dirty
+state, Kitty placeholder metadata, hyperlink presence, application-keypad and
+application-cursor encoder support, modified named-key encoding, focus event
+encoding, mouse event encoding, paste safety validation, safe-API mode tracking
+for bracketed paste, mouse tracking, focus reporting, application keypad mode,
+application cursor mode, origin, and wraparound.
+
+The nmux state-sync path now has coverage for snapshot/patch cursor blink, title
+and working-directory metadata, terminal color state, row semantic prompt
+metadata, per-run semantic content, row dirty metadata, Kitty placeholder row
+metadata, mode payloads, mode-only patch application, sparse row replacement,
+cached client-state compatibility, cached terminal metadata reattach, and
+feature-gated live CLI smoke paths. The default engine remains `interim` until a
+later ADR explicitly accepts the native Ghostty/Zig build cost in normal
+development, CI, and packaging.
