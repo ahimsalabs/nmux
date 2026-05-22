@@ -197,9 +197,9 @@ nmux snapshots, patches, and scrollback chunks. Current coverage includes cursor
 position/visibility/shape, alternate-screen entry/restoration, resize/reflow,
 style-separated visible rows, styled scrollback rows, cell widths, combining
 marks, emoji ZWJ clusters, basic SGR style flags, underline color,
-palette-indexed colors, render-state default colors/palette, bracketed paste,
-mouse tracking, application keypad, origin, and wraparound mode state, and
-mode-aware key encoding.
+palette-indexed colors, render-state default colors/palette, explicit cursor
+color, bracketed paste, mouse tracking, application keypad, origin, and
+wraparound mode state, and mode-aware key encoding.
 
 ```sh
 nix develop path:$PWD -c make check-ghostty-vt
