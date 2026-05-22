@@ -188,8 +188,9 @@ server-provided reason instead of reporting an ambiguous closed connection.
 For pane-scoped failures, the frame also carries `Error.pane_id`; for input
 failures, it carries the originating `InputEvent.input_seq` so clients can
 correlate the failure without parsing the reason text.
-One-shot clients also check for an input error before requesting scrollback, so
-unsafe paste, encoding failures, and host input failures are reported directly.
+One-shot clients also check for an input or output-polling error before
+requesting scrollback, so unsafe paste, encoding failures, host input failures,
+and host output polling failures are reported directly.
 Pane-scoped input, resize, and scrollback requests for unknown panes return a
 `PaneNotFound` error instead of waiting for a response that will never arrive.
 

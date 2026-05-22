@@ -219,7 +219,7 @@ bracketed-paste wrapping, libghostty-vt current-surface mouse forwarding,
 libghostty-vt current-surface CLI SGR mouse forwarding, mode-aware
 libghostty-vt current-surface application-keypad and application-cursor
 named-key forwarding,
-protocol-visible host input and live resize failures,
+protocol-visible host input, live resize, and output polling failures,
 pane/input-attributed `Error` frames, `PaneNotFound` errors for unknown
 pane-scoped client intents, consistent 1-based public scrollback ranges,
 decoded scrollback row hash metadata, and

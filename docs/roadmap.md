@@ -133,6 +133,7 @@ Done:
 - Structured-input forwarding failures now return protocol `Error` frames instead of surfacing as opaque daemon exits, and local one-shot clients check for those frames before requesting scrollback.
 - One-shot and live host write failures now return protocol `Error` frames instead of surfacing as opaque daemon I/O exits.
 - Live host resize failures now return protocol `Error` frames instead of surfacing as opaque daemon I/O exits.
+- Initial and post-attach host output polling failures now return protocol `Error` frames instead of surfacing as opaque daemon I/O exits.
 - Pane-scoped one-shot and live client intents for unknown panes now return protocol `PaneNotFound` errors instead of hanging, silently omitting a response, or falling through to process-host behavior.
 - Public scrollback ranges now consistently use 1-based line numbers from `ScrollbackFetch` through `ScrollbackChunk` and decoded client summaries.
 - Scrollback fetches now treat `known_scrollback_version = 0` as no precondition and return `ErrorCode::StaleVersion` when a nonzero client-known version does not match the daemon's pane scrollback version.

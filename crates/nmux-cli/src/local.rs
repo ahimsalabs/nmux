@@ -333,7 +333,11 @@ fn serve_next_with_output(
     let request = read_attach_request(&mut stream)?;
     if let Some(output) = output.as_deref_mut() {
         let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
-        poll_pane_output_with_engines(session, engines, output, &pane_id)?;
+        if let Err(err) = poll_pane_output_with_engines(session, engines, output, &pane_id) {
+            let mut seq = 1;
+            write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
+            return Ok(());
+        }
     }
     serve_attached_client(&mut stream, request, session, None, engines)
 }
@@ -350,7 +354,11 @@ where
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
     let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
-    poll_pane_output_with_host_and_engines(session, engines, host, &pane_id)?;
+    if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
+        let mut seq = 1;
+        write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
+        return Ok(());
+    }
     serve_attached_client(&mut stream, request, session, Some(host), engines)
 }
 
@@ -367,7 +375,11 @@ where
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
     let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
-    poll_pane_output_with_host_and_engines(session, engines, host, &pane_id)?;
+    if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
+        let mut seq = 1;
+        write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
+        return Ok(());
+    }
     serve_live_attached_client(&mut stream, request, session, host, engines, cycles)
 }
 
@@ -549,12 +561,27 @@ fn serve_live_attached_client(
                         return Ok(());
                     }
                 }
-                poll_pane_output_with_host_until_quiet(session, engines, host, &input.pane_id)?;
+                if let Err(err) =
+                    poll_pane_output_with_host_until_quiet(session, engines, host, &input.pane_id)
+                {
+                    write_host_output_error(stream, session, &mut seq, &input.pane_id, err)?;
+                    return Ok(());
+                }
             } else {
-                poll_pane_output_with_host_until_quiet(session, engines, host, &pane_id)?;
+                if let Err(err) =
+                    poll_pane_output_with_host_until_quiet(session, engines, host, &pane_id)
+                {
+                    write_host_output_error(stream, session, &mut seq, &pane_id, err)?;
+                    return Ok(());
+                }
             }
         } else {
-            poll_pane_output_with_host_until_quiet(session, engines, host, &pane_id)?;
+            if let Err(err) =
+                poll_pane_output_with_host_until_quiet(session, engines, host, &pane_id)
+            {
+                write_host_output_error(stream, session, &mut seq, &pane_id, err)?;
+                return Ok(());
+            }
         }
 
         let current = session.surface_version(&pane_id).unwrap_or_default();
@@ -814,7 +841,12 @@ fn process_one_shot_input(
             return Ok(false);
         }
     }
-    poll_pane_output_with_host_and_engines(session, engines, host, &input.pane_id)?;
+    if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &input.pane_id)
+    {
+        let mut seq = 4;
+        write_host_output_error(stream, session, &mut seq, &input.pane_id, err)?;
+        return Ok(false);
+    }
     Ok(true)
 }
 
@@ -876,6 +908,24 @@ fn write_pane_not_found_error_with_input_seq(
         &format!("pane not found: {pane_id}"),
         Some(pane_id),
         input_seq,
+    )
+}
+
+fn write_host_output_error(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    pane_id: &str,
+    error: HostError,
+) -> Result<(), Box<dyn std::error::Error>> {
+    write_protocol_error(
+        stream,
+        session,
+        seq,
+        protocol::ErrorCode::Unknown,
+        &format!("output polling failed: {error}"),
+        Some(pane_id),
+        0,
     )
 }
 
@@ -1201,6 +1251,12 @@ pub fn attach_from_stream(
     stream: &mut UnixStream,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
     let workspace_frame = wire::read_default_frame(stream)?;
+    if protocol::size_prefixed_root_as_envelope(&workspace_frame)?.body_type()
+        == protocol::EnvelopeBody::Error
+    {
+        let error = error_summary_from_frame(&workspace_frame)?;
+        return Err(format!("server error: {}", error.message).into());
+    }
     let workspace = workspace_summary_from_frame(&workspace_frame)?;
 
     let presence_frame = wire::read_default_frame(stream)?;
@@ -5776,6 +5832,73 @@ mod tests {
     }
 
     #[test]
+    fn attach_reports_initial_output_poll_failure_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = FailingReadHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start failing read pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host)
+                .expect("serve one with read failure");
+        });
+        let err = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: None,
+                ..AttachOptions::default()
+            },
+        )
+        .expect_err("output read failure should report server error");
+        server.join().expect("server thread");
+
+        assert!(
+            err.to_string().contains(
+                "server error: output polling failed: host I/O error during try_read_output for pane-1: simulated read failure"
+            ),
+            "unexpected error: {err}"
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn one_shot_attach_reports_post_input_output_poll_failure_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = FailingReadHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start failing read pane");
+        host.fail_reads = false;
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host)
+                .expect("serve one with post-input read failure");
+        });
+        let err = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: Some("poll-fails".to_owned()),
+                ..AttachOptions::default()
+            },
+        )
+        .expect_err("post-input output read failure should report server error");
+        server.join().expect("server thread");
+
+        assert!(
+            err.to_string().contains(
+                "server error: output polling failed: host I/O error during try_read_output for pane-1: simulated read failure"
+            ),
+            "unexpected error: {err}"
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn attach_reports_missing_scrollback_pane_with_error_frame() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -6233,6 +6356,43 @@ mod tests {
             LiveSurfaceRead::Error(ErrorSummary {
                 code: protocol::ErrorCode::Unknown,
                 message: "resize failed: host I/O error during resize_pane for pane-1: simulated resize failure".to_owned(),
+                retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 0,
+            })
+        );
+
+        server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_attach_reports_output_poll_failure_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = FailingReadHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start failing read pane");
+        host.fail_reads = false;
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve live with read failure");
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert!(initial.surface.is_some());
+
+        send_key_input(&mut stream, "pane-1", "poll-fails").expect("send input");
+        let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
+        assert_eq!(
+            error,
+            LiveSurfaceRead::Error(ErrorSummary {
+                code: protocol::ErrorCode::Unknown,
+                message: "output polling failed: host I/O error during try_read_output for pane-1: simulated read failure".to_owned(),
                 retryable: false,
                 pane_id: Some("pane-1".to_owned()),
                 input_seq: 0,
@@ -9792,6 +9952,80 @@ mod tests {
                     pane_id: pane_id.to_owned(),
                 })
             }
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct FailingReadHost {
+        running: bool,
+        fail_reads: bool,
+    }
+
+    impl ProcessHost for FailingReadHost {
+        fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
+            self.running = true;
+            self.fail_reads = true;
+            Ok(PaneProcess {
+                pane_id: pane_id.to_owned(),
+                host_id: spec.id.clone(),
+                status: ProcessStatus::Running,
+            })
+        }
+
+        fn write_input(&mut self, pane_id: &str, _bytes: &[u8]) -> Result<(), HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            self.fail_reads = true;
+            Ok(())
+        }
+
+        fn resize_pane(&mut self, pane_id: &str, _cols: u32, _rows: u32) -> Result<(), HostError> {
+            if self.running {
+                Ok(())
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
+        }
+
+        fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            self.running = false;
+            Ok(PaneProcess {
+                pane_id: pane_id.to_owned(),
+                host_id: "failing-read".to_owned(),
+                status: ProcessStatus::Exited,
+            })
+        }
+    }
+
+    impl ProcessOutput for FailingReadHost {
+        fn try_read_output(
+            &mut self,
+            pane_id: &str,
+            _bytes: &mut [u8],
+        ) -> Result<usize, HostError> {
+            if !self.running {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            if self.fail_reads {
+                return Err(HostError::Io {
+                    pane_id: pane_id.to_owned(),
+                    operation: "try_read_output".to_owned(),
+                    message: "simulated read failure".to_owned(),
+                });
+            }
+            Ok(0)
         }
     }
 
