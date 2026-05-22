@@ -7034,6 +7034,114 @@ mod tests {
         let _ = fs::remove_file(socket_path);
     }
 
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn live_libghostty_vt_replace_rows_patch_updates_cached_hyperlink_runs() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![
+            b"ready\n".to_vec(),
+            Vec::new(),
+            b"\x1b]8;;https://example.com\x1b\\linked\x1b]8;;\x1b\\ text".to_vec(),
+        ]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            serve_live_n_with_host_and_terminal_engine_kind(
+                &listener,
+                &mut session,
+                &mut host,
+                1,
+                2,
+                TerminalEngineKind::LibghosttyVt,
+            )
+            .expect("serve hyperlink live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        let mut state = ClientAttachState::default();
+        let rendered = state.render_attach(initial).expect("render initial attach");
+        let initial_text = rendered.surface_text.expect("initial surface text");
+        assert!(initial_text.contains("ready"));
+
+        let update = loop {
+            match read_live_surface_update_from_stream(&mut stream).expect("live update") {
+                LiveSurfaceRead::Update(update) => break update,
+                LiveSurfaceRead::NoFrame => continue,
+                other => panic!("expected hyperlink replace-rows update, got {other:?}"),
+            }
+        };
+        assert_eq!(update.kind, SurfaceUpdateKind::Patch);
+        assert_eq!(update.patch_kind, Some(protocol::PatchKind::ReplaceRows));
+        let link_row = update
+            .row_updates
+            .iter()
+            .find(|row| row.text.contains("linked text"))
+            .expect("hyperlink row update");
+        let linked_run = link_row
+            .runs
+            .iter()
+            .find(|run| run.text == "linked")
+            .expect("linked run");
+        assert_ne!(
+            linked_run.flags & CELL_RUN_FLAG_HYPERLINK_PRESENT,
+            0,
+            "hyperlink presence flag missing from live row update"
+        );
+        assert_eq!(linked_run.hyperlink_id, 0);
+        let plain_run = link_row
+            .runs
+            .iter()
+            .find(|run| run.text == " text")
+            .expect("plain run");
+        assert_eq!(plain_run.flags & CELL_RUN_FLAG_HYPERLINK_PRESENT, 0);
+        let link_row_index = usize::try_from(link_row.row).expect("link row index fits in usize");
+
+        let updated_text = state
+            .render_surface_update(&update)
+            .expect("render hyperlink update");
+        assert_ne!(updated_text, initial_text);
+        assert_eq!(Some(updated_text), state.cached_surface_text("pane-1"));
+        let cached_linked_run = state.surfaces[0].row_runs[link_row_index]
+            .iter()
+            .find(|run| run.text == "linked")
+            .expect("cached linked run");
+        assert_ne!(
+            cached_linked_run.flags & CELL_RUN_FLAG_HYPERLINK_PRESENT,
+            0,
+            "hyperlink presence flag missing from cached row run"
+        );
+        assert_eq!(cached_linked_run.hyperlink_id, 0);
+
+        let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
+        let decoded_linked_run = decoded.surfaces[0].row_runs[link_row_index]
+            .iter()
+            .find(|run| run.text == "linked")
+            .expect("decoded linked run");
+        assert_ne!(
+            decoded_linked_run.flags & CELL_RUN_FLAG_HYPERLINK_PRESENT,
+            0,
+            "hyperlink presence flag missing after state encode/decode"
+        );
+        assert_eq!(decoded_linked_run.hyperlink_id, 0);
+
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
     #[test]
     fn live_attach_reports_mouse_out_of_bounds_with_error_frame() {
         let socket_path = test_socket_path();
