@@ -21,6 +21,7 @@ The current implementation is a Rust workspace with:
 
 ```sh
 nix develop path:$PWD -c make check
+nix develop path:$PWD -c make check-ghostty-vt
 ```
 
 ## Quick Smoke

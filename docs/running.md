@@ -193,12 +193,12 @@ feature. The dev shell pins Zig 0.15 because the Ghostty commit used by
 `libghostty-vt-sys` requires that Zig version.
 
 ```sh
-GIT_CONFIG_GLOBAL=/dev/null nix develop path:$PWD -c cargo test -p nmux-core --features libghostty-vt ghostty_vt
-GIT_CONFIG_GLOBAL=/dev/null nix develop path:$PWD -c cargo test -p nmux-cli --features libghostty-vt live_cli_can_use_libghostty_vt_terminal_engine
+nix develop path:$PWD -c make check-ghostty-vt
 ```
 
-`GIT_CONFIG_GLOBAL=/dev/null` is not logically required by nmux; it avoids a
-local Git configuration that rewrites GitHub HTTPS URLs to SSH. The
+The target sets `GIT_CONFIG_GLOBAL=/dev/null`. That is not logically required
+by nmux; it avoids a local Git configuration that rewrites GitHub HTTPS URLs to
+SSH. The
 `libghostty-vt-sys` build script fetches Ghostty from an HTTPS URL unless
 `GHOSTTY_SOURCE_DIR` points at an existing Ghostty checkout.
 

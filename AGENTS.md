@@ -59,11 +59,10 @@ The experimental backend Ghostty VT engine is feature-gated. Use this focused
 check when changing the optional path:
 
 ```sh
-GIT_CONFIG_GLOBAL=/dev/null nix develop path:$PWD -c cargo test -p nmux-core --features libghostty-vt ghostty_vt
-GIT_CONFIG_GLOBAL=/dev/null nix develop path:$PWD -c cargo test -p nmux-cli --features libghostty-vt live_cli_can_use_libghostty_vt_terminal_engine
+nix develop path:$PWD -c make check-ghostty-vt
 ```
 
-`GIT_CONFIG_GLOBAL=/dev/null` avoids local GitHub HTTPS-to-SSH rewrites while
+The target sets `GIT_CONFIG_GLOBAL=/dev/null` to avoid local GitHub HTTPS-to-SSH rewrites while
 `libghostty-vt-sys` fetches its pinned Ghostty source. The Nix shell pins Zig
 0.15 for that native build. Keep this path opt-in unless a later ADR makes the
 native Ghostty/Zig build part of regular CI.
