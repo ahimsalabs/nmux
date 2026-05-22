@@ -85,8 +85,10 @@ only after the backend extraction proves the exact shape needed.
   Local clients now forward UTF-8 paste input through `PasteInput`, wrapping with
   bracketed-paste delimiters only when the pane's current mode advertises
   bracketed paste and rejecting embedded terminators before forwarding.
-  Terminal-derived keypad input forwarding, mouse input forwarding, and focus
-  forwarding still need protocol decisions.
+  Local clients also forward focus gained/lost input through `FocusInput` only
+  when the daemon-owned pane mode reports focus reporting enabled.
+  Terminal-derived keypad input forwarding and mouse input forwarding still need
+  protocol decisions.
 - Terminal metadata: nmux carries OSC 2 terminal title through pane surface
   snapshot and patch metadata. OSC 7 working-directory state remains unproven in
   the current backend path and should stay withheld until the expected upstream

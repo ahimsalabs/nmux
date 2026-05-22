@@ -70,7 +70,7 @@ The policy is part of `PaneNode` so a pane can be fixed-size, leader-controlled,
 
 ## Input Model
 
-`InputEvent` is still a client-to-daemon intent, not authoritative terminal state. Text-oriented commands can use `InputKind.Key` with `KeyInput.text_utf8`; byte-oriented live clients should use `InputKind.RawBytes` with `RawInput.bytes` so control bytes and non-UTF-8 input do not get lossy string conversion before they reach the process host. Paste-oriented commands use `InputKind.Paste` with `PasteInput.text_utf8`; local clients wrap the paste in bracketed-paste delimiters only when the current pane mode reports bracketed paste enabled, and reject embedded bracketed-paste terminators before forwarding.
+`InputEvent` is still a client-to-daemon intent, not authoritative terminal state. Text-oriented commands can use `InputKind.Key` with `KeyInput.text_utf8`; byte-oriented live clients should use `InputKind.RawBytes` with `RawInput.bytes` so control bytes and non-UTF-8 input do not get lossy string conversion before they reach the process host. Paste-oriented commands use `InputKind.Paste` with `PasteInput.text_utf8`; local clients wrap the paste in bracketed-paste delimiters only when the current pane mode reports bracketed paste enabled, and reject embedded bracketed-paste terminators before forwarding. Focus commands use `InputKind.Focus` with `FocusInput.focused`; the local daemon forwards focus gained/lost bytes only when the daemon-owned pane mode reports focus reporting enabled.
 
 ## Validation
 

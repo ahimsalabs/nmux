@@ -357,14 +357,15 @@ impl ::flatbuffers::SimpleToVerifyInSlice for CursorShape {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_INPUT_KIND: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_INPUT_KIND: i8 = 3;
+pub const ENUM_MAX_INPUT_KIND: i8 = 4;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_INPUT_KIND: [InputKind; 4] = [
+pub const ENUM_VALUES_INPUT_KIND: [InputKind; 5] = [
   InputKind::Key,
   InputKind::Mouse,
   InputKind::Paste,
   InputKind::RawBytes,
+  InputKind::Focus,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -376,14 +377,16 @@ impl InputKind {
   pub const Mouse: Self = Self(1);
   pub const Paste: Self = Self(2);
   pub const RawBytes: Self = Self(3);
+  pub const Focus: Self = Self(4);
 
   pub const ENUM_MIN: i8 = 0;
-  pub const ENUM_MAX: i8 = 3;
+  pub const ENUM_MAX: i8 = 4;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::Key,
     Self::Mouse,
     Self::Paste,
     Self::RawBytes,
+    Self::Focus,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -392,6 +395,7 @@ impl InputKind {
       Self::Mouse => Some("Mouse"),
       Self::Paste => Some("Paste"),
       Self::RawBytes => Some("RawBytes"),
+      Self::Focus => Some("Focus"),
       _ => None,
     }
   }
@@ -3432,6 +3436,7 @@ impl<'a> InputEvent<'a> {
   pub const VT_MOUSE: ::flatbuffers::VOffsetT = 14;
   pub const VT_PASTE: ::flatbuffers::VOffsetT = 16;
   pub const VT_RAW: ::flatbuffers::VOffsetT = 18;
+  pub const VT_FOCUS: ::flatbuffers::VOffsetT = 20;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -3444,6 +3449,7 @@ impl<'a> InputEvent<'a> {
   ) -> ::flatbuffers::WIPOffset<InputEvent<'bldr>> {
     let mut builder = InputEventBuilder::new(_fbb);
     builder.add_input_seq(args.input_seq);
+    if let Some(x) = args.focus { builder.add_focus(x); }
     if let Some(x) = args.raw { builder.add_raw(x); }
     if let Some(x) = args.paste { builder.add_paste(x); }
     if let Some(x) = args.mouse { builder.add_mouse(x); }
@@ -3511,6 +3517,13 @@ impl<'a> InputEvent<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<RawInput>>(InputEvent::VT_RAW, None)}
   }
+  #[inline]
+  pub fn focus(&self) -> Option<FocusInput<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<FocusInput>>(InputEvent::VT_FOCUS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for InputEvent<'_> {
@@ -3527,6 +3540,7 @@ impl ::flatbuffers::Verifiable for InputEvent<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<MouseInput>>("mouse", Self::VT_MOUSE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<PasteInput>>("paste", Self::VT_PASTE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<RawInput>>("raw", Self::VT_RAW, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<FocusInput>>("focus", Self::VT_FOCUS, false)?
      .finish();
     Ok(())
   }
@@ -3540,6 +3554,7 @@ pub struct InputEventArgs<'a> {
     pub mouse: Option<::flatbuffers::WIPOffset<MouseInput<'a>>>,
     pub paste: Option<::flatbuffers::WIPOffset<PasteInput<'a>>>,
     pub raw: Option<::flatbuffers::WIPOffset<RawInput<'a>>>,
+    pub focus: Option<::flatbuffers::WIPOffset<FocusInput<'a>>>,
 }
 impl<'a> Default for InputEventArgs<'a> {
   #[inline]
@@ -3553,6 +3568,7 @@ impl<'a> Default for InputEventArgs<'a> {
       mouse: None,
       paste: None,
       raw: None,
+      focus: None,
     }
   }
 }
@@ -3595,6 +3611,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InputEventBuilder<'a, 'b, A> 
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<RawInput>>(InputEvent::VT_RAW, raw);
   }
   #[inline]
+  pub fn add_focus(&mut self, focus: ::flatbuffers::WIPOffset<FocusInput<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<FocusInput>>(InputEvent::VT_FOCUS, focus);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InputEventBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InputEventBuilder {
@@ -3620,6 +3640,7 @@ impl ::core::fmt::Debug for InputEvent<'_> {
       ds.field("mouse", &self.mouse());
       ds.field("paste", &self.paste());
       ds.field("raw", &self.raw());
+      ds.field("focus", &self.focus());
       ds.finish()
   }
 }
@@ -4106,6 +4127,102 @@ impl ::core::fmt::Debug for RawInput<'_> {
   fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
     let mut ds = f.debug_struct("RawInput");
       ds.field("bytes", &self.bytes());
+      ds.finish()
+  }
+}
+pub enum FocusInputOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct FocusInput<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for FocusInput<'a> {
+  type Inner = FocusInput<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> FocusInput<'a> {
+  pub const VT_FOCUSED: ::flatbuffers::VOffsetT = 4;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    FocusInput { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args FocusInputArgs
+  ) -> ::flatbuffers::WIPOffset<FocusInput<'bldr>> {
+    let mut builder = FocusInputBuilder::new(_fbb);
+    builder.add_focused(args.focused);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn focused(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(FocusInput::VT_FOCUSED, Some(false)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for FocusInput<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<bool>("focused", Self::VT_FOCUSED, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct FocusInputArgs {
+    pub focused: bool,
+}
+impl<'a> Default for FocusInputArgs {
+  #[inline]
+  fn default() -> Self {
+    FocusInputArgs {
+      focused: false,
+    }
+  }
+}
+
+pub struct FocusInputBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> FocusInputBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_focused(&mut self, focused: bool) {
+    self.fbb_.push_slot::<bool>(FocusInput::VT_FOCUSED, focused, false);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> FocusInputBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    FocusInputBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<FocusInput<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for FocusInput<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("FocusInput");
+      ds.field("focused", &self.focused());
       ds.finish()
   }
 }

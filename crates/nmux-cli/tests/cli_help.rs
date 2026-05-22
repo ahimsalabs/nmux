@@ -21,6 +21,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
     assert!(stdout.contains("--paste TEXT"));
+    assert!(stdout.contains("--focus gained|lost"));
     assert!(stdout.contains("--stdin-bytes"));
     assert!(stdout.contains("--local-echo off|tty"));
     assert!(stdout.contains("--cols COUNT"));
@@ -143,6 +144,14 @@ fn nmux_rejects_conflicting_frontend_modes() {
         "nmux: --paste cannot be combined with --stdin-bytes",
     );
     assert_nmux_rejects(
+        &["--live", "--focus", "gained", "--stdin"],
+        "nmux: --focus cannot be combined with --stdin",
+    );
+    assert_nmux_rejects(
+        &["--live", "--focus", "gained", "--stdin-bytes"],
+        "nmux: --focus cannot be combined with --stdin-bytes",
+    );
+    assert_nmux_rejects(
         &["--live", "--no-input", "--stdin"],
         "nmux: --no-input cannot be combined with --stdin",
     );
@@ -161,6 +170,23 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--paste", "clip", "--no-input"],
         "nmux: --paste cannot be combined with --no-input",
+    );
+    assert_nmux_rejects(&["--focus", "gained"], "nmux: --focus requires --live");
+    assert_nmux_rejects(
+        &["--live", "--focus", "blurred"],
+        "nmux: --focus requires gained or lost",
+    );
+    assert_nmux_rejects(
+        &["--live", "--key", "ping", "--focus", "gained"],
+        "nmux: --key cannot be combined with --focus",
+    );
+    assert_nmux_rejects(
+        &["--live", "--paste", "clip", "--focus", "gained"],
+        "nmux: --paste cannot be combined with --focus",
+    );
+    assert_nmux_rejects(
+        &["--live", "--focus", "gained", "--no-input"],
+        "nmux: --focus cannot be combined with --no-input",
     );
 }
 

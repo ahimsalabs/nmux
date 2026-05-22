@@ -429,7 +429,9 @@ fn serve_live_attached_client(
         };
         if Session::input_allowed(&actor) {
             if let Some(input) = input {
-                host.write_input(&input.pane_id, &input.bytes)?;
+                if input.forwarding_allowed(session) {
+                    host.write_input(&input.pane_id, &input.bytes)?;
+                }
                 poll_pane_output_until_quiet(session, engines, host, &input.pane_id)?;
             } else {
                 poll_pane_output_until_quiet(session, engines, host, pane_id)?;
@@ -557,7 +559,9 @@ fn serve_attached_client(
         if Session::input_allowed(&actor) {
             let input = read_input_event_from_stream(stream)?;
             if let Some(host) = host.as_deref_mut() {
-                host.write_input(&input.pane_id, &input.bytes)?;
+                if input.forwarding_allowed(session) {
+                    host.write_input(&input.pane_id, &input.bytes)?;
+                }
                 poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
             }
         }
@@ -832,6 +836,17 @@ pub fn send_paste_input(
         text,
         bracketed,
     );
+    wire::write_default_frame(stream, &frame)?;
+    Ok(())
+}
+
+pub fn send_focus_input(
+    stream: &mut UnixStream,
+    pane_id: &str,
+    focused: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame =
+        Session::initial().focus_input_frame("local-client", 3, "local-actor", pane_id, 1, focused);
     wire::write_default_frame(stream, &frame)?;
     Ok(())
 }
@@ -1185,25 +1200,42 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
     let input = envelope
         .body_as_input_event()
         .ok_or("missing input event body")?;
-    let bytes = match input.kind() {
-        protocol::InputKind::Key => input
-            .key()
-            .and_then(|key| key.text_utf8())
-            .unwrap_or_default()
-            .as_bytes()
-            .to_vec(),
-        protocol::InputKind::RawBytes => input
-            .raw()
-            .and_then(|raw| raw.bytes())
-            .map(|bytes| bytes.iter().collect())
-            .unwrap_or_default(),
-        protocol::InputKind::Paste => input
-            .paste()
-            .map(|paste| {
-                paste_input_bytes(paste.text_utf8().unwrap_or_default(), paste.bracketed())
-            })
-            .transpose()?
-            .unwrap_or_default(),
+    let (bytes, requires_focus_reporting) = match input.kind() {
+        protocol::InputKind::Key => (
+            input
+                .key()
+                .and_then(|key| key.text_utf8())
+                .unwrap_or_default()
+                .as_bytes()
+                .to_vec(),
+            false,
+        ),
+        protocol::InputKind::RawBytes => (
+            input
+                .raw()
+                .and_then(|raw| raw.bytes())
+                .map(|bytes| bytes.iter().collect())
+                .unwrap_or_default(),
+            false,
+        ),
+        protocol::InputKind::Paste => (
+            input
+                .paste()
+                .map(|paste| {
+                    paste_input_bytes(paste.text_utf8().unwrap_or_default(), paste.bracketed())
+                })
+                .transpose()?
+                .unwrap_or_default(),
+            false,
+        ),
+        protocol::InputKind::Focus => (
+            if input.focus().is_some_and(|focus| focus.focused()) {
+                b"\x1b[I".to_vec()
+            } else {
+                b"\x1b[O".to_vec()
+            },
+            true,
+        ),
         other => return Err(format!("unexpected input kind: {other:?}").into()),
     };
     Ok(InputSummary {
@@ -1212,6 +1244,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         input_seq: input.input_seq(),
         text: String::from_utf8_lossy(&bytes).into_owned(),
         bytes,
+        requires_focus_reporting,
     })
 }
 
@@ -2377,6 +2410,13 @@ pub struct InputSummary {
     pub input_seq: u64,
     pub text: String,
     pub bytes: Vec<u8>,
+    pub requires_focus_reporting: bool,
+}
+
+impl InputSummary {
+    fn forwarding_allowed(&self, session: &Session) -> bool {
+        !self.requires_focus_reporting || session.pane_focus_reporting(&self.pane_id)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3952,6 +3992,7 @@ mod tests {
                 input_seq: 2,
                 text: "x".to_owned(),
                 bytes: b"x".to_vec(),
+                requires_focus_reporting: false,
             }
         );
     }
@@ -3995,6 +4036,7 @@ mod tests {
                 input_seq: 2,
                 text: "hello\n".to_owned(),
                 bytes: b"hello\n".to_vec(),
+                requires_focus_reporting: false,
             }
         );
     }
@@ -4014,6 +4056,38 @@ mod tests {
 
         assert_eq!(input.bytes, b"\x1b[200~hello\n\x1b[201~".to_vec());
         assert_eq!(input.text, "\x1b[200~hello\n\x1b[201~");
+    }
+
+    #[test]
+    fn decodes_focus_input_from_client_frame() {
+        let gained =
+            Session::initial().focus_input_frame("local-client", 3, "actor-1", "pane-1", 2, true);
+        let gained = input_summary_from_frame(&gained).expect("focus gained summary");
+        assert_eq!(gained.bytes, b"\x1b[I".to_vec());
+        assert!(gained.requires_focus_reporting);
+
+        let lost =
+            Session::initial().focus_input_frame("local-client", 3, "actor-1", "pane-1", 3, false);
+        let lost = input_summary_from_frame(&lost).expect("focus lost summary");
+        assert_eq!(lost.bytes, b"\x1b[O".to_vec());
+        assert!(lost.requires_focus_reporting);
+    }
+
+    #[test]
+    fn focus_input_forwarding_requires_daemon_owned_mode() {
+        let mut session = Session::initial();
+        let input = InputSummary {
+            pane_id: "pane-1".to_owned(),
+            actor_id: "actor-1".to_owned(),
+            input_seq: 1,
+            text: "\x1b[I".to_owned(),
+            bytes: b"\x1b[I".to_vec(),
+            requires_focus_reporting: true,
+        };
+
+        assert!(!input.forwarding_allowed(&session));
+        session.tabs[0].root.modes.focus_reporting = true;
+        assert!(input.forwarding_allowed(&session));
     }
 
     #[test]

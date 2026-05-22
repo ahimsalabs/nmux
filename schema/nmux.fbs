@@ -27,6 +27,7 @@ enum InputKind : byte {
   Mouse = 1,
   Paste = 2,
   RawBytes = 3,
+  Focus = 4,
 }
 
 enum MouseButton : byte {
@@ -198,6 +199,7 @@ table InputEvent {
   mouse:MouseInput;
   paste:PasteInput;
   raw:RawInput;
+  focus:FocusInput;
 }
 
 table KeyInput {
@@ -220,6 +222,10 @@ table PasteInput {
 
 table RawInput {
   bytes:[ubyte];
+}
+
+table FocusInput {
+  focused:bool;
 }
 
 table ResizeIntent {
