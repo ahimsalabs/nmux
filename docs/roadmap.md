@@ -100,6 +100,7 @@ Done:
 - Style-table changes now force a full pane surface snapshot, while row-run-only changes can still use `PaneSurfacePatch`.
 - `ScrollbackChunk` now carries the pane style table, so scrollback row runs no longer reference style IDs without an accompanying table.
 - The optional `libghostty-vt` engine extracts visible rows as style-separated cell runs with cell-width metadata, while keeping plain rendered text available for current clients.
+- `libghostty-vt` extraction tests now cover combining marks as preserved run text with per-cell widths, alongside existing double-width cell coverage.
 - Persisted `nmux --state` files now retain cached row runs and style tables alongside fallback row text, while still accepting older text-only state files as default-style rows.
 - Client-side scrollback decoding now retains `ScrollbackRow` runs alongside rendered fallback text.
 

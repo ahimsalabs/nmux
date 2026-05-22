@@ -68,9 +68,10 @@ only after the backend extraction proves the exact shape needed.
   basic SGR flags, style identity, and cell widths for visible rows. Surface
   snapshots and scrollback chunks carry a pane style table; richer style
   semantics still need protocol decisions.
-- Grapheme and cell width: double-width cells are represented in run widths.
-  Combining marks, emoji clusters, zero-width continuations, and
-  ambiguous-width policy still need broader tests and protocol guidance.
+- Grapheme and cell width: double-width cells and combining marks are covered
+  by `libghostty-vt` extraction tests and represented as per-cell run widths.
+  Emoji clusters, zero-width continuations, and ambiguous-width policy still
+  need broader tests and protocol guidance.
 - Terminal modes: origin mode, wrap mode, bracketed paste, application cursor
   keys, keypad mode, and cursor blink.
 - Alternate screen: alternate scrollback behavior and transitions between

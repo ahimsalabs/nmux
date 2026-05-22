@@ -824,6 +824,47 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_preserves_combining_mark_cell_widths() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input(2, &empty, &empty),
+                b"accent:e\xcc\x81\r\nplain:e",
+            )
+            .expect("terminal update");
+
+        let accent_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("e\u{301}"))
+            .expect("combining mark run");
+        assert!(
+            accent_run.text.contains("accent:e\u{301}"),
+            "combining mark was not preserved in run text: {:?}",
+            accent_run
+        );
+        let accent_index = accent_run
+            .text
+            .chars()
+            .position(|ch| ch == 'e')
+            .expect("accent base char");
+        assert_eq!(
+            accent_run.cell_widths[accent_index], 1,
+            "combining mark should not add a second cell width: {:?}",
+            accent_run
+        );
+        assert!(
+            accent_run.cell_widths.len() < accent_run.text.chars().count(),
+            "run widths should be per rendered cell, not per scalar: {:?}",
+            accent_run
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_emits_cursor_only_patch_for_cursor_movement() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();
