@@ -1,5 +1,4 @@
 use std::fs;
-use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -88,36 +87,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 struct SocketCleanup {
     path: PathBuf,
-    identity: Option<SocketIdentity>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SocketIdentity {
-    dev: u64,
-    ino: u64,
+    identity: Option<local::SocketIdentity>,
 }
 
 impl SocketCleanup {
     fn new(path: PathBuf) -> Self {
-        let identity = socket_identity(&path).ok();
+        let identity = local::socket_identity(&path).ok();
         Self { path, identity }
     }
 }
 
 impl Drop for SocketCleanup {
     fn drop(&mut self) {
-        if self.identity.is_some() && socket_identity(&self.path).ok() == self.identity {
+        if self.identity.is_some() && local::socket_identity(&self.path).ok() == self.identity {
             let _ = fs::remove_file(&self.path);
         }
     }
-}
-
-fn socket_identity(path: &PathBuf) -> std::io::Result<SocketIdentity> {
-    let metadata = fs::symlink_metadata(path)?;
-    Ok(SocketIdentity {
-        dev: metadata.dev(),
-        ino: metadata.ino(),
-    })
 }
 
 fn wait_for_pane_output(

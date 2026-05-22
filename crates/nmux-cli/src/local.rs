@@ -2,6 +2,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read, Write};
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -17,6 +18,12 @@ use nmux_core::terminal::{
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 
 const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SocketIdentity {
+    dev: u64,
+    ino: u64,
+}
 
 pub trait ProcessHostOutput: ProcessHost + ProcessOutput {}
 
@@ -37,6 +44,14 @@ fn default_socket_path_from(runtime_dir: Option<OsString>, uid: u32) -> PathBuf 
 
 fn effective_uid() -> u32 {
     unsafe { libc::geteuid() }
+}
+
+pub fn socket_identity(path: &Path) -> io::Result<SocketIdentity> {
+    let metadata = fs::symlink_metadata(path)?;
+    Ok(SocketIdentity {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+    })
 }
 
 pub fn bind_listener(path: &Path) -> io::Result<UnixListener> {
@@ -769,8 +784,10 @@ pub fn attach_render_once(
     mut options: AttachOptions,
     client_state: &mut ClientAttachState,
 ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
-    options.request.known_surfaces = client_state.known_surfaces();
+    let scope = socket_identity(path).ok();
+    options.request.known_surfaces = client_state.known_surfaces_for_scope(scope);
     let snapshot = attach_with_client_options(path, options)?;
+    client_state.apply_scope(socket_identity(path).ok());
     client_state.render_attach(snapshot)
 }
 
@@ -2093,6 +2110,7 @@ fn row_runs_for_text(
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClientAttachState {
+    scope: Option<SocketIdentity>,
     surfaces: Vec<ClientPaneSurface>,
 }
 
@@ -2122,6 +2140,24 @@ impl ClientAttachState {
                 version: surface.version,
             })
             .collect()
+    }
+
+    pub fn known_surfaces_for_scope(
+        &self,
+        scope: Option<SocketIdentity>,
+    ) -> Vec<KnownSurfaceVersion> {
+        if self.scope == scope {
+            self.known_surfaces()
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn apply_scope(&mut self, scope: Option<SocketIdentity>) {
+        if self.scope != scope {
+            self.surfaces.clear();
+        }
+        self.scope = scope;
     }
 
     pub fn render_attach(
@@ -2193,7 +2229,14 @@ impl ClientAttachState {
     }
 
     fn encode(&self) -> String {
-        let mut encoded = String::from("NMUX_CLIENT_STATE 3\n");
+        let mut encoded = String::from("NMUX_CLIENT_STATE 4\n");
+        if let Some(scope) = self.scope {
+            encoded.push_str("scope socket ");
+            encoded.push_str(&scope.dev.to_string());
+            encoded.push(' ');
+            encoded.push_str(&scope.ino.to_string());
+            encoded.push('\n');
+        }
         for surface in &self.surfaces {
             encoded.push_str("surface ");
             encoded.push_str(&hex_encode(surface.pane_id.as_bytes()));
@@ -2349,6 +2392,7 @@ impl ClientAttachState {
         if header != "NMUX_CLIENT_STATE 1"
             && header != "NMUX_CLIENT_STATE 2"
             && header != "NMUX_CLIENT_STATE 3"
+            && header != "NMUX_CLIENT_STATE 4"
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -2356,8 +2400,18 @@ impl ClientAttachState {
             ));
         }
 
+        let mut scope = None;
         let mut surfaces = Vec::new();
         while let Some(line) = lines.next() {
+            let scope_parts = line.split(' ').collect::<Vec<_>>();
+            if let ["scope", "socket", dev, ino] = scope_parts.as_slice() {
+                scope = Some(SocketIdentity {
+                    dev: parse_state_u64(dev)?,
+                    ino: parse_state_u64(ino)?,
+                });
+                continue;
+            }
+
             let mut parts = line.split(' ');
             let (
                 Some("surface"),
@@ -2670,7 +2724,7 @@ impl ClientAttachState {
             });
         }
 
-        Ok(Self { surfaces })
+        Ok(Self { scope, surfaces })
     }
 }
 
@@ -3422,6 +3476,8 @@ mod tests {
     #[test]
     fn client_attach_state_round_trips_cached_surface() {
         let mut state = ClientAttachState::default();
+        let expected_scope = SocketIdentity { dev: 10, ino: 20 };
+        state.apply_scope(Some(expected_scope));
         let mut snapshot = surface_update(
             SurfaceUpdateKind::Snapshot,
             7,
@@ -3496,7 +3552,16 @@ mod tests {
             .expect("render snapshot");
 
         let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
+        assert_eq!(decoded.scope, Some(expected_scope));
         assert_eq!(decoded.known_surfaces(), state.known_surfaces());
+        assert_eq!(
+            decoded.known_surfaces_for_scope(Some(expected_scope)),
+            state.known_surfaces()
+        );
+        assert_eq!(
+            decoded.known_surfaces_for_scope(Some(SocketIdentity { dev: 10, ino: 21 })),
+            Vec::new()
+        );
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
         assert_eq!(decoded.surfaces[0].cursor, expected_cursor);
         assert_eq!(decoded.surfaces[0].modes, expected_modes);
@@ -3531,6 +3596,11 @@ mod tests {
         )
         .expect("decode old state");
 
+        assert_eq!(decoded.scope, None);
+        assert_eq!(
+            decoded.known_surfaces_for_scope(Some(SocketIdentity { dev: 1, ino: 2 })),
+            Vec::new()
+        );
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
         assert_eq!(decoded.surfaces[0].modes, TerminalModeSummary::default());
         assert_eq!(decoded.surfaces[0].title, "");

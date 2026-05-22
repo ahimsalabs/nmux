@@ -252,9 +252,12 @@ rendered pane surface, terminal title, OSC 7 working directory, terminal modes,
 cached row runs, the cached style table, terminal color state, OSC 133 row/run
 semantic metadata, row dirty flags, Kitty placeholder row metadata, and the last
 known server version, so a later process can request a patch and apply it to the
-cached surface instead of replaying raw PTY bytes. Older state files that only
+cached surface instead of replaying raw PTY bytes. The state file is scoped to
+the daemon socket identity, so a recreated socket path forces a fresh snapshot
+instead of reusing stale rows from an older daemon. Older state files that only
 contain rendered row text still load as default-style rows with default
-metadata, default modes, and default color state.
+metadata, default modes, and default color state, but they also force one fresh
+snapshot before being rewritten with the current socket scope.
 
 Start a long-running command-backed daemon:
 

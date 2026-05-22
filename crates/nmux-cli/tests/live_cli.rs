@@ -1209,6 +1209,106 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
     );
 }
 
+#[test]
+fn live_state_file_is_scoped_to_socket_identity() {
+    let socket_path = test_socket_path();
+    let state_path = socket_path.with_extension("state");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    let mut first_server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'first daemon\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn first nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let first_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run first nmux");
+    let first_status = first_server.wait().expect("wait for first nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        first_client.status.success(),
+        "first nmux failed: {}",
+        String::from_utf8_lossy(&first_client.stderr)
+    );
+    assert!(first_status.success(), "first nmuxd failed: {first_status}");
+
+    let mut second_server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'second daemon\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn second nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let second_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run second nmux");
+    let second_status = second_server.wait().expect("wait for second nmuxd");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    assert!(
+        second_client.status.success(),
+        "second nmux failed: {}",
+        String::from_utf8_lossy(&second_client.stderr)
+    );
+    assert!(
+        second_status.success(),
+        "second nmuxd failed: {second_status}"
+    );
+
+    let stdout = String::from_utf8_lossy(&second_client.stdout);
+    assert!(
+        stdout.contains("second daemon"),
+        "new daemon surface was not rendered:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("first daemon"),
+        "stale cached surface leaked across socket recreation:\n{stdout}"
+    );
+}
+
 #[cfg(feature = "libghostty-vt")]
 #[test]
 fn live_libghostty_vt_clients_can_reattach_to_persisted_workspace_state() {

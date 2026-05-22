@@ -63,6 +63,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         SigwinchResize::enable_if_needed(args.stdin_bytes, args.live_resize.is_some())?;
     let mut client_state = load_client_state(args.state_path.as_deref())?;
     let mut stream = connect_to_daemon(args)?;
+    let socket_scope = local::socket_identity(&args.socket_path).ok();
     stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
     let stdin = io::stdin();
     let mut stdin_lines = if args.stdin_input {
@@ -97,9 +98,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         options.request.mode = AttachMode::ReadOnly;
     }
 
-    options.request.known_surfaces = client_state.known_surfaces();
+    options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
     local::write_attach_request(&mut stream, &options.request)?;
     let snapshot = local::attach_from_stream(&mut stream)?;
+    client_state.apply_scope(local::socket_identity(&args.socket_path).ok());
     let mut paste_bracketed = snapshot
         .surface
         .as_ref()

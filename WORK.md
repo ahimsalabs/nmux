@@ -489,7 +489,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal mode state, and mode-only updates no longer force full refreshes
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch
   ScrollbackChunk carries the pane style table so scrollback row runs do not reference missing style IDs
-  nmux --state preserves cached title, OSC 7 working directory, terminal modes, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, and Kitty placeholder row metadata for patchable reconnects
+  nmux --state preserves cached title, OSC 7 working directory, terminal modes, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, and Kitty placeholder row metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot
   document cursor, mode, alternate-screen, palette, hyperlink, image, grapheme, and cell-width gaps before schema changes
   preserve frontend state-sync semantics; do not introduce client-side raw PTY replay
   keep frontend Ghostty renderer hydration as a separate upstream/API question
