@@ -189,6 +189,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     mouse_event.col,
                     mouse_event.button,
                     mouse_event.action,
+                    mouse_event.modifiers,
                 )?;
             } else if let Some(focus_event) = args.focus_event {
                 if focus_reporting {
@@ -806,6 +807,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut paste_text = None;
     let mut focus_event = None;
     let mut mouse_event = None;
+    let mut mouse_modifiers = 0;
     let mut scrollback_start_line = 1;
     let mut scrollback_line_count = 2;
     let mut state_path = None;
@@ -824,6 +826,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut key_set = false;
     let mut key_name_set = false;
     let mut key_modifiers_set = false;
+    let mut mouse_modifiers_set = false;
     let mut paste_set = false;
     let mut focus_set = false;
     let mut mouse_set = false;
@@ -880,6 +883,13 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                         .ok_or("--mouse requires action:button:row:col")?,
                 )?);
                 input_text = None;
+            }
+            "--mouse-modifiers" => {
+                mouse_modifiers_set = true;
+                mouse_modifiers = parse_key_modifiers(
+                    &args.next().ok_or("--mouse-modifiers requires modifiers")?,
+                )
+                .map_err(|err| format!("--mouse-modifiers {err}"))?;
             }
             "--no-input" => {
                 no_input_set = true;
@@ -993,7 +1003,11 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         key_name_set,
         key_modifiers_set,
         mouse_set,
+        mouse_modifiers_set,
     )?;
+    if let Some(mouse_event) = mouse_event.as_mut() {
+        mouse_event.modifiers = mouse_modifiers;
+    }
 
     Ok(Args {
         help,
@@ -1154,6 +1168,7 @@ fn validate_mode_args(
     key_name_set: bool,
     key_modifiers_set: bool,
     mouse_set: bool,
+    mouse_modifiers_set: bool,
 ) -> Result<(), &'static str> {
     if live && follow {
         return Err("--follow cannot be combined with --live");
@@ -1185,6 +1200,9 @@ fn validate_mode_args(
     if mouse_set && !live {
         return Err("--mouse requires --live");
     }
+    if mouse_modifiers_set && !mouse_set {
+        return Err("--mouse-modifiers requires --mouse");
+    }
     if iterations.is_some() && !live && !follow {
         return Err("--iterations requires --live or --follow");
     }
@@ -1210,6 +1228,7 @@ Options:
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send a focus event in live mode when reporting is enabled
   --mouse A:B:R:C            Send mouse press/release/motion in live mode
+  --mouse-modifiers MODS     Modifiers for --mouse: shift,ctrl,alt,super
   --no-input                 Attach read-only
   --scrollback-start LINE    First scrollback line to request
   --scrollback-count COUNT   Number of scrollback lines to request
@@ -1261,6 +1280,7 @@ struct MouseEvent {
     button: protocol::MouseButton,
     row: u32,
     col: u32,
+    modifiers: u32,
 }
 
 fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
@@ -1376,6 +1396,7 @@ fn parse_mouse_event(value: &str) -> Result<MouseEvent, &'static str> {
         button,
         row,
         col,
+        modifiers: 0,
     })
 }
 
@@ -1448,6 +1469,7 @@ mod tests {
             iterations,
             focus_set,
             key_name_set,
+            false,
             false,
             false,
         )
@@ -1744,6 +1766,7 @@ mod tests {
                 button: protocol::MouseButton::Left,
                 row: 0,
                 col: 1,
+                modifiers: 0,
             })
         );
         assert_eq!(
@@ -1753,6 +1776,7 @@ mod tests {
                 button: protocol::MouseButton::None,
                 row: 23,
                 col: 79,
+                modifiers: 0,
             })
         );
         assert!(parse_mouse_event("click:left:1:1").is_err());
@@ -1851,15 +1875,24 @@ mod tests {
         );
         assert_eq!(
             super_validate_mode_args(
-                false, false, false, false, false, false, None, None, false, false, false, true
+                false, false, false, false, false, false, None, None, false, false, false, true,
+                false
             ),
             Err("--mouse requires --live")
         );
         assert_eq!(
             super_validate_mode_args(
-                true, false, false, false, false, false, None, None, false, false, true, false
+                true, false, false, false, false, false, None, None, false, false, true, false,
+                false
             ),
             Err("--key-modifiers requires --key-name")
+        );
+        assert_eq!(
+            super_validate_mode_args(
+                true, false, false, false, false, false, None, None, false, false, false, false,
+                true
+            ),
+            Err("--mouse-modifiers requires --mouse")
         );
         assert!(
             validate_mode_args(
@@ -2090,6 +2123,7 @@ mod tests {
         assert!(usage.contains("--connect-timeout-ms MS"));
         assert!(usage.contains("--local-echo off|tty"));
         assert!(usage.contains("--key-modifiers MODS"));
+        assert!(usage.contains("--mouse-modifiers MODS"));
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));
         assert!(usage.contains("interim text surface"));

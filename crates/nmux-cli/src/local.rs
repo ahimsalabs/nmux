@@ -902,6 +902,7 @@ pub fn send_mouse_input(
     col: u32,
     button: protocol::MouseButton,
     action: protocol::MouseAction,
+    modifiers: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().mouse_input_frame(
         "local-client",
@@ -913,7 +914,7 @@ pub fn send_mouse_input(
         col,
         button,
         action,
-        0,
+        modifiers,
     );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
@@ -5077,7 +5078,7 @@ mod tests {
             5,
             protocol::MouseButton::Left,
             protocol::MouseAction::Press,
-            0,
+            3,
         );
         let input = input_summary_from_frame(&frame).expect("mouse summary");
 
@@ -5091,7 +5092,7 @@ mod tests {
                 col: 5,
                 button: MouseButton::Left,
                 action: MouseAction::Press,
-                modifiers: 0,
+                modifiers: 3,
             })
         );
         assert!(input.requires_mouse_tracking);

@@ -2733,6 +2733,35 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_encodes_sgr_mouse_modifiers() {
+        use super::{MouseAction, MouseButton, MouseTerminalInput};
+
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        engine
+            .apply_output(
+                terminal_input(24, &empty, &empty),
+                b"\x1b[?1000h\x1b[?1006h",
+            )
+            .expect("terminal update");
+
+        let bytes = engine
+            .encode_mouse_input(MouseTerminalInput {
+                row: 0,
+                col: 0,
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 2,
+                cols: 80,
+                rows: 24,
+            })
+            .expect("encoded mouse input");
+
+        assert_eq!(bytes, b"\x1b[<16;1;1M");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_encodes_key_from_application_cursor_state() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();

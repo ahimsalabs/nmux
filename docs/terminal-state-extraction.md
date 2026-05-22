@@ -98,10 +98,11 @@ only after the backend extraction proves the exact shape needed.
   keypad/application-cursor behavior, and the libghostty-vt engine uses its key
   encoder from daemon-owned terminal state while preserving protocol modifiers.
   Public CLI modifier syntax maps `shift`, `ctrl`, `alt`, and `super` to the
-  protocol modifier bits for named keys. Local clients forward explicit mouse
-  press/release/motion input only when the daemon-owned pane mode reports mouse tracking enabled, with
-  bytes encoded by the live pane terminal engine from its current terminal mouse
-  mode and format. Broader physical-key/text-event forwarding and frontend
+  protocol modifier bits for named keys and mouse input. Local clients forward
+  explicit mouse press/release/motion input only when the daemon-owned pane mode
+  reports mouse tracking enabled, with bytes encoded by the live pane terminal
+  engine from its current terminal mouse mode, format, and modifiers. Broader
+  physical-key/text-event forwarding and frontend
   pointer integration still need protocol decisions.
 - Terminal metadata: nmux carries terminal title and OSC 7 working-directory
   metadata through pane surface snapshot and patch metadata. Title/OSC 7-only
