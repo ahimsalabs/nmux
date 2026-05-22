@@ -124,9 +124,9 @@ only after the backend extraction proves the exact shape needed.
   changes currently require a full surface refresh; incremental palette diffs
   remain withheld until renderer requirements are clearer.
 - Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, and
-  the safe API exposes row/cell hyperlink presence. nmux intentionally leaves
-  `hyperlink_id` unset until URI, identifier, range ownership, and lifetime have
-  a protocol object.
+  backend row/cell hyperlink presence is carried as bit 0 in `CellRun.flags`.
+  nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
+  ownership, and lifetime have a protocol object.
 - Images and graphics protocols: nmux carries Kitty virtual placeholder
   presence on surface snapshots, surface patches, and scrollback chunks. Image
   placement, dimensions, persistence, pixel-data, and fallback protocol objects

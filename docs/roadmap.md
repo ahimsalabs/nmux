@@ -108,7 +108,7 @@ Done:
 - Palette-indexed SGR colors now have `libghostty-vt` extraction coverage proving they resolve into RGBA style-table entries.
 - `libghostty-vt` render-state colors are carried as `TerminalColorState`: backend-observable default foreground/background, active palette, palette overrides, and explicit cursor-color state. Color-state changes currently require a full surface refresh while incremental palette diffs remain withheld.
 - `libghostty-vt` extraction tests now cover combining marks and emoji ZWJ clusters as preserved run text with per-cell widths, alongside existing double-width cell coverage.
-- OSC 8 hyperlink text and backend row/cell hyperlink presence are covered while `hyperlink_id` remains unset until nmux has a real hyperlink table.
+- OSC 8 hyperlink text and backend row/cell hyperlink presence are covered, with run-level presence carried in `CellRun.flags` while `hyperlink_id` remains unset until nmux has a real hyperlink table.
 - The `libghostty-vt` safe API is now tested for bracketed paste mode tracking, and nmux carries that mode in pane surface snapshots and patches.
 - The `libghostty-vt` paste validator is now tested for newline and bracketed-paste terminator injection detection, and local clients can forward UTF-8 paste input through `PasteInput` with bracketed-paste delimiters controlled by the pane's current mode.
 - The `libghostty-vt` safe API is now tested for mouse tracking modes and SGR mouse encoding, nmux carries coarse mouse-tracking mode state, and local live clients can forward explicit mouse press/release/motion input through daemon-owned terminal-engine encoding.

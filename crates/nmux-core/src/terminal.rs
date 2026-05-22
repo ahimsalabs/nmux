@@ -94,6 +94,8 @@ pub struct CellRun {
     pub semantic_content: protocol::CellSemanticContent,
 }
 
+pub const CELL_RUN_FLAG_HYPERLINK_PRESENT: u32 = 1 << 0;
+
 impl CellRun {
     pub fn plain(text: impl Into<String>) -> Self {
         let text = text.into();
@@ -818,9 +820,10 @@ mod ghostty_vt {
                 let text = cell_text(&cells)?;
                 let style_id = style_id(styles, pane_style(&cells)?);
                 let semantic_content = cell_semantic_content(raw_cell.semantic_content().ok()?);
+                let flags = cell_run_flags(raw_cell)?;
                 if let Some(last) = runs.last_mut()
                     && last.style_id == style_id
-                    && last.flags == 0
+                    && last.flags == flags
                     && last.hyperlink_id == 0
                     && last.semantic_content == semantic_content
                 {
@@ -831,7 +834,7 @@ mod ghostty_vt {
                         text,
                         cell_widths: vec![width],
                         style_id,
-                        flags: 0,
+                        flags,
                         hyperlink_id: 0,
                         semantic_content,
                     });
@@ -851,6 +854,14 @@ mod ghostty_vt {
             dirty_rows,
             kitty_placeholders,
         })
+    }
+
+    fn cell_run_flags(cell: libghostty_vt::screen::Cell) -> Option<u32> {
+        let mut flags = 0;
+        if cell.has_hyperlink().ok()? {
+            flags |= super::CELL_RUN_FLAG_HYPERLINK_PRESENT;
+        }
+        Some(flags)
     }
 
     fn row_semantic_prompt(
@@ -2343,14 +2354,28 @@ mod tests {
             .flat_map(|row| row.iter())
             .find(|run| run.text.contains("linked"))
             .expect("hyperlink text run");
-        assert!(
-            link_run.text.contains("linked text"),
-            "hyperlink text was not preserved in rendered row: {:?}",
+        assert_eq!(link_run.text, "linked");
+        assert_ne!(
+            link_run.flags & super::CELL_RUN_FLAG_HYPERLINK_PRESENT,
+            0,
+            "hyperlink presence flag missing from linked run: {:?}",
             link_run
         );
         assert_eq!(
             link_run.hyperlink_id, 0,
             "nmux must not invent hyperlink IDs before a hyperlink table exists"
+        );
+        let plain_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains(" text"))
+            .expect("plain text run after hyperlink reset");
+        assert_eq!(
+            plain_run.flags & super::CELL_RUN_FLAG_HYPERLINK_PRESENT,
+            0,
+            "hyperlink flag should be cleared after OSC 8 reset: {:?}",
+            plain_run
         );
     }
 

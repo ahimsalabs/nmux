@@ -38,7 +38,9 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
   includes both a stable `dirty_hash`, the backend row `dirty` flag, and Kitty
   virtual placeholder presence.
 - `CellRun` stores UTF-8 text, per-cell widths, a style table reference,
-  flags, optional hyperlink reference, and per-run semantic content.
+  flags, optional hyperlink reference, and per-run semantic content. Bit 0 in
+  `CellRun.flags` means backend hyperlink presence for the run; `hyperlink_id`
+  remains zero until nmux has a URI/ID table.
 - `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot` objects and `ScrollbackChunk` objects carry the style table needed by their rows.
 - `CursorState` stores cursor row, column, visibility, shape, and blinking.
 - `TerminalMetadataState` stores pane terminal title and working-directory

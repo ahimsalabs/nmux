@@ -1956,7 +1956,7 @@ mod tests {
                 text: "red".to_owned(),
                 cell_widths: vec![1, 1, 1],
                 style_id: 1,
-                flags: 0,
+                flags: crate::terminal::CELL_RUN_FLAG_HYPERLINK_PRESENT,
                 hyperlink_id: 0,
                 semantic_content: protocol::CellSemanticContent::Prompt,
             },
@@ -1985,6 +1985,10 @@ mod tests {
         assert_eq!(runs.len(), 2);
         assert_eq!(runs.get(0).text_utf8(), Some("red"));
         assert_eq!(runs.get(0).style_id(), 1);
+        assert_eq!(
+            runs.get(0).flags(),
+            crate::terminal::CELL_RUN_FLAG_HYPERLINK_PRESENT
+        );
         assert_eq!(runs.get(0).cell_widths().expect("widths").len(), 3);
         assert_eq!(
             runs.get(0).semantic_content(),
