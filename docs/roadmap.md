@@ -100,6 +100,7 @@ Done:
 - Style-table changes now force a full pane surface snapshot, while row-run-only changes can still use `PaneSurfacePatch`.
 - `ScrollbackChunk` now carries the pane style table, so scrollback row runs no longer reference style IDs without an accompanying table.
 - The optional `libghostty-vt` engine extracts visible and scrollback rows as style-separated cell runs with cell-width metadata, while keeping plain rendered text available for current clients.
+- Basic SGR style flags now have `libghostty-vt` extraction coverage for bold, italic, underline, and strikethrough style-table bits.
 - Cursor-only `libghostty-vt` patches now cover cursor movement, visibility changes, and DECSCUSR visual shape changes.
 - `libghostty-vt` extraction tests now cover alternate-screen entry and restoration to the main screen.
 - Palette-indexed SGR colors now have `libghostty-vt` extraction coverage proving they resolve into RGBA style-table entries.

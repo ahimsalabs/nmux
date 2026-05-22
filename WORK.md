@@ -441,7 +441,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   keep the terminal-state extraction checklist current while importing libghostty-vt and before expanding protocol fields
   optional libghostty-vt feature feeds PTY bytes into daemon-owned VT state, not clients
   optional libghostty-vt engine maps cursor, surface kind, visible rows, styled scrollback rows, row runs, style IDs, cell widths, resize/reflow, and backend-owned scrollback into nmux objects
-  optional libghostty-vt coverage includes cursor visibility/shape/blink state, alternate-screen entry/restoration, combining marks, palette-indexed SGR color resolution, bracketed paste and mouse tracking modes, and mode-aware key encoding
+  optional libghostty-vt coverage includes cursor visibility/shape/blink state, alternate-screen entry/restoration, combining marks, basic SGR style flags, palette-indexed SGR color resolution, bracketed paste and mouse tracking modes, and mode-aware key encoding
   OSC 8 hyperlink text is preserved, but hyperlink IDs remain unset until nmux has a hyperlink table
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk preserve row runs instead of collapsing state to text-only rows
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch

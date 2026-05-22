@@ -891,6 +891,45 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_extracts_basic_sgr_style_flags() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input(2, &empty, &empty),
+                b"\x1b[1;3;4;9mflags\x1b[0m plain",
+            )
+            .expect("terminal update");
+
+        let flags_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("flags"))
+            .expect("flag-styled run");
+        let style = update
+            .styles
+            .get(flags_run.style_id as usize)
+            .expect("flag style");
+
+        assert_ne!(flags_run.style_id, 0);
+        assert_ne!(style.flags & (1 << 0), 0, "bold flag missing");
+        assert_ne!(style.flags & (1 << 1), 0, "italic flag missing");
+        assert_ne!(style.flags & (1 << 6), 0, "strikethrough flag missing");
+        assert_ne!(style.flags & (1 << 8), 0, "underline flag missing");
+
+        let plain_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains(" plain"))
+            .expect("plain run");
+        assert_eq!(plain_run.style_id, 0);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_preserves_combining_mark_cell_widths() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();
