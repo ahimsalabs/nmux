@@ -131,6 +131,7 @@ Done:
 - Persisted `nmux --state` files now retain cached title, OSC 7 working directory, terminal modes including mouse tracking mode/format, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, and Kitty placeholder row metadata alongside fallback row text; current-version live reattach reuses cached terminal modes for initial input gates when no surface frame arrives; cache reuse is scoped to the daemon socket identity, while older unscoped text-only state files still load as default-style rows and force one fresh snapshot.
 - Client-side scrollback decoding now retains `ScrollbackRow` runs alongside rendered fallback text.
 - Client-side surface and scrollback coverage now asserts structured `CellRun` style IDs, cell widths, hyperlink-presence flags, and semantic content survive decode/apply paths instead of being reduced to text-only fallback rows.
+- Feature-gated live CLI coverage now proves `libghostty-vt` streams command output and committed frontend resize metadata through `nmuxd` without leaking raw ANSI controls.
 
 Next:
 
