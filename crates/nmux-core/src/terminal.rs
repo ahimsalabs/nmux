@@ -1026,6 +1026,44 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_render_state_exposes_row_dirty_without_protocol_fields() {
+        use libghostty_vt::{RenderState, Terminal, TerminalOptions, render::RowIterator};
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+        let mut render_state = RenderState::new().expect("render state");
+        let mut rows = RowIterator::new().expect("row iterator");
+
+        let clean_snapshot = render_state.update(&terminal).expect("initial snapshot");
+        let mut clean_row_iter = rows.update(&clean_snapshot).expect("clean row iteration");
+        while let Some(row) = clean_row_iter.next() {
+            row.set_dirty(false).expect("mark row clean");
+        }
+        drop(clean_snapshot);
+
+        terminal.vt_write(b"dirty row");
+        let dirty_snapshot = render_state.update(&terminal).expect("dirty snapshot");
+
+        let mut row_iter = rows.update(&dirty_snapshot).expect("row iteration");
+        let mut dirty_rows = 0;
+        while let Some(row) = row_iter.next() {
+            if row.dirty().expect("row dirty") {
+                dirty_rows += 1;
+            }
+        }
+
+        assert!(
+            dirty_rows > 0,
+            "render state should expose at least one dirty row"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_extracts_basic_sgr_style_flags() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();

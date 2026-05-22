@@ -101,8 +101,10 @@ only after the backend extraction proves the exact shape needed.
   ownership, and lifetime have a protocol object.
 - Images and graphics protocols: placement, dimensions, persistence, and
   fallback behavior for clients without image support.
-- Damage granularity: row replacement is enough for the prototype, but rich
-  cells may need run-level or region-level patches beyond cursor-only updates.
+- Damage granularity: row replacement is enough for the prototype, and
+  `libghostty-vt` render-state tests prove row-level dirty state is
+  backend-observable. Rich cells may still need run-level or region-level
+  patches beyond cursor-only updates before nmux exposes a damage protocol.
 
 ## Acceptance Gate
 
@@ -131,7 +133,8 @@ backend-observable cursor blink state, render-state default colors/palette,
 palette overrides, and explicit cursor color, alternate-screen
 entry/restoration, title metadata with OSC 7 working-directory omission, OSC
 133 semantic prompt state, resize/reflow, styled backend-owned scrollback
-extraction, and safe-API mode tracking for bracketed paste, mouse tracking,
-application keypad mode, and origin/wraparound modes through unit, session, and
-live CLI smoke coverage. It is not the default until the project deliberately
-accepts the native Zig/Ghostty build cost in normal development and CI.
+extraction, row-level dirty state, and safe-API mode tracking for bracketed
+paste, mouse tracking, application keypad mode, and origin/wraparound modes
+through unit, session, and live CLI smoke coverage. It is not the default until
+the project deliberately accepts the native Zig/Ghostty build cost in normal
+development and CI.
