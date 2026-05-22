@@ -434,6 +434,7 @@ M11: terminal frontend polish [done]
   Ctrl-] detach reports a local detach status on stderr
   stdin EOF and live server socket close exits report status on stderr
   explicit live resize requests warn when daemon-published manual policy will ignore them
+  resize-only live clients can commit explicit ResizeIntent without sending pane input
   nmux --help and interactive TTY byte mode call out interim text surface / non-VT-correct renderer limitations
   live-only frontend flags fail fast outside --live instead of being silently ignored
   live attach renders requested initial scrollback context before streaming updates, including initial --redraw paint

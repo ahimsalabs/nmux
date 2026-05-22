@@ -98,7 +98,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
-    if args.stdin_input || args.stdin_bytes {
+    if args.stdin_input || args.stdin_bytes || (args.live_resize.is_some() && !args.no_input) {
         options.request.mode = AttachMode::ReadWrite;
     } else if options.input_text.is_none()
         && args.key_name.is_none()
@@ -867,6 +867,7 @@ struct Args {
     live: bool,
     stdin_input: bool,
     stdin_bytes: bool,
+    no_input: bool,
     local_echo: LocalEcho,
     redraw: bool,
     live_resize: Option<(u32, u32)>,
@@ -1112,6 +1113,7 @@ where
         live,
         stdin_input,
         stdin_bytes,
+        no_input: no_input_set,
         local_echo,
         redraw,
         live_resize,
@@ -1608,6 +1610,7 @@ mod tests {
         assert_eq!(args.paste_text, None);
         assert!(!args.stdin_input);
         assert!(!args.stdin_bytes);
+        assert!(!args.no_input);
         assert!(!args.live);
     }
 

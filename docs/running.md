@@ -88,7 +88,7 @@ For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 ## Live Attach Prototype
 
-The live attach prototype keeps one local connection open for repeated input/output cycles. It is not a terminal UI yet; without an explicit input flag it observes read-only, while `--key` sends the same text on each bounded client cycle, `--stdin` line-streams stdin, and `--stdin-bytes` forwards raw stdin byte chunks. It renders streamed pane surface updates through the same client-side pane surface state used by reconnects. Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive. Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes fail before the client tries to connect.
+The live attach prototype keeps one local connection open for repeated input/output cycles. It is not a terminal UI yet; without an explicit input or resize flag it observes read-only, while `--key` sends the same text on each bounded client cycle, `--stdin` line-streams stdin, and `--stdin-bytes` forwards raw stdin byte chunks. It renders streamed pane surface updates through the same client-side pane surface state used by reconnects. Explicit input modes such as `--key`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive. Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes fail before the client tries to connect.
 
 By default, `nmuxd` and `nmux` use the same local socket path: `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Pass `--socket` on both sides when you want an isolated smoke-test socket.
 If the daemon is not running or the client points at the wrong socket, `nmux` reports the socket path in the connection error.
@@ -145,7 +145,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 
 Read-write live clients also poll process output during idle cycles. That means a process can update the backend-owned pane surface and stream patches to an attached read-write client even when the client has not sent a key frame in that cycle.
 
-To send a resize intent before each live input cycle, pass both `--cols` and `--rows`:
+To send a resize intent before each live cycle, pass both `--cols` and `--rows`:
 
 ```sh
 nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterations 2 --key $'ping\n' --cols 100 --rows 30 --interval-ms 500
@@ -153,7 +153,7 @@ nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live 
 
 After the process-host resize succeeds, the daemon commits the pane size into the workspace tree and republishes a `WorkspaceTreeSnapshot`. The CLI prints the updated workspace summary, including the committed size and daemon-published resize policy.
 
-The local daemon publishes `resize=fixed` by default. Use `nmuxd --resize-policy fixed|leader|active-client|manual` to advertise a different pane resize policy. `manual` ignores frontend viewport resize intents; explicit user-command resize intents remain eligible. Explicit `--cols` and `--rows` values must both be in the local PTY range, 1 through 65535. If a live client supplies `--cols` and `--rows` while the daemon publishes `manual`, the client reports `nmux: resize request ignored by manual resize policy` on stderr.
+The local daemon publishes `resize=fixed` by default. Use `nmuxd --resize-policy fixed|leader|active-client|manual` to advertise a different pane resize policy. `manual` ignores frontend viewport resize intents; explicit user-command resize intents remain eligible. Explicit `--cols` and `--rows` values must both be in the local PTY range, 1 through 65535. A resize-only live client attaches read-write so the daemon can apply the control intent without sending pane input. If a live client supplies `--cols` and `--rows` while the daemon publishes `manual`, the client reports `nmux: resize request ignored by manual resize policy` on stderr.
 
 For line-streamed live input, pipe lines through stdin:
 
