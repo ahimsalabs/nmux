@@ -78,7 +78,9 @@ only after the backend extraction proves the exact shape needed.
   primary and alternate buffers.
 - Palette and theme state: indexed palette overrides, default foreground and
   background, and dynamic color changes.
-- Hyperlinks: URI, identifier, range ownership, and lifetime.
+- Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, but
+  nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
+  ownership, and lifetime have a protocol object.
 - Images and graphics protocols: placement, dimensions, persistence, and
   fallback behavior for clients without image support.
 - Damage granularity: row replacement is enough for the prototype, but rich

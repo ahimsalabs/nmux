@@ -865,6 +865,36 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_preserves_hyperlink_text_without_ids() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input(2, &empty, &empty),
+                b"\x1b]8;;https://example.com\x1b\\linked\x1b]8;;\x1b\\ text",
+            )
+            .expect("terminal update");
+
+        let link_run = update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("linked"))
+            .expect("hyperlink text run");
+        assert!(
+            link_run.text.contains("linked text"),
+            "hyperlink text was not preserved in rendered row: {:?}",
+            link_run
+        );
+        assert_eq!(
+            link_run.hyperlink_id, 0,
+            "nmux must not invent hyperlink IDs before a hyperlink table exists"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_emits_cursor_only_patch_for_cursor_movement() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();
