@@ -56,8 +56,11 @@ pub struct Pane {
     pub resize_policy: protocol::ResizePolicy,
     pub surface: protocol::SurfaceKind,
     pub cursor: Cursor,
+    pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
+    pub surface_row_runs: Vec<Vec<CellRun>>,
     pub scrollback_lines: Vec<String>,
+    pub scrollback_row_runs: Vec<Vec<CellRun>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,7 +71,9 @@ pub struct PaneSurface {
     pub rows: u32,
     pub surface: protocol::SurfaceKind,
     pub cursor: Cursor,
+    pub styles: Vec<PaneStyle>,
     pub lines: Vec<String>,
+    pub row_runs: Vec<Vec<CellRun>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +81,7 @@ pub struct PaneScrollback {
     pub pane_id: String,
     pub version: u64,
     pub lines: Vec<String>,
+    pub row_runs: Vec<Vec<CellRun>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +90,37 @@ pub struct Cursor {
     pub col: u32,
     pub visible: bool,
     pub shape: protocol::CursorShape,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PaneStyle {
+    pub fg_rgba: u32,
+    pub bg_rgba: u32,
+    pub underline_rgba: u32,
+    pub flags: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellRun {
+    pub text: String,
+    pub cell_widths: Vec<u8>,
+    pub style_id: u32,
+    pub flags: u32,
+    pub hyperlink_id: u32,
+}
+
+impl CellRun {
+    pub fn plain(text: impl Into<String>) -> Self {
+        let text = text.into();
+        let cell_widths = vec![1_u8; text.chars().count()];
+        Self {
+            text,
+            cell_widths,
+            style_id: 0,
+            flags: 0,
+            hyperlink_id: 0,
+        }
+    }
 }
 
 impl Session {
@@ -112,14 +149,24 @@ impl Session {
                         visible: true,
                         shape: protocol::CursorShape::Block,
                     },
+                    styles: vec![PaneStyle::default()],
                     surface_lines: vec![
                         "nmux pane-1".to_owned(),
                         "server-owned terminal state".to_owned(),
+                    ],
+                    surface_row_runs: vec![
+                        vec![CellRun::plain("nmux pane-1")],
+                        vec![CellRun::plain("server-owned terminal state")],
                     ],
                     scrollback_lines: vec![
                         "booting nmux workspace".to_owned(),
                         "nmux pane-1".to_owned(),
                         "server-owned terminal state".to_owned(),
+                    ],
+                    scrollback_row_runs: vec![
+                        vec![CellRun::plain("booting nmux workspace")],
+                        vec![CellRun::plain("nmux pane-1")],
+                        vec![CellRun::plain("server-owned terminal state")],
                     ],
                 },
             }],
@@ -130,7 +177,9 @@ impl Session {
         let mut session = Self::initial();
         if let Some(pane) = session.pane_mut("pane-1") {
             pane.surface_lines.clear();
+            pane.surface_row_runs.clear();
             pane.scrollback_lines.clear();
+            pane.scrollback_row_runs.clear();
         }
         session.apply_pane_output("pane-1", output);
         session
@@ -332,7 +381,9 @@ impl Session {
             rows: pane.rows,
             surface: pane.surface,
             cursor: pane.cursor.clone(),
+            styles: pane.styles.clone(),
             lines: pane.surface_lines.clone(),
+            row_runs: row_runs_for_lines(&pane.surface_lines, &pane.surface_row_runs),
         })
     }
 
@@ -346,6 +397,7 @@ impl Session {
             pane_id: pane.id.clone(),
             version: pane.scrollback_version,
             lines: pane.scrollback_lines.clone(),
+            row_runs: row_runs_for_lines(&pane.scrollback_lines, &pane.scrollback_row_runs),
         })
     }
 
@@ -398,9 +450,13 @@ impl Session {
         let mut builder = FlatBufferBuilder::new();
 
         let mut row_offsets = Vec::with_capacity(surface.lines.len());
-        for (row, line) in surface.lines.iter().enumerate() {
-            let run = build_cell_run(&mut builder, line);
-            let runs = builder.create_vector(&[run]);
+        for (row, (line, line_runs)) in surface
+            .lines
+            .iter()
+            .zip(surface.row_runs.iter())
+            .enumerate()
+        {
+            let runs = build_cell_runs(&mut builder, line_runs);
             let row = protocol::SurfaceRow::create(
                 &mut builder,
                 &protocol::SurfaceRowArgs {
@@ -413,8 +469,19 @@ impl Session {
         }
 
         let rows_data = builder.create_vector(&row_offsets);
-        let style = protocol::Style::create(&mut builder, &protocol::StyleArgs::default());
-        let styles = builder.create_vector(&[style]);
+        let mut style_offsets = Vec::with_capacity(surface.styles.len());
+        for style in &surface.styles {
+            style_offsets.push(protocol::Style::create(
+                &mut builder,
+                &protocol::StyleArgs {
+                    fg_rgba: style.fg_rgba,
+                    bg_rgba: style.bg_rgba,
+                    underline_rgba: style.underline_rgba,
+                    flags: style.flags,
+                },
+            ));
+        }
+        let styles = builder.create_vector(&style_offsets);
         let cursor = protocol::CursorState::create(
             &mut builder,
             &protocol::CursorStateArgs {
@@ -486,9 +553,13 @@ impl Session {
         let mut row_offsets = Vec::new();
         if patch_kind == protocol::PatchKind::ReplaceRows {
             row_offsets.reserve(surface.lines.len());
-            for (row, line) in surface.lines.iter().enumerate() {
-                let run = build_cell_run(&mut builder, line);
-                let runs = builder.create_vector(&[run]);
+            for (row, (line, line_runs)) in surface
+                .lines
+                .iter()
+                .zip(surface.row_runs.iter())
+                .enumerate()
+            {
+                let runs = build_cell_runs(&mut builder, line_runs);
                 let row = protocol::RowUpdate::create(
                     &mut builder,
                     &protocol::RowUpdateArgs {
@@ -576,8 +647,10 @@ impl Session {
 
         let mut row_offsets = Vec::with_capacity(selected.len());
         for (offset, line) in selected.iter().enumerate() {
-            let run = build_cell_run(&mut builder, line);
-            let runs = builder.create_vector(&[run]);
+            let runs = build_cell_runs(
+                &mut builder,
+                &scrollback.row_runs[start.saturating_add(offset)],
+            );
             let row = protocol::ScrollbackRow::create(
                 &mut builder,
                 &protocol::ScrollbackRowArgs {
@@ -898,8 +971,10 @@ fn apply_terminal_update(
     let scrollback_changed = pane.scrollback_lines != update.scrollback_lines;
 
     pane.scrollback_lines = update.scrollback_lines;
+    pane.scrollback_row_runs = row_runs_for_lines(&pane.scrollback_lines, &[]);
     pane.surface = update.surface;
     pane.surface_lines = update.surface_lines;
+    pane.surface_row_runs = row_runs_for_lines(&pane.surface_lines, &[]);
     pane.cursor = cursor;
 
     if scrollback_changed {
@@ -940,21 +1015,57 @@ fn stable_row_hash(line: &str) -> u64 {
     hash
 }
 
+fn row_runs_for_lines(lines: &[String], row_runs: &[Vec<CellRun>]) -> Vec<Vec<CellRun>> {
+    if row_runs.len() == lines.len()
+        && row_runs
+            .iter()
+            .zip(lines)
+            .all(|(runs, line)| cell_runs_text(runs) == *line)
+    {
+        row_runs.to_vec()
+    } else {
+        lines
+            .iter()
+            .map(|line| vec![CellRun::plain(line.clone())])
+            .collect()
+    }
+}
+
+fn cell_runs_text(runs: &[CellRun]) -> String {
+    let mut text = String::new();
+    for run in runs {
+        text.push_str(&run.text);
+    }
+    text
+}
+
+fn build_cell_runs<'a>(
+    builder: &mut FlatBufferBuilder<'a>,
+    runs: &[CellRun],
+) -> flatbuffers::WIPOffset<
+    flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<protocol::CellRun<'a>>>,
+> {
+    let mut run_offsets = Vec::with_capacity(runs.len());
+    for run in runs {
+        run_offsets.push(build_cell_run(builder, run));
+    }
+    builder.create_vector(&run_offsets)
+}
+
 fn build_cell_run<'a>(
     builder: &mut FlatBufferBuilder<'a>,
-    line: &str,
+    run: &CellRun,
 ) -> flatbuffers::WIPOffset<protocol::CellRun<'a>> {
-    let text = builder.create_string(line);
-    let widths = vec![1_u8; line.chars().count()];
-    let widths = builder.create_vector(&widths);
+    let text = builder.create_string(&run.text);
+    let widths = builder.create_vector(&run.cell_widths);
     protocol::CellRun::create(
         builder,
         &protocol::CellRunArgs {
             text_utf8: Some(text),
             cell_widths: Some(widths),
-            style_id: 0,
-            flags: 0,
-            hyperlink_id: 0,
+            style_id: run.style_id,
+            flags: run.flags,
+            hyperlink_id: run.hyperlink_id,
         },
     )
 }
@@ -966,7 +1077,7 @@ mod tests {
 
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
-    use super::{AttachMode, Cursor, Session};
+    use super::{AttachMode, CellRun, Cursor, PaneStyle, Session};
 
     #[test]
     fn initial_session_has_one_fixed_size_pane() {
@@ -1186,6 +1297,47 @@ mod tests {
             rows.get(0).runs().expect("runs").get(0).text_utf8(),
             Some("pane two")
         );
+    }
+
+    #[test]
+    fn pane_surface_frame_preserves_stored_cell_runs_and_styles() {
+        let mut session = Session::initial();
+        let pane = session.pane_mut("pane-1").expect("pane");
+        pane.styles.push(PaneStyle {
+            fg_rgba: 0xff00_0000,
+            bg_rgba: 0,
+            underline_rgba: 0,
+            flags: 1,
+        });
+        pane.surface_lines = vec!["red plain".to_owned()];
+        pane.surface_row_runs = vec![vec![
+            CellRun {
+                text: "red".to_owned(),
+                cell_widths: vec![1, 1, 1],
+                style_id: 1,
+                flags: 0,
+                hyperlink_id: 0,
+            },
+            CellRun::plain(" plain"),
+        ]];
+
+        let frame = session.pane_surface_frame("conn-1", 8);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+
+        let styles = snapshot.styles().expect("styles");
+        assert_eq!(styles.len(), 2);
+        assert_eq!(styles.get(1).fg_rgba(), 0xff00_0000);
+        assert_eq!(styles.get(1).flags(), 1);
+
+        let rows = snapshot.rows_data().expect("rows");
+        let runs = rows.get(0).runs().expect("runs");
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs.get(0).text_utf8(), Some("red"));
+        assert_eq!(runs.get(0).style_id(), 1);
+        assert_eq!(runs.get(0).cell_widths().expect("widths").len(), 3);
+        assert_eq!(runs.get(1).text_utf8(), Some(" plain"));
+        assert_eq!(runs.get(1).style_id(), 0);
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::fmt;
 use nmux_proto::protocol;
 
 use crate::host::{CommandSpec, HostSpec};
-use crate::session::{Cursor, Pane, Session, Tab};
+use crate::session::{CellRun, Cursor, Pane, PaneStyle, Session, Tab};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TmuxSession {
@@ -114,8 +114,11 @@ impl TmuxSession {
                     visible: true,
                     shape: protocol::CursorShape::Block,
                 },
+                styles: vec![PaneStyle::default()],
                 surface_lines: Vec::new(),
+                surface_row_runs: Vec::<Vec<CellRun>>::new(),
                 scrollback_lines: Vec::new(),
+                scrollback_row_runs: Vec::<Vec<CellRun>>::new(),
             },
         })
     }
