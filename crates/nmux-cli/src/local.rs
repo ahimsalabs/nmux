@@ -6372,6 +6372,134 @@ mod tests {
     }
 
     #[test]
+    fn live_current_surface_attach_reports_mouse_disabled_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 2)
+                .expect("serve current mouse-disabled live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: vec![KnownSurfaceVersion {
+                    pane_id: "pane-1".to_owned(),
+                    version: 2,
+                }],
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadWrite);
+        assert_eq!(initial.surface, None);
+
+        send_mouse_input(
+            &mut stream,
+            "pane-1",
+            0,
+            0,
+            protocol::MouseButton::Left,
+            protocol::MouseAction::Press,
+            0,
+        )
+        .expect("send mouse input");
+        let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
+        assert_eq!(
+            error,
+            LiveSurfaceRead::Error(ErrorSummary {
+                code: protocol::ErrorCode::PermissionDenied,
+                message: "input rejected: mouse tracking is disabled".to_owned(),
+                retryable: false,
+            })
+        );
+
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn live_current_surface_attach_forwards_mouse_with_libghostty_vt() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![b"\x1b[?1000h\x1b[?1006h".to_vec()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            serve_live_n_with_host_and_terminal_engine_kind(
+                &listener,
+                &mut session,
+                &mut host,
+                1,
+                2,
+                TerminalEngineKind::LibghosttyVt,
+            )
+            .expect("serve current mouse live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: vec![KnownSurfaceVersion {
+                    pane_id: "pane-1".to_owned(),
+                    version: 3,
+                }],
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadWrite);
+        assert_eq!(initial.surface, None);
+
+        send_mouse_input(
+            &mut stream,
+            "pane-1",
+            0,
+            0,
+            protocol::MouseButton::Left,
+            protocol::MouseAction::Press,
+            0,
+        )
+        .expect("send mouse input");
+        let host = server.join().expect("server thread");
+        assert!(host.events.contains(&HostEvent::Input {
+            pane_id: "pane-1".to_owned(),
+            bytes: b"\x1b[<0;1;1M".to_vec(),
+        }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn live_attach_reports_mouse_out_of_bounds_with_error_frame() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");

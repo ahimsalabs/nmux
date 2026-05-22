@@ -194,11 +194,12 @@ metadata, row state hashes, Kitty placeholder row metadata, mode payloads,
 mode-only patch application, sparse row replacement, `FullRefreshRequired`
 snapshot recovery for known-version live clients, metadata-only no-row live
 updates, cached client-state compatibility, cached terminal metadata reattach,
-current-surface live focus forwarding and rejection, protocol-visible host input
-and live resize failures, `PaneNotFound` errors for unknown pane-scoped client
-intents, consistent 1-based public scrollback ranges, decoded scrollback row
-hash metadata, and feature-gated live CLI smoke paths, committed user-command
-live resize metadata, style-table full-refresh reattach, and restored
+current-surface live focus forwarding and rejection, current-surface live mouse
+rejection and libghostty-vt forwarding, protocol-visible host input and live
+resize failures, `PaneNotFound` errors for unknown pane-scoped client intents,
+consistent 1-based public scrollback ranges, decoded scrollback row hash
+metadata, and feature-gated live CLI smoke paths, committed user-command live
+resize metadata, style-table full-refresh reattach, and restored
 alternate-screen scrollback omission. Client-side tests assert decoded surface
 patches and scrollback chunks preserve structured `CellRun` style IDs, cell
 widths, hyperlink-presence flags, and semantic content rather than collapsing
