@@ -124,7 +124,7 @@ Done:
 - `libghostty-vt` render-state row dirty flags are carried through surface snapshots, surface patches, scrollback chunks, and cached client state; `ReplaceRows` patches now carry only changed rows when pane geometry is stable, while richer run/region damage protocol fields remain withheld.
 - `libghostty-vt` Kitty graphics placeholder row metadata is carried through surface snapshots, surface patches, scrollback chunks, and cached client state, while nmux still withholds image placement, dimensions, pixel-data, persistence, and fallback protocol fields.
 - The `libghostty-vt` key encoder is tested against terminal application-cursor mode and protocol modifiers, documenting the future frontend path for mode-aware key encoding without raw PTY replay.
-- Persisted `nmux --state` files now retain cached row runs, style tables, and terminal color state alongside fallback row text, while still accepting older text-only state files as default-style rows with default color state.
+- Persisted `nmux --state` files now retain cached title, OSC 7 working directory, terminal modes, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, and Kitty placeholder row metadata alongside fallback row text, while still accepting older text-only state files as default-style rows with default metadata and color state.
 - Client-side scrollback decoding now retains `ScrollbackRow` runs alongside rendered fallback text.
 
 Next:
