@@ -88,8 +88,11 @@ only after the backend extraction proves the exact shape needed.
   Local clients also forward focus gained/lost input through `FocusInput` only
   when the daemon-owned pane mode reports focus reporting enabled.
   Local clients forward keypad Enter and digit key names through daemon-owned
-  application-keypad mode encoding. Broader terminal-derived key forwarding and
-  mouse input forwarding still need protocol decisions.
+  application-keypad mode encoding. Local clients forward explicit mouse
+  press/release/motion input only when the daemon-owned pane mode reports mouse
+  tracking enabled, with bytes encoded by the live pane terminal engine from its
+  current terminal mouse mode and format. Broader terminal-derived key
+  forwarding and frontend pointer integration still need protocol decisions.
 - Terminal metadata: nmux carries OSC 2 terminal title through pane surface
   snapshot and patch metadata. OSC 7 working-directory state remains unproven in
   the current backend path and should stay withheld until the expected upstream

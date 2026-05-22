@@ -551,6 +551,94 @@ impl<'a> ::flatbuffers::Verifiable for MouseButton {
 
 impl ::flatbuffers::SimpleToVerifyInSlice for MouseButton {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_MOUSE_ACTION: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_MOUSE_ACTION: i8 = 2;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_MOUSE_ACTION: [MouseAction; 3] = [
+  MouseAction::Press,
+  MouseAction::Release,
+  MouseAction::Motion,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct MouseAction(pub i8);
+#[allow(non_upper_case_globals)]
+impl MouseAction {
+  pub const Press: Self = Self(0);
+  pub const Release: Self = Self(1);
+  pub const Motion: Self = Self(2);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 2;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Press,
+    Self::Release,
+    Self::Motion,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Press => Some("Press"),
+      Self::Release => Some("Release"),
+      Self::Motion => Some("Motion"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for MouseAction {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for MouseAction {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for MouseAction {
+    type Output = MouseAction;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for MouseAction {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for MouseAction {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for MouseAction {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_RESIZE_REASON: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MAX_RESIZE_REASON: i8 = 3;
@@ -3794,6 +3882,7 @@ impl<'a> MouseInput<'a> {
   pub const VT_COL: ::flatbuffers::VOffsetT = 6;
   pub const VT_BUTTON: ::flatbuffers::VOffsetT = 8;
   pub const VT_MODIFIERS: ::flatbuffers::VOffsetT = 10;
+  pub const VT_ACTION: ::flatbuffers::VOffsetT = 12;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -3808,6 +3897,7 @@ impl<'a> MouseInput<'a> {
     builder.add_modifiers(args.modifiers);
     builder.add_col(args.col);
     builder.add_row(args.row);
+    builder.add_action(args.action);
     builder.add_button(args.button);
     builder.finish()
   }
@@ -3841,6 +3931,13 @@ impl<'a> MouseInput<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u32>(MouseInput::VT_MODIFIERS, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn action(&self) -> MouseAction {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<MouseAction>(MouseInput::VT_ACTION, Some(MouseAction::Press)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for MouseInput<'_> {
@@ -3853,6 +3950,7 @@ impl ::flatbuffers::Verifiable for MouseInput<'_> {
      .visit_field::<u32>("col", Self::VT_COL, false)?
      .visit_field::<MouseButton>("button", Self::VT_BUTTON, false)?
      .visit_field::<u32>("modifiers", Self::VT_MODIFIERS, false)?
+     .visit_field::<MouseAction>("action", Self::VT_ACTION, false)?
      .finish();
     Ok(())
   }
@@ -3862,6 +3960,7 @@ pub struct MouseInputArgs {
     pub col: u32,
     pub button: MouseButton,
     pub modifiers: u32,
+    pub action: MouseAction,
 }
 impl<'a> Default for MouseInputArgs {
   #[inline]
@@ -3871,6 +3970,7 @@ impl<'a> Default for MouseInputArgs {
       col: 0,
       button: MouseButton::None,
       modifiers: 0,
+      action: MouseAction::Press,
     }
   }
 }
@@ -3897,6 +3997,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> MouseInputBuilder<'a, 'b, A> 
     self.fbb_.push_slot::<u32>(MouseInput::VT_MODIFIERS, modifiers, 0);
   }
   #[inline]
+  pub fn add_action(&mut self, action: MouseAction) {
+    self.fbb_.push_slot::<MouseAction>(MouseInput::VT_ACTION, action, MouseAction::Press);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> MouseInputBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     MouseInputBuilder {
@@ -3918,6 +4022,7 @@ impl ::core::fmt::Debug for MouseInput<'_> {
       ds.field("col", &self.col());
       ds.field("button", &self.button());
       ds.field("modifiers", &self.modifiers());
+      ds.field("action", &self.action());
       ds.finish()
   }
 }

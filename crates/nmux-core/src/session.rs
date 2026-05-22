@@ -472,6 +472,15 @@ impl Session {
             .is_some_and(|pane| pane.modes.focus_reporting)
     }
 
+    pub fn pane_mouse_tracking(&self, pane_id: &str) -> bool {
+        self.pane(pane_id)
+            .is_some_and(|pane| pane.modes.mouse_tracking)
+    }
+
+    pub fn pane_size(&self, pane_id: &str) -> Option<(u32, u32)> {
+        self.pane(pane_id).map(|pane| (pane.cols, pane.rows))
+    }
+
     pub fn pane_application_keypad(&self, pane_id: &str) -> bool {
         self.pane(pane_id)
             .is_some_and(|pane| pane.modes.application_keypad)
@@ -1156,6 +1165,68 @@ impl Session {
                 paste: None,
                 raw: None,
                 focus: Some(focus),
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::InputEvent,
+                body: Some(input.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+
+    pub fn mouse_input_frame(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        actor_id: &str,
+        pane_id: &str,
+        input_seq: u64,
+        row: u32,
+        col: u32,
+        button: protocol::MouseButton,
+        action: protocol::MouseAction,
+        modifiers: u32,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+
+        let mouse = protocol::MouseInput::create(
+            &mut builder,
+            &protocol::MouseInputArgs {
+                row,
+                col,
+                button,
+                modifiers,
+                action,
+            },
+        );
+        let pane_id = builder.create_string(pane_id);
+        let actor_id = builder.create_string(actor_id);
+        let input = protocol::InputEvent::create(
+            &mut builder,
+            &protocol::InputEventArgs {
+                pane_id: Some(pane_id),
+                actor_id: Some(actor_id),
+                input_seq,
+                kind: protocol::InputKind::Mouse,
+                key: None,
+                mouse: Some(mouse),
+                paste: None,
+                raw: None,
+                focus: None,
             },
         );
 
@@ -2211,6 +2282,42 @@ mod tests {
 
         let focus = input.focus().expect("focus input");
         assert!(focus.focused());
+    }
+
+    #[test]
+    fn mouse_input_frame_decodes_to_input_event() {
+        let frame = Session::initial().mouse_input_frame(
+            "conn-1",
+            9,
+            "actor-1",
+            "pane-1",
+            3,
+            4,
+            5,
+            protocol::MouseButton::Left,
+            protocol::MouseAction::Press,
+            2,
+        );
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+
+        assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
+        assert_eq!(envelope.session_id(), Some("local"));
+        assert_eq!(envelope.connection_id(), Some("conn-1"));
+        assert_eq!(envelope.seq(), 9);
+        assert_eq!(envelope.body_type(), protocol::EnvelopeBody::InputEvent);
+
+        let input = envelope.body_as_input_event().expect("input event body");
+        assert_eq!(input.pane_id(), Some("pane-1"));
+        assert_eq!(input.actor_id(), Some("actor-1"));
+        assert_eq!(input.input_seq(), 3);
+        assert_eq!(input.kind(), protocol::InputKind::Mouse);
+
+        let mouse = input.mouse().expect("mouse input");
+        assert_eq!(mouse.row(), 4);
+        assert_eq!(mouse.col(), 5);
+        assert_eq!(mouse.button(), protocol::MouseButton::Left);
+        assert_eq!(mouse.action(), protocol::MouseAction::Press);
+        assert_eq!(mouse.modifiers(), 2);
     }
 
     #[test]

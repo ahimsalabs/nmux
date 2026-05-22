@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{Actor, AttachMode, Session};
-use nmux_core::terminal::{PaneTerminalEngines, TerminalEngineKind};
+use nmux_core::terminal::{
+    MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines, TerminalEngineKind,
+};
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 
 const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
@@ -430,7 +432,7 @@ fn serve_live_attached_client(
         if Session::input_allowed(&actor) {
             if let Some(input) = input {
                 if input.forwarding_allowed(session) {
-                    let bytes = input.forwarded_bytes(session)?;
+                    let bytes = input.forwarded_bytes(session, engines)?;
                     host.write_input(&input.pane_id, &bytes)?;
                 }
                 poll_pane_output_until_quiet(session, engines, host, &input.pane_id)?;
@@ -561,7 +563,7 @@ fn serve_attached_client(
             let input = read_input_event_from_stream(stream)?;
             if let Some(host) = host.as_deref_mut() {
                 if input.forwarding_allowed(session) {
-                    let bytes = input.forwarded_bytes(session)?;
+                    let bytes = input.forwarded_bytes(session, engines)?;
                     host.write_input(&input.pane_id, &bytes)?;
                 }
                 poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
@@ -866,6 +868,30 @@ pub fn send_focus_input(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame =
         Session::initial().focus_input_frame("local-client", 3, "local-actor", pane_id, 1, focused);
+    wire::write_default_frame(stream, &frame)?;
+    Ok(())
+}
+
+pub fn send_mouse_input(
+    stream: &mut UnixStream,
+    pane_id: &str,
+    row: u32,
+    col: u32,
+    button: protocol::MouseButton,
+    action: protocol::MouseAction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = Session::initial().mouse_input_frame(
+        "local-client",
+        3,
+        "local-actor",
+        pane_id,
+        1,
+        row,
+        col,
+        button,
+        action,
+        0,
+    );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
 }
@@ -1219,49 +1245,74 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
     let input = envelope
         .body_as_input_event()
         .ok_or("missing input event body")?;
-    let (bytes, key_name, requires_focus_reporting) = match input.kind() {
-        protocol::InputKind::Key => {
-            let key = input.key();
-            (
-                key.and_then(|key| key.text_utf8())
-                    .unwrap_or_default()
-                    .as_bytes()
-                    .to_vec(),
-                key.and_then(|key| key.key_name()).map(ToOwned::to_owned),
+    let (bytes, key_name, mouse, requires_focus_reporting, requires_mouse_tracking) =
+        match input.kind() {
+            protocol::InputKind::Key => {
+                let key = input.key();
+                (
+                    key.and_then(|key| key.text_utf8())
+                        .unwrap_or_default()
+                        .as_bytes()
+                        .to_vec(),
+                    key.and_then(|key| key.key_name()).map(ToOwned::to_owned),
+                    None,
+                    false,
+                    false,
+                )
+            }
+            protocol::InputKind::RawBytes => (
+                input
+                    .raw()
+                    .and_then(|raw| raw.bytes())
+                    .map(|bytes| bytes.iter().collect())
+                    .unwrap_or_default(),
+                None,
+                None,
                 false,
-            )
-        }
-        protocol::InputKind::RawBytes => (
-            input
-                .raw()
-                .and_then(|raw| raw.bytes())
-                .map(|bytes| bytes.iter().collect())
-                .unwrap_or_default(),
-            None,
-            false,
-        ),
-        protocol::InputKind::Paste => (
-            input
-                .paste()
-                .map(|paste| {
-                    paste_input_bytes(paste.text_utf8().unwrap_or_default(), paste.bracketed())
-                })
-                .transpose()?
-                .unwrap_or_default(),
-            None,
-            false,
-        ),
-        protocol::InputKind::Focus => (
-            if input.focus().is_some_and(|focus| focus.focused()) {
-                b"\x1b[I".to_vec()
-            } else {
-                b"\x1b[O".to_vec()
-            },
-            None,
-            true,
-        ),
-        other => return Err(format!("unexpected input kind: {other:?}").into()),
-    };
+                false,
+            ),
+            protocol::InputKind::Paste => (
+                input
+                    .paste()
+                    .map(|paste| {
+                        paste_input_bytes(paste.text_utf8().unwrap_or_default(), paste.bracketed())
+                    })
+                    .transpose()?
+                    .unwrap_or_default(),
+                None,
+                None,
+                false,
+                false,
+            ),
+            protocol::InputKind::Focus => (
+                if input.focus().is_some_and(|focus| focus.focused()) {
+                    b"\x1b[I".to_vec()
+                } else {
+                    b"\x1b[O".to_vec()
+                },
+                None,
+                None,
+                true,
+                false,
+            ),
+            protocol::InputKind::Mouse => {
+                let mouse = input.mouse().ok_or("missing mouse input")?;
+                (
+                    Vec::new(),
+                    None,
+                    Some(MouseSummary {
+                        row: mouse.row(),
+                        col: mouse.col(),
+                        button: mouse_button_from_protocol(mouse.button()),
+                        action: mouse_action_from_protocol(mouse.action()),
+                        modifiers: mouse.modifiers(),
+                    }),
+                    false,
+                    true,
+                )
+            }
+            other => return Err(format!("unexpected input kind: {other:?}").into()),
+        };
     Ok(InputSummary {
         pane_id: input.pane_id().unwrap_or_default().to_owned(),
         actor_id: input.actor_id().unwrap_or_default().to_owned(),
@@ -1269,8 +1320,31 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         text: String::from_utf8_lossy(&bytes).into_owned(),
         bytes,
         key_name,
+        mouse,
         requires_focus_reporting,
+        requires_mouse_tracking,
     })
+}
+
+fn mouse_action_from_protocol(action: protocol::MouseAction) -> MouseAction {
+    match action {
+        protocol::MouseAction::Press => MouseAction::Press,
+        protocol::MouseAction::Release => MouseAction::Release,
+        protocol::MouseAction::Motion => MouseAction::Motion,
+        _ => MouseAction::Press,
+    }
+}
+
+fn mouse_button_from_protocol(button: protocol::MouseButton) -> MouseButton {
+    match button {
+        protocol::MouseButton::None => MouseButton::None,
+        protocol::MouseButton::Left => MouseButton::Left,
+        protocol::MouseButton::Middle => MouseButton::Middle,
+        protocol::MouseButton::Right => MouseButton::Right,
+        protocol::MouseButton::WheelUp => MouseButton::WheelUp,
+        protocol::MouseButton::WheelDown => MouseButton::WheelDown,
+        _ => MouseButton::None,
+    }
 }
 
 fn paste_input_bytes(text: &str, bracketed: bool) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -2436,21 +2510,52 @@ pub struct InputSummary {
     pub text: String,
     pub bytes: Vec<u8>,
     pub key_name: Option<String>,
+    pub mouse: Option<MouseSummary>,
     pub requires_focus_reporting: bool,
+    pub requires_mouse_tracking: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseSummary {
+    pub row: u32,
+    pub col: u32,
+    pub button: MouseButton,
+    pub action: MouseAction,
+    pub modifiers: u32,
 }
 
 impl InputSummary {
     fn forwarding_allowed(&self, session: &Session) -> bool {
-        !self.requires_focus_reporting || session.pane_focus_reporting(&self.pane_id)
+        (!self.requires_focus_reporting || session.pane_focus_reporting(&self.pane_id))
+            && (!self.requires_mouse_tracking || session.pane_mouse_tracking(&self.pane_id))
     }
 
-    fn forwarded_bytes(&self, session: &Session) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        match self.key_name.as_deref() {
-            Some(key_name) => {
-                keypad_key_bytes(key_name, session.pane_application_keypad(&self.pane_id))
-            }
-            None => Ok(self.bytes.clone()),
+    fn forwarded_bytes(
+        &self,
+        session: &Session,
+        engines: &mut PaneTerminalEngines,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        if let Some(key_name) = self.key_name.as_deref() {
+            return keypad_key_bytes(key_name, session.pane_application_keypad(&self.pane_id));
         }
+        if let Some(mouse) = self.mouse {
+            let (cols, rows) = session
+                .pane_size(&self.pane_id)
+                .ok_or("mouse input pane is missing")?;
+            return engines
+                .engine_mut(&self.pane_id)
+                .encode_mouse_input(MouseTerminalInput {
+                    row: mouse.row,
+                    col: mouse.col,
+                    button: mouse.button,
+                    action: mouse.action,
+                    modifiers: mouse.modifiers,
+                    cols,
+                    rows,
+                })
+                .ok_or_else(|| "terminal engine cannot encode mouse input".into());
+        }
+        Ok(self.bytes.clone())
     }
 }
 
@@ -4060,7 +4165,9 @@ mod tests {
                 text: "x".to_owned(),
                 bytes: b"x".to_vec(),
                 key_name: None,
+                mouse: None,
                 requires_focus_reporting: false,
+                requires_mouse_tracking: false,
             }
         );
     }
@@ -4095,7 +4202,9 @@ mod tests {
             text: String::new(),
             bytes: Vec::new(),
             key_name: Some("numpad-enter".to_owned()),
+            mouse: None,
             requires_focus_reporting: false,
+            requires_mouse_tracking: false,
         };
         let digit = InputSummary {
             key_name: Some("numpad-7".to_owned()),
@@ -4103,18 +4212,29 @@ mod tests {
         };
 
         assert_eq!(
-            enter.forwarded_bytes(&session).expect("normal enter"),
+            enter
+                .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+                .expect("normal enter"),
             b"\r"
         );
-        assert_eq!(digit.forwarded_bytes(&session).expect("normal digit"), b"7");
+        assert_eq!(
+            digit
+                .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+                .expect("normal digit"),
+            b"7"
+        );
 
         session.tabs[0].root.modes.application_keypad = true;
         assert_eq!(
-            enter.forwarded_bytes(&session).expect("application enter"),
+            enter
+                .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+                .expect("application enter"),
             b"\x1bOM"
         );
         assert_eq!(
-            digit.forwarded_bytes(&session).expect("application digit"),
+            digit
+                .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+                .expect("application digit"),
             b"\x1bOw"
         );
     }
@@ -4129,11 +4249,13 @@ mod tests {
             text: String::new(),
             bytes: Vec::new(),
             key_name: Some("f13".to_owned()),
+            mouse: None,
             requires_focus_reporting: false,
+            requires_mouse_tracking: false,
         };
 
         let err = input
-            .forwarded_bytes(&session)
+            .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
             .expect_err("unsupported key name");
         assert!(err.to_string().contains("unsupported key name: f13"));
     }
@@ -4178,7 +4300,9 @@ mod tests {
                 text: "hello\n".to_owned(),
                 bytes: b"hello\n".to_vec(),
                 key_name: None,
+                mouse: None,
                 requires_focus_reporting: false,
+                requires_mouse_tracking: false,
             }
         );
     }
@@ -4216,6 +4340,38 @@ mod tests {
     }
 
     #[test]
+    fn decodes_mouse_input_from_client_frame() {
+        let frame = Session::initial().mouse_input_frame(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            4,
+            5,
+            protocol::MouseButton::Left,
+            protocol::MouseAction::Press,
+            0,
+        );
+        let input = input_summary_from_frame(&frame).expect("mouse summary");
+
+        assert_eq!(input.pane_id, "pane-1");
+        assert_eq!(input.actor_id, "actor-1");
+        assert_eq!(input.input_seq, 2);
+        assert_eq!(
+            input.mouse,
+            Some(MouseSummary {
+                row: 4,
+                col: 5,
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 0,
+            })
+        );
+        assert!(input.requires_mouse_tracking);
+    }
+
+    #[test]
     fn focus_input_forwarding_requires_daemon_owned_mode() {
         let mut session = Session::initial();
         let input = InputSummary {
@@ -4225,11 +4381,39 @@ mod tests {
             text: "\x1b[I".to_owned(),
             bytes: b"\x1b[I".to_vec(),
             key_name: None,
+            mouse: None,
             requires_focus_reporting: true,
+            requires_mouse_tracking: false,
         };
 
         assert!(!input.forwarding_allowed(&session));
         session.tabs[0].root.modes.focus_reporting = true;
+        assert!(input.forwarding_allowed(&session));
+    }
+
+    #[test]
+    fn mouse_input_forwarding_requires_daemon_owned_mode() {
+        let mut session = Session::initial();
+        let input = InputSummary {
+            pane_id: "pane-1".to_owned(),
+            actor_id: "actor-1".to_owned(),
+            input_seq: 1,
+            text: String::new(),
+            bytes: Vec::new(),
+            key_name: None,
+            mouse: Some(MouseSummary {
+                row: 0,
+                col: 0,
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 0,
+            }),
+            requires_focus_reporting: false,
+            requires_mouse_tracking: true,
+        };
+
+        assert!(!input.forwarding_allowed(&session));
+        session.tabs[0].root.modes.mouse_tracking = true;
         assert!(input.forwarding_allowed(&session));
     }
 

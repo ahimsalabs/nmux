@@ -92,6 +92,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         && args.key_name.is_none()
         && options.paste_text.is_none()
         && args.focus_event.is_none()
+        && args.mouse_event.is_none()
     {
         options.request.mode = AttachMode::ReadOnly;
     }
@@ -173,6 +174,15 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             };
             if let Some(key_name) = args.key_name.as_deref() {
                 local::send_named_key_input(&mut stream, "pane-1", key_name)?;
+            } else if let Some(mouse_event) = args.mouse_event {
+                local::send_mouse_input(
+                    &mut stream,
+                    "pane-1",
+                    mouse_event.row,
+                    mouse_event.col,
+                    mouse_event.button,
+                    mouse_event.action,
+                )?;
             } else if let Some(focus_event) = args.focus_event {
                 if focus_reporting {
                     local::send_focus_input(&mut stream, "pane-1", focus_event.focused())?;
@@ -664,6 +674,7 @@ struct Args {
     key_name: Option<String>,
     paste_text: Option<String>,
     focus_event: Option<FocusEvent>,
+    mouse_event: Option<MouseEvent>,
     scrollback_start_line: u64,
     scrollback_line_count: u32,
     state_path: Option<PathBuf>,
@@ -686,6 +697,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut key_name = None;
     let mut paste_text = None;
     let mut focus_event = None;
+    let mut mouse_event = None;
     let mut scrollback_start_line = 1;
     let mut scrollback_line_count = 2;
     let mut state_path = None;
@@ -705,6 +717,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut key_name_set = false;
     let mut paste_set = false;
     let mut focus_set = false;
+    let mut mouse_set = false;
     let mut no_input_set = false;
     let mut args = std::env::args().skip(1);
 
@@ -741,6 +754,15 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                 focus_set = true;
                 focus_event = Some(parse_focus_event(
                     &args.next().ok_or("--focus requires gained or lost")?,
+                )?);
+                input_text = None;
+            }
+            "--mouse" => {
+                mouse_set = true;
+                mouse_event = Some(parse_mouse_event(
+                    &args
+                        .next()
+                        .ok_or("--mouse requires action:button:row:col")?,
                 )?);
                 input_text = None;
             }
@@ -838,6 +860,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         key_name_set,
         paste_set,
         focus_set,
+        mouse_set,
         no_input_set,
         stdin_input,
         stdin_bytes,
@@ -853,6 +876,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         iterations,
         focus_set,
         key_name_set,
+        mouse_set,
     )?;
 
     Ok(Args {
@@ -862,6 +886,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         key_name,
         paste_text,
         focus_event,
+        mouse_event,
         scrollback_start_line,
         scrollback_line_count,
         state_path,
@@ -910,6 +935,7 @@ fn validate_explicit_input_modes(
     key_name_set: bool,
     paste_set: bool,
     focus_set: bool,
+    mouse_set: bool,
     no_input_set: bool,
     stdin_input: bool,
     stdin_bytes: bool,
@@ -926,11 +952,17 @@ fn validate_explicit_input_modes(
     if key_set && focus_set {
         return Err("--key cannot be combined with --focus");
     }
+    if key_set && mouse_set {
+        return Err("--key cannot be combined with --mouse");
+    }
     if key_name_set && paste_set {
         return Err("--key-name cannot be combined with --paste");
     }
     if key_name_set && focus_set {
         return Err("--key-name cannot be combined with --focus");
+    }
+    if key_name_set && mouse_set {
+        return Err("--key-name cannot be combined with --mouse");
     }
     if key_name_set && no_input_set {
         return Err("--key-name cannot be combined with --no-input");
@@ -938,11 +970,20 @@ fn validate_explicit_input_modes(
     if paste_set && focus_set {
         return Err("--paste cannot be combined with --focus");
     }
+    if paste_set && mouse_set {
+        return Err("--paste cannot be combined with --mouse");
+    }
     if paste_set && no_input_set {
         return Err("--paste cannot be combined with --no-input");
     }
     if focus_set && no_input_set {
         return Err("--focus cannot be combined with --no-input");
+    }
+    if focus_set && mouse_set {
+        return Err("--focus cannot be combined with --mouse");
+    }
+    if mouse_set && no_input_set {
+        return Err("--mouse cannot be combined with --no-input");
     }
     if key_set && stdin_input {
         return Err("--key cannot be combined with --stdin");
@@ -968,6 +1009,12 @@ fn validate_explicit_input_modes(
     if focus_set && stdin_bytes {
         return Err("--focus cannot be combined with --stdin-bytes");
     }
+    if mouse_set && stdin_input {
+        return Err("--mouse cannot be combined with --stdin");
+    }
+    if mouse_set && stdin_bytes {
+        return Err("--mouse cannot be combined with --stdin-bytes");
+    }
     if no_input_set && stdin_input {
         return Err("--no-input cannot be combined with --stdin");
     }
@@ -988,6 +1035,7 @@ fn validate_mode_args(
     iterations: Option<usize>,
     focus_set: bool,
     key_name_set: bool,
+    mouse_set: bool,
 ) -> Result<(), &'static str> {
     if live && follow {
         return Err("--follow cannot be combined with --live");
@@ -1013,6 +1061,9 @@ fn validate_mode_args(
     if key_name_set && !live {
         return Err("--key-name requires --live");
     }
+    if mouse_set && !live {
+        return Err("--mouse requires --live");
+    }
     if iterations.is_some() && !live && !follow {
         return Err("--iterations requires --live or --follow");
     }
@@ -1036,6 +1087,7 @@ Options:
   --key-name NAME            Send keypad-enter or keypad-0..9 in live mode
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send a focus event in live mode when reporting is enabled
+  --mouse A:B:R:C            Send mouse press/release/motion in live mode
   --no-input                 Attach read-only
   --scrollback-start LINE    First scrollback line to request
   --scrollback-count COUNT   Number of scrollback lines to request
@@ -1081,6 +1133,14 @@ impl FocusEvent {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MouseEvent {
+    action: protocol::MouseAction,
+    button: protocol::MouseButton,
+    row: u32,
+    col: u32,
+}
+
 fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
     match value {
         "off" => Ok(LocalEcho::Off),
@@ -1114,15 +1174,129 @@ fn parse_key_name(value: &str) -> Result<String, &'static str> {
     }
 }
 
+fn parse_mouse_event(value: &str) -> Result<MouseEvent, &'static str> {
+    let mut parts = value.split(':');
+    let action = parse_mouse_action(
+        parts
+            .next()
+            .ok_or("--mouse requires action:button:row:col")?,
+    )?;
+    let button = parse_mouse_button(
+        parts
+            .next()
+            .ok_or("--mouse requires action:button:row:col")?,
+    )?;
+    let row = parse_one_based_cell(
+        parts
+            .next()
+            .ok_or("--mouse requires action:button:row:col")?,
+    )?;
+    let col = parse_one_based_cell(
+        parts
+            .next()
+            .ok_or("--mouse requires action:button:row:col")?,
+    )?;
+    if parts.next().is_some() {
+        return Err("--mouse requires action:button:row:col");
+    }
+
+    Ok(MouseEvent {
+        action,
+        button,
+        row,
+        col,
+    })
+}
+
+fn parse_mouse_action(value: &str) -> Result<protocol::MouseAction, &'static str> {
+    match value {
+        "press" => Ok(protocol::MouseAction::Press),
+        "release" => Ok(protocol::MouseAction::Release),
+        "motion" => Ok(protocol::MouseAction::Motion),
+        _ => Err("--mouse action must be press, release, or motion"),
+    }
+}
+
+fn parse_mouse_button(value: &str) -> Result<protocol::MouseButton, &'static str> {
+    match value {
+        "none" => Ok(protocol::MouseButton::None),
+        "left" => Ok(protocol::MouseButton::Left),
+        "middle" => Ok(protocol::MouseButton::Middle),
+        "right" => Ok(protocol::MouseButton::Right),
+        "wheel-up" => Ok(protocol::MouseButton::WheelUp),
+        "wheel-down" => Ok(protocol::MouseButton::WheelDown),
+        _ => Err("--mouse button must be none, left, middle, right, wheel-up, or wheel-down"),
+    }
+}
+
+fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
+    let value = value
+        .parse::<u32>()
+        .map_err(|_| "--mouse row and col must be positive integers")?;
+    value
+        .checked_sub(1)
+        .ok_or("--mouse row and col must be positive integers")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        FocusEvent, LocalEcho, interim_surface_fidelity_warning_needed, parse_focus_event,
-        parse_key_name, parse_local_echo, raw_terminal_lflag, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, resize_policy_warning, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
-        validate_explicit_input_modes, validate_mode_args, validate_positive_numeric_args,
+        FocusEvent, LocalEcho, MouseEvent, interim_surface_fidelity_warning_needed,
+        parse_focus_event, parse_key_name, parse_local_echo, parse_mouse_event, raw_terminal_lflag,
+        raw_terminal_mode_needed, redraw_terminal_guard_needed, resize_policy_warning,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        validate_explicit_input_modes as super_validate_explicit_input_modes,
+        validate_mode_args as super_validate_mode_args, validate_positive_numeric_args,
     };
+    use nmux_proto::protocol;
+
+    fn validate_mode_args(
+        live: bool,
+        follow: bool,
+        stdin_input: bool,
+        stdin_bytes: bool,
+        local_echo_set: bool,
+        redraw: bool,
+        live_resize: Option<(u32, u32)>,
+        iterations: Option<usize>,
+        focus_set: bool,
+        key_name_set: bool,
+    ) -> Result<(), &'static str> {
+        super_validate_mode_args(
+            live,
+            follow,
+            stdin_input,
+            stdin_bytes,
+            local_echo_set,
+            redraw,
+            live_resize,
+            iterations,
+            focus_set,
+            key_name_set,
+            false,
+        )
+    }
+
+    fn validate_explicit_input_modes(
+        key_set: bool,
+        key_name_set: bool,
+        paste_set: bool,
+        focus_set: bool,
+        no_input_set: bool,
+        stdin_input: bool,
+        stdin_bytes: bool,
+    ) -> Result<(), &'static str> {
+        super_validate_explicit_input_modes(
+            key_set,
+            key_name_set,
+            paste_set,
+            focus_set,
+            false,
+            no_input_set,
+            stdin_input,
+            stdin_bytes,
+        )
+    }
 
     #[test]
     fn raw_terminal_mode_is_only_needed_for_stdin_bytes_on_tty() {
@@ -1216,6 +1390,31 @@ mod tests {
     }
 
     #[test]
+    fn mouse_arg_accepts_action_button_and_one_based_cells() {
+        assert_eq!(
+            parse_mouse_event("press:left:1:2"),
+            Ok(MouseEvent {
+                action: protocol::MouseAction::Press,
+                button: protocol::MouseButton::Left,
+                row: 0,
+                col: 1,
+            })
+        );
+        assert_eq!(
+            parse_mouse_event("release:none:24:80"),
+            Ok(MouseEvent {
+                action: protocol::MouseAction::Release,
+                button: protocol::MouseButton::None,
+                row: 23,
+                col: 79,
+            })
+        );
+        assert!(parse_mouse_event("click:left:1:1").is_err());
+        assert!(parse_mouse_event("press:left:0:1").is_err());
+        assert!(parse_mouse_event("press:left:1").is_err());
+    }
+
+    #[test]
     fn mode_validation_rejects_ignored_or_conflicting_flags() {
         assert_eq!(
             validate_mode_args(
@@ -1304,6 +1503,12 @@ mod tests {
             ),
             Err("--key-name requires --live")
         );
+        assert_eq!(
+            super_validate_mode_args(
+                false, false, false, false, false, false, None, None, false, false, true
+            ),
+            Err("--mouse requires --live")
+        );
         assert!(
             validate_mode_args(
                 true,
@@ -1355,12 +1560,24 @@ mod tests {
             Err("--key cannot be combined with --focus")
         );
         assert_eq!(
+            super_validate_explicit_input_modes(
+                true, false, false, false, true, false, false, false
+            ),
+            Err("--key cannot be combined with --mouse")
+        );
+        assert_eq!(
             validate_explicit_input_modes(false, true, true, false, false, false, false),
             Err("--key-name cannot be combined with --paste")
         );
         assert_eq!(
             validate_explicit_input_modes(false, true, false, true, false, false, false),
             Err("--key-name cannot be combined with --focus")
+        );
+        assert_eq!(
+            super_validate_explicit_input_modes(
+                false, true, false, false, true, false, false, false
+            ),
+            Err("--key-name cannot be combined with --mouse")
         );
         assert_eq!(
             validate_explicit_input_modes(false, true, false, false, true, false, false),
@@ -1371,12 +1588,30 @@ mod tests {
             Err("--paste cannot be combined with --focus")
         );
         assert_eq!(
+            super_validate_explicit_input_modes(
+                false, false, true, false, true, false, false, false
+            ),
+            Err("--paste cannot be combined with --mouse")
+        );
+        assert_eq!(
             validate_explicit_input_modes(false, false, true, false, true, false, false),
             Err("--paste cannot be combined with --no-input")
         );
         assert_eq!(
             validate_explicit_input_modes(false, false, false, true, true, false, false),
             Err("--focus cannot be combined with --no-input")
+        );
+        assert_eq!(
+            super_validate_explicit_input_modes(
+                false, false, false, true, true, false, false, false
+            ),
+            Err("--focus cannot be combined with --mouse")
+        );
+        assert_eq!(
+            super_validate_explicit_input_modes(
+                false, false, false, false, true, true, false, false
+            ),
+            Err("--mouse cannot be combined with --no-input")
         );
         assert_eq!(
             validate_explicit_input_modes(true, false, false, false, false, true, false),
@@ -1409,6 +1644,18 @@ mod tests {
         assert_eq!(
             validate_explicit_input_modes(false, false, false, true, false, false, true),
             Err("--focus cannot be combined with --stdin-bytes")
+        );
+        assert_eq!(
+            super_validate_explicit_input_modes(
+                false, false, false, false, true, false, true, false
+            ),
+            Err("--mouse cannot be combined with --stdin")
+        );
+        assert_eq!(
+            super_validate_explicit_input_modes(
+                false, false, false, false, true, false, false, true
+            ),
+            Err("--mouse cannot be combined with --stdin-bytes")
         );
         assert_eq!(
             validate_explicit_input_modes(false, false, false, false, true, true, false),

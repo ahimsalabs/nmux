@@ -39,6 +39,12 @@ enum MouseButton : byte {
   WheelDown = 5,
 }
 
+enum MouseAction : byte {
+  Press = 0,
+  Release = 1,
+  Motion = 2,
+}
+
 enum ResizeReason : byte {
   FrontendViewport = 0,
   UserCommand = 1,
@@ -213,6 +219,7 @@ table MouseInput {
   col:uint;
   button:MouseButton = None;
   modifiers:uint;
+  action:MouseAction = Press;
 }
 
 table PasteInput {

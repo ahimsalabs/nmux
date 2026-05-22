@@ -143,6 +143,38 @@ pub enum TerminalEngineKind {
 pub trait TerminalEngine {
     fn apply_output(&mut self, input: TerminalInput<'_>, output: &[u8]) -> Option<TerminalUpdate>;
     fn resize(&mut self, input: TerminalInput<'_>, cols: u32, rows: u32) -> Option<TerminalUpdate>;
+
+    fn encode_mouse_input(&mut self, _input: MouseTerminalInput) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseTerminalInput {
+    pub row: u32,
+    pub col: u32,
+    pub button: MouseButton,
+    pub action: MouseAction,
+    pub modifiers: u32,
+    pub cols: u32,
+    pub rows: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseAction {
+    Press,
+    Release,
+    Motion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseButton {
+    None,
+    Left,
+    Middle,
+    Right,
+    WheelUp,
+    WheelDown,
 }
 
 #[derive(Default)]
@@ -308,7 +340,7 @@ fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
 #[cfg(feature = "libghostty-vt")]
 mod ghostty_vt {
     use libghostty_vt::{
-        RenderState, Terminal, TerminalOptions,
+        RenderState, Terminal, TerminalOptions, mouse,
         render::{CellIterator, CursorVisualStyle, RowIterator, Snapshot as RenderSnapshot},
         screen::CellWide,
         style::{RgbColor, Style, StyleColor, Underline},
@@ -317,8 +349,8 @@ mod ghostty_vt {
     use nmux_proto::protocol;
 
     use super::{
-        CellRun, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput, TerminalModes,
-        TerminalUpdate,
+        CellRun, MouseAction, MouseButton, MouseTerminalInput, PaneStyle, TerminalCursor,
+        TerminalEngine, TerminalInput, TerminalModes, TerminalUpdate,
     };
 
     pub struct LibghosttyVtTerminalEngine {
@@ -367,6 +399,11 @@ mod ghostty_vt {
             let rows = u16::try_from(rows).ok()?;
             state.terminal.resize(cols, rows, 8, 16).ok()?;
             state.extract_update(input, true)
+        }
+
+        fn encode_mouse_input(&mut self, input: MouseTerminalInput) -> Option<Vec<u8>> {
+            let state = self.state.as_ref()?;
+            encode_mouse_input(&state.terminal, input)
         }
     }
 
@@ -750,6 +787,58 @@ mod ghostty_vt {
             origin: terminal.mode(Mode::ORIGIN).ok()?,
             wraparound: terminal.mode(Mode::WRAPAROUND).ok()?,
         })
+    }
+
+    fn encode_mouse_input(
+        terminal: &Terminal<'_, '_>,
+        input: MouseTerminalInput,
+    ) -> Option<Vec<u8>> {
+        let mut encoder = mouse::Encoder::new().ok()?;
+        encoder
+            .set_options_from_terminal(terminal)
+            .set_size(mouse::EncoderSize {
+                screen_width: input.cols.checked_mul(8)?,
+                screen_height: input.rows.checked_mul(16)?,
+                cell_width: 8,
+                cell_height: 16,
+                padding_top: 0,
+                padding_bottom: 0,
+                padding_right: 0,
+                padding_left: 0,
+            });
+        let mut event = mouse::Event::new().ok()?;
+        event
+            .set_action(mouse_action(input.action))
+            .set_button(mouse_button(input.button))
+            .set_mods(libghostty_vt::key::Mods::from_bits_retain(
+                u16::try_from(input.modifiers).ok()?,
+            ))
+            .set_position(mouse::Position {
+                x: input.col.checked_mul(8)? as f32,
+                y: input.row.checked_mul(16)? as f32,
+            });
+        let mut bytes = Vec::new();
+        encoder.encode_to_vec(&event, &mut bytes).ok()?;
+        Some(bytes)
+    }
+
+    fn mouse_action(action: MouseAction) -> mouse::Action {
+        match action {
+            MouseAction::Press => mouse::Action::Press,
+            MouseAction::Release => mouse::Action::Release,
+            MouseAction::Motion => mouse::Action::Motion,
+        }
+    }
+
+    fn mouse_button(button: MouseButton) -> Option<mouse::Button> {
+        match button {
+            MouseButton::None => None,
+            MouseButton::Left => Some(mouse::Button::Left),
+            MouseButton::Middle => Some(mouse::Button::Middle),
+            MouseButton::Right => Some(mouse::Button::Right),
+            MouseButton::WheelUp => Some(mouse::Button::Four),
+            MouseButton::WheelDown => Some(mouse::Button::Five),
+        }
     }
 }
 
@@ -1885,6 +1974,36 @@ mod tests {
         assert!(terminal.is_mouse_tracking().expect("mouse tracking"));
         terminal.vt_write(b"\x1b[?1003l");
         assert!(!terminal.is_mouse_tracking().expect("mouse tracking"));
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_encodes_sgr_mouse_press_from_terminal_state() {
+        use super::{MouseAction, MouseButton, MouseTerminalInput};
+
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let update = engine
+            .apply_output(
+                terminal_input(24, &empty, &empty),
+                b"\x1b[?1000h\x1b[?1006h",
+            )
+            .expect("terminal update");
+        assert!(update.modes.mouse_tracking);
+
+        let bytes = engine
+            .encode_mouse_input(MouseTerminalInput {
+                row: 0,
+                col: 0,
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 0,
+                cols: 80,
+                rows: 24,
+            })
+            .expect("encoded mouse input");
+
+        assert_eq!(bytes, b"\x1b[<0;1;1M");
     }
 
     #[cfg(feature = "libghostty-vt")]
