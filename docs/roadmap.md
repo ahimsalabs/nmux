@@ -96,6 +96,8 @@ Done:
 - Client-side surface state rejects unsupported patch kinds instead of treating them as cursor-only updates.
 - Pane surface snapshot and patch serialization is pane-scoped, matching the per-pane terminal engine and scrollback boundaries.
 - `nmuxd --terminal-engine interim` exposes the current engine choice explicitly; backend `libghostty-vt` is imported behind an opt-in Cargo feature while the project decides when to accept the native Zig/Ghostty build in the default path.
+- Pane state now preserves `CellRun` and style-table data internally, and snapshots/patches serialize stored runs instead of flattening every row to one default-style string.
+- The optional `libghostty-vt` engine extracts visible rows as style-separated cell runs with cell-width metadata, while keeping plain rendered text available for current clients.
 
 Next:
 

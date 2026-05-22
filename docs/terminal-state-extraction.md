@@ -14,10 +14,10 @@ the vendored native Ghostty VT build. The default `nmuxd` engine remains
 
 - `WorkspaceTreeSnapshot`: session, tab, root pane identity, size, resize policy,
   and current pane surface version.
-- `PaneSurfaceSnapshot`: pane ID, surface version, size, cursor, and rendered row
-  text.
-- `PaneSurfacePatch`: base/version pair, replacement rows, and cursor.
-- `ScrollbackChunk`: scrollback lines by range.
+- `PaneSurfaceSnapshot`: pane ID, surface version, size, cursor, style table,
+  and rendered row runs.
+- `PaneSurfacePatch`: base/version pair, replacement row runs, and cursor.
+- `ScrollbackChunk`: scrollback row runs by range.
 
 The current terminal engine boundary owns:
 
@@ -26,6 +26,7 @@ The current terminal engine boundary owns:
 - cursor state;
 - visible surface rows;
 - scrollback rows;
+- row runs, cell widths, and the pane style table;
 - PTY output bytes;
 - resize events.
 
@@ -38,9 +39,11 @@ backend terminal state into the same nmux objects:
   from row-count heuristics or serializer defaults.
 - Surface kind: active main versus alternate screen state must come from the
   terminal engine and be present on full surface snapshots.
-- Visible rows: extract the active screen viewport as row text compatible with
+- Visible rows: extract the active screen viewport as row runs compatible with
   the current `PaneSurfaceSnapshot` and `PaneSurfacePatch` fields. Snapshot and
   patch serialization must stay pane-scoped.
+- Cell runs: preserve style identity and cell-width metadata from the VT engine
+  while keeping rendered row text available as a client fallback.
 - Scrollback: expose historical rows through the existing `ScrollbackChunk`
   range model and advance scrollback versions when backend-owned history
   changes. Fetch handling must stay pane-scoped.
@@ -60,10 +63,13 @@ backend terminal state into the same nmux objects:
 Do not freeze these into ad hoc string fields. Add protocol fields or objects
 only after the backend extraction proves the exact shape needed.
 
-- Cell style runs: color, bold, italic, underline variants, reverse video,
-  faint, blink, strike, and style identity.
-- Grapheme and cell width: combining marks, emoji clusters, double-width cells,
-  zero-width continuations, and ambiguous-width policy.
+- Cell style runs: `libghostty-vt` now supplies foreground/background colors,
+  basic SGR flags, style identity, and cell widths for visible rows. Scrollback
+  style-table ownership and richer style semantics still need protocol
+  decisions.
+- Grapheme and cell width: double-width cells are represented in run widths.
+  Combining marks, emoji clusters, zero-width continuations, and
+  ambiguous-width policy still need broader tests and protocol guidance.
 - Terminal modes: origin mode, wrap mode, bracketed paste, application cursor
   keys, keypad mode, and cursor blink.
 - Alternate screen: alternate scrollback behavior and transitions between
@@ -88,13 +94,15 @@ have tests proving:
 - scrollback fetches return backend-owned history after viewport changes;
 - alternate-screen behavior is either correctly modeled or explicitly withheld
   behind the interim engine flag;
+- visible rows preserve style-separated `CellRun` objects and wide-cell widths;
 - unsupported VT features fail by omission with documented limitations, not by
   corrupting the existing nmux state objects.
 
 ## Current libghostty-vt Default-Enable Gate
 
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
-extraction, cursor-only updates, alternate-screen detection, resize/reflow, and
-backend-owned scrollback extraction through unit, session, and live CLI smoke
-coverage. It is not the default until the project deliberately accepts the
-native Zig/Ghostty build cost in normal development and CI.
+extraction, style-separated cell runs, wide-cell widths, cursor-only updates,
+alternate-screen detection, resize/reflow, and backend-owned scrollback
+extraction through unit, session, and live CLI smoke coverage. It is not the
+default until the project deliberately accepts the native Zig/Ghostty build cost
+in normal development and CI.
