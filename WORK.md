@@ -488,6 +488,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   ReplaceRows patches now carry only changed rows when the pane geometry is stable; SurfaceRow, RowUpdate, and ScrollbackRow carry backend row dirty flags and row state hashes as metadata, while richer run/region damage protocol fields remain withheld
   SurfaceRow, RowUpdate, and ScrollbackRow carry Kitty virtual placeholder metadata; image placement and pixel-data protocol fields remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk preserve row runs instead of collapsing state to text-only rows
+  client-side tests prove decoded surface patches and scrollback chunks preserve structured CellRun style IDs, cell widths, hyperlink-presence flags, and semantic content instead of collapsing to rendered fallback text
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal mode state, and mode-only updates no longer force full refreshes
   ADR 0017 documents terminal input mode state and daemon-owned input gating for paste, focus, named keys, and mouse input
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch

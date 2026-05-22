@@ -183,8 +183,11 @@ metadata, per-run semantic content, row dirty metadata, row state hashes, Kitty
 placeholder row metadata, mode payloads, mode-only patch application, sparse row
 replacement, metadata-only no-row live updates, cached client-state
 compatibility, cached terminal metadata reattach, and feature-gated live CLI
-smoke paths. `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli`
-test suites with `--features libghostty-vt`, so ordinary feature-sensitive
-tests are part of the opt-in gate. ADR 0018 keeps the default engine `interim`
-until a later decision explicitly accepts the native Ghostty/Zig build cost in
-normal development, CI, and packaging.
+smoke paths. Client-side tests assert decoded surface patches and scrollback
+chunks preserve structured `CellRun` style IDs, cell widths,
+hyperlink-presence flags, and semantic content rather than collapsing to
+text-only fallback rows. `make check-ghostty-vt` runs the full `nmux-core` and
+`nmux-cli` test suites with `--features libghostty-vt`, so ordinary
+feature-sensitive tests are part of the opt-in gate. ADR 0018 keeps the default
+engine `interim` until a later decision explicitly accepts the native
+Ghostty/Zig build cost in normal development, CI, and packaging.

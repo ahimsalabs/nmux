@@ -3479,7 +3479,10 @@ mod tests {
         HostError, HostEvent, HostSpec, PaneProcess, PlanningHost, ProcessHost, ProcessOutput,
         ProcessStatus, RecordingOutput,
     };
-    use nmux_core::terminal::{TerminalEngine, TerminalInput, TerminalUpdate};
+    use nmux_core::terminal::{
+        CELL_RUN_FLAG_HYPERLINK_PRESENT, CellRun, PaneStyle, TerminalEngine, TerminalInput,
+        TerminalUpdate,
+    };
 
     use super::*;
 
@@ -3626,6 +3629,19 @@ mod tests {
         }
     }
 
+    fn surface_row_with_runs(row: u32, runs: Vec<CellRunSummary>) -> SurfaceRowUpdate {
+        SurfaceRowUpdate {
+            row,
+            text: render_run_summaries(&runs),
+            runs,
+            dirty_hash: u64::from(row),
+            row_state_hash: u64::from(row) + 100,
+            semantic_prompt: protocol::RowSemanticPrompt::None,
+            dirty: false,
+            kitty_virtual_placeholder: false,
+        }
+    }
+
     fn scrollback_line(line: u64, text: &str) -> ScrollbackLine {
         ScrollbackLine {
             line,
@@ -3634,6 +3650,17 @@ mod tests {
             semantic_prompt: protocol::RowSemanticPrompt::None,
             dirty: false,
             kitty_virtual_placeholder: false,
+        }
+    }
+
+    fn styled_run(text: &str, style_id: u32, widths: Vec<u8>) -> CellRunSummary {
+        CellRunSummary {
+            text: text.to_owned(),
+            cell_widths: widths,
+            style_id,
+            flags: 0,
+            hyperlink_id: 0,
+            semantic_content: protocol::CellSemanticContent::Output,
         }
     }
 
@@ -3755,6 +3782,65 @@ mod tests {
         assert_eq!(surface.title, "patched title");
         assert_eq!(surface.working_directory, "file://localhost/tmp/patched");
         assert_eq!(surface.render_text(), "new top\nmiddle\nnew bottom");
+    }
+
+    #[test]
+    fn client_surface_preserves_structured_row_runs_across_updates() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row_with_runs(
+                0,
+                vec![
+                    styled_run("wide", 1, vec![1, 1, 1, 1]),
+                    styled_run("字", 2, vec![2]),
+                ],
+            )],
+        );
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+
+        assert_eq!(surface.render_text(), "wide字");
+        assert_eq!(
+            surface.row_runs[0],
+            vec![
+                styled_run("wide", 1, vec![1, 1, 1, 1]),
+                styled_run("字", 2, vec![2]),
+            ]
+        );
+
+        let patch = surface_update(
+            SurfaceUpdateKind::Patch,
+            2,
+            Some(1),
+            vec![surface_row_with_runs(
+                0,
+                vec![
+                    styled_run("prompt", 3, vec![1, 1, 1, 1, 1, 1]),
+                    CellRunSummary {
+                        text: " output".to_owned(),
+                        cell_widths: vec![1, 1, 1, 1, 1, 1, 1],
+                        style_id: 4,
+                        flags: CELL_RUN_FLAG_HYPERLINK_PRESENT,
+                        hyperlink_id: 0,
+                        semantic_content: protocol::CellSemanticContent::Input,
+                    },
+                ],
+            )],
+        );
+        surface.apply_patch(&patch).expect("apply patch");
+
+        assert_eq!(surface.render_text(), "prompt output");
+        assert_eq!(surface.row_runs[0][0].style_id, 3);
+        assert_eq!(surface.row_runs[0][1].style_id, 4);
+        assert_eq!(
+            surface.row_runs[0][1].flags,
+            CELL_RUN_FLAG_HYPERLINK_PRESENT
+        );
+        assert_eq!(
+            surface.row_runs[0][1].semantic_content,
+            protocol::CellSemanticContent::Input
+        );
     }
 
     #[test]
@@ -5778,23 +5864,80 @@ mod tests {
 
     #[test]
     fn decodes_scrollback_chunk_from_server_frame() {
-        let frame = Session::initial().scrollback_chunk_frame("local-client", 4, 1, 2);
+        let mut session = Session::initial();
+        session.tabs[0].root.styles.push(PaneStyle {
+            fg_rgba: 0xff00_0000,
+            bg_rgba: 0x0000_00ff,
+            underline_rgba: 0,
+            flags: 1,
+        });
+        session.tabs[0].root.scrollback_lines[1] = "styled字".to_owned();
+        session.tabs[0].root.scrollback_row_runs[1] = vec![
+            CellRun {
+                text: "styled".to_owned(),
+                cell_widths: vec![1, 1, 1, 1, 1, 1],
+                style_id: 1,
+                flags: CELL_RUN_FLAG_HYPERLINK_PRESENT,
+                hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Prompt,
+            },
+            CellRun {
+                text: "字".to_owned(),
+                cell_widths: vec![2],
+                style_id: 0,
+                flags: 0,
+                hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Input,
+            },
+        ];
+        let frame = session.scrollback_chunk_frame("local-client", 4, 1, 2);
         let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
 
         assert_eq!(chunk.pane_id, "pane-1");
         assert_eq!(chunk.scrollback_version, 1);
         assert_eq!(chunk.start_line, 1);
         assert_eq!(chunk.total_lines, 3);
-        assert_eq!(chunk.styles, default_style_summaries());
+        assert_eq!(chunk.styles.len(), 2);
+        assert_eq!(chunk.styles[1].fg_rgba, 0xff00_0000);
         assert_eq!(
             chunk.lines,
             vec![
-                scrollback_line(1, "nmux pane-1"),
+                ScrollbackLine {
+                    line: 1,
+                    text: "styled字".to_owned(),
+                    runs: vec![
+                        CellRunSummary {
+                            text: "styled".to_owned(),
+                            cell_widths: vec![1, 1, 1, 1, 1, 1],
+                            style_id: 1,
+                            flags: CELL_RUN_FLAG_HYPERLINK_PRESENT,
+                            hyperlink_id: 0,
+                            semantic_content: protocol::CellSemanticContent::Prompt,
+                        },
+                        CellRunSummary {
+                            text: "字".to_owned(),
+                            cell_widths: vec![2],
+                            style_id: 0,
+                            flags: 0,
+                            hyperlink_id: 0,
+                            semantic_content: protocol::CellSemanticContent::Input,
+                        },
+                    ],
+                    semantic_prompt: protocol::RowSemanticPrompt::None,
+                    dirty: false,
+                    kitty_virtual_placeholder: false,
+                },
                 scrollback_line(2, "server-owned terminal state"),
             ]
         );
-        assert_eq!(chunk.lines[0].runs[0].text, "nmux pane-1");
-        assert_eq!(chunk.lines[0].runs[0].cell_widths.len(), 11);
+        assert_eq!(chunk.lines[0].runs.len(), 2);
+        assert_eq!(chunk.lines[0].runs[0].style_id, 1);
+        assert_eq!(
+            chunk.lines[0].runs[0].flags,
+            CELL_RUN_FLAG_HYPERLINK_PRESENT
+        );
+        assert_eq!(chunk.lines[0].runs[1].cell_widths, vec![2]);
+        assert_eq!(chunk.lines[1].runs[0].text, "server-owned terminal state");
     }
 
     #[derive(Debug, Default)]
