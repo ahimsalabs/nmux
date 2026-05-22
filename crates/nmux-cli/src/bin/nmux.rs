@@ -78,6 +78,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut stdin_bytes_closed = false;
     let mut detach_requested = false;
+    let mut client_sequence = local::ClientFrameSequence::default();
 
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
@@ -120,7 +121,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .surface_text
         .clone()
         .unwrap_or_else(|| current_workspace.display_line());
-    let scrollback = initial_live_scrollback(args, &mut stream)?;
+    let scrollback = initial_live_scrollback(args, &mut stream, &mut client_sequence)?;
     print_live_rendered(rendered, args.redraw, scrollback);
     flush_stdout()?;
 
@@ -136,16 +137,33 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
         if options.request.mode == AttachMode::ReadWrite {
             if let Some((cols, rows)) = args.live_resize {
-                local::send_resize_intent(&mut stream, "pane-1", cols, rows)?;
+                local::send_resize_intent_with_sequence(
+                    &mut stream,
+                    &mut client_sequence,
+                    "pane-1",
+                    cols,
+                    rows,
+                )?;
             } else if let Some((cols, rows)) = sigwinch_resize.next_resize()? {
-                local::send_resize_intent(&mut stream, "pane-1", cols, rows)?;
+                local::send_resize_intent_with_sequence(
+                    &mut stream,
+                    &mut client_sequence,
+                    "pane-1",
+                    cols,
+                    rows,
+                )?;
             }
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
                 match receiver.try_recv() {
                     Ok(StdinByteRead::Input(input)) => {
                         let (input, detach) = split_stdin_bytes_for_detach(&input);
                         if let Some(input) = input {
-                            local::send_raw_input(&mut stream, "pane-1", &input)?;
+                            local::send_raw_input_with_sequence(
+                                &mut stream,
+                                &mut client_sequence,
+                                "pane-1",
+                                &input,
+                            )?;
                         }
                         detach_requested = detach;
                         None
@@ -175,15 +193,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 options.input_text.as_deref().map(ToOwned::to_owned)
             };
             if let Some(key_name) = args.key_name.as_deref() {
-                local::send_named_key_input_with_modifiers(
+                local::send_named_key_input_with_modifiers_and_sequence(
                     &mut stream,
+                    &mut client_sequence,
                     "pane-1",
                     key_name,
                     args.key_modifiers,
                 )?;
             } else if let Some(mouse_event) = args.mouse_event {
-                local::send_mouse_input(
+                local::send_mouse_input_with_sequence(
                     &mut stream,
+                    &mut client_sequence,
                     "pane-1",
                     mouse_event.row,
                     mouse_event.col,
@@ -193,12 +213,27 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 )?;
             } else if let Some(focus_event) = args.focus_event {
                 if focus_reporting {
-                    local::send_focus_input(&mut stream, "pane-1", focus_event.focused())?;
+                    local::send_focus_input_with_sequence(
+                        &mut stream,
+                        &mut client_sequence,
+                        "pane-1",
+                        focus_event.focused(),
+                    )?;
                 }
             } else if let Some(paste_text) = options.paste_text.as_deref() {
-                local::send_paste_input(&mut stream, "pane-1", paste_text)?;
+                local::send_paste_input_with_sequence(
+                    &mut stream,
+                    &mut client_sequence,
+                    "pane-1",
+                    paste_text,
+                )?;
             } else if let Some(input_text) = input_text.as_deref() {
-                local::send_key_input(&mut stream, "pane-1", input_text)?;
+                local::send_key_input_with_sequence(
+                    &mut stream,
+                    &mut client_sequence,
+                    "pane-1",
+                    input_text,
+                )?;
             }
         }
 
@@ -339,9 +374,11 @@ fn save_client_state(
 fn initial_live_scrollback(
     args: &Args,
     stream: &mut UnixStream,
+    sequence: &mut local::ClientFrameSequence,
 ) -> Result<Option<local::ScrollbackChunkSummary>, Box<dyn std::error::Error>> {
-    local::send_scrollback_fetch(
+    local::send_scrollback_fetch_with_sequence(
         stream,
+        sequence,
         "pane-1",
         args.scrollback_start_line,
         args.scrollback_line_count,

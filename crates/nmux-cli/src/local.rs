@@ -817,23 +817,25 @@ pub fn attach_with_client_options(
     };
     let mode = options.request.mode;
     write_attach_request(&mut stream, &options.request)?;
+    let mut sequence = ClientFrameSequence::default();
     let snapshot = attach_from_stream(&mut stream)?;
     if snapshot.surface.is_some() {
         if mode == AttachMode::ReadWrite {
             let mut sent_input = false;
             if let Some(paste_text) = options.paste_text.as_deref() {
-                send_paste_input(&mut stream, "pane-1", paste_text)?;
+                send_paste_input_with_sequence(&mut stream, &mut sequence, "pane-1", paste_text)?;
                 sent_input = true;
             } else if let Some(input_text) = options.input_text.as_deref() {
-                send_key_input(&mut stream, "pane-1", input_text)?;
+                send_key_input_with_sequence(&mut stream, &mut sequence, "pane-1", input_text)?;
                 sent_input = true;
             }
             if sent_input {
                 read_optional_server_error_from_stream(&mut stream)?;
             }
         }
-        send_scrollback_fetch(
+        send_scrollback_fetch_with_sequence(
             &mut stream,
+            &mut sequence,
             "pane-1",
             options.scrollback_start_line,
             options.scrollback_line_count,
@@ -894,8 +896,24 @@ pub fn send_key_input(
     pane_id: &str,
     text: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let frame =
-        Session::initial().key_input_frame("local-client", 3, "local-actor", pane_id, 1, text);
+    let mut sequence = ClientFrameSequence::default();
+    send_key_input_with_sequence(stream, &mut sequence, pane_id, text)
+}
+
+pub fn send_key_input_with_sequence(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    text: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = Session::initial().key_input_frame(
+        "local-client",
+        sequence.next_envelope_seq(),
+        "local-actor",
+        pane_id,
+        sequence.next_input_seq(),
+        text,
+    );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
 }
@@ -914,12 +932,29 @@ pub fn send_named_key_input_with_modifiers(
     key_name: &str,
     modifiers: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sequence = ClientFrameSequence::default();
+    send_named_key_input_with_modifiers_and_sequence(
+        stream,
+        &mut sequence,
+        pane_id,
+        key_name,
+        modifiers,
+    )
+}
+
+pub fn send_named_key_input_with_modifiers_and_sequence(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    key_name: &str,
+    modifiers: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().named_key_input_frame_with_modifiers(
         "local-client",
-        3,
+        sequence.next_envelope_seq(),
         "local-actor",
         pane_id,
-        1,
+        sequence.next_input_seq(),
         key_name,
         modifiers,
     );
@@ -932,8 +967,24 @@ pub fn send_raw_input(
     pane_id: &str,
     bytes: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let frame =
-        Session::initial().raw_input_frame("local-client", 3, "local-actor", pane_id, 1, bytes);
+    let mut sequence = ClientFrameSequence::default();
+    send_raw_input_with_sequence(stream, &mut sequence, pane_id, bytes)
+}
+
+pub fn send_raw_input_with_sequence(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    bytes: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = Session::initial().raw_input_frame(
+        "local-client",
+        sequence.next_envelope_seq(),
+        "local-actor",
+        pane_id,
+        sequence.next_input_seq(),
+        bytes,
+    );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
 }
@@ -943,12 +994,22 @@ pub fn send_paste_input(
     pane_id: &str,
     text: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sequence = ClientFrameSequence::default();
+    send_paste_input_with_sequence(stream, &mut sequence, pane_id, text)
+}
+
+pub fn send_paste_input_with_sequence(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    text: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().paste_input_frame(
         "local-client",
-        3,
+        sequence.next_envelope_seq(),
         "local-actor",
         pane_id,
-        1,
+        sequence.next_input_seq(),
         text,
         false,
     );
@@ -961,8 +1022,24 @@ pub fn send_focus_input(
     pane_id: &str,
     focused: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let frame =
-        Session::initial().focus_input_frame("local-client", 3, "local-actor", pane_id, 1, focused);
+    let mut sequence = ClientFrameSequence::default();
+    send_focus_input_with_sequence(stream, &mut sequence, pane_id, focused)
+}
+
+pub fn send_focus_input_with_sequence(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    focused: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = Session::initial().focus_input_frame(
+        "local-client",
+        sequence.next_envelope_seq(),
+        "local-actor",
+        pane_id,
+        sequence.next_input_seq(),
+        focused,
+    );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
 }
@@ -976,12 +1053,35 @@ pub fn send_mouse_input(
     action: protocol::MouseAction,
     modifiers: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sequence = ClientFrameSequence::default();
+    send_mouse_input_with_sequence(
+        stream,
+        &mut sequence,
+        pane_id,
+        row,
+        col,
+        button,
+        action,
+        modifiers,
+    )
+}
+
+pub fn send_mouse_input_with_sequence(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    row: u32,
+    col: u32,
+    button: protocol::MouseButton,
+    action: protocol::MouseAction,
+    modifiers: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().mouse_input_frame(
         "local-client",
-        3,
+        sequence.next_envelope_seq(),
         "local-actor",
         pane_id,
-        1,
+        sequence.next_input_seq(),
         row,
         col,
         button,
@@ -998,9 +1098,20 @@ pub fn send_resize_intent(
     cols: u32,
     rows: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sequence = ClientFrameSequence::default();
+    send_resize_intent_with_sequence(stream, &mut sequence, pane_id, cols, rows)
+}
+
+pub fn send_resize_intent_with_sequence(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    cols: u32,
+    rows: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().resize_intent_frame(
         "local-client",
-        3,
+        sequence.next_envelope_seq(),
         "local-actor",
         pane_id,
         cols,
@@ -1017,9 +1128,20 @@ pub fn send_scrollback_fetch(
     start_line: u64,
     line_count: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sequence = ClientFrameSequence::default();
+    send_scrollback_fetch_with_sequence(stream, &mut sequence, pane_id, start_line, line_count)
+}
+
+pub fn send_scrollback_fetch_with_sequence(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    start_line: u64,
+    line_count: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().scrollback_fetch_frame(
         "local-client",
-        4,
+        sequence.next_envelope_seq(),
         "local-actor",
         pane_id,
         start_line,
@@ -1028,6 +1150,35 @@ pub fn send_scrollback_fetch(
     );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientFrameSequence {
+    next_envelope_seq: u64,
+    next_input_seq: u64,
+}
+
+impl Default for ClientFrameSequence {
+    fn default() -> Self {
+        Self {
+            next_envelope_seq: 1,
+            next_input_seq: 1,
+        }
+    }
+}
+
+impl ClientFrameSequence {
+    fn next_envelope_seq(&mut self) -> u64 {
+        let seq = self.next_envelope_seq;
+        self.next_envelope_seq += 1;
+        seq
+    }
+
+    fn next_input_seq(&mut self) -> u64 {
+        let seq = self.next_input_seq;
+        self.next_input_seq += 1;
+        seq
+    }
 }
 
 pub fn workspace_summary_from_frame(
@@ -4325,14 +4476,17 @@ mod tests {
             Some(2)
         );
 
-        send_key_input(&mut stream, "pane-1", "first").expect("send first input");
+        let mut sequence = ClientFrameSequence::default();
+        send_key_input_with_sequence(&mut stream, &mut sequence, "pane-1", "first")
+            .expect("send first input");
         let first_update = read_surface_update_from_stream(&mut stream).expect("first update");
         assert_eq!(first_update.kind, SurfaceUpdateKind::Patch);
         assert_eq!(first_update.base_version, Some(2));
         assert_eq!(first_update.version, 3);
         assert!(first_update.text.ends_with("first"));
 
-        send_key_input(&mut stream, "pane-1", "second").expect("send second input");
+        send_key_input_with_sequence(&mut stream, &mut sequence, "pane-1", "second")
+            .expect("send second input");
         let second_update = read_surface_update_from_stream(&mut stream).expect("second update");
         assert_eq!(second_update.kind, SurfaceUpdateKind::Patch);
         assert_eq!(second_update.base_version, Some(3));
@@ -4893,6 +5047,48 @@ mod tests {
                 retryable: false,
             }
         );
+    }
+
+    #[test]
+    fn client_frame_sequence_increments_envelope_and_input_sequences() {
+        let (mut client, mut server) = UnixStream::pair().expect("socket pair");
+        let mut sequence = ClientFrameSequence::default();
+
+        send_key_input_with_sequence(&mut client, &mut sequence, "pane-1", "a").expect("send key");
+        send_resize_intent_with_sequence(&mut client, &mut sequence, "pane-1", 100, 40)
+            .expect("send resize");
+        send_mouse_input_with_sequence(
+            &mut client,
+            &mut sequence,
+            "pane-1",
+            1,
+            2,
+            protocol::MouseButton::Left,
+            protocol::MouseAction::Press,
+            0,
+        )
+        .expect("send mouse");
+
+        let key_frame = wire::read_default_frame(&mut server).expect("read key");
+        let resize_frame = wire::read_default_frame(&mut server).expect("read resize");
+        let mouse_frame = wire::read_default_frame(&mut server).expect("read mouse");
+
+        let key_envelope =
+            protocol::size_prefixed_root_as_envelope(&key_frame).expect("key envelope");
+        let resize_envelope =
+            protocol::size_prefixed_root_as_envelope(&resize_frame).expect("resize envelope");
+        let mouse_envelope =
+            protocol::size_prefixed_root_as_envelope(&mouse_frame).expect("mouse envelope");
+        assert_eq!(key_envelope.seq(), 1);
+        assert_eq!(resize_envelope.seq(), 2);
+        assert_eq!(mouse_envelope.seq(), 3);
+
+        let key = input_summary_from_frame(&key_frame).expect("key input");
+        let resize = resize_intent_from_frame(&resize_frame).expect("resize intent");
+        let mouse = input_summary_from_frame(&mouse_frame).expect("mouse input");
+        assert_eq!(key.input_seq, 1);
+        assert_eq!(resize.cols, 100);
+        assert_eq!(mouse.input_seq, 2);
     }
 
     #[test]

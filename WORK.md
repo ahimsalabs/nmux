@@ -494,6 +494,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   ScrollbackChunk carries the pane style table so scrollback row runs do not reference missing style IDs
   nmux --state preserves cached title, OSC 7 working directory, terminal modes including mouse tracking mode/format, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, and Kitty placeholder row metadata for patchable reconnects, scoped to the daemon socket identity so recreated socket paths force a fresh snapshot
   current-version live reattach reuses cached terminal modes for initial focus-reporting input gates when the daemon sends no surface frame; paste delimiter selection remains daemon-owned
+  local clients maintain monotonic Envelope.seq and InputEvent.input_seq values across one-shot and live post-attach frames, including repeated structured live input
   document cursor, mode, alternate-screen, palette, hyperlink, image, grapheme, and cell-width gaps before schema changes
   preserve frontend state-sync semantics; do not introduce client-side raw PTY replay
   keep frontend Ghostty renderer hydration as a separate upstream/API question
