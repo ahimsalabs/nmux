@@ -101,8 +101,10 @@ only after the backend extraction proves the exact shape needed.
 - Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, but
   nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
   ownership, and lifetime have a protocol object.
-- Images and graphics protocols: placement, dimensions, persistence, and
-  fallback behavior for clients without image support.
+- Images and graphics protocols: `libghostty-vt` build info and row metadata
+  can prove Kitty graphics support and virtual placeholder rows, but nmux has no
+  image placement, dimensions, persistence, pixel-data, or fallback protocol
+  objects yet.
 - Damage granularity: row replacement is enough for the prototype, and
   `libghostty-vt` render-state tests prove row-level dirty state is
   backend-observable. Rich cells may still need run-level or region-level
@@ -135,8 +137,8 @@ backend-observable cursor blink state, render-state default colors/palette,
 palette overrides, and explicit cursor color, alternate-screen entry/restoration
 with alternate scrollback omission, title metadata with OSC 7 working-directory
 omission, OSC 133 semantic prompt state, resize/reflow, styled backend-owned
-scrollback extraction, row-level dirty state, and safe-API mode tracking for
-bracketed paste, mouse tracking, application keypad mode, and origin/wraparound
-modes through unit, session, and live CLI smoke coverage. It is not the default
-until the project deliberately accepts the native Zig/Ghostty build cost in
-normal development and CI.
+scrollback extraction, row-level dirty state, Kitty graphics placeholder
+detection, and safe-API mode tracking for bracketed paste, mouse tracking,
+application keypad mode, and origin/wraparound modes through unit, session, and
+live CLI smoke coverage. It is not the default until the project deliberately
+accepts the native Zig/Ghostty build cost in normal development and CI.

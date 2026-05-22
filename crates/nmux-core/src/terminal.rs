@@ -1064,6 +1064,55 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_safe_api_tracks_kitty_placeholder_without_image_protocol_fields() {
+        use libghostty_vt::{
+            RenderState, Terminal, TerminalOptions, build_info, render::RowIterator,
+        };
+
+        if !build_info::supports_kitty_graphics().expect("kitty graphics support query") {
+            return;
+        }
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+        let mut render_state = RenderState::new().expect("render state");
+        let mut rows = RowIterator::new().expect("row iterator");
+
+        let mut seq = Vec::new();
+        seq.extend_from_slice(b"\x1b_Ga=T,t=d;");
+        seq.extend_from_slice(
+            b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=",
+        );
+        seq.extend_from_slice(b"\x1b\\");
+        seq.extend_from_slice("\u{10eeee}".as_bytes());
+
+        terminal.vt_write(&seq);
+        let snapshot = render_state.update(&terminal).expect("snapshot");
+        let mut row_iter = rows.update(&snapshot).expect("row iteration");
+        let mut has_placeholder = false;
+        while let Some(row) = row_iter.next() {
+            if row
+                .raw_row()
+                .expect("raw row")
+                .has_kitty_virtual_placeholder()
+                .expect("kitty placeholder")
+            {
+                has_placeholder = true;
+            }
+        }
+
+        assert!(
+            has_placeholder,
+            "kitty graphics placeholder should be visible through row metadata"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_extracts_basic_sgr_style_flags() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();
