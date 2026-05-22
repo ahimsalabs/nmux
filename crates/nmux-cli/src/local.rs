@@ -642,7 +642,17 @@ fn serve_attached_client(
                             return Ok(());
                         }
                     };
-                    host.write_input(&input.pane_id, &bytes)?;
+                    if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+                        let mut seq = 4;
+                        write_input_error(
+                            stream,
+                            session,
+                            &mut seq,
+                            protocol::ErrorCode::Unknown,
+                            &format!("input forwarding failed: {err}"),
+                        )?;
+                        return Ok(());
+                    }
                 }
                 poll_pane_output_with_engines(session, engines, host, &input.pane_id)?;
             }
@@ -4544,6 +4554,38 @@ mod tests {
                 .events()
                 .iter()
                 .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_with_client_options_reports_host_write_failure_error_frames() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = FailingWriteHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start failing write pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+        });
+        let err = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: Some("fail".to_owned()),
+                ..AttachOptions::default()
+            },
+        )
+        .expect_err("host write failure should report server error");
+        server.join().expect("server thread");
+
+        assert!(
+            err.to_string().contains(
+                "server error: input forwarding failed: host I/O error during write_input for pane-1: simulated write failure"
+            ),
+            "unexpected error: {err}"
         );
 
         let _ = fs::remove_file(socket_path);
