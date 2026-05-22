@@ -3685,6 +3685,12 @@ impl InputSummary {
         if mode == protocol::MouseTrackingMode::None {
             return Some(InputRejection::MouseTrackingDisabled);
         }
+        let Some((cols, rows)) = session.pane_size(&self.pane_id) else {
+            return None;
+        };
+        if mouse.row >= rows || mouse.col >= cols {
+            return Some(InputRejection::MouseCoordinatesOutOfBounds);
+        }
         (!mouse_input_allowed(mode, mouse)).then_some(InputRejection::MouseActionRejected(mode))
     }
 
@@ -3744,6 +3750,7 @@ impl InputSummary {
 enum InputRejection {
     FocusReportingDisabled,
     MouseTrackingDisabled,
+    MouseCoordinatesOutOfBounds,
     MouseActionRejected(protocol::MouseTrackingMode),
 }
 
@@ -3752,6 +3759,9 @@ impl InputRejection {
         match self {
             Self::FocusReportingDisabled => "input rejected: focus reporting is disabled",
             Self::MouseTrackingDisabled => "input rejected: mouse tracking is disabled",
+            Self::MouseCoordinatesOutOfBounds => {
+                "input rejected: mouse coordinates are outside pane bounds"
+            }
             Self::MouseActionRejected(protocol::MouseTrackingMode::X10) => {
                 "input rejected: X10 mouse tracking accepts press events only"
             }
@@ -5233,6 +5243,54 @@ mod tests {
     }
 
     #[test]
+    fn one_shot_attach_reports_mouse_out_of_bounds_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        session.tabs[0].root.modes.mouse_tracking = true;
+        session.tabs[0].root.modes.mouse_tracking_mode = protocol::MouseTrackingMode::Normal;
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let err = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                input_text: None,
+                mouse: Some(AttachMouseInput {
+                    row: 24,
+                    col: 0,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                }),
+                ..AttachOptions::default()
+            },
+        )
+        .expect_err("out-of-bounds mouse input should report server error");
+        let host = server.join().expect("server thread");
+
+        assert!(
+            err.to_string().contains(
+                "server error: input rejected: mouse coordinates are outside pane bounds"
+            ),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !host
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn attach_with_client_options_reports_input_error_frames() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -6038,6 +6096,70 @@ mod tests {
             LiveSurfaceRead::Error(ErrorSummary {
                 code: protocol::ErrorCode::PermissionDenied,
                 message: "input rejected: focus reporting is disabled".to_owned(),
+                retryable: false,
+            })
+        );
+
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events()
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_attach_reports_mouse_out_of_bounds_with_error_frame() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        session.tabs[0].root.modes.mouse_tracking = true;
+        session.tabs[0].root.modes.mouse_tracking_mode = protocol::MouseTrackingMode::Normal;
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+                .expect("serve mouse-bounds live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "local-user".to_owned(),
+                display_name: "local".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(initial.presence.mode, AttachMode::ReadWrite);
+
+        send_mouse_input(
+            &mut stream,
+            "pane-1",
+            0,
+            80,
+            protocol::MouseButton::Left,
+            protocol::MouseAction::Press,
+            0,
+        )
+        .expect("send mouse input");
+        let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
+        assert_eq!(
+            error,
+            LiveSurfaceRead::Error(ErrorSummary {
+                code: protocol::ErrorCode::PermissionDenied,
+                message: "input rejected: mouse coordinates are outside pane bounds".to_owned(),
                 retryable: false,
             })
         );
@@ -7109,6 +7231,64 @@ mod tests {
             Some(InputRejection::MouseTrackingDisabled)
         );
         session.tabs[0].root.modes.mouse_tracking_mode = protocol::MouseTrackingMode::Normal;
+        assert_eq!(input.forwarding_rejection(&session), None);
+    }
+
+    #[test]
+    fn mouse_input_forwarding_rejects_coordinates_outside_daemon_pane_bounds() {
+        let mut session = Session::initial();
+        session.tabs[0].root.modes.mouse_tracking = true;
+        session.tabs[0].root.modes.mouse_tracking_mode = protocol::MouseTrackingMode::Normal;
+        let input = InputSummary {
+            pane_id: "pane-1".to_owned(),
+            actor_id: "actor-1".to_owned(),
+            input_seq: 1,
+            text: String::new(),
+            bytes: Vec::new(),
+            paste_text: None,
+            key_name: None,
+            key_modifiers: 0,
+            mouse: Some(MouseSummary {
+                row: 24,
+                col: 79,
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 0,
+            }),
+            requires_focus_reporting: false,
+            requires_mouse_tracking: true,
+        };
+
+        assert_eq!(
+            input.forwarding_rejection(&session),
+            Some(InputRejection::MouseCoordinatesOutOfBounds)
+        );
+
+        let input = InputSummary {
+            mouse: Some(MouseSummary {
+                row: 23,
+                col: 80,
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 0,
+            }),
+            ..input
+        };
+        assert_eq!(
+            input.forwarding_rejection(&session),
+            Some(InputRejection::MouseCoordinatesOutOfBounds)
+        );
+
+        let input = InputSummary {
+            mouse: Some(MouseSummary {
+                row: 23,
+                col: 79,
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 0,
+            }),
+            ..input
+        };
         assert_eq!(input.forwarding_rejection(&session), None);
     }
 

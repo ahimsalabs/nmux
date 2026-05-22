@@ -1180,6 +1180,61 @@ fn live_libghostty_vt_cli_blocks_motion_in_normal_mouse_mode() {
     );
 }
 
+#[cfg(feature = "libghostty-vt")]
+#[test]
+fn live_libghostty_vt_cli_reports_mouse_out_of_bounds() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "stty -icanon -echo min 0 time 5; printf '\\033[?1000h\\033[?1006hready\n'; bytes=$(dd bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--mouse",
+            "press:left:25:1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        !client.status.success(),
+        "nmux unexpectedly succeeded:\n{}",
+        String::from_utf8_lossy(&client.stdout)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains(
+            "nmux: live server error: input rejected: mouse coordinates are outside pane bounds"
+        ),
+        "missing mouse bounds error:\n{stderr}"
+    );
+}
+
 #[test]
 fn live_cli_redraw_includes_initial_scrollback_range() {
     let socket_path = test_socket_path();
