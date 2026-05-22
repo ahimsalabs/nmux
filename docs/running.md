@@ -186,6 +186,21 @@ The read-only client attaches once, sends no input, and prints streamed surface 
 This is not a terminal emulator yet. The interim text surface only converts simple output bytes into backend-owned visible rows and scrollback. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state derived from a local PTY, server-owned scrollback ranges, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input forwarding.
 `nmuxd --terminal-engine interim` selects this current implementation explicitly. Backend `libghostty-vt` extraction is imported behind the `libghostty-vt` Cargo feature, but the default build keeps the interim engine until the extraction checklist is satisfied.
 
+## Optional libghostty-vt Build
+
+The experimental backend VT engine is gated behind the `libghostty-vt` Cargo
+feature. The dev shell pins Zig 0.15 because the Ghostty commit used by
+`libghostty-vt-sys` requires that Zig version.
+
+```sh
+GIT_CONFIG_GLOBAL=/dev/null nix develop path:$PWD -c cargo test -p nmux-core --features libghostty-vt libghostty_vt_engine_consumes_ansi_sequences
+```
+
+`GIT_CONFIG_GLOBAL=/dev/null` is not logically required by nmux; it avoids a
+local Git configuration that rewrites GitHub HTTPS URLs to SSH. The
+`libghostty-vt-sys` build script fetches Ghostty from an HTTPS URL unless
+`GHOSTTY_SOURCE_DIR` points at an existing Ghostty checkout.
+
 ## Presence And Attach Modes
 
 The FlatBuffers `AttachRequest` carries actor ID, user metadata, focused pane, and attach mode. The daemon replies with `PresenceUpdate`.

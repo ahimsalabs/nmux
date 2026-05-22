@@ -99,7 +99,4 @@ the default because the first extraction pass still needs:
 - backend-owned scrollback extraction instead of mirroring only the visible
   render rows into `ScrollbackChunk`;
 - focused tests for cursor-only VT updates, alternate-screen transitions, and
-  resize after scrollback reflow;
-- documentation for the local GitHub HTTPS-to-SSH rewrite trap during the
-  vendored build, or a repo-local build strategy that avoids relying on user
-  Git config.
+  resize after scrollback reflow.
