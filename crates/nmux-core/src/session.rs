@@ -1514,6 +1514,7 @@ fn apply_terminal_update(
     let rows_changed = pane.surface_lines != update.surface_lines;
     let surface_kind_changed = pane.surface != update.surface;
     let styles_changed = pane.styles != update.styles;
+    let cursor_changed = pane.cursor != cursor;
     let row_runs_changed = pane.surface_row_runs != surface_row_runs;
     let semantic_prompts_changed = pane.surface_semantic_prompts != surface_semantic_prompts;
     let dirty_rows_changed = pane.surface_dirty_rows != surface_dirty_rows;
@@ -1535,7 +1536,7 @@ fn apply_terminal_update(
         || semantic_prompts_changed
         || dirty_rows_changed
         || kitty_placeholders_changed
-        || pane.cursor != cursor
+        || cursor_changed
         || modes_changed
         || title_changed
         || working_directory_changed
@@ -1579,7 +1580,10 @@ fn apply_terminal_update(
             kitty_placeholders_changed,
             surface_kind_changed,
             styles_changed,
+            cursor_changed,
             modes_changed,
+            title_changed,
+            working_directory_changed,
             colors_changed,
         );
         pane.last_row_update_indices = if pane.last_patch_kind == protocol::PatchKind::ReplaceRows {
@@ -1601,7 +1605,10 @@ fn terminal_patch_kind(
     kitty_placeholders_changed: bool,
     surface_kind_changed: bool,
     styles_changed: bool,
+    cursor_changed: bool,
     modes_changed: bool,
+    title_changed: bool,
+    working_directory_changed: bool,
     colors_changed: bool,
 ) -> protocol::PatchKind {
     if surface_kind_changed || styles_changed || colors_changed {
@@ -1615,6 +1622,8 @@ fn terminal_patch_kind(
         protocol::PatchKind::ReplaceRows
     } else if modes_changed {
         protocol::PatchKind::ModeOnly
+    } else if cursor_changed || title_changed || working_directory_changed {
+        protocol::PatchKind::CursorOnly
     } else {
         requested
     }
@@ -3474,7 +3483,7 @@ mod tests {
     }
 
     #[test]
-    fn title_only_engine_update_emits_replace_rows_patch_with_metadata() {
+    fn title_only_engine_update_emits_cursor_only_patch_with_metadata() {
         struct TitleOnlyEngine;
 
         impl TerminalEngine for TitleOnlyEngine {
@@ -3515,13 +3524,14 @@ mod tests {
         assert_eq!(surface.working_directory, "file://localhost/tmp/nmux");
         assert_eq!(
             session.surface_patch_kind("pane-1"),
-            Some(protocol::PatchKind::ReplaceRows)
+            Some(protocol::PatchKind::CursorOnly)
         );
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let patch = envelope.body_as_pane_surface_patch().expect("patch");
-        assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
+        assert_eq!(patch.kind(), protocol::PatchKind::CursorOnly);
+        assert_eq!(patch.row_updates().expect("row updates").len(), 0);
         assert_eq!(
             patch.metadata().expect("metadata").title(),
             Some("pane title")
@@ -3533,7 +3543,7 @@ mod tests {
     }
 
     #[test]
-    fn working_directory_only_engine_update_emits_replace_rows_patch_with_metadata() {
+    fn working_directory_only_engine_update_emits_cursor_only_patch_with_metadata() {
         struct WorkingDirectoryOnlyEngine;
 
         impl TerminalEngine for WorkingDirectoryOnlyEngine {
@@ -3577,13 +3587,14 @@ mod tests {
         assert_eq!(surface.working_directory, "file://localhost/tmp/nmux");
         assert_eq!(
             session.surface_patch_kind("pane-1"),
-            Some(protocol::PatchKind::ReplaceRows)
+            Some(protocol::PatchKind::CursorOnly)
         );
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let patch = envelope.body_as_pane_surface_patch().expect("patch");
-        assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
+        assert_eq!(patch.kind(), protocol::PatchKind::CursorOnly);
+        assert_eq!(patch.row_updates().expect("row updates").len(), 0);
         assert_eq!(patch.metadata().expect("metadata").title(), Some(""));
         assert_eq!(
             patch.metadata().expect("metadata").working_directory(),

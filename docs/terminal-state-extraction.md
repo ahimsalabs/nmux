@@ -104,9 +104,10 @@ only after the backend extraction proves the exact shape needed.
   mode and format. Broader physical-key/text-event forwarding and frontend
   pointer integration still need protocol decisions.
 - Terminal metadata: nmux carries terminal title and OSC 7 working-directory
-  metadata through pane surface snapshot and patch metadata, with libghostty-vt
-  coverage for BEL-terminated, ST-terminated, split, cleared, and malformed OSC
-  7 input.
+  metadata through pane surface snapshot and patch metadata. Title/OSC 7-only
+  changes use no-row surface patches so live clients can update pane metadata
+  without reprinting unchanged row text. The libghostty-vt path has coverage for
+  BEL-terminated, ST-terminated, split, cleared, and malformed OSC 7 input.
 - Shell integration metadata: nmux carries OSC 133 row semantic prompt state on
   surface snapshots, surface patches, and scrollback chunks. `CellRun` also
   carries backend-observed OSC 133 semantic content for output, input, and

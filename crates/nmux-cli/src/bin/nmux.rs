@@ -219,6 +219,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::Update(update) => {
+                    let previous_metadata = current_surface_metadata.clone();
                     paste_bracketed = update.modes.bracketed_paste;
                     focus_reporting = update.modes.focus_reporting;
                     current_surface_metadata = local::TerminalMetadataSummary {
@@ -226,10 +227,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         working_directory: update.working_directory.clone(),
                     };
                     current_surface_text = client_state.render_surface_update(&update)?;
-                    print_live_surface(
+                    print_live_update(
                         &current_workspace,
+                        &previous_metadata,
                         &current_surface_metadata,
                         &current_surface_text,
+                        &update,
                         args.redraw,
                     );
                     flush_stdout()?;
@@ -674,6 +677,48 @@ fn print_live_surface(
     } else {
         print_terminal_metadata(metadata);
         println!("{surface_text}");
+    }
+}
+
+fn print_live_update(
+    workspace: &local::WorkspaceSummary,
+    previous_metadata: &local::TerminalMetadataSummary,
+    metadata: &local::TerminalMetadataSummary,
+    surface_text: &str,
+    update: &local::SurfaceUpdate,
+    redraw: bool,
+) {
+    match live_update_print_kind(previous_metadata, metadata, update, redraw) {
+        LiveUpdatePrintKind::Surface => {
+            print_live_surface(workspace, metadata, surface_text, redraw)
+        }
+        LiveUpdatePrintKind::Metadata => print_terminal_metadata(metadata),
+        LiveUpdatePrintKind::None => {}
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveUpdatePrintKind {
+    Surface,
+    Metadata,
+    None,
+}
+
+fn live_update_print_kind(
+    previous_metadata: &local::TerminalMetadataSummary,
+    metadata: &local::TerminalMetadataSummary,
+    update: &local::SurfaceUpdate,
+    redraw: bool,
+) -> LiveUpdatePrintKind {
+    if redraw
+        || update.kind == local::SurfaceUpdateKind::Snapshot
+        || update.patch_kind == Some(protocol::PatchKind::ReplaceRows)
+    {
+        LiveUpdatePrintKind::Surface
+    } else if metadata != previous_metadata {
+        LiveUpdatePrintKind::Metadata
+    } else {
+        LiveUpdatePrintKind::None
     }
 }
 
@@ -1369,11 +1414,12 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FocusEvent, LocalEcho, MouseEvent, initial_live_terminal_modes,
-        interim_surface_fidelity_warning_needed, parse_focus_event, parse_key_modifiers,
-        parse_key_name, parse_local_echo, parse_mouse_event, raw_terminal_lflag,
-        raw_terminal_mode_needed, redraw_terminal_guard_needed, resize_policy_warning,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        FocusEvent, LiveUpdatePrintKind, LocalEcho, MouseEvent, initial_live_terminal_modes,
+        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        resize_policy_warning, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_positive_numeric_args,
     };
@@ -1430,6 +1476,31 @@ mod tests {
         }
     }
 
+    fn test_surface_update(
+        kind: local::SurfaceUpdateKind,
+        patch_kind: Option<protocol::PatchKind>,
+    ) -> local::SurfaceUpdate {
+        local::SurfaceUpdate {
+            kind,
+            pane_id: "pane-1".to_owned(),
+            version: 7,
+            base_version: (kind == local::SurfaceUpdateKind::Patch).then_some(6),
+            patch_kind,
+            cols: (kind == local::SurfaceUpdateKind::Snapshot).then_some(80),
+            rows: (kind == local::SurfaceUpdateKind::Snapshot).then_some(24),
+            surface: (kind == local::SurfaceUpdateKind::Snapshot)
+                .then_some(protocol::SurfaceKind::Main),
+            cursor: None,
+            modes: local::TerminalModeSummary::default(),
+            title: String::new(),
+            working_directory: String::new(),
+            colors: None,
+            row_updates: Vec::new(),
+            styles: Vec::new(),
+            text: String::new(),
+        }
+    }
+
     #[test]
     fn initial_live_modes_use_fresh_surface_then_cached_state() {
         let mut client_state = local::ClientAttachState::default();
@@ -1480,6 +1551,56 @@ mod tests {
         assert_eq!(
             initial_live_terminal_modes(None, &client_state, "missing"),
             local::TerminalModeSummary::default()
+        );
+    }
+
+    #[test]
+    fn live_update_print_kind_keeps_non_row_updates_quiet() {
+        let previous = local::TerminalMetadataSummary {
+            title: "old title".to_owned(),
+            working_directory: "file://localhost/old".to_owned(),
+        };
+        let changed = local::TerminalMetadataSummary {
+            title: "new title".to_owned(),
+            working_directory: "file://localhost/new".to_owned(),
+        };
+        let cursor_only = test_surface_update(
+            local::SurfaceUpdateKind::Patch,
+            Some(protocol::PatchKind::CursorOnly),
+        );
+        let mode_only = test_surface_update(
+            local::SurfaceUpdateKind::Patch,
+            Some(protocol::PatchKind::ModeOnly),
+        );
+        let replace_rows = test_surface_update(
+            local::SurfaceUpdateKind::Patch,
+            Some(protocol::PatchKind::ReplaceRows),
+        );
+        let snapshot = test_surface_update(local::SurfaceUpdateKind::Snapshot, None);
+
+        assert_eq!(
+            live_update_print_kind(&previous, &previous, &cursor_only, false),
+            LiveUpdatePrintKind::None
+        );
+        assert_eq!(
+            live_update_print_kind(&previous, &changed, &cursor_only, false),
+            LiveUpdatePrintKind::Metadata
+        );
+        assert_eq!(
+            live_update_print_kind(&previous, &changed, &mode_only, false),
+            LiveUpdatePrintKind::Metadata
+        );
+        assert_eq!(
+            live_update_print_kind(&previous, &previous, &replace_rows, false),
+            LiveUpdatePrintKind::Surface
+        );
+        assert_eq!(
+            live_update_print_kind(&previous, &previous, &snapshot, false),
+            LiveUpdatePrintKind::Surface
+        );
+        assert_eq!(
+            live_update_print_kind(&previous, &previous, &cursor_only, true),
+            LiveUpdatePrintKind::Surface
         );
     }
 

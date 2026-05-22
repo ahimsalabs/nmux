@@ -120,6 +120,7 @@ Done:
 - The `libghostty-vt` safe API is now tested for origin and wraparound modes, and nmux carries those mode states in pane surface snapshots and patches.
 - `libghostty-vt` render-state cursor blinking is carried in `CursorState` and cursor-only patches, with old client cache entries defaulting to blinking enabled.
 - Terminal title and OSC 7 working-directory metadata are carried through pane surface snapshots, patches, and cached client state.
+- Title/OSC 7-only changes use no-row surface patches, and non-redraw live clients print metadata-only changes without reprinting unchanged row text.
 - `libghostty-vt` OSC 133 prompt-row semantics and per-run semantic content are carried through surface snapshots, surface patches, scrollback chunks, and cached client state, while nmux still withholds broader semantic command IDs, ranges, lifecycle, and exit metadata.
 - `libghostty-vt` render-state row dirty flags and row state hashes are carried through surface snapshots, surface patches, scrollback chunks, and cached client state; `ReplaceRows` patches now carry only changed rows when pane geometry is stable, while richer run/region damage protocol fields remain withheld.
 - `libghostty-vt` Kitty graphics placeholder row metadata is carried through surface snapshots, surface patches, scrollback chunks, and cached client state, while nmux still withholds image placement, dimensions, pixel-data, persistence, and fallback protocol fields.

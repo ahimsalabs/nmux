@@ -679,26 +679,22 @@ mod ghostty_vt {
                 && surface_semantic_prompts == input.surface_semantic_prompts
                 && surface_dirty_rows == input.surface_dirty_rows
                 && surface_kitty_placeholders == input.surface_kitty_placeholders
-                && cursor != input.cursor
-                && modes == input.modes
-                && title == input.title
-                && working_directory == input.working_directory
                 && colors == input.colors
+                && modes != input.modes
             {
-                protocol::PatchKind::CursorOnly
+                protocol::PatchKind::ModeOnly
             } else if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
                 && surface_semantic_prompts == input.surface_semantic_prompts
                 && surface_dirty_rows == input.surface_dirty_rows
                 && surface_kitty_placeholders == input.surface_kitty_placeholders
-                && cursor == input.cursor
-                && modes != input.modes
-                && title == input.title
-                && working_directory == input.working_directory
                 && colors == input.colors
+                && (cursor != input.cursor
+                    || title != input.title
+                    || working_directory != input.working_directory)
             {
-                protocol::PatchKind::ModeOnly
+                protocol::PatchKind::CursorOnly
             } else {
                 protocol::PatchKind::ReplaceRows
             };
@@ -1815,7 +1811,7 @@ mod tests {
 
         assert_eq!(title.title, "nmux test title");
         assert_eq!(title.surface_lines, first.surface_lines);
-        assert_eq!(title.patch_kind, protocol::PatchKind::ReplaceRows);
+        assert_eq!(title.patch_kind, protocol::PatchKind::CursorOnly);
     }
 
     #[cfg(feature = "libghostty-vt")]
@@ -1834,7 +1830,7 @@ mod tests {
 
         assert_eq!(update.working_directory, "file://localhost/tmp/nmux");
         assert_eq!(update.surface_lines, first.surface_lines);
-        assert_eq!(update.patch_kind, protocol::PatchKind::ReplaceRows);
+        assert_eq!(update.patch_kind, protocol::PatchKind::CursorOnly);
     }
 
     #[cfg(feature = "libghostty-vt")]
