@@ -98,7 +98,5 @@ extraction, cursor-only updates, alternate-screen detection, resize/reflow, and
 backend-owned scrollback extraction. It is not the default because the first
 integration pass still needs:
 
-- session-level feature tests proving `ScrollbackChunk` responses are backed by
-  Ghostty-owned history, not the interim text engine;
 - live CLI smoke coverage for `nmuxd --terminal-engine libghostty-vt` before the
   flag is documented as usable outside experimental builds.

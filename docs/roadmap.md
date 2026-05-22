@@ -99,7 +99,7 @@ Done:
 
 Next:
 
-- Prove the optional `libghostty-vt` engine through session-level scrollback fetch and live CLI smoke tests.
+- Prove the optional `libghostty-vt` engine through live CLI smoke tests.
 - Use [the terminal state extraction checklist](terminal-state-extraction.md) as the gate for making `libghostty-vt` the default engine or expanding protocol fields.
 - Keep client attach, reconnect, live streaming, and scrollback fetch semantics on nmux state objects.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.

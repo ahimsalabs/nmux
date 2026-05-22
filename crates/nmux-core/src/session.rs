@@ -1319,6 +1319,53 @@ mod tests {
         assert_eq!(chunk.pane_id(), Some("pane-1"));
     }
 
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn ghostty_vt_scrollback_chunk_uses_backend_history() {
+        let mut session = Session::initial();
+        if let Some(pane) = session.pane_mut("pane-1") {
+            pane.cols = 20;
+            pane.rows = 2;
+            pane.surface_lines.clear();
+            pane.scrollback_lines.clear();
+        }
+
+        let mut engines = crate::terminal::PaneTerminalEngines::new(
+            crate::terminal::TerminalEngineKind::LibghosttyVt,
+        );
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"one\r\ntwo\r\nthree\r\nfour",
+            engines.engine_mut("pane-1")
+        ));
+
+        let surface = session.initial_pane_surface();
+        let frame = session
+            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 0, 10)
+            .expect("scrollback chunk");
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+        assert!(
+            chunk.total_lines() as usize > surface.lines.len(),
+            "scrollback chunk did not include history beyond the surface"
+        );
+
+        let rows = chunk.rows().expect("scrollback rows");
+        let row_text = (0..rows.len())
+            .map(|index| {
+                let row = rows.get(index);
+                let runs = row.runs().expect("runs");
+                runs.get(0).text_utf8().unwrap_or_default().to_owned()
+            })
+            .collect::<Vec<_>>();
+        for expected in ["one", "two", "three", "four"] {
+            assert!(
+                row_text.iter().any(|line| line.contains(expected)),
+                "scrollback chunk missing {expected}: {row_text:?}"
+            );
+        }
+    }
+
     #[test]
     fn initial_surface_matches_tail_of_scrollback() {
         let session = Session::initial();
