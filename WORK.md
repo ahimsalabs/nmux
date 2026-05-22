@@ -487,7 +487,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   OSC 8 hyperlink text and backend row/cell hyperlink presence are preserved through CellRun flags, feature-gated local live coverage proves libghostty-vt OSC 8 run flags survive ReplaceRows cache updates and state encode/decode, and hyperlink IDs remain unset until nmux has a hyperlink table
   CursorState carries cursor blink metadata from libghostty-vt, and old cached client cursor state defaults to blinking enabled
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal title and OSC 7 working-directory metadata
-  title/OSC 7-only updates use no-row surface patches, and feature-gated live CLI coverage proves non-redraw clients print metadata-only changes without reprinting unchanged row text
+  title/OSC 7-only updates use no-row surface patches, and feature-gated live CLI coverage proves non-redraw clients print metadata-only changes without reprinting unchanged row text and persist those metadata-only changes through --state reattach
   local CLI rendering prints non-empty terminal title and OSC 7 working-directory metadata with the current pane surface
   feature-gated local live coverage proves libghostty-vt CursorOnly patches stream after attach, avoid row repaint, update ClientAttachState cursor metadata, and survive state encode/decode
   structured-input encoding failures return protocol Error frames instead of opaque daemon exits, and local one-shot clients surface the server-provided reason before scrollback fetches

@@ -806,6 +806,98 @@ fn live_libghostty_vt_cli_prints_metadata_only_update_without_reprinting_rows() 
 
 #[cfg(feature = "libghostty-vt")]
 #[test]
+fn live_libghostty_vt_cli_persists_metadata_only_update_to_state() {
+    let socket_path = test_socket_path();
+    let state_path = socket_path.with_extension("state");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "2",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "printf 'ready\\n'; sleep 0.3; printf '\\033]2;patched metadata\\033\\\\\\033]7;file://localhost/tmp/patched\\007'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let first_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "4",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run first nmux");
+
+    assert!(
+        first_client.status.success(),
+        "first nmux failed: {}",
+        String::from_utf8_lossy(&first_client.stderr)
+    );
+
+    let second_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run second nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    assert!(
+        second_client.status.success(),
+        "second nmux failed: {}",
+        String::from_utf8_lossy(&second_client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&second_client.stdout);
+    assert!(
+        stdout.contains("ready"),
+        "reattached client did not render cached surface text:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("title=patched metadata"),
+        "reattached client did not render persisted metadata-only title:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("working-directory=file://localhost/tmp/patched"),
+        "reattached client did not render persisted metadata-only working directory:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\x1b]2;") && !stdout.contains("\x1b]7;"),
+        "metadata control sequences leaked after state reattach:\n{stdout}"
+    );
+}
+
+#[cfg(feature = "libghostty-vt")]
+#[test]
 fn live_libghostty_vt_cli_redraw_prints_terminal_metadata() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
