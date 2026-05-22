@@ -4,9 +4,10 @@ The nmux protocol synchronizes backend-owned terminal state. It is not a raw PTY
 
 The current schema lives at [schema/nmux.fbs](../schema/nmux.fbs).
 
-## M0 Scope
+## Current Envelope Scope
 
-M0 defines the smallest useful state-sync envelope:
+The current schema has grown beyond the original M0 skeleton. It defines these
+state-sync envelope bodies:
 
 - `Envelope` for versioning, sequencing, acknowledgements, and body dispatch.
 - `WorkspaceTreeSnapshot` for sessions, tabs, panes, split layout, pane sizes, and resize policy.
@@ -17,10 +18,13 @@ M0 defines the smallest useful state-sync envelope:
 - `InputEvent` for key, raw byte, paste, focus, and mouse input from an actor
   to a pane.
 - `ResizeIntent` for client-originated size requests.
+- `PresenceUpdate` for actor join/leave-style presence events.
 - `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time.
 - `Error` for protocol-level failures.
 
-Permissions, sandbox hosts, adapters, and image-specific payloads are intentionally outside M0. They should be added as new envelope bodies when their object model is clear.
+Permissions, sandbox hosts, adapters, and image-specific payloads remain outside
+the current envelope. They should be added as new envelope bodies when their
+object model is clear.
 
 ## State Ownership
 
@@ -43,7 +47,9 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
 - `CellRun` stores UTF-8 text, per-cell widths, a style table reference,
   flags, optional hyperlink reference, and per-run semantic content. Bit 0 in
   `CellRun.flags` means backend hyperlink presence for the run; `hyperlink_id`
-  remains zero until nmux has a URI/ID table.
+  remains zero until nmux has a URI/ID table. `cell_widths` is one byte per
+  rendered cell in the run, so wide characters carry a width of 2 at their
+  rendered cell position.
 - `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot` objects and `ScrollbackChunk` objects carry the style table needed by their rows.
 - `CursorState` stores cursor row, column, visibility, shape, and blinking.
 - `TerminalMetadataState` stores pane terminal title and working-directory
@@ -112,7 +118,7 @@ user-command resize intents.
 
 ## Input Model
 
-`InputEvent` is still a client-to-daemon intent, not authoritative terminal state. Text-oriented commands can use `InputKind.Key` with `KeyInput.text_utf8`; named-key commands can use `InputKind.Key` with `KeyInput.key_name`, currently for keypad Enter/digits, arrow keys, Enter, Tab, Backspace, Escape, Insert, Delete, Home, End, PageUp/PageDown, and F1-F12. The local daemon asks the live pane terminal engine to encode named keys from daemon-owned terminal state; the interim engine preserves existing unmodified keypad/application-cursor behavior, while the `libghostty-vt` engine uses its key encoder and preserves `KeyInput.modifiers`. Public CLI named-key and mouse modifiers use the low four protocol bits: `shift=1`, `ctrl=2`, `alt=4`, and `super=8`. Byte-oriented live clients should use `InputKind.RawBytes` with `RawInput.bytes` so control bytes and non-UTF-8 input do not get lossy string conversion before they reach the process host. Paste-oriented commands use `InputKind.Paste` with `PasteInput.text_utf8`; the local daemon rejects embedded bracketed-paste terminators, then wraps the paste in bracketed-paste delimiters only when daemon-owned pane mode reports bracketed paste enabled. Focus commands use `InputKind.Focus` with `FocusInput.focused`; the local daemon forwards focus gained/lost bytes only when the daemon-owned pane mode reports focus reporting enabled and otherwise returns a protocol `Error`. Mouse commands use `InputKind.Mouse` with zero-based cell coordinates, button, modifiers, and action; the local daemon gates them by daemon-owned pane size and mouse tracking mode (`None`, `X10`, `Normal`, `Button`, or `Any`) before asking the live pane terminal engine to encode bytes from the current terminal mode and mouse format. Local clients maintain monotonic `Envelope.seq` values across post-attach client frames and monotonic `InputEvent.input_seq` values across input events on the same connection. ADR 0017 records the input-mode policy and the remaining physical-key/text-event boundary.
+`InputEvent` is still a client-to-daemon intent, not authoritative terminal state. Text-oriented commands can use `InputKind.Key` with `KeyInput.text_utf8`; named-key commands can use `InputKind.Key` with `KeyInput.key_name`, currently for keypad Enter/digits, arrow keys, Enter, Tab, Backspace, Escape, Insert, Delete, Home, End, PageUp/PageDown, and F1-F12. The local daemon asks the live pane terminal engine to encode named keys from daemon-owned terminal state; the interim engine preserves existing unmodified keypad/application-cursor behavior, while the `libghostty-vt` engine uses its key encoder and preserves `KeyInput.modifiers`. Public CLI named-key and mouse modifiers use the low four protocol bits: `shift=1`, `ctrl=2`, `alt=4`, and `super=8`. Byte-oriented live clients should use `InputKind.RawBytes` with `RawInput.bytes` so control bytes and non-UTF-8 input do not get lossy string conversion before they reach the process host. Paste-oriented commands use `InputKind.Paste` with `PasteInput.text_utf8`; the local daemon rejects embedded bracketed-paste terminators, ignores the historical client-provided `PasteInput.bracketed` preference, and wraps the paste in bracketed-paste delimiters only when daemon-owned pane mode reports bracketed paste enabled. Focus commands use `InputKind.Focus` with `FocusInput.focused`; the local daemon forwards focus gained/lost bytes only when the daemon-owned pane mode reports focus reporting enabled and otherwise returns a protocol `Error`. Mouse commands use `InputKind.Mouse` with zero-based cell coordinates, button, modifiers, and action; the local daemon gates them by daemon-owned pane size and mouse tracking mode (`None`, `X10`, `Normal`, `Button`, or `Any`) before asking the live pane terminal engine to encode bytes from the current terminal mode and mouse format. `MouseFormat::SgrPixels` is tracked as backend terminal state, but public `MouseInput` currently carries cell coordinates only; pixel-coordinate forwarding remains withheld until the input schema has explicit pixel fields. Local clients maintain monotonic `Envelope.seq` values across post-attach client frames and monotonic `InputEvent.input_seq` values across input events on the same connection. ADR 0017 records the input-mode policy and the remaining physical-key/text-event boundary.
 
 When a structured input event cannot be encoded or safely forwarded, or a live
 control intent such as resize cannot be applied by the process host, the daemon

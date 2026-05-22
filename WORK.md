@@ -1,5 +1,9 @@
 **nmux is a portable Ghostty-style workspace whose backend owns terminal state, and libghostty is the canonical terminal-state/snapshot engine.**
 
+Garden note: this file mixes product thesis, aspirational protocol sketches, and
+implemented milestone status. Treat `docs/roadmap.md`, `docs/protocol.md`, and
+ADRs as authoritative for current schema and implementation details.
+
 That means nmux should not primarily synchronize raw PTY bytes. It should synchronize **versioned terminal state objects**: session tree, tab tree, pane grid, cursor, scrollback ranges, titles, agent state, presence, and input/control events. That matches the direction in your prior notes: `session -> tab -> pane`, resumable connections, multi-player presence, sandbox-hosted PTYs, and a protocol boundary rather than a herdr-shaped core. 
 
 ## The thesis
@@ -55,7 +59,7 @@ Mosh’s big idea is not just UDP; it is **state synchronization instead of byte
 nmux should steal that model:
 
 ```text
-client: I have pane p version 1042, scrollback ranges 0..200 and 900..1100
+client: I have pane p version 1042, scrollback ranges 1..200 and 901..1100
 server: pane p current version is 1088
 server: here are patches 1043..1088
 ```
@@ -181,12 +185,7 @@ Envelope
   body: union
 
 Bodies
-  Hello
-  Attach
-  Detach
-  Ping
   WorkspaceTreeSnapshot
-  WorkspaceTreePatch
   PaneSurfaceSnapshot
   PaneSurfacePatch
   ScrollbackFetch
@@ -194,8 +193,7 @@ Bodies
   InputEvent
   ResizeIntent
   PresenceUpdate
-  AgentStateUpdate
-  HostSpec
+  AttachRequest
   Error
 ```
 
@@ -242,7 +240,7 @@ Make pane size authoritative:
 PaneSize
   cols
   rows
-  policy = fixed | active_client | leader | max | manual
+  policy = fixed | active_client | leader | manual
 ```
 
 Clients send:
@@ -251,11 +249,7 @@ Clients send:
 ResizeIntent { pane_id, desired_cols, desired_rows, reason }
 ```
 
-The server replies with:
-
-```text
-PaneResized { committed_cols, committed_rows, by_actor }
-```
+The server publishes committed size through workspace/pane state.
 
 Spectators can have smaller viewports. Controllers can request resize. A “leader” client can own size. This prevents mobile reconnects from trashing everyone else’s layout.
 

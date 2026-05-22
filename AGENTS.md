@@ -24,7 +24,7 @@ Current sequencing:
 The current implementation is a Rust workspace:
 
 - `crates/nmux-proto` owns FlatBuffers wire helpers and generated schema bindings.
-- `crates/nmux-core` owns session state, process hosts, interim text-surface logic, and adapter mapping helpers.
+- `crates/nmux-core` owns session state, process hosts, the terminal engine boundary, interim text-surface logic, optional `libghostty-vt` extraction, and adapter mapping helpers.
 - `crates/nmux-cli` owns the `nmuxd` daemon, `nmux` client, Unix-socket local transport, and CLI integration tests.
 
 ## Working Rules

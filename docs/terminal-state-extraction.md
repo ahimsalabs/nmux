@@ -1,9 +1,9 @@
 # Terminal State Extraction Checklist
 
-M13 replaces the interim text engine with daemon-owned backend `libghostty-vt`
-state extraction. This file records the mapping work already proven by the
-opt-in backend and the remaining protocol decisions needed before default/CI
-promotion.
+M13 proves the opt-in path from the interim text engine toward daemon-owned
+backend `libghostty-vt` state extraction. This file records the mapping work
+already proven by the opt-in backend and the remaining protocol decisions needed
+before default/CI promotion.
 
 `libghostty-vt` is now present as an optional Cargo feature and compiles through
 the vendored native Ghostty VT build. ADR 0018 keeps the default `nmuxd` engine
