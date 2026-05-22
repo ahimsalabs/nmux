@@ -508,7 +508,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   feature-gated live CLI coverage proves libghostty-vt streams command output and committed user-command resize metadata through nmuxd without leaking raw ANSI controls
   feature-gated live CLI coverage proves restored libghostty-vt alternate-screen output stays out of requested scrollback
   PaneSurfaceSnapshot and PaneSurfacePatch carry terminal mode state, and mode-only updates no longer force full refreshes
-  feature-gated local live coverage proves libghostty-vt ModeOnly patches stream after attach, avoid row repaint, update ClientAttachState modes, and survive state encode/decode
+  feature-gated local and live CLI coverage proves libghostty-vt ModeOnly patches stream after attach, avoid row repaint, update ClientAttachState modes, and survive state encode/decode plus real --state reattach
   ADR 0017 documents terminal input mode state and daemon-owned input gating for paste, focus, named keys, and mouse input
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch
   live attach clients with a known surface version receive a PaneSurfaceSnapshot, not a PaneSurfacePatch, when the daemon marks the latest surface update FullRefreshRequired
