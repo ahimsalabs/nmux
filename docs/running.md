@@ -202,9 +202,10 @@ colors/palette, palette overrides, explicit cursor color, title metadata, OSC
 133 semantic prompt state, bracketed paste, paste safety validation, mouse
 tracking, focus reporting and event encoding, application keypad tracking and
 explicit encoder output, origin, wraparound mode state, row-level dirty state,
-Kitty graphics placeholder detection, and mode-aware key encoding. OSC 7
-working-directory metadata and image placement data remain intentionally
-withheld until the expected backend behavior and nmux protocol shape are clear.
+Kitty graphics placeholder detection, mode-aware key encoding, and mode-only
+surface patches. OSC 7 working-directory metadata and image placement data
+remain intentionally withheld until the expected backend behavior and nmux
+protocol shape are clear.
 
 ```sh
 nix develop path:$PWD -c make check-ghostty-vt

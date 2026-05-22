@@ -111,6 +111,7 @@ table PaneSurfaceSnapshot {
   cols:uint;
   rows:uint;
   cursor:CursorState;
+  modes:TerminalModeState;
   styles:[Style];
   rows_data:[SurfaceRow];
 }
@@ -122,6 +123,7 @@ table PaneSurfacePatch {
   kind:PatchKind = ReplaceRows;
   row_updates:[RowUpdate];
   cursor:CursorState;
+  modes:TerminalModeState;
 }
 
 table CursorState {
@@ -129,6 +131,16 @@ table CursorState {
   col:uint;
   visible:bool = true;
   shape:CursorShape = Block;
+}
+
+table TerminalModeState {
+  bracketed_paste:bool;
+  mouse_tracking:bool;
+  focus_reporting:bool;
+  application_keypad:bool;
+  application_cursor:bool;
+  origin:bool;
+  wraparound:bool = true;
 }
 
 table SurfaceRow {

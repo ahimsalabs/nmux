@@ -14,9 +14,10 @@ the vendored native Ghostty VT build. The default `nmuxd` engine remains
 
 - `WorkspaceTreeSnapshot`: session, tab, root pane identity, size, resize policy,
   and current pane surface version.
-- `PaneSurfaceSnapshot`: pane ID, surface version, size, cursor, style table,
-  and rendered row runs.
-- `PaneSurfacePatch`: base/version pair, replacement row runs, and cursor.
+- `PaneSurfaceSnapshot`: pane ID, surface version, size, cursor, terminal modes,
+  style table, and rendered row runs.
+- `PaneSurfacePatch`: base/version pair, replacement row runs, cursor, and
+  terminal modes.
 - `ScrollbackChunk`: scrollback row runs by range.
 
 The current terminal engine boundary owns:
@@ -52,12 +53,12 @@ backend terminal state into the same nmux objects:
 - Versions: bump surface versions when the nmux-visible surface, cursor, or
   surface dimensions change; scrollback-only updates should not force a surface
   version bump. Keep workspace versions for tree metadata changes.
-- Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; row text
-  or row-run-only changes should use `PatchKind::ReplaceRows`; changes that
-  cannot be expressed by the current patch schema, including style-table changes
-  and mode-only updates before mode fields exist, should force a full snapshot.
-  Clients must reject unsupported patch kinds rather than applying them as
-  cursor-only updates.
+- Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; terminal
+  mode-only changes should use `PatchKind::ModeOnly`; row text or row-run-only
+  changes should use `PatchKind::ReplaceRows`; changes that cannot be expressed
+  by the current patch schema, including style-table changes, should force a
+  full snapshot. Clients must reject unsupported patch kinds rather than
+  applying them as cursor-only updates.
 
 ## Known Schema Gaps
 
@@ -72,17 +73,17 @@ only after the backend extraction proves the exact shape needed.
   clusters are covered by `libghostty-vt` extraction tests and represented as
   per-cell run widths. Ambiguous-width policy and broader grapheme cases still
   need protocol guidance.
-- Terminal modes: `libghostty-vt` tracks bracketed paste, mouse tracking,
-  focus reporting, application keypad, origin, and wraparound modes through its
-  safe API and can derive key encoder behavior from terminal modes such as
-  application cursor keys. Its key encoder can also emit application-keypad
-  sequences when the option is explicit, its focus helper can encode focus
-  gained/lost events, and its paste validator rejects newline and bracketed
-  paste terminator injection sequences. Its render state exposes cursor blink
-  state, but nmux has no mode or cursor-metadata fields yet. Terminal-derived
-  keypad input forwarding, paste forwarding, mouse input forwarding, focus
-  forwarding, and the client-visible shape of mode updates still need protocol
-  decisions.
+- Terminal modes: nmux snapshots and patches now carry bracketed paste, mouse
+  tracking, focus reporting, application keypad, application cursor, origin,
+  and wraparound state. `libghostty-vt` tracks those modes through its safe API,
+  can derive key encoder behavior from terminal modes such as application
+  cursor keys, and emits mode-only patches when only the mode payload changes.
+  Its key encoder can also emit application-keypad sequences when the option is
+  explicit, its focus helper can encode focus gained/lost events, and its paste
+  validator rejects newline and bracketed paste terminator injection sequences.
+  Its render state exposes cursor blink state, but nmux has no cursor-metadata
+  fields yet. Terminal-derived keypad input forwarding, paste forwarding, mouse
+  input forwarding, and focus forwarding still need protocol decisions.
 - Terminal metadata: `libghostty-vt` exposes OSC 2 title state through the safe
   API, but nmux has no title metadata field yet. OSC 7 working-directory state
   remains unproven in the current backend path and should stay withheld until
@@ -143,8 +144,9 @@ with alternate scrollback omission, title metadata with OSC 7 working-directory
 omission, OSC 133 semantic prompt state, resize/reflow, styled backend-owned
 scrollback extraction, row-level dirty state, Kitty graphics placeholder
 detection, application-keypad encoder support, focus event encoding, paste
-safety validation, and safe-API mode tracking for bracketed paste, mouse
-tracking, focus reporting, application keypad mode, and origin/wraparound modes
-through unit, session, and live CLI smoke coverage. It is not the default until
-the project deliberately accepts the native Zig/Ghostty build cost in normal
-development and CI.
+safety validation, safe-API mode tracking for bracketed paste, mouse tracking,
+focus reporting, application keypad mode, and origin/wraparound modes, plus
+nmux snapshot/patch mode payloads and mode-only patch application through unit,
+session, and live CLI smoke coverage. It is not the default until the project
+deliberately accepts the native Zig/Ghostty build cost in normal development
+and CI.

@@ -4,6 +4,7 @@ use nmux_proto::{PROTOCOL_VERSION, protocol};
 use crate::host::{CommandSpec, HostSpec};
 use crate::terminal::{
     CellRun, InterimTextTerminalEngine, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput,
+    TerminalModes,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +59,7 @@ pub struct Pane {
     pub resize_policy: protocol::ResizePolicy,
     pub surface: protocol::SurfaceKind,
     pub cursor: Cursor,
+    pub modes: TerminalModes,
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
@@ -73,6 +75,7 @@ pub struct PaneSurface {
     pub rows: u32,
     pub surface: protocol::SurfaceKind,
     pub cursor: Cursor,
+    pub modes: TerminalModes,
     pub styles: Vec<PaneStyle>,
     pub lines: Vec<String>,
     pub row_runs: Vec<Vec<CellRun>>,
@@ -121,6 +124,7 @@ impl Session {
                         visible: true,
                         shape: protocol::CursorShape::Block,
                     },
+                    modes: TerminalModes::default(),
                     styles: vec![PaneStyle::default()],
                     surface_lines: vec![
                         "nmux pane-1".to_owned(),
@@ -178,6 +182,7 @@ impl Session {
             rows: pane.rows,
             surface: pane.surface,
             cursor: TerminalCursor::from(&pane.cursor),
+            modes: pane.modes,
             surface_lines: &pane.surface_lines,
             scrollback_lines: &pane.scrollback_lines,
         };
@@ -213,6 +218,7 @@ impl Session {
             rows: pane.rows,
             surface: pane.surface,
             cursor: TerminalCursor::from(&pane.cursor),
+            modes: pane.modes,
             surface_lines: &pane.surface_lines,
             scrollback_lines: &pane.scrollback_lines,
         };
@@ -353,6 +359,7 @@ impl Session {
             rows: pane.rows,
             surface: pane.surface,
             cursor: pane.cursor.clone(),
+            modes: pane.modes,
             styles: pane.styles.clone(),
             lines: pane.surface_lines.clone(),
             row_runs: row_runs_for_lines(&pane.surface_lines, &pane.surface_row_runs),
@@ -464,6 +471,7 @@ impl Session {
                 shape: surface.cursor.shape,
             },
         );
+        let modes = build_terminal_modes(&mut builder, surface.modes);
         let pane_id = builder.create_string(&surface.pane_id);
         let snapshot = protocol::PaneSurfaceSnapshot::create(
             &mut builder,
@@ -474,6 +482,7 @@ impl Session {
                 cols: surface.cols,
                 rows: surface.rows,
                 cursor: Some(cursor),
+                modes: Some(modes),
                 styles: Some(styles),
                 rows_data: Some(rows_data),
             },
@@ -555,6 +564,7 @@ impl Session {
                 shape: surface.cursor.shape,
             },
         );
+        let modes = build_terminal_modes(&mut builder, surface.modes);
         let pane_id = builder.create_string(&surface.pane_id);
         let patch = protocol::PaneSurfacePatch::create(
             &mut builder,
@@ -565,6 +575,7 @@ impl Session {
                 kind: patch_kind,
                 row_updates: Some(row_updates),
                 cursor: Some(cursor),
+                modes: Some(modes),
             },
         );
 
@@ -945,12 +956,31 @@ impl From<TerminalCursor> for Cursor {
     }
 }
 
+fn build_terminal_modes<'a>(
+    builder: &mut FlatBufferBuilder<'a>,
+    modes: TerminalModes,
+) -> flatbuffers::WIPOffset<protocol::TerminalModeState<'a>> {
+    protocol::TerminalModeState::create(
+        builder,
+        &protocol::TerminalModeStateArgs {
+            bracketed_paste: modes.bracketed_paste,
+            mouse_tracking: modes.mouse_tracking,
+            focus_reporting: modes.focus_reporting,
+            application_keypad: modes.application_keypad,
+            application_cursor: modes.application_cursor,
+            origin: modes.origin,
+            wraparound: modes.wraparound,
+        },
+    )
+}
+
 fn apply_terminal_update(
     pane: &mut Pane,
     update: crate::terminal::TerminalUpdate,
     force_surface_version: bool,
 ) -> bool {
     let cursor = Cursor::from(update.cursor);
+    let modes_changed = pane.modes != update.modes;
     let rows_changed = pane.surface_lines != update.surface_lines;
     let surface_kind_changed = pane.surface != update.surface;
     let styles_changed = pane.styles != update.styles;
@@ -960,7 +990,8 @@ fn apply_terminal_update(
         || styles_changed
         || rows_changed
         || row_runs_changed
-        || pane.cursor != cursor;
+        || pane.cursor != cursor
+        || modes_changed;
     let scrollback_changed = pane.scrollback_lines != update.scrollback_lines
         || pane.scrollback_row_runs != update.scrollback_row_runs;
 
@@ -968,6 +999,7 @@ fn apply_terminal_update(
     pane.scrollback_row_runs =
         row_runs_for_lines(&pane.scrollback_lines, &update.scrollback_row_runs);
     pane.surface = update.surface;
+    pane.modes = update.modes;
     pane.styles = update.styles;
     pane.surface_lines = update.surface_lines;
     pane.surface_row_runs = row_runs_for_lines(&pane.surface_lines, &update.surface_row_runs);
@@ -985,6 +1017,7 @@ fn apply_terminal_update(
             row_runs_changed,
             surface_kind_changed,
             styles_changed,
+            modes_changed,
         );
     }
 
@@ -997,13 +1030,14 @@ fn terminal_patch_kind(
     row_runs_changed: bool,
     surface_kind_changed: bool,
     styles_changed: bool,
+    modes_changed: bool,
 ) -> protocol::PatchKind {
     if surface_kind_changed || styles_changed {
         protocol::PatchKind::FullRefreshRequired
     } else if rows_changed || row_runs_changed {
         protocol::PatchKind::ReplaceRows
-    } else if requested == protocol::PatchKind::ModeOnly {
-        protocol::PatchKind::FullRefreshRequired
+    } else if modes_changed {
+        protocol::PatchKind::ModeOnly
     } else {
         requested
     }
@@ -1073,7 +1107,8 @@ fn build_cell_run<'a>(
 mod tests {
     use crate::host::HostKind;
     use crate::terminal::{
-        CellRun, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput, TerminalUpdate,
+        CellRun, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput, TerminalModes,
+        TerminalUpdate,
     };
 
     use nmux_proto::{PROTOCOL_VERSION, protocol};
@@ -1236,6 +1271,11 @@ mod tests {
         assert_eq!(cursor.col(), 0);
         assert!(cursor.visible());
         assert_eq!(cursor.shape(), protocol::CursorShape::Block);
+        let modes = snapshot.modes().expect("modes");
+        assert!(!modes.bracketed_paste());
+        assert!(!modes.mouse_tracking());
+        assert!(!modes.focus_reporting());
+        assert!(modes.wraparound());
 
         let styles = snapshot.styles().expect("styles");
         assert_eq!(styles.len(), 1);
@@ -1366,6 +1406,10 @@ mod tests {
         let cursor = patch.cursor().expect("cursor");
         assert_eq!(cursor.row(), 1);
         assert_eq!(cursor.col(), 0);
+        let modes = patch.modes().expect("modes");
+        assert!(!modes.bracketed_paste());
+        assert!(!modes.focus_reporting());
+        assert!(modes.wraparound());
 
         let rows = patch.row_updates().expect("row updates");
         assert_eq!(rows.len(), 2);
@@ -2073,6 +2117,7 @@ mod tests {
                     patch_kind: protocol::PatchKind::ReplaceRows,
                     surface: input.surface,
                     cursor: input.cursor,
+                    modes: input.modes,
                     styles: vec![
                         PaneStyle::default(),
                         PaneStyle {
@@ -2136,6 +2181,7 @@ mod tests {
                     patch_kind: protocol::PatchKind::ReplaceRows,
                     surface: input.surface,
                     cursor: input.cursor,
+                    modes: input.modes,
                     styles: vec![PaneStyle::default()],
                     surface_lines: input.surface_lines.to_vec(),
                     surface_row_runs: input
@@ -2178,7 +2224,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_only_engine_update_requires_full_refresh_until_modes_are_modeled() {
+    fn mode_only_engine_update_emits_mode_only_patch() {
         struct ModeOnlyEngine;
 
         impl TerminalEngine for ModeOnlyEngine {
@@ -2188,18 +2234,18 @@ mod tests {
                 output: &[u8],
             ) -> Option<TerminalUpdate> {
                 assert_eq!(output, b"mode only");
-                Some(TerminalUpdate::plain(
+                let mut update = TerminalUpdate::plain(
                     protocol::PatchKind::ModeOnly,
                     input.surface,
-                    TerminalCursor {
-                        row: input.cursor.row,
-                        col: input.cursor.col,
-                        visible: input.cursor.visible,
-                        shape: protocol::CursorShape::Beam,
-                    },
+                    input.cursor,
                     input.surface_lines.to_vec(),
                     input.scrollback_lines.to_vec(),
-                ))
+                );
+                update.modes = TerminalModes {
+                    bracketed_paste: true,
+                    ..input.modes
+                };
+                Some(update)
             }
 
             fn resize(
@@ -2218,8 +2264,16 @@ mod tests {
         assert!(session.apply_pane_output_with_engine("pane-1", b"mode only", &mut engine));
         assert_eq!(
             session.surface_patch_kind("pane-1"),
-            Some(protocol::PatchKind::FullRefreshRequired)
+            Some(protocol::PatchKind::ModeOnly)
         );
+        let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::ModeOnly);
+        assert_eq!(patch.row_updates().expect("row updates").len(), 0);
+        let modes = patch.modes().expect("modes");
+        assert!(modes.bracketed_paste());
+        assert!(modes.wraparound());
     }
 
     #[test]

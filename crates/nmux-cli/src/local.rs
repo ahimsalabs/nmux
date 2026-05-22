@@ -905,6 +905,10 @@ pub fn surface_update_from_frame(
                 rows: Some(snapshot.rows()),
                 surface: Some(snapshot.surface()),
                 cursor: snapshot.cursor().map(CursorSummary::from_protocol),
+                modes: snapshot
+                    .modes()
+                    .map(TerminalModeSummary::from_protocol)
+                    .unwrap_or_default(),
                 row_updates,
                 styles,
                 text,
@@ -932,6 +936,10 @@ pub fn surface_update_from_frame(
                 rows: None,
                 surface: None,
                 cursor: patch.cursor().map(CursorSummary::from_protocol),
+                modes: patch
+                    .modes()
+                    .map(TerminalModeSummary::from_protocol)
+                    .unwrap_or_default(),
                 row_updates,
                 styles: Vec::new(),
                 text,
@@ -1461,6 +1469,7 @@ pub struct SurfaceUpdate {
     pub rows: Option<u32>,
     pub surface: Option<protocol::SurfaceKind>,
     pub cursor: Option<CursorSummary>,
+    pub modes: TerminalModeSummary,
     pub row_updates: Vec<SurfaceRowUpdate>,
     pub styles: Vec<StyleSummary>,
     pub text: String,
@@ -1499,6 +1508,45 @@ impl CursorSummary {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalModeSummary {
+    pub bracketed_paste: bool,
+    pub mouse_tracking: bool,
+    pub focus_reporting: bool,
+    pub application_keypad: bool,
+    pub application_cursor: bool,
+    pub origin: bool,
+    pub wraparound: bool,
+}
+
+impl Default for TerminalModeSummary {
+    fn default() -> Self {
+        Self {
+            bracketed_paste: false,
+            mouse_tracking: false,
+            focus_reporting: false,
+            application_keypad: false,
+            application_cursor: false,
+            origin: false,
+            wraparound: true,
+        }
+    }
+}
+
+impl TerminalModeSummary {
+    fn from_protocol(modes: protocol::TerminalModeState<'_>) -> Self {
+        Self {
+            bracketed_paste: modes.bracketed_paste(),
+            mouse_tracking: modes.mouse_tracking(),
+            focus_reporting: modes.focus_reporting(),
+            application_keypad: modes.application_keypad(),
+            application_cursor: modes.application_cursor(),
+            origin: modes.origin(),
+            wraparound: modes.wraparound(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceRowUpdate {
     pub row: u32,
@@ -1532,6 +1580,7 @@ pub struct ClientPaneSurface {
     pub rows: u32,
     pub surface: protocol::SurfaceKind,
     pub cursor: Option<CursorSummary>,
+    pub modes: TerminalModeSummary,
     styles: Vec<StyleSummary>,
     row_text: Vec<String>,
     row_runs: Vec<Vec<CellRunSummary>>,
@@ -1546,6 +1595,7 @@ impl ClientPaneSurface {
             rows: update.rows.ok_or("surface snapshot missing rows")?,
             surface: update.surface.unwrap_or(protocol::SurfaceKind::Main),
             cursor: update.cursor,
+            modes: update.modes,
             styles: if update.styles.is_empty() {
                 default_style_summaries()
             } else {
@@ -1601,11 +1651,18 @@ impl ClientPaneSurface {
             self.version = update.version;
             return Ok(());
         }
+        if update.patch_kind == Some(protocol::PatchKind::ModeOnly) {
+            self.cursor = update.cursor;
+            self.modes = update.modes;
+            self.version = update.version;
+            return Ok(());
+        }
         if update.patch_kind != Some(protocol::PatchKind::ReplaceRows) {
             return Err(format!("unsupported surface patch kind: {:?}", update.patch_kind).into());
         }
         self.apply_rows(&update.row_updates)?;
         self.cursor = update.cursor;
+        self.modes = update.modes;
         self.version = update.version;
         Ok(())
     }
@@ -1784,6 +1841,41 @@ impl ClientAttachState {
                 }
                 None => encoded.push_str("cursor none\n"),
             }
+            encoded.push_str("modes ");
+            encoded.push_str(if surface.modes.bracketed_paste {
+                "1"
+            } else {
+                "0"
+            });
+            encoded.push(' ');
+            encoded.push_str(if surface.modes.mouse_tracking {
+                "1"
+            } else {
+                "0"
+            });
+            encoded.push(' ');
+            encoded.push_str(if surface.modes.focus_reporting {
+                "1"
+            } else {
+                "0"
+            });
+            encoded.push(' ');
+            encoded.push_str(if surface.modes.application_keypad {
+                "1"
+            } else {
+                "0"
+            });
+            encoded.push(' ');
+            encoded.push_str(if surface.modes.application_cursor {
+                "1"
+            } else {
+                "0"
+            });
+            encoded.push(' ');
+            encoded.push_str(if surface.modes.origin { "1" } else { "0" });
+            encoded.push(' ');
+            encoded.push_str(if surface.modes.wraparound { "1" } else { "0" });
+            encoded.push('\n');
             for style in &surface.styles {
                 encoded.push_str("style ");
                 encoded.push_str(&style.fg_rgba.to_string());
@@ -1872,6 +1964,7 @@ impl ClientAttachState {
                 io::Error::new(io::ErrorKind::InvalidData, "surface rows too large")
             })?;
             let mut cursor = None;
+            let mut modes = TerminalModeSummary::default();
             let mut styles = Vec::new();
             let mut row_text = vec![String::new(); row_count];
             let mut row_runs = vec![Vec::new(); row_count];
@@ -1887,26 +1980,10 @@ impl ClientAttachState {
                     break;
                 }
 
-                let mut parts = line.split(' ');
-                match (
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                    parts.next(),
-                ) {
-                    (Some("cursor"), Some("none"), None, None, None, None, None) => cursor = None,
-                    (
-                        Some("cursor"),
-                        Some(row),
-                        Some(col),
-                        Some(visible),
-                        Some(shape),
-                        None,
-                        None,
-                    ) => {
+                let parts = line.split(' ').collect::<Vec<_>>();
+                match parts.as_slice() {
+                    ["cursor", "none"] => cursor = None,
+                    ["cursor", row, col, visible, shape] => {
                         cursor = Some(CursorSummary {
                             row: parse_state_u32(row)?,
                             col: parse_state_u32(col)?,
@@ -1914,15 +1991,27 @@ impl ClientAttachState {
                             shape: protocol::CursorShape(parse_state_i8(shape)?),
                         });
                     }
-                    (
-                        Some("style"),
-                        Some(fg_rgba),
-                        Some(bg_rgba),
-                        Some(underline_rgba),
-                        Some(flags),
-                        None,
-                        None,
-                    ) => {
+                    [
+                        "modes",
+                        bracketed_paste,
+                        mouse_tracking,
+                        focus_reporting,
+                        application_keypad,
+                        application_cursor,
+                        origin,
+                        wraparound,
+                    ] => {
+                        modes = TerminalModeSummary {
+                            bracketed_paste: parse_state_bool(bracketed_paste)?,
+                            mouse_tracking: parse_state_bool(mouse_tracking)?,
+                            focus_reporting: parse_state_bool(focus_reporting)?,
+                            application_keypad: parse_state_bool(application_keypad)?,
+                            application_cursor: parse_state_bool(application_cursor)?,
+                            origin: parse_state_bool(origin)?,
+                            wraparound: parse_state_bool(wraparound)?,
+                        };
+                    }
+                    ["style", fg_rgba, bg_rgba, underline_rgba, flags] => {
                         styles.push(StyleSummary {
                             fg_rgba: parse_state_u32(fg_rgba)?,
                             bg_rgba: parse_state_u32(bg_rgba)?,
@@ -1930,7 +2019,7 @@ impl ClientAttachState {
                             flags: parse_state_u32(flags)?,
                         });
                     }
-                    (Some("row"), Some(row), Some(text), None, None, None, None) => {
+                    ["row", row, text] => {
                         let row = parse_state_usize(row)?;
                         let Some(target) = row_text.get_mut(row) else {
                             return Err(io::Error::new(
@@ -1941,15 +2030,7 @@ impl ClientAttachState {
                         *target = String::from_utf8(hex_decode(text)?)
                             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
                     }
-                    (
-                        Some("run"),
-                        Some(row),
-                        Some(text),
-                        Some(cell_widths),
-                        Some(style_id),
-                        Some(flags),
-                        hyperlink_id,
-                    ) => {
+                    ["run", row, text, cell_widths, style_id, flags] => {
                         let row = parse_state_usize(row)?;
                         let Some(target) = row_runs.get_mut(row) else {
                             return Err(io::Error::new(
@@ -1963,10 +2044,24 @@ impl ClientAttachState {
                             cell_widths: hex_decode(cell_widths)?,
                             style_id: parse_state_u32(style_id)?,
                             flags: parse_state_u32(flags)?,
-                            hyperlink_id: hyperlink_id
-                                .map(parse_state_u32)
-                                .transpose()?
-                                .unwrap_or(0),
+                            hyperlink_id: 0,
+                        });
+                    }
+                    ["run", row, text, cell_widths, style_id, flags, hyperlink_id] => {
+                        let row = parse_state_usize(row)?;
+                        let Some(target) = row_runs.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state run row index outside surface",
+                            ));
+                        };
+                        target.push(CellRunSummary {
+                            text: String::from_utf8(hex_decode(text)?)
+                                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
+                            cell_widths: hex_decode(cell_widths)?,
+                            style_id: parse_state_u32(style_id)?,
+                            flags: parse_state_u32(flags)?,
+                            hyperlink_id: parse_state_u32(hyperlink_id)?,
                         });
                     }
                     _ => {
@@ -1985,6 +2080,7 @@ impl ClientAttachState {
                 rows,
                 surface,
                 cursor,
+                modes,
                 styles: if styles.is_empty() {
                     default_style_summaries()
                 } else {
@@ -2286,6 +2382,7 @@ mod tests {
                 SurfaceUpdateKind::Patch => None,
             },
             cursor: None,
+            modes: TerminalModeSummary::default(),
             styles: if kind == SurfaceUpdateKind::Snapshot {
                 default_style_summaries()
             } else {
@@ -2459,7 +2556,7 @@ mod tests {
     }
 
     #[test]
-    fn client_surface_rejects_mode_only_patch_without_mode_fields() {
+    fn client_surface_applies_mode_only_patch_without_rows() {
         let snapshot = surface_update(
             SurfaceUpdateKind::Snapshot,
             1,
@@ -2469,14 +2566,13 @@ mod tests {
         let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
         let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
         patch.patch_kind = Some(protocol::PatchKind::ModeOnly);
+        patch.modes.bracketed_paste = true;
 
-        let err = surface
-            .apply_patch(&patch)
-            .expect_err("unsupported mode patch");
+        surface.apply_patch(&patch).expect("apply patch");
 
-        assert!(err.to_string().contains("unsupported surface patch kind"));
-        assert_eq!(surface.version, 1);
+        assert_eq!(surface.version, 2);
         assert_eq!(surface.render_text(), "top");
+        assert!(surface.modes.bracketed_paste);
     }
 
     #[test]
@@ -2603,7 +2699,10 @@ mod tests {
             underline_rgba: 0,
             flags: 1,
         });
+        snapshot.modes.bracketed_paste = true;
+        snapshot.modes.focus_reporting = true;
         let expected_styles = snapshot.styles.clone();
+        let expected_modes = snapshot.modes;
         state
             .render_attach(AttachSnapshot {
                 workspace: WorkspaceSummary {
@@ -2623,6 +2722,7 @@ mod tests {
         let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
         assert_eq!(decoded.known_surfaces(), state.known_surfaces());
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
+        assert_eq!(decoded.surfaces[0].modes, expected_modes);
         assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
         assert_eq!(decoded.surfaces[0].styles, expected_styles);
         assert_eq!(decoded.surfaces[0].row_runs[0].len(), 2);
@@ -2639,6 +2739,7 @@ mod tests {
         .expect("decode old state");
 
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
+        assert_eq!(decoded.surfaces[0].modes, TerminalModeSummary::default());
         assert_eq!(decoded.surfaces[0].styles, default_style_summaries());
         assert_eq!(decoded.surfaces[0].render_text(), "cached");
     }

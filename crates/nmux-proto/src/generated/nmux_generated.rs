@@ -1747,8 +1747,9 @@ impl<'a> PaneSurfaceSnapshot<'a> {
   pub const VT_COLS: ::flatbuffers::VOffsetT = 10;
   pub const VT_ROWS: ::flatbuffers::VOffsetT = 12;
   pub const VT_CURSOR: ::flatbuffers::VOffsetT = 14;
-  pub const VT_STYLES: ::flatbuffers::VOffsetT = 16;
-  pub const VT_ROWS_DATA: ::flatbuffers::VOffsetT = 18;
+  pub const VT_MODES: ::flatbuffers::VOffsetT = 16;
+  pub const VT_STYLES: ::flatbuffers::VOffsetT = 18;
+  pub const VT_ROWS_DATA: ::flatbuffers::VOffsetT = 20;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -1763,6 +1764,7 @@ impl<'a> PaneSurfaceSnapshot<'a> {
     builder.add_version(args.version);
     if let Some(x) = args.rows_data { builder.add_rows_data(x); }
     if let Some(x) = args.styles { builder.add_styles(x); }
+    if let Some(x) = args.modes { builder.add_modes(x); }
     if let Some(x) = args.cursor { builder.add_cursor(x); }
     builder.add_rows(args.rows);
     builder.add_cols(args.cols);
@@ -1815,6 +1817,13 @@ impl<'a> PaneSurfaceSnapshot<'a> {
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CursorState>>(PaneSurfaceSnapshot::VT_CURSOR, None)}
   }
   #[inline]
+  pub fn modes(&self) -> Option<TerminalModeState<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalModeState>>(PaneSurfaceSnapshot::VT_MODES, None)}
+  }
+  #[inline]
   pub fn styles(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>> {
     // Safety:
     // Created from valid Table for this object
@@ -1842,6 +1851,7 @@ impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
      .visit_field::<u32>("cols", Self::VT_COLS, false)?
      .visit_field::<u32>("rows", Self::VT_ROWS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<CursorState>>("cursor", Self::VT_CURSOR, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<TerminalModeState>>("modes", Self::VT_MODES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Style>>>>("styles", Self::VT_STYLES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SurfaceRow>>>>("rows_data", Self::VT_ROWS_DATA, false)?
      .finish();
@@ -1855,6 +1865,7 @@ pub struct PaneSurfaceSnapshotArgs<'a> {
     pub cols: u32,
     pub rows: u32,
     pub cursor: Option<::flatbuffers::WIPOffset<CursorState<'a>>>,
+    pub modes: Option<::flatbuffers::WIPOffset<TerminalModeState<'a>>>,
     pub styles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>>>,
     pub rows_data: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SurfaceRow<'a>>>>>,
 }
@@ -1868,6 +1879,7 @@ impl<'a> Default for PaneSurfaceSnapshotArgs<'a> {
       cols: 0,
       rows: 0,
       cursor: None,
+      modes: None,
       styles: None,
       rows_data: None,
     }
@@ -1904,6 +1916,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfaceSnapshotBuilder<'a
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CursorState>>(PaneSurfaceSnapshot::VT_CURSOR, cursor);
   }
   #[inline]
+  pub fn add_modes(&mut self, modes: ::flatbuffers::WIPOffset<TerminalModeState<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalModeState>>(PaneSurfaceSnapshot::VT_MODES, modes);
+  }
+  #[inline]
   pub fn add_styles(&mut self, styles: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Style<'b >>>>) {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneSurfaceSnapshot::VT_STYLES, styles);
   }
@@ -1935,6 +1951,7 @@ impl ::core::fmt::Debug for PaneSurfaceSnapshot<'_> {
       ds.field("cols", &self.cols());
       ds.field("rows", &self.rows());
       ds.field("cursor", &self.cursor());
+      ds.field("modes", &self.modes());
       ds.field("styles", &self.styles());
       ds.field("rows_data", &self.rows_data());
       ds.finish()
@@ -1962,6 +1979,7 @@ impl<'a> PaneSurfacePatch<'a> {
   pub const VT_KIND: ::flatbuffers::VOffsetT = 10;
   pub const VT_ROW_UPDATES: ::flatbuffers::VOffsetT = 12;
   pub const VT_CURSOR: ::flatbuffers::VOffsetT = 14;
+  pub const VT_MODES: ::flatbuffers::VOffsetT = 16;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -1975,6 +1993,7 @@ impl<'a> PaneSurfacePatch<'a> {
     let mut builder = PaneSurfacePatchBuilder::new(_fbb);
     builder.add_version(args.version);
     builder.add_base_version(args.base_version);
+    if let Some(x) = args.modes { builder.add_modes(x); }
     if let Some(x) = args.cursor { builder.add_cursor(x); }
     if let Some(x) = args.row_updates { builder.add_row_updates(x); }
     if let Some(x) = args.pane_id { builder.add_pane_id(x); }
@@ -2025,6 +2044,13 @@ impl<'a> PaneSurfacePatch<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CursorState>>(PaneSurfacePatch::VT_CURSOR, None)}
   }
+  #[inline]
+  pub fn modes(&self) -> Option<TerminalModeState<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalModeState>>(PaneSurfacePatch::VT_MODES, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for PaneSurfacePatch<'_> {
@@ -2039,6 +2065,7 @@ impl ::flatbuffers::Verifiable for PaneSurfacePatch<'_> {
      .visit_field::<PatchKind>("kind", Self::VT_KIND, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<RowUpdate>>>>("row_updates", Self::VT_ROW_UPDATES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<CursorState>>("cursor", Self::VT_CURSOR, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<TerminalModeState>>("modes", Self::VT_MODES, false)?
      .finish();
     Ok(())
   }
@@ -2050,6 +2077,7 @@ pub struct PaneSurfacePatchArgs<'a> {
     pub kind: PatchKind,
     pub row_updates: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<RowUpdate<'a>>>>>,
     pub cursor: Option<::flatbuffers::WIPOffset<CursorState<'a>>>,
+    pub modes: Option<::flatbuffers::WIPOffset<TerminalModeState<'a>>>,
 }
 impl<'a> Default for PaneSurfacePatchArgs<'a> {
   #[inline]
@@ -2061,6 +2089,7 @@ impl<'a> Default for PaneSurfacePatchArgs<'a> {
       kind: PatchKind::ReplaceRows,
       row_updates: None,
       cursor: None,
+      modes: None,
     }
   }
 }
@@ -2095,6 +2124,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfacePatchBuilder<'a, '
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CursorState>>(PaneSurfacePatch::VT_CURSOR, cursor);
   }
   #[inline]
+  pub fn add_modes(&mut self, modes: ::flatbuffers::WIPOffset<TerminalModeState<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalModeState>>(PaneSurfacePatch::VT_MODES, modes);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PaneSurfacePatchBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     PaneSurfacePatchBuilder {
@@ -2118,6 +2151,7 @@ impl ::core::fmt::Debug for PaneSurfacePatch<'_> {
       ds.field("kind", &self.kind());
       ds.field("row_updates", &self.row_updates());
       ds.field("cursor", &self.cursor());
+      ds.field("modes", &self.modes());
       ds.finish()
   }
 }
@@ -2265,6 +2299,204 @@ impl ::core::fmt::Debug for CursorState<'_> {
       ds.field("col", &self.col());
       ds.field("visible", &self.visible());
       ds.field("shape", &self.shape());
+      ds.finish()
+  }
+}
+pub enum TerminalModeStateOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct TerminalModeState<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for TerminalModeState<'a> {
+  type Inner = TerminalModeState<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> TerminalModeState<'a> {
+  pub const VT_BRACKETED_PASTE: ::flatbuffers::VOffsetT = 4;
+  pub const VT_MOUSE_TRACKING: ::flatbuffers::VOffsetT = 6;
+  pub const VT_FOCUS_REPORTING: ::flatbuffers::VOffsetT = 8;
+  pub const VT_APPLICATION_KEYPAD: ::flatbuffers::VOffsetT = 10;
+  pub const VT_APPLICATION_CURSOR: ::flatbuffers::VOffsetT = 12;
+  pub const VT_ORIGIN: ::flatbuffers::VOffsetT = 14;
+  pub const VT_WRAPAROUND: ::flatbuffers::VOffsetT = 16;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    TerminalModeState { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args TerminalModeStateArgs
+  ) -> ::flatbuffers::WIPOffset<TerminalModeState<'bldr>> {
+    let mut builder = TerminalModeStateBuilder::new(_fbb);
+    builder.add_wraparound(args.wraparound);
+    builder.add_origin(args.origin);
+    builder.add_application_cursor(args.application_cursor);
+    builder.add_application_keypad(args.application_keypad);
+    builder.add_focus_reporting(args.focus_reporting);
+    builder.add_mouse_tracking(args.mouse_tracking);
+    builder.add_bracketed_paste(args.bracketed_paste);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn bracketed_paste(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(TerminalModeState::VT_BRACKETED_PASTE, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn mouse_tracking(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(TerminalModeState::VT_MOUSE_TRACKING, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn focus_reporting(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(TerminalModeState::VT_FOCUS_REPORTING, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn application_keypad(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(TerminalModeState::VT_APPLICATION_KEYPAD, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn application_cursor(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(TerminalModeState::VT_APPLICATION_CURSOR, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn origin(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(TerminalModeState::VT_ORIGIN, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn wraparound(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(TerminalModeState::VT_WRAPAROUND, Some(true)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for TerminalModeState<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<bool>("bracketed_paste", Self::VT_BRACKETED_PASTE, false)?
+     .visit_field::<bool>("mouse_tracking", Self::VT_MOUSE_TRACKING, false)?
+     .visit_field::<bool>("focus_reporting", Self::VT_FOCUS_REPORTING, false)?
+     .visit_field::<bool>("application_keypad", Self::VT_APPLICATION_KEYPAD, false)?
+     .visit_field::<bool>("application_cursor", Self::VT_APPLICATION_CURSOR, false)?
+     .visit_field::<bool>("origin", Self::VT_ORIGIN, false)?
+     .visit_field::<bool>("wraparound", Self::VT_WRAPAROUND, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct TerminalModeStateArgs {
+    pub bracketed_paste: bool,
+    pub mouse_tracking: bool,
+    pub focus_reporting: bool,
+    pub application_keypad: bool,
+    pub application_cursor: bool,
+    pub origin: bool,
+    pub wraparound: bool,
+}
+impl<'a> Default for TerminalModeStateArgs {
+  #[inline]
+  fn default() -> Self {
+    TerminalModeStateArgs {
+      bracketed_paste: false,
+      mouse_tracking: false,
+      focus_reporting: false,
+      application_keypad: false,
+      application_cursor: false,
+      origin: false,
+      wraparound: true,
+    }
+  }
+}
+
+pub struct TerminalModeStateBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> TerminalModeStateBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_bracketed_paste(&mut self, bracketed_paste: bool) {
+    self.fbb_.push_slot::<bool>(TerminalModeState::VT_BRACKETED_PASTE, bracketed_paste, false);
+  }
+  #[inline]
+  pub fn add_mouse_tracking(&mut self, mouse_tracking: bool) {
+    self.fbb_.push_slot::<bool>(TerminalModeState::VT_MOUSE_TRACKING, mouse_tracking, false);
+  }
+  #[inline]
+  pub fn add_focus_reporting(&mut self, focus_reporting: bool) {
+    self.fbb_.push_slot::<bool>(TerminalModeState::VT_FOCUS_REPORTING, focus_reporting, false);
+  }
+  #[inline]
+  pub fn add_application_keypad(&mut self, application_keypad: bool) {
+    self.fbb_.push_slot::<bool>(TerminalModeState::VT_APPLICATION_KEYPAD, application_keypad, false);
+  }
+  #[inline]
+  pub fn add_application_cursor(&mut self, application_cursor: bool) {
+    self.fbb_.push_slot::<bool>(TerminalModeState::VT_APPLICATION_CURSOR, application_cursor, false);
+  }
+  #[inline]
+  pub fn add_origin(&mut self, origin: bool) {
+    self.fbb_.push_slot::<bool>(TerminalModeState::VT_ORIGIN, origin, false);
+  }
+  #[inline]
+  pub fn add_wraparound(&mut self, wraparound: bool) {
+    self.fbb_.push_slot::<bool>(TerminalModeState::VT_WRAPAROUND, wraparound, true);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> TerminalModeStateBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    TerminalModeStateBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<TerminalModeState<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for TerminalModeState<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("TerminalModeState");
+      ds.field("bracketed_paste", &self.bracketed_paste());
+      ds.field("mouse_tracking", &self.mouse_tracking());
+      ds.field("focus_reporting", &self.focus_reporting());
+      ds.field("application_keypad", &self.application_keypad());
+      ds.field("application_cursor", &self.application_cursor());
+      ds.field("origin", &self.origin());
+      ds.field("wraparound", &self.wraparound());
       ds.finish()
   }
 }

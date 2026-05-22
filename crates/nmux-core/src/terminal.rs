@@ -7,6 +7,7 @@ pub struct TerminalInput<'a> {
     pub rows: u32,
     pub surface: protocol::SurfaceKind,
     pub cursor: TerminalCursor,
+    pub modes: TerminalModes,
     pub surface_lines: &'a [String],
     pub scrollback_lines: &'a [String],
 }
@@ -17,6 +18,31 @@ pub struct TerminalCursor {
     pub col: u32,
     pub visible: bool,
     pub shape: protocol::CursorShape,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalModes {
+    pub bracketed_paste: bool,
+    pub mouse_tracking: bool,
+    pub focus_reporting: bool,
+    pub application_keypad: bool,
+    pub application_cursor: bool,
+    pub origin: bool,
+    pub wraparound: bool,
+}
+
+impl Default for TerminalModes {
+    fn default() -> Self {
+        Self {
+            bracketed_paste: false,
+            mouse_tracking: false,
+            focus_reporting: false,
+            application_keypad: false,
+            application_cursor: false,
+            origin: false,
+            wraparound: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -55,6 +81,7 @@ pub struct TerminalUpdate {
     pub patch_kind: protocol::PatchKind,
     pub surface: protocol::SurfaceKind,
     pub cursor: TerminalCursor,
+    pub modes: TerminalModes,
     pub styles: Vec<PaneStyle>,
     pub surface_lines: Vec<String>,
     pub surface_row_runs: Vec<Vec<CellRun>>,
@@ -74,6 +101,7 @@ impl TerminalUpdate {
             patch_kind,
             surface,
             cursor,
+            modes: TerminalModes::default(),
             styles: vec![PaneStyle::default()],
             surface_row_runs: plain_row_runs(&surface_lines),
             scrollback_row_runs: plain_row_runs(&scrollback_lines),
@@ -155,6 +183,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
         Some(interim_text_update(
             input.surface,
             input.cursor,
+            input.modes,
             input.rows,
             scrollback_lines,
         ))
@@ -169,6 +198,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
         Some(interim_text_update(
             input.surface,
             input.cursor,
+            input.modes,
             rows,
             input.scrollback_lines.to_vec(),
         ))
@@ -178,6 +208,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
 fn interim_text_update(
     surface: protocol::SurfaceKind,
     previous_cursor: TerminalCursor,
+    modes: TerminalModes,
     rows: u32,
     scrollback_lines: Vec<String>,
 ) -> TerminalUpdate {
@@ -190,13 +221,15 @@ fn interim_text_update(
         shape: previous_cursor.shape,
     };
 
-    TerminalUpdate::plain(
+    let mut update = TerminalUpdate::plain(
         protocol::PatchKind::ReplaceRows,
         surface,
         cursor,
         surface_lines,
         scrollback_lines,
-    )
+    );
+    update.modes = modes;
+    update
 }
 
 pub(crate) fn plain_row_runs(lines: &[String]) -> Vec<Vec<CellRun>> {
@@ -245,7 +278,8 @@ mod ghostty_vt {
     use nmux_proto::protocol;
 
     use super::{
-        CellRun, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput, TerminalUpdate,
+        CellRun, PaneStyle, TerminalCursor, TerminalEngine, TerminalInput, TerminalModes,
+        TerminalUpdate,
     };
 
     pub struct LibghosttyVtTerminalEngine {
@@ -337,12 +371,20 @@ mod ghostty_vt {
             )?;
             let surface_lines = surface_rows.lines.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
+            let modes = modes(&self.terminal)?;
             let patch_kind = if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
                 && cursor != input.cursor
+                && modes == input.modes
             {
                 protocol::PatchKind::CursorOnly
+            } else if !force_rows
+                && surface == input.surface
+                && surface_lines == input.surface_lines
+                && modes != input.modes
+            {
+                protocol::PatchKind::ModeOnly
             } else {
                 protocol::PatchKind::ReplaceRows
             };
@@ -351,6 +393,7 @@ mod ghostty_vt {
                 patch_kind,
                 surface,
                 cursor,
+                modes,
                 styles,
                 surface_row_runs: surface_rows.row_runs,
                 scrollback_row_runs: scrollback_rows.row_runs,
@@ -584,6 +627,18 @@ mod ghostty_vt {
             Some(protocol::SurfaceKind::Main)
         }
     }
+
+    fn modes(terminal: &Terminal<'_, '_>) -> Option<TerminalModes> {
+        Some(TerminalModes {
+            bracketed_paste: terminal.mode(Mode::BRACKETED_PASTE).ok()?,
+            mouse_tracking: terminal.is_mouse_tracking().ok()?,
+            focus_reporting: terminal.mode(Mode::FOCUS_EVENT).ok()?,
+            application_keypad: terminal.mode(Mode::KEYPAD_KEYS).ok()?,
+            application_cursor: terminal.mode(Mode::DECCKM).ok()?,
+            origin: terminal.mode(Mode::ORIGIN).ok()?,
+            wraparound: terminal.mode(Mode::WRAPAROUND).ok()?,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -592,7 +647,7 @@ mod tests {
 
     use super::{
         InterimTextTerminalEngine, PaneTerminalEngines, TerminalCursor, TerminalEngine,
-        TerminalEngineKind, TerminalInput,
+        TerminalEngineKind, TerminalInput, TerminalModes,
     };
 
     #[cfg(feature = "libghostty-vt")]
@@ -622,6 +677,7 @@ mod tests {
                 visible: true,
                 shape: protocol::CursorShape::Block,
             },
+            modes: TerminalModes::default(),
             surface_lines,
             scrollback_lines,
         }
@@ -635,6 +691,7 @@ mod tests {
             rows: update.surface_lines.len() as u32,
             surface: update.surface,
             cursor: update.cursor,
+            modes: update.modes,
             surface_lines: &update.surface_lines,
             scrollback_lines: &update.scrollback_lines,
         }
@@ -655,6 +712,7 @@ mod tests {
                 visible: true,
                 shape: protocol::CursorShape::Block,
             },
+            modes: TerminalModes::default(),
             surface_lines: &[],
             scrollback_lines: &scrollback_lines,
         };
@@ -699,6 +757,7 @@ mod tests {
                 visible: false,
                 shape: protocol::CursorShape::Beam,
             },
+            modes: TerminalModes::default(),
             surface_lines: &[],
             scrollback_lines: &scrollback_lines,
         };
@@ -741,6 +800,7 @@ mod tests {
                 visible: true,
                 shape: protocol::CursorShape::Underline,
             },
+            modes: TerminalModes::default(),
             surface_lines: &scrollback_lines,
             scrollback_lines: &scrollback_lines,
         };
@@ -1321,6 +1381,29 @@ mod tests {
 
         terminal.vt_write(b"\x1b[?2004l");
         assert!(!terminal.mode(Mode::BRACKETED_PASTE).expect("mode"));
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_emits_mode_only_patch_for_mode_changes() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let first = engine
+            .apply_output(terminal_input(2, &empty, &empty), b"ready")
+            .expect("initial update");
+        let mode_change = engine
+            .apply_output(
+                terminal_input_from_update(&first),
+                b"\x1b[?2004h\x1b[?1004h",
+            )
+            .expect("mode update");
+
+        assert_eq!(mode_change.patch_kind, protocol::PatchKind::ModeOnly);
+        assert_eq!(mode_change.surface_lines, first.surface_lines);
+        assert_eq!(mode_change.cursor, first.cursor);
+        assert!(mode_change.modes.bracketed_paste);
+        assert!(mode_change.modes.focus_reporting);
     }
 
     #[cfg(feature = "libghostty-vt")]
