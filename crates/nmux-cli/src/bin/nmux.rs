@@ -113,7 +113,6 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     local::write_attach_request(&mut stream, &options.request)?;
     let snapshot = local::attach_from_stream(&mut stream)?;
     client_state.apply_scope(local::socket_identity(&args.socket_path).ok());
-    let snapshot_modes = snapshot.surface.as_ref().map(|surface| surface.modes);
     let mut rendered = client_state.render_attach(snapshot)?;
     if rendered.surface_text.is_none() {
         rendered.surface_text = client_state.cached_surface_text(&rendered.workspace.pane_id);
@@ -121,9 +120,6 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             .cached_surface_metadata(&rendered.workspace.pane_id)
             .unwrap_or_default();
     }
-    let initial_modes =
-        initial_live_terminal_modes(snapshot_modes, &client_state, &rendered.workspace.pane_id);
-    let mut focus_reporting = initial_modes.focus_reporting;
     warn_if_resize_intent_conflicts_with_policy(args.live_resize, rendered.workspace.resize_policy);
     let mut current_workspace = rendered.workspace.clone();
     let mut current_surface_metadata = rendered.surface_metadata.clone();
@@ -238,14 +234,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     mouse_event.modifiers,
                 )?;
             } else if let Some(focus_event) = args.focus_event {
-                if focus_reporting {
-                    local::send_focus_input_with_sequence(
-                        &mut stream,
-                        &mut client_sequence,
-                        "pane-1",
-                        focus_event.focused(),
-                    )?;
-                }
+                local::send_focus_input_with_sequence(
+                    &mut stream,
+                    &mut client_sequence,
+                    "pane-1",
+                    focus_event.focused(),
+                )?;
             } else if let Some(paste_text) = options.paste_text.as_deref() {
                 local::send_paste_input_with_sequence(
                     &mut stream,
@@ -281,7 +275,6 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 local::LiveSurfaceRead::Update(update) => {
                     let previous_metadata = current_surface_metadata.clone();
-                    focus_reporting = update.modes.focus_reporting;
                     current_surface_metadata = local::TerminalMetadataSummary {
                         title: update.title.clone(),
                         working_directory: update.working_directory.clone(),
@@ -373,16 +366,6 @@ fn load_client_state(
     };
     local::ClientAttachState::load(path)
         .map_err(|err| format!("failed to load client state {}: {err}", path.display()).into())
-}
-
-fn initial_live_terminal_modes(
-    snapshot_modes: Option<local::TerminalModeSummary>,
-    client_state: &local::ClientAttachState,
-    pane_id: &str,
-) -> local::TerminalModeSummary {
-    snapshot_modes
-        .or_else(|| client_state.cached_surface_modes(pane_id))
-        .unwrap_or_default()
 }
 
 fn save_client_state(
@@ -1548,16 +1531,15 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 mod tests {
     use super::{
         FocusEvent, LiveUpdatePrintKind, LocalEcho, MouseEvent, args_from_iter,
-        initial_live_terminal_modes, interim_surface_fidelity_warning_needed,
-        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, raw_terminal_lflag, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, resize_policy_warning, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        resize_policy_warning, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_positive_numeric_args,
     };
     use nmux_cli::local;
-    use nmux_core::session::AttachMode;
     use nmux_proto::protocol;
 
     fn validate_mode_args(
@@ -1593,27 +1575,6 @@ mod tests {
         )
     }
 
-    fn test_workspace() -> local::WorkspaceSummary {
-        local::WorkspaceSummary {
-            session_id: "local".to_owned(),
-            tab_id: "tab-1".to_owned(),
-            pane_id: "pane-1".to_owned(),
-            cols: 80,
-            rows: 24,
-            resize_policy: protocol::ResizePolicy::Fixed,
-        }
-    }
-
-    fn test_presence() -> local::PresenceSummary {
-        local::PresenceSummary {
-            actor_id: "actor-1".to_owned(),
-            user_id: "local-user".to_owned(),
-            display_name: "Local User".to_owned(),
-            mode: AttachMode::ReadWrite,
-            focused_pane_id: Some("pane-1".to_owned()),
-        }
-    }
-
     fn test_surface_update(
         kind: local::SurfaceUpdateKind,
         patch_kind: Option<protocol::PatchKind>,
@@ -1637,59 +1598,6 @@ mod tests {
             styles: Vec::new(),
             text: String::new(),
         }
-    }
-
-    #[test]
-    fn initial_live_modes_use_fresh_surface_then_cached_state() {
-        let mut client_state = local::ClientAttachState::default();
-        let mut cached_modes = local::TerminalModeSummary::default();
-        cached_modes.bracketed_paste = true;
-        cached_modes.focus_reporting = true;
-        cached_modes.mouse_tracking = true;
-        cached_modes.mouse_tracking_mode = protocol::MouseTrackingMode::Any;
-        cached_modes.mouse_format = protocol::MouseFormat::Sgr;
-        let snapshot = local::SurfaceUpdate {
-            kind: local::SurfaceUpdateKind::Snapshot,
-            pane_id: "pane-1".to_owned(),
-            version: 7,
-            base_version: None,
-            patch_kind: None,
-            cols: Some(80),
-            rows: Some(24),
-            surface: Some(protocol::SurfaceKind::Main),
-            cursor: None,
-            modes: cached_modes,
-            title: String::new(),
-            working_directory: String::new(),
-            colors: None,
-            row_updates: Vec::new(),
-            styles: Vec::new(),
-            text: String::new(),
-        };
-        client_state
-            .render_attach(local::AttachSnapshot {
-                workspace: test_workspace(),
-                presence: test_presence(),
-                surface: Some(snapshot),
-                scrollback: None,
-            })
-            .expect("cached snapshot");
-
-        let mut fresh_modes = local::TerminalModeSummary::default();
-        fresh_modes.focus_reporting = true;
-
-        assert_eq!(
-            initial_live_terminal_modes(Some(fresh_modes), &client_state, "pane-1"),
-            fresh_modes
-        );
-        assert_eq!(
-            initial_live_terminal_modes(None, &client_state, "pane-1"),
-            cached_modes
-        );
-        assert_eq!(
-            initial_live_terminal_modes(None, &client_state, "missing"),
-            local::TerminalModeSummary::default()
-        );
     }
 
     #[test]

@@ -97,8 +97,9 @@ only after the backend extraction proves the exact shape needed.
   Local clients now forward UTF-8 paste input through `PasteInput`; the daemon
   rejects embedded bracketed-paste terminators, then wraps with bracketed-paste
   delimiters only when daemon-owned pane mode advertises bracketed paste.
-  Local clients also forward focus gained/lost input through `FocusInput` only
-  when the daemon-owned pane mode reports focus reporting enabled.
+  Local clients also forward focus gained/lost input through `FocusInput`; the
+  daemon rejects it when the daemon-owned pane mode reports focus reporting
+  disabled.
   Local clients forward common named keys for Enter, Tab, Backspace, Escape,
   Insert/Delete, Home/End, PageUp/PageDown, and F1-F12 through the live pane
   terminal engine. The interim engine preserves existing unmodified

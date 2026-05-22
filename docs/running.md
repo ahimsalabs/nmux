@@ -290,8 +290,8 @@ Explicit one-shot text, paste, named-key, focus, and mouse input is still
 forwarded before the scrollback fetch when the visible surface is already
 current.
 When a scoped state file is already current and the daemon sends no surface
-frame, live input gating reuses the cached terminal modes for bracketed paste
-and focus reporting until the next surface update arrives.
+frame, explicit live focus input is still sent to the daemon and rejected with
+an Error frame when the daemon-owned pane mode has focus reporting disabled.
 
 Start a long-running command-backed daemon:
 
