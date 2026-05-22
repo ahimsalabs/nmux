@@ -169,7 +169,7 @@ mod ghostty_vt {
         RenderState, Terminal, TerminalOptions,
         render::{CellIterator, CursorVisualStyle, RowIterator, Snapshot as RenderSnapshot},
         screen::CellWide,
-        terminal::Mode,
+        terminal::{Mode, ScrollViewport},
     };
     use nmux_proto::protocol;
 
@@ -244,11 +244,17 @@ mod ghostty_vt {
             input: TerminalInput<'_>,
             force_rows: bool,
         ) -> Option<TerminalUpdate> {
+            let surface = surface_kind(&self.terminal)?;
+            let scrollback_lines = if surface == protocol::SurfaceKind::Main {
+                self.scrollback_lines()?
+            } else {
+                input.scrollback_lines.to_vec()
+            };
+            self.terminal.scroll_viewport(ScrollViewport::Bottom);
             let snapshot = self.render_state.update(&self.terminal).ok()?;
             let surface_lines =
                 surface_lines(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?;
             let cursor = cursor(&snapshot, input.cursor)?;
-            let surface = surface_kind(&self.terminal)?;
             let patch_kind = if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
@@ -263,9 +269,35 @@ mod ghostty_vt {
                 patch_kind,
                 surface,
                 cursor,
-                scrollback_lines: surface_lines.clone(),
+                scrollback_lines,
                 surface_lines,
             })
+        }
+
+        fn scrollback_lines(&mut self) -> Option<Vec<String>> {
+            let total_rows = self.terminal.total_rows().ok()?;
+            if total_rows == 0 {
+                return Some(Vec::new());
+            }
+
+            self.terminal.scroll_viewport(ScrollViewport::Top);
+            let snapshot = self.render_state.update(&self.terminal).ok()?;
+            let mut lines =
+                surface_lines(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?;
+            lines.truncate(total_rows);
+
+            while lines.len() < total_rows {
+                self.terminal.scroll_viewport(ScrollViewport::Delta(1));
+                let snapshot = self.render_state.update(&self.terminal).ok()?;
+                let viewport_lines =
+                    surface_lines(&snapshot, &mut self.row_iterator, &mut self.cell_iterator)?;
+                let Some(next_line) = viewport_lines.last() else {
+                    break;
+                };
+                lines.push(next_line.clone());
+            }
+
+            Some(lines)
         }
     }
 
@@ -634,6 +666,36 @@ mod tests {
             resized.surface_lines
         );
         assert_ne!(resized.surface_lines, first.surface_lines);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_extracts_backend_owned_scrollback() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(20, 2, &empty, &empty),
+                b"one\r\ntwo\r\nthree\r\nfour",
+            )
+            .expect("terminal update");
+
+        assert!(
+            update.scrollback_lines.len() > update.surface_lines.len(),
+            "scrollback did not include history beyond the viewport: {:?}",
+            update.scrollback_lines
+        );
+        for expected in ["one", "two", "three", "four"] {
+            assert!(
+                update
+                    .scrollback_lines
+                    .iter()
+                    .any(|line| line.contains(expected)),
+                "scrollback missing {expected}: {:?}",
+                update.scrollback_lines
+            );
+        }
     }
 }
 use std::collections::HashMap;
