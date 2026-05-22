@@ -946,6 +946,32 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_render_state_tracks_palette_override_without_protocol_fields() {
+        use libghostty_vt::{RenderState, Terminal, TerminalOptions, style::RgbColor};
+
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 80,
+            rows: 24,
+            max_scrollback: 100,
+        })
+        .expect("terminal");
+        let mut render_state = RenderState::new().expect("render state");
+
+        terminal.vt_write(b"\x1b]4;1;#112233\x1b\\");
+        let snapshot = render_state.update(&terminal).expect("snapshot");
+
+        assert_eq!(
+            snapshot.colors().expect("render colors").palette[1],
+            RgbColor {
+                r: 0x11,
+                g: 0x22,
+                b: 0x33,
+            }
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_engine_extracts_basic_sgr_style_flags() {
         let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
         let empty = Vec::new();
