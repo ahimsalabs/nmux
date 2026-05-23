@@ -138,7 +138,7 @@ Done:
 - One-shot and live host write failures now return protocol `Error` frames instead of surfacing as opaque daemon I/O exits.
 - Live host resize failures now return protocol `Error` frames instead of surfacing as opaque daemon I/O exits.
 - Initial and post-attach host output polling failures now return protocol `Error` frames instead of surfacing as opaque daemon I/O exits.
-- Pane-scoped one-shot and live client intents for unknown panes now return protocol `PaneNotFound` errors instead of hanging, silently omitting a response, or falling through to process-host behavior.
+- Pane-scoped one-shot and live client intents for unknown panes now return protocol `PaneNotFound` errors instead of hanging, silently omitting a response, or falling through to process-host behavior, and attach setup rejects missing active-pane metadata instead of guessing `pane-1`.
 - Public scrollback ranges now consistently use 1-based line numbers from `ScrollbackFetch` through `ScrollbackChunk` and decoded client summaries.
 - Scrollback fetches now treat `known_scrollback_version = 0` as no precondition and return `ErrorCode::StaleVersion` when a nonzero client-known version does not match the daemon's pane scrollback version.
 - Local clients now fetch daemon-owned scrollback even when a reconnect has the current visible surface, preserve distinct scoped cached scrollback range/version entries as fetch preconditions for matching ranges, and retry once with `known_scrollback_version = 0` after `StaleVersion`.

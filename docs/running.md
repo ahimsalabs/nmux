@@ -193,6 +193,8 @@ requesting scrollback, so unsafe paste, encoding failures, host input failures,
 and host output polling failures are reported directly.
 Pane-scoped input, resize, and scrollback requests for unknown panes return a
 `PaneNotFound` error instead of waiting for a response that will never arrive.
+If the daemon cannot resolve its active pane while setting up an attach, it
+also returns `PaneNotFound` instead of guessing `pane-1`.
 
 For read-only live observation, use `--no-input`:
 

@@ -513,7 +513,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   one-shot and live host write failures return protocol Error frames instead of tearing down nmuxd with opaque I/O failures
   live host resize failures return protocol Error frames instead of tearing down nmuxd with opaque I/O failures
   initial and post-attach host output polling failures return protocol Error frames instead of tearing down nmuxd with opaque I/O failures
-  pane-scoped one-shot and live client intents for unknown panes return protocol PaneNotFound errors instead of hanging or falling through to process-host behavior
+  pane-scoped one-shot and live client intents for unknown panes return protocol PaneNotFound errors instead of hanging or falling through to process-host behavior, and attach setup rejects missing active-pane metadata instead of guessing pane-1
   public scrollback ranges consistently use 1-based line numbers from ScrollbackFetch through ScrollbackChunk and decoded client summaries
   ScrollbackFetch known_scrollback_version 0 means no client precondition, and nonzero stale scrollback versions return protocol StaleVersion errors
   nmux --state preserves distinct last-seen scrollback range/version metadata entries scoped to the daemon socket identity, current-surface reconnects still fetch daemon-owned scrollback, matching later fetches use cached versions as preconditions, and stale fetches retry once with no version precondition

@@ -332,7 +332,11 @@ fn serve_next_with_output(
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
     if let Some(output) = output.as_deref_mut() {
-        let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
+        let Some(pane_id) = active_pane_id(session).map(ToOwned::to_owned) else {
+            let mut seq = 1;
+            write_active_pane_not_found_error(&mut stream, session, &mut seq)?;
+            return Ok(());
+        };
         if let Err(err) = poll_pane_output_with_engines(session, engines, output, &pane_id) {
             let mut seq = 1;
             write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
@@ -353,7 +357,11 @@ where
 {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
-    let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
+    let Some(pane_id) = active_pane_id(session).map(ToOwned::to_owned) else {
+        let mut seq = 1;
+        write_active_pane_not_found_error(&mut stream, session, &mut seq)?;
+        return Ok(());
+    };
     if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
         let mut seq = 1;
         write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
@@ -374,7 +382,11 @@ where
 {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
-    let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
+    let Some(pane_id) = active_pane_id(session).map(ToOwned::to_owned) else {
+        let mut seq = 1;
+        write_active_pane_not_found_error(&mut stream, session, &mut seq)?;
+        return Ok(());
+    };
     if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
         let mut seq = 1;
         write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
@@ -391,8 +403,11 @@ fn serve_live_attached_client(
     engines: &mut PaneTerminalEngines,
     cycles: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
     let mut seq = 1;
+    let Some(pane_id) = active_pane_id(session).map(ToOwned::to_owned) else {
+        write_active_pane_not_found_error(stream, session, &mut seq)?;
+        return Ok(());
+    };
     let workspace_frame = session.workspace_tree_frame("local-client", seq);
     wire::write_default_frame(stream, &workspace_frame)?;
     seq += 1;
@@ -694,15 +709,21 @@ fn serve_attached_client(
     mut host: Option<&mut dyn ProcessHostOutput>,
     engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let workspace_frame = session.workspace_tree_frame("local-client", 1);
+    let mut seq = 1;
+    let Some(pane_id) = active_pane_id(session).map(ToOwned::to_owned) else {
+        write_active_pane_not_found_error(stream, session, &mut seq)?;
+        return Ok(());
+    };
+
+    let workspace_frame = session.workspace_tree_frame("local-client", seq);
     wire::write_default_frame(stream, &workspace_frame)?;
+    seq += 1;
 
     let actor = request.actor();
-    let presence_frame = session.presence_update_frame("local-client", 2, &actor);
+    let presence_frame = session.presence_update_frame("local-client", seq, &actor);
     wire::write_default_frame(stream, &presence_frame)?;
+    seq += 1;
 
-    let pane_id = active_pane_id(session).unwrap_or("pane-1").to_owned();
-    let mut seq = 3;
     let response = request.surface_response(session, &pane_id);
     let status_frame = session.attach_status_frame(
         "local-client",
@@ -772,12 +793,16 @@ fn serve_attached_client(
 }
 
 fn active_pane_id(session: &Session) -> Option<&str> {
-    session
+    let pane_id = session
         .tabs
         .iter()
         .find(|tab| tab.id == session.active_tab_id)
         .or_else(|| session.tabs.first())
-        .map(|tab| tab.active_pane_id.as_str())
+        .map(|tab| tab.active_pane_id.as_str())?;
+    session
+        .surface_version(pane_id)
+        .is_some()
+        .then_some(pane_id)
 }
 
 fn process_one_shot_input(
@@ -891,6 +916,29 @@ fn write_pane_not_found_error(
     pane_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     write_pane_not_found_error_with_input_seq(stream, session, seq, pane_id, 0)
+}
+
+fn write_active_pane_not_found_error(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let pane_id = session
+        .tabs
+        .iter()
+        .find(|tab| tab.id == session.active_tab_id)
+        .or_else(|| session.tabs.first())
+        .map(|tab| tab.active_pane_id.as_str())
+        .unwrap_or("active-pane");
+    write_protocol_error(
+        stream,
+        session,
+        seq,
+        protocol::ErrorCode::PaneNotFound,
+        &format!("active pane not found: {pane_id}"),
+        Some(pane_id),
+        0,
+    )
 }
 
 fn write_pane_not_found_error_with_input_seq(
@@ -7206,6 +7254,33 @@ mod tests {
             event,
             HostEvent::Input { pane_id, .. } if pane_id == "pane-1"
         )));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_rejects_missing_active_pane_without_guessing_default() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        session.tabs[0].active_pane_id = "missing-pane".to_owned();
+
+        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let err = attach_from_stream(&mut stream).expect_err("missing active pane should fail");
+        server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("active pane not found: missing-pane"),
+            "missing active-pane context: {err}"
+        );
+        assert!(
+            err.to_string().contains("server error"),
+            "missing server error prefix: {err}"
+        );
 
         let _ = fs::remove_file(socket_path);
     }
