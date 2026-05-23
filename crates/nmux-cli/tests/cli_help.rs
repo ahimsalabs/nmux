@@ -39,6 +39,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(
         stdout.contains("Informational flags exit before mode validation or socket/state work")
     );
+    assert!(stdout.contains("NMUX_ORIGIN records the local hop chain"));
     assert!(stdout.contains("not a VT-correct terminal emulator"));
     assert!(stdout.contains("Default socket: --socket, else valid absolute $NMUX_SOCKET"));
     assert!(stdout.contains("valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock"));
@@ -80,6 +81,7 @@ fn nmuxd_help_lists_live_server_flags() {
             .contains("Informational flags exit before daemon-mode validation or socket/PTY work")
     );
     assert!(stdout.contains("Existing socket paths are not replaced automatically"));
+    assert!(stdout.contains("NMUX_ORIGIN is appended for child pane commands"));
     assert!(stdout.contains("libghostty-vt requires building nmux"));
     assert!(stdout.contains("Examples:"));
     assert!(stdout.contains("nmuxd --one-shot"));

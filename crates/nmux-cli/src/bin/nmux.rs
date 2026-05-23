@@ -1481,6 +1481,7 @@ Options:
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   --print-context prints inherited NMUX_* pane identity without connecting.
+  NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
   Without an explicit input or resize flag, nmux attaches read-only.
   The current renderer uses an interim text surface, not a VT-correct terminal emulator.

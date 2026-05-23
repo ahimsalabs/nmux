@@ -318,6 +318,7 @@ Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   Informational flags exit before daemon-mode validation or socket/PTY work.
   Existing socket paths are not replaced automatically.
+  When started inside nmux, NMUX_ORIGIN is appended for child pane commands.
   libghostty-vt requires building nmux with the libghostty-vt feature.
 
 Examples:
