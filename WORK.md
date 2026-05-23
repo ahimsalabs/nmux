@@ -50,7 +50,16 @@ backends/adapters
   herdr adapter, optional AGPL membrane
 ```
 
-The key move is that **nmuxd runs libghostty per pane**. PTY bytes go into libghostty. libghostty maintains the authoritative terminal state. nmux serializes that state into snapshots and diffs. Clients render the state and send input back. This directly uses the thing you actually wanted from libghostty: snapshotting, VT correctness, Unicode, styles, modes, images, scrollback, and eventually render integration. Your previous notes already called out the snapshot/VT layer as the central place Ghostty belongs, not as a backend adapter. 
+The target move is that **nmuxd runs a real Ghostty/libghostty-derived terminal
+engine per pane**. Today that is implemented as an opt-in `libghostty-vt`
+backend while the default engine remains the interim text surface. PTY bytes go
+into the daemon-owned terminal engine, that engine maintains authoritative
+terminal state, and nmux serializes that state into snapshots and diffs.
+Clients render the state and send input back. This directly uses the thing you
+actually wanted from libghostty: snapshotting, VT correctness, Unicode, styles,
+modes, images, scrollback, and eventually render integration. Your previous
+notes already called out the snapshot/VT layer as the central place Ghostty
+belongs, not as a backend adapter.
 
 ## Mosh inspiration, but not a Mosh clone
 
@@ -84,6 +93,10 @@ ScrollbackChunk    lazy historical range
 That is what makes it a **portable workspace**, not just a remote shell.
 
 ## What “Ghostty control mode” looks like
+
+The rest of this section is a product/protocol sketch, not the current
+FlatBuffers contract. Keep the implemented schema details in `docs/protocol.md`
+and durable protocol decisions in ADRs.
 
 The Ghostty equivalent of `tmux -CC` is not a line protocol that Ghostty parses. It is more like:
 
@@ -128,15 +141,20 @@ AttachWorkspace
     pane:abc.scrollback = 980
 ```
 
-Then the server replies with either patches or fresh snapshots:
+Then the server replies with either patches or fresh snapshots. The implemented
+local attach path currently sends `WorkspaceTreeSnapshot`, `PresenceUpdate`,
+`AttachStatus`, and then a pane surface frame only when the status says one
+follows. Future frontend handshakes may grow beyond that:
 
 ```text
 WorkspaceTreeSnapshot
+PresenceUpdate
+AttachStatus
 PaneSurfaceSnapshot
 PaneSurfacePatch
 ScrollbackChunk
-PresenceSnapshot
-AgentStateSnapshot
+future PresenceSnapshot
+future AgentStateSnapshot
 ```
 
 Input goes the other direction:
@@ -173,7 +191,7 @@ If yes, great: nmux snapshots can hydrate a libghostty render state. If no, you 
 
 FlatBuffers is still the right serialization layer, but the schema should be state-sync-first, not RPC-first. FlatBuffers supports zero-copy access without parsing/unpacking and works across languages including Rust, Swift, and TypeScript. ([GitHub][5]) Its evolution rules also fit this project: append fields, do not remove fields, deprecate instead. ([FlatBuffers][6])
 
-A good `nmux.fbs` shape is:
+A good current `nmux.fbs` spine is:
 
 ```text
 Envelope
@@ -194,10 +212,11 @@ Bodies
   ResizeIntent
   PresenceUpdate
   AttachRequest
+  AttachStatus
   Error
 ```
 
-Do **not** start with a naïve `Cell { codepoint:u32, attrs:u64 }` and freeze it. Terminal cells are messier than that: grapheme clusters, double-width characters, combining marks, hyperlinks, images, underlines, cursor modes, palette changes, and ligatures all matter. The protocol should probably encode rows as runs:
+Do **not** start with a naïve `Cell { codepoint:u32, attrs:u64 }` and freeze it. Terminal cells are messier than that: grapheme clusters, double-width characters, combining marks, hyperlinks, images, underlines, cursor modes, palette changes, and ligatures all matter. The protocol now encodes rows as runs:
 
 ```text
 CellRun
@@ -212,7 +231,9 @@ Row
   dirty_hash
 ```
 
-Then keep a separate style table:
+Then keep a separate style table. Current wire colors are packed RGBA values
+and style booleans are compacted into `Style.flags`; this sketch remains useful
+as the conceptual inventory behind those packed fields:
 
 ```text
 Style
