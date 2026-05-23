@@ -61,31 +61,17 @@ when changing terminal engine behavior.
 Use this path when collecting evidence for making `libghostty-vt` the default
 engine, a regular CI requirement, or a packaging baseline.
 
-Run:
+Start with the narrow evidence path that matches the question:
 
-```sh
-nix develop . -c make promotion-sample
-nix develop . -c make local-smoke
-nix develop . -c make promotion-cold-target-sample
-nix develop . -c make promotion-cold-deps-sample
-nix develop . -c make promotion-cold-deps-verify
-nix develop . -c make promotion-local-sample
-nix develop . -c make promotion-evidence-bundle
-nix develop . -c make promotion-evidence-verify
-nix develop . -c make source-fetch-provenance-sample
-nix develop . -c make source-fetch-provenance-verify
-nix develop . -c make source-fetch-offline-probe
-nix develop . -c make source-fetch-offline-probe-verify
-nix develop . -c make packaging-sample
-nix develop . -c make packaging-layout-sample
-nix develop . -c make packaging-layout-verify
-nix develop . -c make packaging-provenance-sample
-nix develop . -c make packaging-provenance-verify
-nix develop . -c make packaging-provenance-manifest-verify
-nix develop . -c make packaging-archive-sample
-nix develop . -c make packaging-archive-verify
-nix develop . -c make packaging-archive-runtime-smoke
-```
+| Question | Command |
+| --- | --- |
+| Does the combined default plus opt-in gate pass here? | `nix develop . -c make promotion-sample` |
+| Does the user-level default workflow still work? | `nix develop . -c make local-smoke` |
+| What changes with a fresh Rust target dir? | `nix develop . -c make promotion-cold-target-sample` |
+| Can isolated Cargo dependency/source fetches satisfy the opt-in path? | `nix develop . -c make promotion-cold-deps-sample` then `nix develop . -c make promotion-cold-deps-verify` |
+| Do source-fetch, validation, workflow smoke, offline probe, and package runtime smoke pass together? | `nix develop . -c make promotion-local-sample` |
+| Do we need a self-contained evidence artifact? | `nix develop . -c make promotion-evidence-bundle` then `nix develop . -c make promotion-evidence-verify` |
+| Are source-fetch or packaging details under review? | Use the focused `source-fetch-*` and `packaging-*` targets described below, or the full inventory in [toolchain.md](toolchain.md). |
 
 Record the host, command, result, timing, cache state, source-fetch mode, and
 any CI or packaging context in
