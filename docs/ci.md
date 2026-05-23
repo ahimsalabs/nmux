@@ -46,7 +46,7 @@ Record each manual run with these fields:
 | Runner | Runner OS, architecture, image label, and hosted/self-hosted status from `SUMMARY.txt`. |
 | Toolchain | `make toolchain-info` output from the run. |
 | Source mode | `ghostty_source_mode`, `GHOSTTY_SOURCE_DIR`, and `GIT_CONFIG_GLOBAL`. |
-| Cache state | Whether Nix, Cargo registry, Cargo Git, Rust target, and native Ghostty/Zig build caches were cold, warm, restored, or unknown. |
+| Cache state | `CACHE_STATE.txt` plus CI cache setup context; classify whether Nix, Cargo registry, Cargo Git, Rust target, and native Ghostty/Zig build caches were cold, warm, restored, or unknown. |
 | Timings | `check_all_real_seconds`, `check_all_user_seconds`, `check_all_sys_seconds`, `bundle_elapsed_seconds`, and total GitHub job duration. |
 | Provenance | `nmux-promotion-evidence` artifact, `SOURCE_FETCH.txt`, `Cargo.lock` hash, and locked `libghostty-vt`/`libghostty-vt-sys` records. |
 | Packaging | Archive name, SHA-256, `packaging-provenance-verify` result, and packaged runtime smoke result. |
@@ -58,10 +58,10 @@ before transcribing it into the promotion tracker. For a downloaded artifact
 that is not under `target/promotion-evidence`, run
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify`. The
 verifier checks the required summary identity fields, timing fields,
-bundle-relative summary artifact names, relocation-safe `BUNDLE_MANIFEST.txt`
-hashes, source/provenance records,
-archive hash, and packaged runtime smoke result; it does not replace human
-judgment about cache state, flake rate, or platform coverage.
+bundle-relative summary artifact names, cache-state artifact, relocation-safe
+`BUNDLE_MANIFEST.txt` hashes, source/provenance records, archive hash, and
+packaged runtime smoke result; it does not replace human judgment about cache
+classification, flake rate, or platform coverage.
 
 The bundle summary records GitHub Actions fields when present:
 `github_server_url`, `github_repository`, `github_run_id`,
@@ -71,6 +71,9 @@ The bundle summary records GitHub Actions fields when present:
 `check_all_user_seconds`, and `check_all_sys_seconds`, plus
 `started_at_utc`, `completed_at_utc`, and `bundle_elapsed_seconds` for the
 bundle artifact generation and verifier pass before final console output.
+`CACHE_STATE.txt` records observed cache-related environment values and
+directory presence; use it with the workflow cache configuration when
+classifying the run as cold, warm, restored, or unknown.
 Local runs record GitHub identity fields as `unset`; the overall GitHub job
 duration still comes from the workflow UI or API.
 

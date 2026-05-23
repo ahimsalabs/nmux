@@ -72,6 +72,38 @@ promotion-evidence-bundle:
 			shasum -a 256 "$$1" | awk '{print $$1}'; \
 		fi; \
 	}; \
+	path_status() { \
+		if [ -e "$$1" ]; then \
+			printf 'present'; \
+		else \
+			printf 'missing'; \
+		fi; \
+	}; \
+	write_cache_state() { \
+		cache_state="$$bundle_dir/CACHE_STATE.txt"; \
+		cargo_home="$${CARGO_HOME:-$$HOME/.cargo}"; \
+		cargo_target_dir="$${CARGO_TARGET_DIR:-target}"; \
+		{ \
+			printf 'nmux promotion evidence cache state\n'; \
+			printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+			printf 'cache_state_scope=%s\n' 'observed filesystem and environment state; does not by itself prove cold or warm cache history'; \
+			printf 'HOME=%s\n' "$${HOME:-unset}"; \
+			printf 'CARGO_HOME=%s\n' "$$cargo_home"; \
+			printf 'CARGO_TARGET_DIR=%s\n' "$$cargo_target_dir"; \
+			printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
+			printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
+			printf 'nix_store_status=%s\n' "$$(path_status /nix/store)"; \
+			printf 'cargo_home_status=%s\n' "$$(path_status "$$cargo_home")"; \
+			printf 'cargo_registry_status=%s\n' "$$(path_status "$$cargo_home/registry")"; \
+			printf 'cargo_git_status=%s\n' "$$(path_status "$$cargo_home/git")"; \
+			printf 'cargo_target_dir_status=%s\n' "$$(path_status "$$cargo_target_dir")"; \
+			printf 'promotion_cold_target_dir_status=%s\n' "$$(path_status target/promotion-cold)"; \
+			printf 'packaging_default_target_dir_status=%s\n' "$$(path_status target/packaging-default)"; \
+			printf 'packaging_libghostty_vt_target_dir_status=%s\n' "$$(path_status target/packaging-libghostty-vt)"; \
+			printf 'source_fetch_provenance_status=%s\n' "$$(path_status target/source-fetch-provenance)"; \
+			printf 'cache_state_note=%s\n' 'classify cold, warm, restored, or unknown in the promotion tracker from this artifact plus CI/cache setup context'; \
+		} > "$$cache_state"; \
+	}; \
 	write_summary() { \
 		completed_utc="$$1"; \
 		elapsed_seconds="$$2"; \
@@ -96,7 +128,7 @@ promotion-evidence-bundle:
 			printf 'ghostty_source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"; \
 			printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
 			printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
-			printf 'cache_state=%s\n' 'not captured; record Nix/Cargo/native cache context separately'; \
+			printf 'cache_state=%s\n' 'CACHE_STATE.txt'; \
 			printf 'run_log=%s\n' 'RUN.log'; \
 			printf 'toolchain=%s\n' 'TOOLCHAIN.txt'; \
 			printf 'source_fetch=%s\n' 'SOURCE_FETCH.txt'; \
@@ -115,6 +147,7 @@ promotion-evidence-bundle:
 			printf 'nmux promotion evidence bundle manifest\n'; \
 			for name in \
 				ARCHIVE.sha256 \
+				CACHE_STATE.txt \
 				CARGO_TREE.txt \
 				PACKAGE_PROVENANCE.txt \
 				RUN.log \
@@ -127,11 +160,13 @@ promotion-evidence-bundle:
 	}; \
 	end_epoch="$$(date -u '+%s')"; \
 	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+	write_cache_state; \
 	write_summary "$$completed_utc" "$$((end_epoch - start_epoch))"; \
 	write_manifest; \
 	$(MAKE) --no-print-directory PROMOTION_EVIDENCE_DIR="$$bundle_dir" promotion-evidence-verify; \
 	end_epoch="$$(date -u '+%s')"; \
 	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+	write_cache_state; \
 	write_summary "$$completed_utc" "$$((end_epoch - start_epoch))"; \
 	write_manifest; \
 	$(MAKE) --no-print-directory PROMOTION_EVIDENCE_DIR="$$bundle_dir" promotion-evidence-verify; \
@@ -149,6 +184,7 @@ promotion-evidence-verify:
 	package_provenance="$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
 	cargo_tree="$$bundle_dir/CARGO_TREE.txt"; \
 	archive_sha_file="$$bundle_dir/ARCHIVE.sha256"; \
+	cache_state="$$bundle_dir/CACHE_STATE.txt"; \
 	bundle_manifest="$$bundle_dir/BUNDLE_MANIFEST.txt"; \
 	hash_file() { \
 		if command -v sha256sum >/dev/null 2>&1; then \
@@ -189,12 +225,14 @@ promotion-evidence-verify:
 	require_file "$$package_provenance"; \
 	require_file "$$cargo_tree"; \
 	require_file "$$archive_sha_file"; \
+	require_file "$$cache_state"; \
 	require_file "$$bundle_manifest"; \
 	expected_manifest="$$(mktemp)"; \
 	{ \
 		printf 'nmux promotion evidence bundle manifest\n'; \
 		for name in \
 			ARCHIVE.sha256 \
+			CACHE_STATE.txt \
 			CARGO_TREE.txt \
 			PACKAGE_PROVENANCE.txt \
 			RUN.log \
@@ -230,7 +268,7 @@ promotion-evidence-verify:
 	require_line "$$summary" '^ghostty_source_mode=(pinned-fetch|local)$$' 'Ghostty source mode'; \
 	require_line "$$summary" '^GHOSTTY_SOURCE_DIR=.+$$' 'GHOSTTY_SOURCE_DIR field'; \
 	require_line "$$summary" '^GIT_CONFIG_GLOBAL=.+$$' 'GIT_CONFIG_GLOBAL field'; \
-	require_line "$$summary" '^cache_state=.+$$' 'cache state field'; \
+	require_exact "$$summary" 'cache_state=CACHE_STATE.txt' 'cache state path'; \
 	require_exact "$$summary" 'run_log=RUN.log' 'run log path'; \
 	require_exact "$$summary" 'toolchain=TOOLCHAIN.txt' 'toolchain path'; \
 	require_exact "$$summary" 'source_fetch=SOURCE_FETCH.txt' 'source-fetch path'; \
@@ -275,6 +313,18 @@ promotion-evidence-verify:
 	require_line "$$run_log" '^packaged_runtime_smoke=passed$$' 'runtime smoke result'; \
 	require_line "$$cargo_tree" '^nmux-cli v' 'cargo tree root'; \
 	require_line "$$archive_sha_file" '^[0-9a-f]{64}  target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package\.tar\.gz$$' 'archive SHA-256 file'; \
+	require_exact "$$cache_state" 'nmux promotion evidence cache state' 'cache state title'; \
+	require_line "$$cache_state" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'cache state timestamp'; \
+	require_line "$$cache_state" '^cache_state_scope=.+$$' 'cache state scope'; \
+	require_line "$$cache_state" '^CARGO_HOME=.+$$' 'cache state CARGO_HOME'; \
+	require_line "$$cache_state" '^CARGO_TARGET_DIR=.+$$' 'cache state CARGO_TARGET_DIR'; \
+	require_line "$$cache_state" '^nix_store_status=(present|missing)$$' 'Nix store cache status'; \
+	require_line "$$cache_state" '^cargo_home_status=(present|missing)$$' 'Cargo home cache status'; \
+	require_line "$$cache_state" '^cargo_registry_status=(present|missing)$$' 'Cargo registry cache status'; \
+	require_line "$$cache_state" '^cargo_git_status=(present|missing)$$' 'Cargo git cache status'; \
+	require_line "$$cache_state" '^cargo_target_dir_status=(present|missing)$$' 'Cargo target cache status'; \
+	require_line "$$cache_state" '^packaging_libghostty_vt_target_dir_status=(present|missing)$$' 'native VT target cache status'; \
+	require_line "$$cache_state" '^cache_state_note=.+$$' 'cache state interpretation note'; \
 	printf 'promotion_evidence_verified=%s\n' "$$summary"
 
 source-fetch-provenance-sample: toolchain-info
