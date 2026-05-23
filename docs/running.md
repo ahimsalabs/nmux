@@ -232,8 +232,10 @@ Informational flags such as `--version`, `--version-json`, `--help`,
 validation or socket/PTY work, so scripts can reuse broader command templates
 without accidentally opening a connection or starting a pane process.
 `--state-info` and `--state-info-json` require `--state PATH` and inspect the
-persisted client cache without connecting. `--state-info-json` reports setup
-failures as JSON error objects.
+persisted client cache without connecting. They include the selected socket
+path, whether it exists, and whether the persisted cache scope matches that live
+socket identity. `--state-info-json` reports setup failures as JSON error
+objects.
 
 ```sh
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --print-socket
@@ -527,7 +529,8 @@ surface frame, explicit live key, paste, named-key, focus, and mouse input is
 still sent to daemon-owned input handling; disabled focus or mouse modes return
 protocol `Error` frames instead of relying on cached client mode state.
 Use `nmux --state PATH --state-info-json` to inspect this cache shape from a
-script without opening a socket.
+script without opening a socket; its socket fields tell the script whether the
+cache belongs to the currently selected daemon socket.
 
 Start a long-running command-backed daemon:
 

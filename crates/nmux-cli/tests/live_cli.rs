@@ -304,6 +304,14 @@ fn state_info_reports_persisted_cache_without_connecting() {
         "missing exists:\n{stdout}"
     );
     assert!(
+        stdout.contains("\"socket_exists\":false"),
+        "missing socket existence:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"scope_matches_socket\":null"),
+        "missing unknown socket scope match:\n{stdout}"
+    );
+    assert!(
         stdout.contains("\"scope\":{\"kind\":\"socket\""),
         "missing socket scope:\n{stdout}"
     );
@@ -318,6 +326,8 @@ fn state_info_reports_persisted_cache_without_connecting() {
 
     let info_text = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
             "--state",
             state_path.to_str().expect("state path"),
             "--state-info",
@@ -332,11 +342,92 @@ fn state_info_reports_persisted_cache_without_connecting() {
     let stdout = String::from_utf8_lossy(&info_text.stdout);
     assert!(stdout.contains("exists=true"), "missing exists:\n{stdout}");
     assert!(
+        stdout.contains("socket_exists=false"),
+        "missing socket existence:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("scope_matches_socket=unknown"),
+        "missing unknown socket scope match:\n{stdout}"
+    );
+    assert!(
         stdout.contains("surface pane=pane-1"),
         "missing surface summary:\n{stdout}"
     );
 
     let _ = fs::remove_file(&state_path);
+}
+
+#[test]
+fn state_info_reports_matching_live_socket_scope() {
+    let socket_path = test_socket_path();
+    let state_path = test_state_path();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-forever",
+            "--command",
+            "printf 'ready\n'; cat >/dev/null",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let attach = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "100",
+        ])
+        .output()
+        .expect("run nmux");
+    assert!(
+        attach.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&attach.stderr)
+    );
+
+    let info_json = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--state-info-json",
+        ])
+        .output()
+        .expect("run nmux --state-info-json");
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    assert!(
+        info_json.status.success(),
+        "state-info-json failed: {}",
+        String::from_utf8_lossy(&info_json.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&info_json.stdout);
+    assert!(
+        stdout.contains("\"socket_exists\":true"),
+        "missing socket existence:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"scope_matches_socket\":true"),
+        "missing matching socket scope:\n{stdout}"
+    );
 }
 
 #[test]

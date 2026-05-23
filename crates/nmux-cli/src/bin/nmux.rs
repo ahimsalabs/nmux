@@ -1615,15 +1615,38 @@ fn print_state_info(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         return Err("--state-info requires --state PATH".into());
     };
     let exists = path.exists();
+    let socket_identity = local::socket_identity(&args.socket_path)
+        .ok()
+        .map(local::SocketIdentitySummary::from);
     let state = local::ClientAttachState::load(path)
         .map_err(|err| format!("failed to load client state {}: {err}", path.display()))?;
     let summary = state.summary();
+    let socket_info = StateInfoSocketSummary {
+        path: &args.socket_path,
+        exists: args.socket_path.exists(),
+        scope_matches_socket: match (summary.scope, socket_identity) {
+            (Some(scope), Some(identity)) => Some(scope == identity),
+            _ => None,
+        },
+    };
     if args.state_info_json {
-        println!("{}", format_state_info_json(path, exists, &summary));
+        println!(
+            "{}",
+            format_state_info_json(path, exists, &socket_info, &summary)
+        );
     } else {
-        print!("{}", format_state_info_text(path, exists, &summary));
+        print!(
+            "{}",
+            format_state_info_text(path, exists, &socket_info, &summary)
+        );
     }
     Ok(())
+}
+
+struct StateInfoSocketSummary<'a> {
+    path: &'a Path,
+    exists: bool,
+    scope_matches_socket: Option<bool>,
 }
 
 fn print_key_names(json: bool) {
@@ -2144,6 +2167,7 @@ fn format_context_json(session_id: &str, pane_id: &str, socket: &str, origin: &s
 fn format_state_info_text(
     path: &Path,
     exists: bool,
+    socket_info: &StateInfoSocketSummary<'_>,
     summary: &local::ClientStateSummary,
 ) -> String {
     let mut output = String::new();
@@ -2152,6 +2176,19 @@ fn format_state_info_text(
     output.push('\n');
     output.push_str("exists=");
     output.push_str(if exists { "true" } else { "false" });
+    output.push('\n');
+    output.push_str("socket=");
+    output.push_str(&socket_info.path.display().to_string());
+    output.push('\n');
+    output.push_str("socket_exists=");
+    output.push_str(if socket_info.exists { "true" } else { "false" });
+    output.push('\n');
+    output.push_str("scope_matches_socket=");
+    output.push_str(match socket_info.scope_matches_socket {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "unknown",
+    });
     output.push('\n');
     match summary.scope {
         Some(scope) => {
@@ -2203,6 +2240,7 @@ fn format_state_info_text(
 fn format_state_info_json(
     path: &Path,
     exists: bool,
+    socket_info: &StateInfoSocketSummary<'_>,
     summary: &local::ClientStateSummary,
 ) -> String {
     let scope = summary
@@ -2214,6 +2252,10 @@ fn format_state_info_json(
             )
         })
         .unwrap_or_else(|| "null".to_owned());
+    let scope_matches_socket = socket_info
+        .scope_matches_socket
+        .map(|matches| if matches { "true" } else { "false" })
+        .unwrap_or("null");
     let surfaces = summary
         .surfaces
         .iter()
@@ -2249,9 +2291,12 @@ fn format_state_info_json(
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"path\":{},\"exists\":{},\"scope\":{scope},\"surfaces\":[{surfaces}],\"scrollbacks\":[{scrollbacks}]}}",
+        "{{\"path\":{},\"exists\":{},\"socket_path\":{},\"socket_exists\":{},\"scope_matches_socket\":{},\"scope\":{scope},\"surfaces\":[{surfaces}],\"scrollbacks\":[{scrollbacks}]}}",
         local::json_string(&path.display().to_string()),
-        exists
+        exists,
+        local::json_string(&socket_info.path.display().to_string()),
+        socket_info.exists,
+        scope_matches_socket
     )
 }
 
@@ -2733,16 +2778,16 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 mod tests {
     use super::{
         FocusEvent, KEY_NAME_ALIASES, LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent,
-        SUPPORTED_KEY_NAMES, args_from_iter, format_cli_error_json, format_context_json,
-        format_input_choices_json, format_key_names_json, format_live_attach_json,
-        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
-        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
-        format_scrollback, format_state_info_json, format_state_info_text,
-        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        SUPPORTED_KEY_NAMES, StateInfoSocketSummary, args_from_iter, format_cli_error_json,
+        format_context_json, format_input_choices_json, format_key_names_json,
+        format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
+        format_live_error_json, format_live_surface_update_json, format_live_workspace_json,
+        format_rendered_attach_json, format_scrollback, format_state_info_json,
+        format_state_info_text, interim_surface_fidelity_warning_needed, live_update_print_kind,
+        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
+        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag,
+        raw_terminal_mode_needed, redraw_terminal_guard_needed, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -3263,15 +3308,26 @@ mod tests {
             }],
         };
         let path = Path::new("/tmp/nmux.state");
-        let text = format_state_info_text(path, true, &summary);
+        let socket_info = StateInfoSocketSummary {
+            path: Path::new("/tmp/nmux.sock"),
+            exists: true,
+            scope_matches_socket: Some(true),
+        };
+        let text = format_state_info_text(path, true, &socket_info, &summary);
         assert!(text.contains("state=/tmp/nmux.state"));
         assert!(text.contains("exists=true"));
+        assert!(text.contains("socket=/tmp/nmux.sock"));
+        assert!(text.contains("socket_exists=true"));
+        assert!(text.contains("scope_matches_socket=true"));
         assert!(text.contains("scope=socket dev=1 ino=2 ctime=3.4"));
         assert!(text.contains("surface pane=pane-1 version=7 size=80x24 kind=main"));
         assert!(text.contains("scrollback pane=pane-1 version=9 range=6..7 total=7"));
-        let json = format_state_info_json(path, true, &summary);
+        let json = format_state_info_json(path, true, &socket_info, &summary);
         assert!(json.contains("\"path\":\"/tmp/nmux.state\""));
         assert!(json.contains("\"exists\":true"));
+        assert!(json.contains("\"socket_path\":\"/tmp/nmux.sock\""));
+        assert!(json.contains("\"socket_exists\":true"));
+        assert!(json.contains("\"scope_matches_socket\":true"));
         assert!(json.contains("\"scope\":{\"kind\":\"socket\",\"dev\":1"));
         assert!(json.contains("\"surface_kind\":\"main\""));
         assert!(json.contains("\"scrollbacks\":[{\"pane_id\":\"pane-1\",\"version\":9"));
