@@ -62,6 +62,9 @@ engine or a regular CI requirement.
   to avoid local Git URL rewrite interference.
 - `make check-all` runs the regular default-engine gate plus the opt-in
   `libghostty-vt` gate for release-style validation.
+- Multiple warm local Darwin arm64 `make check-all` samples are recorded below,
+  including a post-info-flag run; these are useful trend evidence, not CI or
+  cold-cache promotion evidence.
 - ADR 0018 and ADR 0023 keep the native build out of the default development
   loop until the remaining evidence in this tracker is gathered.
 
@@ -74,6 +77,7 @@ evidence or measurements from every supported platform.
 | --- | --- | --- | --- |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout | `/usr/bin/time -p nix --extra-experimental-features 'nix-command flakes' develop . -c make check-all` | Passed; `real 17.01`, `user 2.83`, `sys 2.98` |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; opt-in source fetch path already available locally; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `/usr/bin/time -p nix --extra-experimental-features 'nix-command flakes' develop . -c make check-all` | Passed; `real 30.89`, `user 8.78`, `sys 9.51` |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout after local usability/info-flag changes; existing Nix/Cargo/native build caches; opt-in source fetch path already available locally; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `/usr/bin/time -p nix --extra-experimental-features 'nix-command flakes' develop . -c make check-all` | Passed; `real 34.42`, `user 10.95`, `sys 11.09` |
 
 ## Open Work
 
