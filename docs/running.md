@@ -360,8 +360,9 @@ nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' -
 ```
 
 Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached. Bounded live and follow loops reject `--iterations 0` before connecting, and `--interval-ms` must be greater than zero.
-For scripts, add `--json` to live mode to print newline-delimited attach,
-workspace, and surface update events instead of renderer text. Attach and
+For scripts, add `--json` to one-shot or follow attach to print machine-readable
+attach objects instead of renderer text, or add it to live mode to print
+newline-delimited attach, workspace, and surface update events. Attach and
 surface events include structured terminal state, row payloads, style tables,
 and hyperlink tables for scripts that need more than rendered fallback text.
 Successful live JSON sessions end with a `detach` event whose reason is
@@ -370,7 +371,7 @@ do not need to parse stderr lifecycle notes.
 Live JSON also emits `error` events for setup failures before attach, such as a
 corrupt `--state` file or missing daemon socket, and for protocol errors after
 attach.
-`--json` is mutually exclusive with `--follow` and `--redraw`.
+`--json` is mutually exclusive with `--redraw`.
 
 Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start`/`--scrollback-count` or `--scrollback-tail`, unless `--no-scrollback` asks for a current-surface-only attach; the printed header reports the actual returned row range and includes the total when the response is not the tail. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. State saves write a temporary file in the target directory and rename it into place. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
 

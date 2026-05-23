@@ -318,10 +318,10 @@ nmux agent mark --pane p123 --state waiting
 ```
 
 Current local scriptability is narrower but real: `nmux --json` emits
-machine-readable attach objects with authoritative attach status, terminal
-state, structured current-surface rows, style/hyperlink tables, rendered text,
-structured scrollback rows, and structured setup, state-save, and protocol error
-objects; `nmux --live --json` streams newline-delimited
+machine-readable one-shot and follow attach objects with authoritative attach
+status, terminal state, structured current-surface rows, style/hyperlink tables,
+rendered text, structured scrollback rows, and structured setup, state-save, and
+protocol error objects; `nmux --live --json` streams newline-delimited
 attach/workspace/surface/error events with structured surface row payloads,
 including setup failures before attach.
 
@@ -508,7 +508,7 @@ M12: live workspace usability [done]
   nmuxd --cwd and repeatable nmuxd --env KEY=VALUE configure local pane command launch context before daemon-owned NMUX_* identity variables are injected
   nmuxd --ready-json emits a single startup JSON object after socket bind and initial pane startup, including socket path/source, daemon mode, terminal engine, and resize policy, or a JSON startup error event when readiness fails first, so scripts can wait on stdout instead of polling the socket path
   nmux --start starts a private managed nmuxd --one-shot --ready-json, or nmuxd --live-forever --ready-json when paired with --live, on a short temporary socket path, waits for daemon readiness internally with configurable --startup-timeout-ms, forwards managed --cwd/--env launch context when supplied, attaches, and cleans up the managed daemon when the client exits; nmux --shell is the one-flag interactive shorthand over that managed live path
-  nmux --json and nmux --live --json expose structured surface, scrollback, style, hyperlink, terminal-state, lifecycle, setup-error, state-save-error, and protocol-error payloads for scripts instead of reducing backend-owned state to rendered text only
+  nmux --json, nmux --follow --json, and nmux --live --json expose structured surface, scrollback, style, hyperlink, terminal-state, lifecycle, setup-error, state-save-error, and protocol-error payloads for scripts instead of reducing backend-owned state to rendered text only
   nmux --state-info and nmux --state-info-json inspect persisted client cache shape without opening a socket, report the selected socket path/existence and whether that live socket identity matches the persisted cache scope, and --state-info-json reports setup failures as JSON error objects, so localdev scripts can diagnose scoped surfaces, scrollback metadata, and cache applicability offline
   help output documents NMUX_ORIGIN local hop-chain behavior for nested clients and daemons
   nmux --print-context reports inherited NMUX_* pane identity as exact key/value lines without connecting, --print-context-json reports missing context as a JSON error object outside nmux, and the path has nested PTY smoke coverage

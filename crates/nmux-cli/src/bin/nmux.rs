@@ -2889,9 +2889,6 @@ fn validate_mode_args(args: ClientModeArgs) -> Result<(), &'static str> {
     if args.live_resize.is_some() && !args.live {
         return Err("--cols and --rows require --live");
     }
-    if args.output_json && args.follow {
-        return Err("--json cannot be combined with --follow");
-    }
     if args.output_json && args.redraw {
         return Err("--json cannot be combined with --redraw");
     }
@@ -2974,7 +2971,7 @@ Notes:
   --print-context-json prints the same inherited context as a JSON object.
   --print-socket-json prints the resolved socket path and source as JSON.
   --state-info and --state-info-json require --state PATH and do not connect.
-  --json emits one object for one-shot attach, or newline-delimited live events.
+  --json emits one object per one-shot/follow attach, or newline-delimited live events.
   --start waits for nmuxd --ready-json and cleans up the private daemon on exit.
   --startup-timeout-ms controls that managed readiness wait and defaults to 5000.
   --shell is shorthand for --start --live --stdin-bytes --redraw using $SHELL or sh.
@@ -4265,14 +4262,6 @@ mod tests {
         );
         assert_eq!(
             super_validate_mode_args(ClientModeArgs {
-                follow: true,
-                output_json: true,
-                ..ClientModeArgs::default()
-            }),
-            Err("--json cannot be combined with --follow")
-        );
-        assert_eq!(
-            super_validate_mode_args(ClientModeArgs {
                 live: true,
                 redraw: true,
                 output_json: true,
@@ -4322,6 +4311,7 @@ mod tests {
             super_validate_mode_args(ClientModeArgs {
                 follow: true,
                 iterations: Some(1),
+                output_json: true,
                 ..ClientModeArgs::default()
             })
             .is_ok()

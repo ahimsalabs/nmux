@@ -34,6 +34,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--list-input-choices-json"));
     assert!(stdout.contains("--json"));
     assert!(stdout.contains("Print attach output as JSON; live uses JSON lines"));
+    assert!(stdout.contains("--json emits one object per one-shot/follow attach"));
     assert!(stdout.contains("--paste TEXT"));
     assert!(stdout.contains("--focus gained|lost"));
     assert!(stdout.contains("daemon rejects if reporting is off"));

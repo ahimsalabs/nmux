@@ -120,14 +120,14 @@ Done:
 - `nmux --print-socket` and `nmuxd --print-socket` print the resolved socket path without connecting or binding, including `NMUX_SOCKET` and explicit `--socket` precedence.
 - `nmux` and `nmuxd` informational flags exit before mode validation or
   socket/state/PTY work.
-- `nmux --json` prints one-shot attach output as a machine-readable object with
-  workspace, authoritative attach status, terminal metadata, structured current
-  surface rows/styles/hyperlinks, rendered surface text, and structured
-  scrollback rows, and emits structured setup/state-save/protocol error objects
-  when attach output cannot be produced; `nmux --live --json` streams
-  newline-delimited attach, workspace, surface update, setup/protocol error, and
-  final detach events with structured row payloads and lifecycle reasons for
-  scripts.
+- `nmux --json` prints one-shot and follow attach output as machine-readable
+  objects with workspace, authoritative attach status, terminal metadata,
+  structured current surface rows/styles/hyperlinks, rendered surface text, and
+  structured scrollback rows, and emits structured setup/state-save/protocol
+  error objects when attach output cannot be produced; `nmux --live --json`
+  streams newline-delimited attach, workspace, surface update, setup/protocol
+  error, and final detach events with structured row payloads and lifecycle
+  reasons for scripts.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - `nmuxd --ready-json` emits a single startup JSON object after socket bind and
   initial pane startup, or a startup error event if readiness fails first, so
