@@ -594,6 +594,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   use docs/upstream trackers for upstream-blocked work instead of treating it as local implementation debt
   README, running docs, and the terminal extraction checklist now use post-M14 language instead of treating M13 extraction as the active roadmap target or assuming pane-1/fixed scrollback behavior
   docs/toolchain.md now documents the supported Nix path and non-Nix requirements checklist without counting that checklist as default-engine promotion evidence
+  docs/toolchain.md now includes a required field template for future non-Nix promotion attempts, covering setup commands, exact tool versions, source mode, cache state, timing, packaging follow-up, and gaps
   docs/source-fetch-policy.md now records current opt-in libghostty-vt-sys fetch behavior and keeps packaged/default-build source policy as explicit promotion work
   ADR 0024 defines acceptance criteria for any future native-VT source-policy promotion decision, including source-mode evidence, cache/offline behavior, provenance, and license-review scope
   docs/packaging.md now records the current no-release-binary stance and native-VT packaging questions required before default promotion

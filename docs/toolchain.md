@@ -187,6 +187,22 @@ the exact tool versions, source-fetch environment, and `check-all` timing are
 visible together. When `GHOSTTY_SOURCE_DIR` is set, the optional VT preflight
 requires it to point at an existing readable directory. When it is unset, the
 source mode is recorded as the pinned `libghostty-vt-sys` fetch path.
+
+Record non-Nix attempts with these fields before treating them as promotion
+evidence:
+
+| Field | Required Content |
+| --- | --- |
+| Host | OS version, architecture, CPU class, and memory if known. |
+| Setup commands | Platform-specific commands used to install Rust, FlatBuffers, make, Zig, and any source-fetch prerequisites. |
+| Toolchain | `make toolchain-info` output, including exact `flatc` and Zig versions. |
+| Source mode | `ghostty_source_mode`, `GHOSTTY_SOURCE_DIR`, and `GIT_CONFIG_GLOBAL`. |
+| Cache state | Whether Cargo registry, Cargo Git, Rust target, native Ghostty/Zig build, and source-fetch caches were cold, warm, restored, or unknown. |
+| Command | Exact command, usually `/usr/bin/time -p env GIT_CONFIG_GLOBAL=/dev/null make promotion-sample` or `make check-all`. |
+| Result | Passed or failed, including timed output and the first failing command. |
+| Packaging follow-up | Whether matching `make packaging-*` targets were run in the same environment or left as open work. |
+| Gaps | Missing tools, version mismatches, source-fetch failures, cache assumptions, or platform-specific packaging issues. |
+
 See [source-fetch-policy.md](source-fetch-policy.md) for the current opt-in
 policy and the remaining source-fetch decisions for packaged/default builds.
 See [packaging.md](packaging.md) for binary distribution questions that remain

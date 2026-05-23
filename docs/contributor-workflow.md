@@ -129,6 +129,8 @@ runtime layout can serve a real pane.
 
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty
-source policy, or release binaries.
+source policy, or release binaries. Non-Nix promotion attempts should use the
+field template in [toolchain.md](toolchain.md) before being copied into the
+promotion tracker.
 Use the manual CI promotion evidence bundle job when collecting CI evidence; a
 normal pull-request run remains default-engine-only.

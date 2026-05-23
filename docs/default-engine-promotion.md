@@ -158,7 +158,9 @@ evidence or measurements from every supported platform.
 These attempts validate the documented non-Nix checklist. Failed setup attempts
 are not promotion evidence for the optional native VT path, but they identify
 the missing host requirements needed before a complete non-Nix timing sample can
-be recorded.
+be recorded. Use the field template in [toolchain notes](toolchain.md) when
+adding new rows so setup commands, exact tool versions, source mode, cache
+state, timings, packaging follow-up, and gaps are explicit.
 
 | Date | Host | Command | Result |
 | --- | --- | --- | --- |
