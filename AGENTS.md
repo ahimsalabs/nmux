@@ -58,6 +58,10 @@ The current implementation is a Rust workspace:
 - Work sequentially. Do not parallelize implementation or documentation steps. If subagents are useful, run them as bounded read-only assistants and integrate their findings in the main worktree yourself.
 - Check `jj status` before starting a step.
 - Commit with `jj` after each coherent implementation or documentation step, after relevant checks pass.
+- After pushing a commit, use `gh` to find the GitHub Actions run and record its
+  run ID or URL. Do not wait for GitHub checks unless the task specifically
+  depends on CI completion; otherwise let them run asynchronously and keep
+  moving on local work.
 - Keep commits small enough that each one has a clear review purpose.
 - Preserve user or agent work already present in the worktree unless explicitly told to change it.
 - Prefer documentation under `docs/` once a note needs to outlive the current scratch plan.
