@@ -759,19 +759,26 @@ fn flush_stdout() -> io::Result<()> {
 }
 
 fn warn_if_interim_surface_fidelity_is_visible(stdin_bytes: bool) {
-    if interim_surface_fidelity_warning_needed(stdin_bytes, stdin_is_tty(), stdout_is_tty()) {
+    if interim_surface_fidelity_warning_needed(InterimSurfaceFidelityWarningContext {
+        stdin_bytes,
+        stdin_is_tty: stdin_is_tty(),
+        stdout_is_tty: stdout_is_tty(),
+    }) {
         eprintln!("{}", INTERIM_SURFACE_FIDELITY_WARNING);
     }
 }
 
 const INTERIM_SURFACE_FIDELITY_WARNING: &str = "nmux: interim text surface; ANSI styles, alternate screen, cursor motion, images, and full VT fidelity are unsupported";
 
-fn interim_surface_fidelity_warning_needed(
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct InterimSurfaceFidelityWarningContext {
     stdin_bytes: bool,
     stdin_is_tty: bool,
     stdout_is_tty: bool,
-) -> bool {
-    stdin_bytes && stdin_is_tty && stdout_is_tty
+}
+
+fn interim_surface_fidelity_warning_needed(context: InterimSurfaceFidelityWarningContext) -> bool {
+    context.stdin_bytes && context.stdin_is_tty && context.stdout_is_tty
 }
 
 fn save_live_state(
@@ -1022,7 +1029,11 @@ struct SigwinchResize {
 
 impl SigwinchResize {
     fn enable_if_needed(stdin_bytes: bool, explicit_resize: bool) -> io::Result<Self> {
-        if !sigwinch_resize_needed(stdin_bytes, explicit_resize, stdin_is_tty()) {
+        if !sigwinch_resize_needed(SigwinchResizeContext {
+            stdin_bytes,
+            explicit_resize,
+            stdin_is_tty: stdin_is_tty(),
+        }) {
             return Ok(Self {
                 _guard: None,
                 last_size: None,
@@ -1083,8 +1094,15 @@ extern "C" fn handle_sigwinch(_: libc::c_int) {
     SIGWINCH_RECEIVED.store(true, Ordering::SeqCst);
 }
 
-fn sigwinch_resize_needed(stdin_bytes: bool, explicit_resize: bool, stdin_is_tty: bool) -> bool {
-    stdin_bytes && !explicit_resize && stdin_is_tty
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct SigwinchResizeContext {
+    stdin_bytes: bool,
+    explicit_resize: bool,
+    stdin_is_tty: bool,
+}
+
+fn sigwinch_resize_needed(context: SigwinchResizeContext) -> bool {
+    context.stdin_bytes && !context.explicit_resize && context.stdin_is_tty
 }
 
 fn stdin_terminal_size() -> io::Result<Option<(u32, u32)>> {
@@ -1689,12 +1707,12 @@ where
             interval_ms,
             connect_timeout_ms,
         )?;
-        validate_scrollback_selection_args(
-            raw.no_scrollback,
+        validate_scrollback_selection_args(ScrollbackSelectionArgFlags {
+            no_scrollback_set: raw.no_scrollback,
             scrollback_tail_set,
             scrollback_start_set,
             scrollback_count_set,
-        )?;
+        })?;
         validate_explicit_input_modes(ExplicitInputModeArgs {
             key_set,
             key_name_set,
@@ -2582,25 +2600,30 @@ fn validate_positive_numeric_args(
     Ok(())
 }
 
-fn validate_scrollback_selection_args(
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ScrollbackSelectionArgFlags {
     no_scrollback_set: bool,
     scrollback_tail_set: bool,
     scrollback_start_set: bool,
     scrollback_count_set: bool,
+}
+
+fn validate_scrollback_selection_args(
+    args: ScrollbackSelectionArgFlags,
 ) -> Result<(), &'static str> {
-    if no_scrollback_set && scrollback_tail_set {
+    if args.no_scrollback_set && args.scrollback_tail_set {
         return Err("--no-scrollback cannot be combined with --scrollback-tail");
     }
-    if no_scrollback_set && scrollback_start_set {
+    if args.no_scrollback_set && args.scrollback_start_set {
         return Err("--no-scrollback cannot be combined with --scrollback-start");
     }
-    if no_scrollback_set && scrollback_count_set {
+    if args.no_scrollback_set && args.scrollback_count_set {
         return Err("--no-scrollback cannot be combined with --scrollback-count");
     }
-    if scrollback_tail_set && scrollback_start_set {
+    if args.scrollback_tail_set && args.scrollback_start_set {
         return Err("--scrollback-tail cannot be combined with --scrollback-start");
     }
-    if scrollback_tail_set && scrollback_count_set {
+    if args.scrollback_tail_set && args.scrollback_count_set {
         return Err("--scrollback-tail cannot be combined with --scrollback-count");
     }
     Ok(())
@@ -3042,17 +3065,19 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientModeArgs, ExplicitInputModeArgs, FocusEvent, KEY_NAME_ALIASES, LiveDetachReason,
-        LiveUpdatePrintKind, LocalEcho, MouseEvent, SUPPORTED_KEY_NAMES, StateInfoSocketSummary,
-        args_from_iter, format_cli_error_json, format_context_json, format_input_choices_json,
-        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
-        format_live_detach_json, format_live_error_json, format_live_surface_update_json,
-        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        format_state_info_json, format_state_info_text, interim_surface_fidelity_warning_needed,
-        live_update_print_kind, parse_env_assignment, parse_focus_event, parse_key_modifiers,
-        parse_key_name, parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        ClientModeArgs, ExplicitInputModeArgs, FocusEvent, InterimSurfaceFidelityWarningContext,
+        KEY_NAME_ALIASES, LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent,
+        SUPPORTED_KEY_NAMES, ScrollbackSelectionArgFlags, SigwinchResizeContext,
+        StateInfoSocketSummary, args_from_iter, format_cli_error_json, format_context_json,
+        format_input_choices_json, format_key_names_json, format_live_attach_json,
+        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
+        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
+        format_scrollback, format_state_info_json, format_state_info_text,
+        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_env_assignment,
+        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
+        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag,
+        raw_terminal_mode_needed, redraw_terminal_guard_needed, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -3735,18 +3760,56 @@ mod tests {
 
     #[test]
     fn interim_surface_fidelity_warning_is_only_for_interactive_byte_mode() {
-        assert!(interim_surface_fidelity_warning_needed(true, true, true));
-        assert!(!interim_surface_fidelity_warning_needed(true, true, false));
-        assert!(!interim_surface_fidelity_warning_needed(true, false, true));
-        assert!(!interim_surface_fidelity_warning_needed(false, true, true));
+        let interactive_byte_mode = InterimSurfaceFidelityWarningContext {
+            stdin_bytes: true,
+            stdin_is_tty: true,
+            stdout_is_tty: true,
+        };
+
+        assert!(interim_surface_fidelity_warning_needed(
+            interactive_byte_mode
+        ));
+        assert!(!interim_surface_fidelity_warning_needed(
+            InterimSurfaceFidelityWarningContext {
+                stdout_is_tty: false,
+                ..interactive_byte_mode
+            }
+        ));
+        assert!(!interim_surface_fidelity_warning_needed(
+            InterimSurfaceFidelityWarningContext {
+                stdin_is_tty: false,
+                ..interactive_byte_mode
+            }
+        ));
+        assert!(!interim_surface_fidelity_warning_needed(
+            InterimSurfaceFidelityWarningContext {
+                stdin_bytes: false,
+                ..interactive_byte_mode
+            }
+        ));
     }
 
     #[test]
     fn sigwinch_resize_is_only_needed_for_interactive_byte_mode_without_explicit_size() {
-        assert!(sigwinch_resize_needed(true, false, true));
-        assert!(!sigwinch_resize_needed(true, true, true));
-        assert!(!sigwinch_resize_needed(true, false, false));
-        assert!(!sigwinch_resize_needed(false, false, true));
+        let interactive_byte_mode = SigwinchResizeContext {
+            stdin_bytes: true,
+            explicit_resize: false,
+            stdin_is_tty: true,
+        };
+
+        assert!(sigwinch_resize_needed(interactive_byte_mode));
+        assert!(!sigwinch_resize_needed(SigwinchResizeContext {
+            explicit_resize: true,
+            ..interactive_byte_mode
+        }));
+        assert!(!sigwinch_resize_needed(SigwinchResizeContext {
+            stdin_is_tty: false,
+            ..interactive_byte_mode
+        }));
+        assert!(!sigwinch_resize_needed(SigwinchResizeContext {
+            stdin_bytes: false,
+            ..interactive_byte_mode
+        }));
     }
 
     #[test]
@@ -4423,29 +4486,58 @@ mod tests {
 
     #[test]
     fn scrollback_selection_validation_rejects_ambiguous_tail_args() {
+        let tail = ScrollbackSelectionArgFlags {
+            scrollback_tail_set: true,
+            ..ScrollbackSelectionArgFlags::default()
+        };
+        let range = ScrollbackSelectionArgFlags {
+            scrollback_start_set: true,
+            scrollback_count_set: true,
+            ..ScrollbackSelectionArgFlags::default()
+        };
+        let no_scrollback = ScrollbackSelectionArgFlags {
+            no_scrollback_set: true,
+            ..ScrollbackSelectionArgFlags::default()
+        };
+
         assert_eq!(
-            validate_scrollback_selection_args(false, true, true, false),
+            validate_scrollback_selection_args(ScrollbackSelectionArgFlags {
+                scrollback_start_set: true,
+                ..tail
+            }),
             Err("--scrollback-tail cannot be combined with --scrollback-start")
         );
         assert_eq!(
-            validate_scrollback_selection_args(false, true, false, true),
+            validate_scrollback_selection_args(ScrollbackSelectionArgFlags {
+                scrollback_count_set: true,
+                ..tail
+            }),
             Err("--scrollback-tail cannot be combined with --scrollback-count")
         );
         assert_eq!(
-            validate_scrollback_selection_args(true, true, false, false),
+            validate_scrollback_selection_args(ScrollbackSelectionArgFlags {
+                scrollback_tail_set: true,
+                ..no_scrollback
+            }),
             Err("--no-scrollback cannot be combined with --scrollback-tail")
         );
         assert_eq!(
-            validate_scrollback_selection_args(true, false, true, false),
+            validate_scrollback_selection_args(ScrollbackSelectionArgFlags {
+                scrollback_start_set: true,
+                ..no_scrollback
+            }),
             Err("--no-scrollback cannot be combined with --scrollback-start")
         );
         assert_eq!(
-            validate_scrollback_selection_args(true, false, false, true),
+            validate_scrollback_selection_args(ScrollbackSelectionArgFlags {
+                scrollback_count_set: true,
+                ..no_scrollback
+            }),
             Err("--no-scrollback cannot be combined with --scrollback-count")
         );
-        assert!(validate_scrollback_selection_args(false, true, false, false).is_ok());
-        assert!(validate_scrollback_selection_args(false, false, true, true).is_ok());
-        assert!(validate_scrollback_selection_args(true, false, false, false).is_ok());
+        assert!(validate_scrollback_selection_args(tail).is_ok());
+        assert!(validate_scrollback_selection_args(range).is_ok());
+        assert!(validate_scrollback_selection_args(no_scrollback).is_ok());
     }
 
     #[test]
