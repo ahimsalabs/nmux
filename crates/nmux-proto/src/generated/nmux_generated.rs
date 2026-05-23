@@ -2308,6 +2308,7 @@ impl<'a> PaneSurfaceSnapshot<'a> {
   pub const VT_STYLES: ::flatbuffers::VOffsetT = 20;
   pub const VT_ROWS_DATA: ::flatbuffers::VOffsetT = 22;
   pub const VT_COLORS: ::flatbuffers::VOffsetT = 24;
+  pub const VT_HYPERLINKS: ::flatbuffers::VOffsetT = 26;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2320,6 +2321,7 @@ impl<'a> PaneSurfaceSnapshot<'a> {
   ) -> ::flatbuffers::WIPOffset<PaneSurfaceSnapshot<'bldr>> {
     let mut builder = PaneSurfaceSnapshotBuilder::new(_fbb);
     builder.add_version(args.version);
+    if let Some(x) = args.hyperlinks { builder.add_hyperlinks(x); }
     if let Some(x) = args.colors { builder.add_colors(x); }
     if let Some(x) = args.rows_data { builder.add_rows_data(x); }
     if let Some(x) = args.styles { builder.add_styles(x); }
@@ -2411,6 +2413,13 @@ impl<'a> PaneSurfaceSnapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalColorState>>(PaneSurfaceSnapshot::VT_COLORS, None)}
   }
+  #[inline]
+  pub fn hyperlinks(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink>>>>(PaneSurfaceSnapshot::VT_HYPERLINKS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
@@ -2430,6 +2439,7 @@ impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Style>>>>("styles", Self::VT_STYLES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SurfaceRow>>>>("rows_data", Self::VT_ROWS_DATA, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<TerminalColorState>>("colors", Self::VT_COLORS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Hyperlink>>>>("hyperlinks", Self::VT_HYPERLINKS, false)?
      .finish();
     Ok(())
   }
@@ -2446,6 +2456,7 @@ pub struct PaneSurfaceSnapshotArgs<'a> {
     pub styles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>>>,
     pub rows_data: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SurfaceRow<'a>>>>>,
     pub colors: Option<::flatbuffers::WIPOffset<TerminalColorState<'a>>>,
+    pub hyperlinks: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink<'a>>>>>,
 }
 impl<'a> Default for PaneSurfaceSnapshotArgs<'a> {
   #[inline]
@@ -2462,6 +2473,7 @@ impl<'a> Default for PaneSurfaceSnapshotArgs<'a> {
       styles: None,
       rows_data: None,
       colors: None,
+      hyperlinks: None,
     }
   }
 }
@@ -2516,6 +2528,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfaceSnapshotBuilder<'a
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalColorState>>(PaneSurfaceSnapshot::VT_COLORS, colors);
   }
   #[inline]
+  pub fn add_hyperlinks(&mut self, hyperlinks: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Hyperlink<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneSurfaceSnapshot::VT_HYPERLINKS, hyperlinks);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PaneSurfaceSnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     PaneSurfaceSnapshotBuilder {
@@ -2544,6 +2560,7 @@ impl ::core::fmt::Debug for PaneSurfaceSnapshot<'_> {
       ds.field("styles", &self.styles());
       ds.field("rows_data", &self.rows_data());
       ds.field("colors", &self.colors());
+      ds.field("hyperlinks", &self.hyperlinks());
       ds.finish()
   }
 }
@@ -4210,6 +4227,153 @@ impl ::core::fmt::Debug for Style<'_> {
       ds.finish()
   }
 }
+pub enum HyperlinkOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct Hyperlink<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for Hyperlink<'a> {
+  type Inner = Hyperlink<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> Hyperlink<'a> {
+  pub const VT_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_URI: ::flatbuffers::VOffsetT = 6;
+  pub const VT_OSC8_ID: ::flatbuffers::VOffsetT = 8;
+  pub const VT_PARAMS: ::flatbuffers::VOffsetT = 10;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    Hyperlink { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args HyperlinkArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<Hyperlink<'bldr>> {
+    let mut builder = HyperlinkBuilder::new(_fbb);
+    if let Some(x) = args.params { builder.add_params(x); }
+    if let Some(x) = args.osc8_id { builder.add_osc8_id(x); }
+    if let Some(x) = args.uri { builder.add_uri(x); }
+    builder.add_id(args.id);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn id(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(Hyperlink::VT_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn uri(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Hyperlink::VT_URI, None)}
+  }
+  #[inline]
+  pub fn osc8_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Hyperlink::VT_OSC8_ID, None)}
+  }
+  #[inline]
+  pub fn params(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Hyperlink::VT_PARAMS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for Hyperlink<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u32>("id", Self::VT_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("uri", Self::VT_URI, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("osc8_id", Self::VT_OSC8_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("params", Self::VT_PARAMS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct HyperlinkArgs<'a> {
+    pub id: u32,
+    pub uri: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub osc8_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub params: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for HyperlinkArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    HyperlinkArgs {
+      id: 0,
+      uri: None,
+      osc8_id: None,
+      params: None,
+    }
+  }
+}
+
+pub struct HyperlinkBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> HyperlinkBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_id(&mut self, id: u32) {
+    self.fbb_.push_slot::<u32>(Hyperlink::VT_ID, id, 0);
+  }
+  #[inline]
+  pub fn add_uri(&mut self, uri: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Hyperlink::VT_URI, uri);
+  }
+  #[inline]
+  pub fn add_osc8_id(&mut self, osc8_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Hyperlink::VT_OSC8_ID, osc8_id);
+  }
+  #[inline]
+  pub fn add_params(&mut self, params: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Hyperlink::VT_PARAMS, params);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> HyperlinkBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    HyperlinkBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<Hyperlink<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for Hyperlink<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("Hyperlink");
+      ds.field("id", &self.id());
+      ds.field("uri", &self.uri());
+      ds.field("osc8_id", &self.osc8_id());
+      ds.field("params", &self.params());
+      ds.finish()
+  }
+}
 pub enum InputEventOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -5392,6 +5556,7 @@ impl<'a> ScrollbackChunk<'a> {
   pub const VT_ROWS: ::flatbuffers::VOffsetT = 12;
   pub const VT_STYLES: ::flatbuffers::VOffsetT = 14;
   pub const VT_COLORS: ::flatbuffers::VOffsetT = 16;
+  pub const VT_HYPERLINKS: ::flatbuffers::VOffsetT = 18;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5406,6 +5571,7 @@ impl<'a> ScrollbackChunk<'a> {
     builder.add_total_lines(args.total_lines);
     builder.add_start_line(args.start_line);
     builder.add_scrollback_version(args.scrollback_version);
+    if let Some(x) = args.hyperlinks { builder.add_hyperlinks(x); }
     if let Some(x) = args.colors { builder.add_colors(x); }
     if let Some(x) = args.styles { builder.add_styles(x); }
     if let Some(x) = args.rows { builder.add_rows(x); }
@@ -5463,6 +5629,13 @@ impl<'a> ScrollbackChunk<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalColorState>>(ScrollbackChunk::VT_COLORS, None)}
   }
+  #[inline]
+  pub fn hyperlinks(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink>>>>(ScrollbackChunk::VT_HYPERLINKS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for ScrollbackChunk<'_> {
@@ -5478,6 +5651,7 @@ impl ::flatbuffers::Verifiable for ScrollbackChunk<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ScrollbackRow>>>>("rows", Self::VT_ROWS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Style>>>>("styles", Self::VT_STYLES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<TerminalColorState>>("colors", Self::VT_COLORS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Hyperlink>>>>("hyperlinks", Self::VT_HYPERLINKS, false)?
      .finish();
     Ok(())
   }
@@ -5490,6 +5664,7 @@ pub struct ScrollbackChunkArgs<'a> {
     pub rows: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ScrollbackRow<'a>>>>>,
     pub styles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>>>,
     pub colors: Option<::flatbuffers::WIPOffset<TerminalColorState<'a>>>,
+    pub hyperlinks: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink<'a>>>>>,
 }
 impl<'a> Default for ScrollbackChunkArgs<'a> {
   #[inline]
@@ -5502,6 +5677,7 @@ impl<'a> Default for ScrollbackChunkArgs<'a> {
       rows: None,
       styles: None,
       colors: None,
+      hyperlinks: None,
     }
   }
 }
@@ -5540,6 +5716,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackChunkBuilder<'a, 'b
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalColorState>>(ScrollbackChunk::VT_COLORS, colors);
   }
   #[inline]
+  pub fn add_hyperlinks(&mut self, hyperlinks: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Hyperlink<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackChunk::VT_HYPERLINKS, hyperlinks);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackChunkBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     ScrollbackChunkBuilder {
@@ -5564,6 +5744,7 @@ impl ::core::fmt::Debug for ScrollbackChunk<'_> {
       ds.field("rows", &self.rows());
       ds.field("styles", &self.styles());
       ds.field("colors", &self.colors());
+      ds.field("hyperlinks", &self.hyperlinks());
       ds.finish()
   }
 }

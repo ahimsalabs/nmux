@@ -1644,6 +1644,11 @@ pub fn surface_update_from_frame(
                 .styles()
                 .map(decoded_styles)
                 .unwrap_or_else(default_style_summaries);
+            let hyperlinks = snapshot
+                .hyperlinks()
+                .map(decoded_hyperlinks)
+                .transpose()?
+                .unwrap_or_default();
             let row_updates = decoded_surface_rows(rows.len(), |index| {
                 let row = rows.get(index);
                 decoded_surface_row(
@@ -1684,6 +1689,7 @@ pub fn surface_update_from_frame(
                 colors: decoded_terminal_colors(snapshot.colors()),
                 row_updates,
                 styles,
+                hyperlinks,
                 text,
             })
         }
@@ -1734,6 +1740,7 @@ pub fn surface_update_from_frame(
                 colors: decoded_terminal_colors(patch.colors()),
                 row_updates,
                 styles: Vec::new(),
+                hyperlinks: Vec::new(),
                 text,
             })
         }
@@ -1806,6 +1813,24 @@ fn decoded_styles(
         });
     }
     decoded
+}
+
+fn decoded_hyperlinks(
+    hyperlinks: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<protocol::Hyperlink<'_>>>,
+) -> Result<Vec<HyperlinkSummary>, Box<dyn std::error::Error>> {
+    let mut decoded = Vec::with_capacity(hyperlinks.len());
+    for hyperlink_index in 0..hyperlinks.len() {
+        let hyperlink = hyperlinks.get(hyperlink_index);
+        let uri = hyperlink.uri().unwrap_or_default().to_owned();
+        decoded.push(HyperlinkSummary {
+            id: hyperlink.id(),
+            uri,
+            osc8_id: hyperlink.osc8_id().unwrap_or_default().to_owned(),
+            params: hyperlink.params().unwrap_or_default().to_owned(),
+        });
+    }
+    validate_hyperlink_table(&decoded)?;
+    Ok(decoded)
 }
 
 fn decoded_terminal_colors(
@@ -2317,12 +2342,18 @@ pub fn scrollback_chunk_from_frame(
         .body_as_scrollback_chunk()
         .ok_or("missing scrollback chunk body")?;
     let styles = chunk.styles().map(decoded_styles).unwrap_or_default();
+    let hyperlinks = chunk
+        .hyperlinks()
+        .map(decoded_hyperlinks)
+        .transpose()?
+        .unwrap_or_default();
     let colors = decoded_terminal_colors(chunk.colors()).unwrap_or_default();
     let rows = chunk.rows().ok_or("scrollback chunk has no rows")?;
     let mut lines = Vec::with_capacity(rows.len());
     for index in 0..rows.len() {
         let row = rows.get(index);
         let runs = row.runs().map(decoded_cell_runs).unwrap_or_default();
+        validate_cell_run_hyperlink_ids(&runs, &hyperlinks)?;
         lines.push(ScrollbackLine {
             line: row.line(),
             text: render_run_summaries(&runs),
@@ -2341,6 +2372,7 @@ pub fn scrollback_chunk_from_frame(
         start_line: chunk.start_line(),
         total_lines: chunk.total_lines(),
         styles,
+        hyperlinks,
         colors,
         lines,
     })
@@ -2648,6 +2680,7 @@ pub struct SurfaceUpdate {
     pub colors: Option<TerminalColorSummary>,
     pub row_updates: Vec<SurfaceRowUpdate>,
     pub styles: Vec<StyleSummary>,
+    pub hyperlinks: Vec<HyperlinkSummary>,
     pub text: String,
 }
 
@@ -2808,6 +2841,14 @@ pub struct StyleSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HyperlinkSummary {
+    pub id: u32,
+    pub uri: String,
+    pub osc8_id: String,
+    pub params: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientPaneSurface {
     pub pane_id: String,
     pub version: u64,
@@ -2820,6 +2861,7 @@ pub struct ClientPaneSurface {
     pub working_directory: String,
     pub colors: TerminalColorSummary,
     styles: Vec<StyleSummary>,
+    hyperlinks: Vec<HyperlinkSummary>,
     row_text: Vec<String>,
     row_runs: Vec<Vec<CellRunSummary>>,
     row_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
@@ -2846,6 +2888,7 @@ impl ClientPaneSurface {
             } else {
                 update.styles.clone()
             },
+            hyperlinks: update.hyperlinks.clone(),
             row_text: Vec::new(),
             row_runs: Vec::new(),
             row_semantic_prompts: Vec::new(),
@@ -2853,6 +2896,7 @@ impl ClientPaneSurface {
             row_kitty_placeholders: Vec::new(),
             row_state_hashes: Vec::new(),
         };
+        validate_hyperlink_table(&surface.hyperlinks)?;
         let row_count =
             usize::try_from(surface.rows).map_err(|_| "surface row count does not fit in usize")?;
         surface.row_text.resize(row_count, String::new());
@@ -2863,6 +2907,7 @@ impl ClientPaneSurface {
         surface.row_dirty.resize(row_count, false);
         surface.row_kitty_placeholders.resize(row_count, false);
         surface.row_state_hashes.resize(row_count, 0);
+        validate_row_update_hyperlink_ids(&update.row_updates, &surface.hyperlinks)?;
         surface.apply_rows(&update.row_updates)?;
         Ok(surface)
     }
@@ -2900,6 +2945,9 @@ impl ClientPaneSurface {
         }
         if update.patch_kind == Some(protocol::PatchKind::FullRefreshRequired) {
             return Err("surface patch requires full refresh".into());
+        }
+        if !update.hyperlinks.is_empty() {
+            return Err("surface patch cannot change hyperlink table".into());
         }
         if update.patch_kind == Some(protocol::PatchKind::CursorOnly) {
             if let Some(colors) = update.colors.as_ref()
@@ -2945,6 +2993,7 @@ impl ClientPaneSurface {
         {
             return Err("replace-rows patch changes terminal colors".into());
         }
+        validate_row_update_hyperlink_ids(&update.row_updates, &self.hyperlinks)?;
         self.apply_rows(&update.row_updates)?;
         self.cursor = update.cursor;
         self.modes = update.modes;
@@ -3013,6 +3062,66 @@ fn row_runs_for_text(
         }
     }
     row_runs
+}
+
+fn validate_row_update_hyperlink_ids(
+    rows: &[SurfaceRowUpdate],
+    hyperlinks: &[HyperlinkSummary],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for row in rows {
+        validate_cell_run_hyperlink_ids(&row.runs, hyperlinks)?;
+    }
+    Ok(())
+}
+
+fn validate_cell_run_hyperlink_ids(
+    runs: &[CellRunSummary],
+    hyperlinks: &[HyperlinkSummary],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for run in runs {
+        if run.hyperlink_id != 0
+            && !hyperlinks
+                .iter()
+                .any(|hyperlink| hyperlink.id == run.hyperlink_id)
+        {
+            return Err(format!(
+                "cell run references unknown hyperlink_id {}",
+                run.hyperlink_id
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_hyperlink_table(
+    hyperlinks: &[HyperlinkSummary],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (index, hyperlink) in hyperlinks.iter().enumerate() {
+        if hyperlink.id == 0 {
+            return Err("hyperlink table entry uses reserved id 0".into());
+        }
+        if hyperlink.uri.is_empty() {
+            return Err(format!("hyperlink {} is missing target uri", hyperlink.id).into());
+        }
+        if hyperlinks[..index]
+            .iter()
+            .any(|existing| existing.id == hyperlink.id)
+        {
+            return Err(format!("duplicate hyperlink id {}", hyperlink.id).into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_cached_row_hyperlink_ids(
+    row_runs: &[Vec<CellRunSummary>],
+    hyperlinks: &[HyperlinkSummary],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for runs in row_runs {
+        validate_cell_run_hyperlink_ids(runs, hyperlinks)?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -3229,7 +3338,7 @@ impl ClientAttachState {
     }
 
     fn encode(&self) -> String {
-        let mut encoded = String::from("NMUX_CLIENT_STATE 6\n");
+        let mut encoded = String::from("NMUX_CLIENT_STATE 7\n");
         if let Some(scope) = self.scope {
             encoded.push_str("scope socket ");
             encoded.push_str(&scope.dev.to_string());
@@ -3356,6 +3465,17 @@ impl ClientAttachState {
                 encoded.push_str(&style.flags.to_string());
                 encoded.push('\n');
             }
+            for hyperlink in &surface.hyperlinks {
+                encoded.push_str("hyperlink ");
+                encoded.push_str(&hyperlink.id.to_string());
+                encoded.push(' ');
+                encoded.push_str(&hex_encode(hyperlink.uri.as_bytes()));
+                encoded.push(' ');
+                encoded.push_str(&state_hex_field(hyperlink.osc8_id.as_bytes()));
+                encoded.push(' ');
+                encoded.push_str(&state_hex_field(hyperlink.params.as_bytes()));
+                encoded.push('\n');
+            }
             for (index, row) in surface.row_text.iter().enumerate() {
                 encoded.push_str("row ");
                 encoded.push_str(&index.to_string());
@@ -3414,6 +3534,7 @@ impl ClientAttachState {
             && header != "NMUX_CLIENT_STATE 4"
             && header != "NMUX_CLIENT_STATE 5"
             && header != "NMUX_CLIENT_STATE 6"
+            && header != "NMUX_CLIENT_STATE 7"
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -3497,6 +3618,7 @@ impl ClientAttachState {
             let mut working_directory = String::new();
             let mut colors = TerminalColorSummary::default();
             let mut styles = Vec::new();
+            let mut hyperlinks = Vec::new();
             let mut row_text = vec![String::new(); row_count];
             let mut row_runs = vec![Vec::new(); row_count];
             let mut row_semantic_prompts = vec![protocol::RowSemanticPrompt::None; row_count];
@@ -3633,6 +3755,17 @@ impl ClientAttachState {
                             bg_rgba: parse_state_u32(bg_rgba)?,
                             underline_rgba: parse_state_u32(underline_rgba)?,
                             flags: parse_state_u32(flags)?,
+                        });
+                    }
+                    ["hyperlink", id, uri, osc8_id, params] => {
+                        hyperlinks.push(HyperlinkSummary {
+                            id: parse_state_u32(id)?,
+                            uri: String::from_utf8(hex_decode(uri)?)
+                                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
+                            osc8_id: String::from_utf8(decode_state_hex_field(osc8_id)?)
+                                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
+                            params: String::from_utf8(decode_state_hex_field(params)?)
+                                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
                         });
                     }
                     ["row", row, text] => {
@@ -3812,6 +3945,12 @@ impl ClientAttachState {
                 }
             }
 
+            validate_hyperlink_table(&hyperlinks)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+            let row_runs = row_runs_for_text(&row_text, row_runs);
+            validate_cached_row_hyperlink_ids(&row_runs, &hyperlinks)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+
             surfaces.push(ClientPaneSurface {
                 pane_id,
                 version,
@@ -3828,7 +3967,8 @@ impl ClientAttachState {
                 } else {
                     styles
                 },
-                row_runs: row_runs_for_text(&row_text, row_runs),
+                hyperlinks,
+                row_runs,
                 row_semantic_prompts,
                 row_dirty,
                 row_kitty_placeholders,
@@ -3902,6 +4042,22 @@ fn hex_encode(bytes: &[u8]) -> String {
         encoded.push(HEX[(byte & 0x0f) as usize] as char);
     }
     encoded
+}
+
+fn state_hex_field(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        "-".to_owned()
+    } else {
+        hex_encode(bytes)
+    }
+}
+
+fn decode_state_hex_field(encoded: &str) -> io::Result<Vec<u8>> {
+    if encoded == "-" {
+        Ok(Vec::new())
+    } else {
+        hex_decode(encoded)
+    }
 }
 
 fn hex_decode(encoded: &str) -> io::Result<Vec<u8>> {
@@ -4129,6 +4285,7 @@ pub struct ScrollbackChunkSummary {
     pub start_line: u64,
     pub total_lines: u64,
     pub styles: Vec<StyleSummary>,
+    pub hyperlinks: Vec<HyperlinkSummary>,
     pub colors: TerminalColorSummary,
     pub lines: Vec<ScrollbackLine>,
 }
@@ -4317,6 +4474,7 @@ mod tests {
             } else {
                 Vec::new()
             },
+            hyperlinks: Vec::new(),
             text: render_decoded_rows(&rows),
             row_updates: rows,
         }
@@ -4340,6 +4498,172 @@ mod tests {
             dirty: false,
             kitty_virtual_placeholder: false,
         }
+    }
+
+    fn flatbuffer_terminal_colors<'a>(
+        builder: &mut FlatBufferBuilder<'a>,
+    ) -> flatbuffers::WIPOffset<protocol::TerminalColorState<'a>> {
+        let palette = builder.create_vector::<u32>(&[]);
+        let palette_diff = builder.create_vector::<u32>(&[]);
+        protocol::TerminalColorState::create(
+            builder,
+            &protocol::TerminalColorStateArgs {
+                default_fg_rgba: 0,
+                default_bg_rgba: 0,
+                cursor_rgba: 0,
+                cursor_rgba_set: false,
+                palette_rgba: Some(palette),
+                palette_diff_start: 0,
+                palette_diff_rgba: Some(palette_diff),
+            },
+        )
+    }
+
+    fn flatbuffer_hyperlink<'a>(
+        builder: &mut FlatBufferBuilder<'a>,
+    ) -> flatbuffers::WIPOffset<protocol::Hyperlink<'a>> {
+        let uri = builder.create_string("https://example.test/link");
+        let osc8_id = builder.create_string("link-id");
+        let params = builder.create_string("id=link-id");
+        protocol::Hyperlink::create(
+            builder,
+            &protocol::HyperlinkArgs {
+                id: 7,
+                uri: Some(uri),
+                osc8_id: Some(osc8_id),
+                params: Some(params),
+            },
+        )
+    }
+
+    fn flatbuffer_linked_run<'a>(
+        builder: &mut FlatBufferBuilder<'a>,
+    ) -> flatbuffers::WIPOffset<protocol::CellRun<'a>> {
+        let text = builder.create_string("linked");
+        let widths = builder.create_vector(&[1u8, 1, 1, 1, 1, 1]);
+        protocol::CellRun::create(
+            builder,
+            &protocol::CellRunArgs {
+                text_utf8: Some(text),
+                cell_widths: Some(widths),
+                style_id: 0,
+                flags: CELL_RUN_FLAG_HYPERLINK_PRESENT,
+                hyperlink_id: 7,
+                semantic_content: protocol::CellSemanticContent::Output,
+            },
+        )
+    }
+
+    fn envelope_frame<'a>(
+        builder: &mut FlatBufferBuilder<'a>,
+        body_type: protocol::EnvelopeBody,
+        body: flatbuffers::WIPOffset<flatbuffers::UnionWIPOffset>,
+    ) -> Vec<u8> {
+        let session_id = builder.create_string("local");
+        let connection_id = builder.create_string("local-client");
+        let envelope = protocol::Envelope::create(
+            builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(session_id),
+                connection_id: Some(connection_id),
+                seq: 0,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type,
+                body: Some(body),
+            },
+        );
+        protocol::finish_size_prefixed_envelope_buffer(builder, envelope);
+        builder.finished_data().to_vec()
+    }
+
+    fn pane_surface_snapshot_with_hyperlink_frame() -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let run = flatbuffer_linked_run(&mut builder);
+        let runs = builder.create_vector(&[run]);
+        let row = protocol::SurfaceRow::create(
+            &mut builder,
+            &protocol::SurfaceRowArgs {
+                row: 0,
+                runs: Some(runs),
+                dirty_hash: 1,
+                semantic_prompt: protocol::RowSemanticPrompt::None,
+                dirty: false,
+                kitty_virtual_placeholder: false,
+                row_state_hash: 1,
+            },
+        );
+        let rows = builder.create_vector(&[row]);
+        let styles = builder.create_vector::<flatbuffers::WIPOffset<protocol::Style>>(&[]);
+        let hyperlink = flatbuffer_hyperlink(&mut builder);
+        let hyperlinks = builder.create_vector(&[hyperlink]);
+        let colors = flatbuffer_terminal_colors(&mut builder);
+        let pane_id = builder.create_string("pane-1");
+        let snapshot = protocol::PaneSurfaceSnapshot::create(
+            &mut builder,
+            &protocol::PaneSurfaceSnapshotArgs {
+                pane_id: Some(pane_id),
+                version: 1,
+                surface: protocol::SurfaceKind::Main,
+                cols: 80,
+                rows: 1,
+                cursor: None,
+                modes: None,
+                metadata: None,
+                styles: Some(styles),
+                rows_data: Some(rows),
+                colors: Some(colors),
+                hyperlinks: Some(hyperlinks),
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::PaneSurfaceSnapshot,
+            snapshot.as_union_value(),
+        )
+    }
+
+    fn scrollback_chunk_with_hyperlink_frame() -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let run = flatbuffer_linked_run(&mut builder);
+        let runs = builder.create_vector(&[run]);
+        let row = protocol::ScrollbackRow::create(
+            &mut builder,
+            &protocol::ScrollbackRowArgs {
+                line: 1,
+                runs: Some(runs),
+                dirty_hash: 1,
+                semantic_prompt: protocol::RowSemanticPrompt::None,
+                dirty: false,
+                kitty_virtual_placeholder: false,
+                row_state_hash: 1,
+            },
+        );
+        let rows = builder.create_vector(&[row]);
+        let styles = builder.create_vector::<flatbuffers::WIPOffset<protocol::Style>>(&[]);
+        let hyperlink = flatbuffer_hyperlink(&mut builder);
+        let hyperlinks = builder.create_vector(&[hyperlink]);
+        let colors = flatbuffer_terminal_colors(&mut builder);
+        let pane_id = builder.create_string("pane-1");
+        let chunk = protocol::ScrollbackChunk::create(
+            &mut builder,
+            &protocol::ScrollbackChunkArgs {
+                pane_id: Some(pane_id),
+                scrollback_version: 1,
+                start_line: 1,
+                total_lines: 1,
+                rows: Some(rows),
+                styles: Some(styles),
+                colors: Some(colors),
+                hyperlinks: Some(hyperlinks),
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::ScrollbackChunk,
+            chunk.as_union_value(),
+        )
     }
 
     fn rename_initial_pane(session: &mut Session, pane_id: &str) {
@@ -4546,6 +4870,7 @@ mod tests {
                 start_line: 1,
                 total_lines: 3,
                 styles: default_style_summaries(),
+                hyperlinks: Vec::new(),
                 colors: TerminalColorSummary::default(),
                 lines: vec![
                     scrollback_line(1, "booting nmux workspace"),
@@ -4585,6 +4910,45 @@ mod tests {
         assert_eq!(surface.title, "patched title");
         assert_eq!(surface.working_directory, "file://localhost/tmp/patched");
         assert_eq!(surface.render_text(), "new top\nmiddle\nnew bottom");
+    }
+
+    #[test]
+    fn decodes_surface_snapshot_hyperlink_table_from_frame() {
+        let frame = pane_surface_snapshot_with_hyperlink_frame();
+        let update = surface_update_from_frame(&frame).expect("surface update");
+
+        assert_eq!(
+            update.hyperlinks,
+            vec![HyperlinkSummary {
+                id: 7,
+                uri: "https://example.test/link".to_owned(),
+                osc8_id: "link-id".to_owned(),
+                params: "id=link-id".to_owned(),
+            }]
+        );
+        assert_eq!(update.row_updates[0].runs[0].hyperlink_id, 7);
+
+        let surface = ClientPaneSurface::from_snapshot(&update).expect("client surface");
+        assert_eq!(surface.row_runs[0][0].hyperlink_id, 7);
+        assert_eq!(surface.render_text(), "linked");
+    }
+
+    #[test]
+    fn decodes_scrollback_chunk_hyperlink_table_from_frame() {
+        let frame = scrollback_chunk_with_hyperlink_frame();
+        let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
+
+        assert_eq!(
+            chunk.hyperlinks,
+            vec![HyperlinkSummary {
+                id: 7,
+                uri: "https://example.test/link".to_owned(),
+                osc8_id: "link-id".to_owned(),
+                params: "id=link-id".to_owned(),
+            }]
+        );
+        assert_eq!(chunk.lines[0].runs[0].hyperlink_id, 7);
+        assert_eq!(chunk.lines[0].text, "linked");
     }
 
     #[test]
@@ -4644,6 +5008,41 @@ mod tests {
             surface.row_runs[0][1].semantic_content,
             protocol::CellSemanticContent::Input
         );
+    }
+
+    #[test]
+    fn client_surface_rejects_patch_with_unknown_hyperlink_id() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top")],
+        );
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let patch = surface_update(
+            SurfaceUpdateKind::Patch,
+            2,
+            Some(1),
+            vec![surface_row_with_runs(
+                0,
+                vec![CellRunSummary {
+                    text: "linked".to_owned(),
+                    cell_widths: vec![1, 1, 1, 1, 1, 1],
+                    style_id: 0,
+                    flags: CELL_RUN_FLAG_HYPERLINK_PRESENT,
+                    hyperlink_id: 7,
+                    semantic_content: protocol::CellSemanticContent::Output,
+                }],
+            )],
+        );
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("unknown hyperlink id should be rejected");
+
+        assert!(err.to_string().contains("unknown hyperlink_id"));
+        assert_eq!(surface.version, 1);
+        assert_eq!(surface.render_text(), "top");
     }
 
     #[test]
@@ -4919,7 +5318,7 @@ mod tests {
                             cell_widths: vec![1, 1, 1, 1, 1],
                             style_id: 1,
                             flags: 1,
-                            hyperlink_id: 0,
+                            hyperlink_id: 7,
                             semantic_content: protocol::CellSemanticContent::Prompt,
                         },
                         CellRunSummary::plain("d"),
@@ -4938,6 +5337,12 @@ mod tests {
             bg_rgba: 0,
             underline_rgba: 0,
             flags: 1,
+        });
+        snapshot.hyperlinks.push(HyperlinkSummary {
+            id: 7,
+            uri: "https://example.test/cache".to_owned(),
+            osc8_id: String::new(),
+            params: String::new(),
         });
         snapshot.modes.bracketed_paste = true;
         snapshot.modes.focus_reporting = true;
@@ -4963,6 +5368,7 @@ mod tests {
             blinking: false,
         });
         let expected_styles = snapshot.styles.clone();
+        let expected_hyperlinks = snapshot.hyperlinks.clone();
         let expected_modes = snapshot.modes;
         let expected_cursor = snapshot.cursor;
         let expected_title = snapshot.title.clone();
@@ -4987,6 +5393,7 @@ mod tests {
                     start_line: 4,
                     total_lines: 9,
                     styles: default_style_summaries(),
+                    hyperlinks: Vec::new(),
                     colors: TerminalColorSummary::default(),
                     lines: vec![scrollback_line(4, "cached scrollback")],
                 }),
@@ -5049,10 +5456,12 @@ mod tests {
         assert!(decoded.surfaces[0].row_kitty_placeholders[0]);
         assert_eq!(decoded.surfaces[0].row_state_hashes[0], 1);
         assert_eq!(decoded.surfaces[0].styles, expected_styles);
+        assert_eq!(decoded.surfaces[0].hyperlinks, expected_hyperlinks);
         assert_eq!(decoded.surfaces[0].row_runs[0].len(), 2);
         assert_eq!(decoded.surfaces[0].row_runs[0][0].text, "cache");
         assert_eq!(decoded.surfaces[0].row_runs[0][0].style_id, 1);
         assert_eq!(decoded.surfaces[0].row_runs[0][0].flags, 1);
+        assert_eq!(decoded.surfaces[0].row_runs[0][0].hyperlink_id, 7);
         assert_eq!(
             decoded.surfaces[0].row_runs[0][0].semantic_content,
             protocol::CellSemanticContent::Prompt
@@ -5082,8 +5491,29 @@ mod tests {
         assert!(!decoded.surfaces[0].row_dirty[0]);
         assert!(!decoded.surfaces[0].row_kitty_placeholders[0]);
         assert_eq!(decoded.surfaces[0].styles, default_style_summaries());
+        assert!(decoded.surfaces[0].hyperlinks.is_empty());
         assert_eq!(decoded.surfaces[0].render_text(), "cached");
         assert!(decoded.scrollbacks.is_empty());
+    }
+
+    #[test]
+    fn client_attach_state_rejects_unknown_cached_hyperlink_id() {
+        let err = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 7\nsurface 70616e652d31 7 80 24 0\ncursor none\nrow 0 6c696e6b6564\nrun 0 6c696e6b6564 010101010101 0 1 7 0\nend\n",
+        )
+        .expect_err("dangling hyperlink id should be rejected");
+
+        assert!(err.to_string().contains("unknown hyperlink_id"));
+    }
+
+    #[test]
+    fn client_attach_state_rejects_invalid_hyperlink_table() {
+        let err = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 7\nsurface 70616e652d31 7 80 24 0\ncursor none\nhyperlink 0 68747470733a2f2f6578616d706c652e74657374 - -\nrow 0 636163686564\nend\n",
+        )
+        .expect_err("reserved hyperlink id should be rejected");
+
+        assert!(err.to_string().contains("reserved id 0"));
     }
 
     #[test]
@@ -5109,6 +5539,7 @@ mod tests {
                     start_line: 1,
                     total_lines: 2,
                     styles: default_style_summaries(),
+                    hyperlinks: Vec::new(),
                     colors: TerminalColorSummary::default(),
                     lines: vec![scrollback_line(1, "cached")],
                 }),
@@ -5133,6 +5564,7 @@ mod tests {
             start_line: 1,
             total_lines: 6,
             styles: default_style_summaries(),
+            hyperlinks: Vec::new(),
             colors: TerminalColorSummary::default(),
             lines: vec![scrollback_line(1, "one"), scrollback_line(2, "two")],
         });
@@ -5142,6 +5574,7 @@ mod tests {
             start_line: 3,
             total_lines: 6,
             styles: default_style_summaries(),
+            hyperlinks: Vec::new(),
             colors: TerminalColorSummary::default(),
             lines: vec![scrollback_line(3, "three")],
         });
@@ -5151,6 +5584,7 @@ mod tests {
             start_line: 1,
             total_lines: 6,
             styles: default_style_summaries(),
+            hyperlinks: Vec::new(),
             colors: TerminalColorSummary::default(),
             lines: vec![scrollback_line(1, "one"), scrollback_line(2, "two")],
         });
@@ -5207,6 +5641,7 @@ mod tests {
                 start_line: 1,
                 total_lines: 1,
                 styles: default_style_summaries(),
+                hyperlinks: Vec::new(),
                 colors: TerminalColorSummary::default(),
                 lines: vec![scrollback_line(1, "real process output")],
             })
@@ -5467,6 +5902,7 @@ mod tests {
                 start_line: 4,
                 total_lines: 4,
                 styles: default_style_summaries(),
+                hyperlinks: Vec::new(),
                 colors: TerminalColorSummary::default(),
                 lines: vec![scrollback_line(4, "z")],
             }
@@ -5507,6 +5943,7 @@ mod tests {
                 start_line: 4,
                 total_lines: 4,
                 styles: default_style_summaries(),
+                hyperlinks: Vec::new(),
                 colors: TerminalColorSummary::default(),
                 lines: vec![scrollback_line(4, "custom")],
             })
@@ -5548,6 +5985,7 @@ mod tests {
                 start_line: 4,
                 total_lines: 5,
                 styles: default_style_summaries(),
+                hyperlinks: Vec::new(),
                 colors: TerminalColorSummary::default(),
                 lines: vec![scrollback_line(4, "pasted"), scrollback_line(5, "text")],
             })
@@ -7864,6 +8302,7 @@ mod tests {
                 start_line: 1,
                 total_lines: 3,
                 styles: default_style_summaries(),
+                hyperlinks: Vec::new(),
                 colors: TerminalColorSummary::default(),
                 lines: vec![
                     scrollback_line(1, "booting nmux workspace"),
@@ -7953,6 +8392,7 @@ mod tests {
                     start_line: 1,
                     total_lines: 1,
                     styles: default_style_summaries(),
+                    hyperlinks: Vec::new(),
                     colors: TerminalColorSummary::default(),
                     lines: vec![
                         scrollback_line(1, "booting pane-2"),
@@ -8081,6 +8521,7 @@ mod tests {
                     start_line: 1,
                     total_lines: 3,
                     styles: default_style_summaries(),
+                    hyperlinks: Vec::new(),
                     colors: TerminalColorSummary::default(),
                     lines: vec![
                         scrollback_line(1, "booting nmux workspace"),

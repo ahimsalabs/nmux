@@ -158,6 +158,7 @@ table PaneSurfaceSnapshot {
   styles:[Style];
   rows_data:[SurfaceRow];
   colors:TerminalColorState;
+  hyperlinks:[Hyperlink];
 }
 
 table PaneSurfacePatch {
@@ -243,6 +244,13 @@ table Style {
   flags:uint;
 }
 
+table Hyperlink {
+  id:uint;
+  uri:string;
+  osc8_id:string;
+  params:string;
+}
+
 table InputEvent {
   pane_id:string;
   actor_id:string;
@@ -306,6 +314,7 @@ table ScrollbackChunk {
   rows:[ScrollbackRow];
   styles:[Style];
   colors:TerminalColorState;
+  hyperlinks:[Hyperlink];
 }
 
 table ScrollbackRow {

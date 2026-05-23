@@ -48,10 +48,16 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
   placeholder presence.
 - `CellRun` stores UTF-8 text, per-cell widths, a style table reference,
   flags, optional hyperlink reference, and per-run semantic content. Bit 0 in
-  `CellRun.flags` means backend hyperlink presence for the run; `hyperlink_id`
-  remains zero until nmux has a URI/ID table. `cell_widths` is one byte per
+  `CellRun.flags` means backend hyperlink presence for the run. Nonzero
+  `hyperlink_id` values resolve through the `Hyperlink` table carried by the
+  same `PaneSurfaceSnapshot` or `ScrollbackChunk`; the current extractor still
+  leaves IDs zero until URI identity is wired. `cell_widths` is one byte per
   rendered cell in the run, so wide characters carry a width of 2 at their
   rendered cell position.
+- `Hyperlink` stores table-backed hyperlink identity for full snapshots and
+  scrollback chunks: numeric ID, target URI, optional OSC 8 identifier, and
+  optional raw parameter string. `PaneSurfacePatch` does not carry hyperlink
+  table diffs yet, so patches must not introduce references to unknown IDs.
 - `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot`
   objects and `ScrollbackChunk` objects carry the style table needed by their
   rows. `fg_rgba`, `bg_rgba`, and `underline_rgba` use `0xRRGGBBAA` packing;
@@ -109,13 +115,14 @@ absolute palette. These are versioned surface changes because future input
 encoding, renderer behavior, and pane chrome can depend on terminal state even
 when visible text does not change.
 
-`PaneSurfacePatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, if color changes are coupled to row/style changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired`. During attach, `AttachStatus.surface_state = Snapshot` is the recovery signal and the daemon immediately follows it with a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
+`PaneSurfacePatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, if a row update would reference a new hyperlink ID that is absent from the client's cached table, if color changes are coupled to row/style changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired`. During attach, `AttachStatus.surface_state = Snapshot` is the recovery signal and the daemon immediately follows it with a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
 
 Scrollback is a separate versioned object. Clients request ranges with
 `ScrollbackFetch`; the daemon replies with `ScrollbackChunk` rows and the
-corresponding style table for that chunk. `ScrollbackFetch.start_line`,
-`ScrollbackChunk.start_line`, and `ScrollbackRow.line` are 1-based public line
-numbers, so line 1 is the oldest retained row in the chunk's pane history.
+corresponding style and hyperlink tables for that chunk.
+`ScrollbackFetch.start_line`, `ScrollbackChunk.start_line`, and
+`ScrollbackRow.line` are 1-based public line numbers, so line 1 is the oldest
+retained row in the chunk's pane history.
 `ScrollbackFetch.known_scrollback_version = 0` means the client is not asserting
 a cached scrollback version. Nonzero known versions must match the daemon's
 current pane scrollback version; mismatches return `ErrorCode::StaleVersion`

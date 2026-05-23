@@ -1599,6 +1599,7 @@ mod tests {
             colors: None,
             row_updates: Vec::new(),
             styles: Vec::new(),
+            hyperlinks: Vec::new(),
             text: String::new(),
         }
     }

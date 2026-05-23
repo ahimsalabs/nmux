@@ -629,6 +629,7 @@ impl Session {
             ));
         }
         let styles = builder.create_vector(&style_offsets);
+        let hyperlinks = builder.create_vector::<flatbuffers::WIPOffset<protocol::Hyperlink>>(&[]);
         let cursor = protocol::CursorState::create(
             &mut builder,
             &protocol::CursorStateArgs {
@@ -658,6 +659,7 @@ impl Session {
                 colors: Some(colors),
                 styles: Some(styles),
                 rows_data: Some(rows_data),
+                hyperlinks: Some(hyperlinks),
             },
         );
 
@@ -913,6 +915,7 @@ impl Session {
             ));
         }
         let styles = builder.create_vector(&style_offsets);
+        let hyperlinks = builder.create_vector::<flatbuffers::WIPOffset<protocol::Hyperlink>>(&[]);
         let colors = build_terminal_colors(&mut builder, &scrollback.colors, None, true);
         let pane_id = builder.create_string(&scrollback.pane_id);
         let chunk = protocol::ScrollbackChunk::create(
@@ -925,6 +928,7 @@ impl Session {
                 rows: Some(rows),
                 styles: Some(styles),
                 colors: Some(colors),
+                hyperlinks: Some(hyperlinks),
             },
         );
 
@@ -1944,7 +1948,7 @@ fn build_cell_run<'a>(
             cell_widths: Some(widths),
             style_id: run.style_id,
             flags: run.flags,
-            hyperlink_id: run.hyperlink_id,
+            hyperlink_id: 0,
             semantic_content: run.semantic_content,
         },
     )
@@ -2228,7 +2232,7 @@ mod tests {
                 cell_widths: vec![1, 1, 1],
                 style_id: 1,
                 flags: crate::terminal::CELL_RUN_FLAG_HYPERLINK_PRESENT,
-                hyperlink_id: 0,
+                hyperlink_id: 7,
                 semantic_content: protocol::CellSemanticContent::Prompt,
             },
             CellRun::plain(" plain"),
@@ -2242,6 +2246,7 @@ mod tests {
         assert_eq!(styles.len(), 2);
         assert_eq!(styles.get(1).fg_rgba(), 0xff00_0000);
         assert_eq!(styles.get(1).flags(), 1);
+        assert_eq!(snapshot.hyperlinks().expect("hyperlinks").len(), 0);
         let colors = snapshot.colors().expect("colors");
         assert_eq!(colors.default_fg_rgba(), 0xeeeeeeff);
         assert_eq!(colors.default_bg_rgba(), 0x111111ff);
@@ -2260,6 +2265,7 @@ mod tests {
             runs.get(0).flags(),
             crate::terminal::CELL_RUN_FLAG_HYPERLINK_PRESENT
         );
+        assert_eq!(runs.get(0).hyperlink_id(), 0);
         assert_eq!(runs.get(0).cell_widths().expect("widths").len(), 3);
         assert_eq!(
             runs.get(0).semantic_content(),
@@ -2541,7 +2547,7 @@ mod tests {
                 cell_widths: vec![1, 1, 1],
                 style_id: 1,
                 flags: 0,
-                hyperlink_id: 0,
+                hyperlink_id: 7,
                 semantic_content: protocol::CellSemanticContent::Input,
             },
             CellRun::plain(" plain"),
@@ -2557,6 +2563,7 @@ mod tests {
         assert_eq!(styles.len(), 2);
         assert_eq!(styles.get(1).fg_rgba(), 0xff00_0000);
         assert_eq!(styles.get(1).flags(), 1);
+        assert_eq!(chunk.hyperlinks().expect("hyperlinks").len(), 0);
         let colors = chunk.colors().expect("colors");
         assert_eq!(colors.default_fg_rgba(), 0xeeeeeeff);
         assert_eq!(colors.default_bg_rgba(), 0x111111ff);
@@ -2570,6 +2577,7 @@ mod tests {
         assert_eq!(runs.len(), 2);
         assert_eq!(runs.get(0).text_utf8(), Some("red"));
         assert_eq!(runs.get(0).style_id(), 1);
+        assert_eq!(runs.get(0).hyperlink_id(), 0);
         assert_eq!(
             runs.get(0).semantic_content(),
             protocol::CellSemanticContent::Input
