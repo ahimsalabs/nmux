@@ -1762,20 +1762,54 @@ fn format_scrollback_json(scrollback: &local::ScrollbackChunkSummary) -> String 
         .iter()
         .map(|line| {
             format!(
-                "{{\"line\":{},\"text\":{}}}",
+                "{{\"line\":{},\"text\":{},\"dirty_hash\":{},\"row_state_hash\":{},\"semantic_prompt\":{},\"dirty\":{},\"kitty_virtual_placeholder\":{},\"runs\":{}}}",
                 line.line,
-                local::json_string(&line.text)
+                local::json_string(&line.text),
+                line.dirty_hash,
+                line.row_state_hash,
+                local::json_string(row_semantic_prompt_name(line.semantic_prompt)),
+                line.dirty,
+                line.kitty_virtual_placeholder,
+                format_cell_runs_json(&line.runs)
             )
         })
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"pane_id\":{},\"scrollback_version\":{},\"start_line\":{},\"total_lines\":{},\"lines\":[{lines}]}}",
+        "{{\"pane_id\":{},\"scrollback_version\":{},\"start_line\":{},\"total_lines\":{},\"colors\":{},\"styles\":{},\"hyperlinks\":{},\"lines\":[{lines}]}}",
         local::json_string(&scrollback.pane_id),
         scrollback.scrollback_version,
         scrollback.start_line,
-        scrollback.total_lines
+        scrollback.total_lines,
+        format_terminal_colors_json(&scrollback.colors),
+        format_styles_json(&scrollback.styles),
+        format_hyperlinks_json(&scrollback.hyperlinks)
     )
+}
+
+fn format_terminal_colors_json(colors: &local::TerminalColorSummary) -> String {
+    format!(
+        "{{\"default_fg_rgba\":{},\"default_bg_rgba\":{},\"cursor_rgba\":{},\"cursor_rgba_set\":{},\"palette_rgba\":{},\"palette_diff_start\":{},\"palette_diff_rgba\":{}}}",
+        colors.default_fg_rgba,
+        colors.default_bg_rgba,
+        colors.cursor_rgba,
+        colors.cursor_rgba_set,
+        format_u32_array_json(&colors.palette_rgba),
+        colors
+            .palette_diff_start
+            .map(|start| start.to_string())
+            .unwrap_or_else(|| "null".to_owned()),
+        format_u32_array_json(&colors.palette_diff_rgba)
+    )
+}
+
+fn format_u32_array_json(values: &[u32]) -> String {
+    let values = values
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{values}]")
 }
 
 fn resize_policy_name(policy: protocol::ResizePolicy) -> &'static str {
@@ -2566,17 +2600,42 @@ mod tests {
                 scrollback_version: 9,
                 start_line: 1,
                 total_lines: 2,
-                styles: Vec::new(),
-                hyperlinks: Vec::new(),
-                colors: local::TerminalColorSummary::default(),
+                styles: vec![local::StyleSummary {
+                    fg_rgba: 1,
+                    bg_rgba: 2,
+                    underline_rgba: 3,
+                    flags: 4,
+                }],
+                hyperlinks: vec![local::HyperlinkSummary {
+                    id: 8,
+                    uri: "https://example.test/scroll".to_owned(),
+                    osc8_id: "scroll-id".to_owned(),
+                    params: "id=scroll-id".to_owned(),
+                }],
+                colors: local::TerminalColorSummary {
+                    default_fg_rgba: 5,
+                    default_bg_rgba: 6,
+                    cursor_rgba: 7,
+                    cursor_rgba_set: true,
+                    palette_rgba: vec![8, 9],
+                    palette_diff_start: Some(1),
+                    palette_diff_rgba: vec![10],
+                },
                 lines: vec![local::ScrollbackLine {
                     line: 1,
                     text: "older row".to_owned(),
-                    runs: Vec::new(),
-                    dirty_hash: 0,
-                    row_state_hash: 0,
-                    semantic_prompt: protocol::RowSemanticPrompt::None,
-                    dirty: false,
+                    runs: vec![local::CellRunSummary {
+                        text: "older".to_owned(),
+                        cell_widths: vec![1, 1, 1, 1, 1],
+                        style_id: 0,
+                        flags: 1,
+                        hyperlink_id: 8,
+                        semantic_content: protocol::CellSemanticContent::Input,
+                    }],
+                    dirty_hash: 12,
+                    row_state_hash: 13,
+                    semantic_prompt: protocol::RowSemanticPrompt::Prompt,
+                    dirty: true,
                     kitty_virtual_placeholder: false,
                 }],
             }),
@@ -2595,7 +2654,12 @@ mod tests {
         assert!(json.contains("\"mouse_format\":\"sgr-pixels\""));
         assert!(json.contains("\"surface_text\":\"hello\\nworld\""));
         assert!(json.contains("\"scrollback_version\":9"));
-        assert!(json.contains("{\"line\":1,\"text\":\"older row\"}"));
+        assert!(json.contains("\"palette_rgba\":[8,9]"));
+        assert!(json.contains("\"styles\":[{\"fg_rgba\":1"));
+        assert!(json.contains("\"hyperlinks\":[{\"id\":8,\"uri\":\"https://example.test/scroll\""));
+        assert!(json.contains("\"line\":1,\"text\":\"older row\""));
+        assert!(json.contains("\"semantic_prompt\":\"prompt\""));
+        assert!(json.contains("\"semantic_content\":\"input\""));
     }
 
     #[test]

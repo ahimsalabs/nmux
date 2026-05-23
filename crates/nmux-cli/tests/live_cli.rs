@@ -112,6 +112,14 @@ fn one_shot_cli_can_print_attach_json() {
         stdout.contains("\"scrollback\":{"),
         "missing scrollback:\n{stdout}"
     );
+    assert!(
+        stdout.contains("\"lines\":["),
+        "missing structured scrollback lines:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"runs\":["),
+        "missing structured scrollback runs:\n{stdout}"
+    );
 }
 
 #[test]
