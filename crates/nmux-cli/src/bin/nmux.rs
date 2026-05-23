@@ -1552,13 +1552,16 @@ fn format_live_surface_update_json(
         .map(local::json_string)
         .unwrap_or_else(|| "null".to_owned());
     format!(
-        "{{\"event\":\"surface\",\"workspace\":{},\"terminal\":{},\"surface_text\":{},\"update\":{{\"pane_id\":{},\"kind\":{},\"version\":{},\"base_version\":{base_version},\"patch_kind\":{patch_kind}}}}}",
+        "{{\"event\":\"surface\",\"workspace\":{},\"terminal\":{},\"surface_text\":{},\"update\":{{\"pane_id\":{},\"kind\":{},\"version\":{},\"base_version\":{base_version},\"patch_kind\":{patch_kind},\"rows\":{},\"styles\":{},\"hyperlinks\":{}}}}}",
         format_workspace_json(workspace),
         format_surface_update_terminal_json(metadata, update),
         local::json_string(surface_text),
         local::json_string(&update.pane_id),
         local::json_string(surface_update_kind_name(update.kind)),
-        update.version
+        update.version,
+        format_surface_rows_json(&update.row_updates),
+        format_styles_json(&update.styles),
+        format_hyperlinks_json(&update.hyperlinks)
     )
 }
 
@@ -1673,6 +1676,86 @@ fn format_terminal_modes_json(modes: local::TerminalModeSummary) -> String {
     )
 }
 
+fn format_surface_rows_json(rows: &[local::SurfaceRowUpdate]) -> String {
+    let rows = rows
+        .iter()
+        .map(|row| {
+            format!(
+                "{{\"row\":{},\"text\":{},\"dirty_hash\":{},\"row_state_hash\":{},\"semantic_prompt\":{},\"dirty\":{},\"kitty_virtual_placeholder\":{},\"runs\":{}}}",
+                row.row,
+                local::json_string(&row.text),
+                row.dirty_hash,
+                row.row_state_hash,
+                local::json_string(row_semantic_prompt_name(row.semantic_prompt)),
+                row.dirty,
+                row.kitty_virtual_placeholder,
+                format_cell_runs_json(&row.runs)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{rows}]")
+}
+
+fn format_cell_runs_json(runs: &[local::CellRunSummary]) -> String {
+    let runs = runs
+        .iter()
+        .map(|run| {
+            format!(
+                "{{\"text\":{},\"cell_widths\":{},\"style_id\":{},\"flags\":{},\"hyperlink_id\":{},\"semantic_content\":{}}}",
+                local::json_string(&run.text),
+                format_u8_array_json(&run.cell_widths),
+                run.style_id,
+                run.flags,
+                run.hyperlink_id,
+                local::json_string(cell_semantic_content_name(run.semantic_content))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{runs}]")
+}
+
+fn format_styles_json(styles: &[local::StyleSummary]) -> String {
+    let styles = styles
+        .iter()
+        .map(|style| {
+            format!(
+                "{{\"fg_rgba\":{},\"bg_rgba\":{},\"underline_rgba\":{},\"flags\":{}}}",
+                style.fg_rgba, style.bg_rgba, style.underline_rgba, style.flags
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{styles}]")
+}
+
+fn format_hyperlinks_json(hyperlinks: &[local::HyperlinkSummary]) -> String {
+    let hyperlinks = hyperlinks
+        .iter()
+        .map(|hyperlink| {
+            format!(
+                "{{\"id\":{},\"uri\":{},\"osc8_id\":{},\"params\":{}}}",
+                hyperlink.id,
+                local::json_string(&hyperlink.uri),
+                local::json_string(&hyperlink.osc8_id),
+                local::json_string(&hyperlink.params)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{hyperlinks}]")
+}
+
+fn format_u8_array_json(values: &[u8]) -> String {
+    let values = values
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{values}]")
+}
+
 fn format_scrollback_json(scrollback: &local::ScrollbackChunkSummary) -> String {
     let lines = scrollback
         .lines
@@ -1766,6 +1849,24 @@ fn mouse_format_name(format: protocol::MouseFormat) -> &'static str {
         protocol::MouseFormat::Sgr => "sgr",
         protocol::MouseFormat::Urxvt => "urxvt",
         protocol::MouseFormat::SgrPixels => "sgr-pixels",
+        _ => "unknown",
+    }
+}
+
+fn row_semantic_prompt_name(prompt: protocol::RowSemanticPrompt) -> &'static str {
+    match prompt {
+        protocol::RowSemanticPrompt::None => "none",
+        protocol::RowSemanticPrompt::Prompt => "prompt",
+        protocol::RowSemanticPrompt::Continuation => "continuation",
+        _ => "unknown",
+    }
+}
+
+fn cell_semantic_content_name(content: protocol::CellSemanticContent) -> &'static str {
+    match content {
+        protocol::CellSemanticContent::Output => "output",
+        protocol::CellSemanticContent::Prompt => "prompt",
+        protocol::CellSemanticContent::Input => "input",
         _ => "unknown",
     }
 }
@@ -2526,6 +2627,35 @@ mod tests {
             Some(protocol::PatchKind::ModeOnly),
         );
         update.text = "updated".to_owned();
+        update.styles.push(local::StyleSummary {
+            fg_rgba: 0xff00_00ff,
+            bg_rgba: 0x0000_00ff,
+            underline_rgba: 0,
+            flags: 3,
+        });
+        update.hyperlinks.push(local::HyperlinkSummary {
+            id: 4,
+            uri: "https://example.test/live".to_owned(),
+            osc8_id: "osc-id".to_owned(),
+            params: "id=osc-id".to_owned(),
+        });
+        update.row_updates.push(local::SurfaceRowUpdate {
+            row: 2,
+            text: "styled".to_owned(),
+            runs: vec![local::CellRunSummary {
+                text: "sty".to_owned(),
+                cell_widths: vec![1, 1, 1],
+                style_id: 1,
+                flags: 2,
+                hyperlink_id: 4,
+                semantic_content: protocol::CellSemanticContent::Prompt,
+            }],
+            dirty_hash: 11,
+            row_state_hash: 12,
+            semantic_prompt: protocol::RowSemanticPrompt::Continuation,
+            dirty: true,
+            kitty_virtual_placeholder: false,
+        });
 
         assert!(format_live_attach_json(&rendered).starts_with("{\"event\":\"attach\""));
         assert_eq!(
@@ -2542,6 +2672,14 @@ mod tests {
         assert!(update_json.contains("\"kind\":\"patch\""));
         assert!(update_json.contains("\"base_version\":6"));
         assert!(update_json.contains("\"patch_kind\":\"mode-only\""));
+        assert!(update_json.contains("\"rows\":[{\"row\":2,\"text\":\"styled\""));
+        assert!(update_json.contains("\"semantic_prompt\":\"continuation\""));
+        assert!(update_json.contains("\"cell_widths\":[1,1,1]"));
+        assert!(update_json.contains("\"semantic_content\":\"prompt\""));
+        assert!(update_json.contains("\"styles\":[{\"fg_rgba\":4278190335"));
+        assert!(
+            update_json.contains("\"hyperlinks\":[{\"id\":4,\"uri\":\"https://example.test/live\"")
+        );
 
         let error_json = format_live_error_json(&local::ErrorSummary {
             code: protocol::ErrorCode::PermissionDenied,

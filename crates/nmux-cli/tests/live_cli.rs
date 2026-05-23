@@ -385,6 +385,14 @@ fn live_cli_can_stream_json_events() {
         "missing surface event:\n{stdout}"
     );
     assert!(
+        stdout.contains("\"rows\":["),
+        "missing structured row updates:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"runs\":["),
+        "missing structured row runs:\n{stdout}"
+    );
+    assert!(
         stdout.contains("json:ping"),
         "missing streamed output:\n{stdout}"
     );
