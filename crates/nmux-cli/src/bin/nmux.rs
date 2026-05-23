@@ -1501,6 +1501,7 @@ struct RawArgs {
     #[arg(
         long = "key-name",
         value_name = "NAME",
+        value_parser = parse_key_name,
         action = ArgAction::Append,
         allow_hyphen_values = true
     )]
@@ -1508,35 +1509,60 @@ struct RawArgs {
     #[arg(
         long = "key-modifiers",
         value_name = "MODS",
+        value_parser = parse_key_modifiers_for_clap,
         allow_hyphen_values = true
     )]
-    key_modifiers: Option<String>,
+    key_modifiers: Option<u32>,
     #[arg(long = "paste", value_name = "TEXT", allow_hyphen_values = true)]
     paste_text: Option<String>,
-    #[arg(long = "focus", value_name = "gained|lost", allow_hyphen_values = true)]
-    focus_event: Option<String>,
+    #[arg(
+        long = "focus",
+        value_name = "gained|lost",
+        value_parser = parse_focus_event,
+        allow_hyphen_values = true
+    )]
+    focus_event: Option<FocusEvent>,
     #[arg(
         long = "mouse",
         value_name = "action:button:row:col",
+        value_parser = parse_mouse_event,
         allow_hyphen_values = true
     )]
-    mouse_event: Option<String>,
+    mouse_event: Option<MouseEvent>,
     #[arg(
         long = "mouse-modifiers",
         value_name = "MODS",
+        value_parser = parse_mouse_modifiers_for_clap,
         allow_hyphen_values = true
     )]
-    mouse_modifiers: Option<String>,
-    #[arg(long = "mouse-pixels", value_name = "x:y", allow_hyphen_values = true)]
-    mouse_pixels: Option<String>,
+    mouse_modifiers: Option<u32>,
+    #[arg(
+        long = "mouse-pixels",
+        value_name = "x:y",
+        value_parser = parse_mouse_pixels,
+        allow_hyphen_values = true
+    )]
+    mouse_pixels: Option<(u32, u32)>,
     #[arg(long = "no-input", action = ArgAction::SetTrue)]
     no_input: bool,
-    #[arg(long = "scrollback-start", value_name = "LINE")]
-    scrollback_start: Option<String>,
-    #[arg(long = "scrollback-count", value_name = "COUNT")]
-    scrollback_count: Option<String>,
-    #[arg(long = "scrollback-tail", value_name = "COUNT")]
-    scrollback_tail: Option<String>,
+    #[arg(
+        long = "scrollback-start",
+        value_name = "LINE",
+        value_parser = parse_scrollback_start_arg
+    )]
+    scrollback_start: Option<u64>,
+    #[arg(
+        long = "scrollback-count",
+        value_name = "COUNT",
+        value_parser = parse_scrollback_count_arg
+    )]
+    scrollback_count: Option<u32>,
+    #[arg(
+        long = "scrollback-tail",
+        value_name = "COUNT",
+        value_parser = parse_scrollback_tail_arg
+    )]
+    scrollback_tail: Option<u32>,
     #[arg(long = "no-scrollback", action = ArgAction::SetTrue)]
     no_scrollback: bool,
     #[arg(long = "state", value_name = "PATH")]
@@ -1561,8 +1587,12 @@ struct RawArgs {
         allow_hyphen_values = true
     )]
     start_env: Vec<(String, String)>,
-    #[arg(long = "startup-timeout-ms", value_name = "MS")]
-    startup_timeout_ms: Option<String>,
+    #[arg(
+        long = "startup-timeout-ms",
+        value_name = "MS",
+        value_parser = parse_startup_timeout_ms_arg
+    )]
+    startup_timeout_ms: Option<u64>,
     #[arg(long = "stdin", action = ArgAction::SetTrue)]
     stdin_input: bool,
     #[arg(long = "stdin-bytes", action = ArgAction::SetTrue)]
@@ -1570,27 +1600,33 @@ struct RawArgs {
     #[arg(
         long = "local-echo",
         value_name = "off|tty",
+        value_parser = parse_local_echo,
         allow_hyphen_values = true
     )]
-    local_echo: Option<String>,
+    local_echo: Option<LocalEcho>,
     #[arg(
         long = "detach-key",
         value_name = "ctrl-]|none",
+        value_parser = parse_detach_key,
         allow_hyphen_values = true
     )]
-    detach_key: Option<String>,
+    detach_key: Option<DetachKey>,
     #[arg(long = "redraw", action = ArgAction::SetTrue)]
     redraw: bool,
-    #[arg(long = "cols", value_name = "COUNT")]
-    live_cols: Option<String>,
-    #[arg(long = "rows", value_name = "COUNT")]
-    live_rows: Option<String>,
-    #[arg(long = "interval-ms", value_name = "MS")]
-    interval_ms: Option<String>,
-    #[arg(long = "connect-timeout-ms", value_name = "MS")]
-    connect_timeout_ms: Option<String>,
-    #[arg(long = "iterations", value_name = "COUNT")]
-    iterations: Option<String>,
+    #[arg(long = "cols", value_name = "COUNT", value_parser = parse_cols_arg)]
+    live_cols: Option<u32>,
+    #[arg(long = "rows", value_name = "COUNT", value_parser = parse_rows_arg)]
+    live_rows: Option<u32>,
+    #[arg(long = "interval-ms", value_name = "MS", value_parser = parse_interval_ms_arg)]
+    interval_ms: Option<u64>,
+    #[arg(
+        long = "connect-timeout-ms",
+        value_name = "MS",
+        value_parser = parse_connect_timeout_ms_arg
+    )]
+    connect_timeout_ms: Option<u64>,
+    #[arg(long = "iterations", value_name = "COUNT", value_parser = parse_iterations_arg)]
+    iterations: Option<usize>,
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
@@ -1628,98 +1664,26 @@ where
     let scrollback_count_set = raw.scrollback_count.is_some();
     let scrollback_tail_set = raw.scrollback_tail.is_some();
     let startup_timeout_set = raw.startup_timeout_ms.is_some();
-    let scrollback_start_line = raw
-        .scrollback_start
-        .map(|value| parse_numeric_arg("--scrollback-start", value))
-        .transpose()?
-        .unwrap_or(1);
-    let scrollback_line_count = raw
-        .scrollback_count
-        .map(|value| parse_numeric_arg("--scrollback-count", value))
-        .transpose()?
-        .unwrap_or(2);
-    let scrollback_tail_count = raw
-        .scrollback_tail
-        .map(|value| parse_numeric_arg("--scrollback-tail", value))
-        .transpose()?;
-    let live_cols = raw
-        .live_cols
-        .map(|value| parse_numeric_arg("--cols", value))
-        .transpose()?;
-    let live_rows = raw
-        .live_rows
-        .map(|value| parse_numeric_arg("--rows", value))
-        .transpose()?;
-    let interval_ms = raw
-        .interval_ms
-        .map(|value| parse_numeric_arg("--interval-ms", value))
-        .transpose()?
-        .unwrap_or(1000);
-    let connect_timeout_ms = raw
-        .connect_timeout_ms
-        .map(|value| parse_numeric_arg("--connect-timeout-ms", value))
-        .transpose()?;
+    let scrollback_start_line = raw.scrollback_start.unwrap_or(1);
+    let scrollback_line_count = raw.scrollback_count.unwrap_or(2);
+    let scrollback_tail_count = raw.scrollback_tail;
+    let live_cols = raw.live_cols;
+    let live_rows = raw.live_rows;
+    let interval_ms = raw.interval_ms.unwrap_or(1000);
+    let connect_timeout_ms = raw.connect_timeout_ms;
     let startup_timeout_ms = raw
         .startup_timeout_ms
-        .map(|value| parse_numeric_arg("--startup-timeout-ms", value))
-        .transpose()?
         .unwrap_or(DEFAULT_MANAGED_STARTUP_TIMEOUT_MS);
-    let iterations = raw
-        .iterations
-        .map(|value| parse_numeric_arg("--iterations", value))
-        .transpose()?;
-    let mut key_name = None;
-    let mut key_names = Vec::new();
-    for raw_key_name in &raw.key_names {
-        let parsed = parse_key_name(raw_key_name)?;
-        if key_name.is_none() {
-            key_name = Some(parsed.clone());
-        }
-        key_names.push(parsed);
-    }
-    let key_modifiers = raw
-        .key_modifiers
-        .as_deref()
-        .map(parse_key_modifiers)
-        .transpose()
-        .map_err(|err| format!("--key-modifiers {err}"))?
-        .unwrap_or(0);
-    let mut mouse_event = raw
-        .mouse_event
-        .as_deref()
-        .map(parse_mouse_event)
-        .transpose()?;
-    let mouse_modifiers = raw
-        .mouse_modifiers
-        .as_deref()
-        .map(parse_key_modifiers)
-        .transpose()
-        .map_err(|err| format!("--mouse-modifiers {err}"))?
-        .unwrap_or(0);
-    let mouse_pixels = raw
-        .mouse_pixels
-        .as_deref()
-        .map(parse_mouse_pixels)
-        .transpose()?;
-    let focus_event = raw
-        .focus_event
-        .as_deref()
-        .map(parse_focus_event)
-        .transpose()?;
-    let local_echo = raw
-        .local_echo
-        .as_deref()
-        .map(parse_local_echo)
-        .transpose()
-        .map_err(|err| format!("--local-echo {err}"))?
-        .unwrap_or(LocalEcho::Off);
-    let detach_key = raw
-        .detach_key
-        .as_deref()
-        .map(parse_detach_key)
-        .transpose()
-        .map_err(|err| format!("--detach-key {err}"))?
-        .unwrap_or(DetachKey::CtrlRightBracket);
+    let iterations = raw.iterations;
+    let key_name = raw.key_names.first().cloned();
+    let key_names = raw.key_names.clone();
+    let key_modifiers = raw.key_modifiers.unwrap_or(0);
+    let mut mouse_event = raw.mouse_event;
+    let mouse_modifiers = raw.mouse_modifiers.unwrap_or(0);
+    let mouse_pixels = raw.mouse_pixels;
+    let focus_event = raw.focus_event;
+    let local_echo = raw.local_echo.unwrap_or(LocalEcho::Off);
+    let detach_key = raw.detach_key.unwrap_or(DetachKey::CtrlRightBracket);
     let start_working_dir = match raw.start_working_dir {
         Some(value) if value.is_empty() => {
             return Err("--cwd requires a non-empty directory path".into());
@@ -1758,7 +1722,7 @@ where
         if raw.stdin_input && stdin_bytes {
             return Err("--stdin and --stdin-bytes cannot be used together".into());
         }
-        validate_positive_numeric_args(
+        validate_positive_numeric_args(PositiveNumericArgs {
             scrollback_start_line,
             scrollback_line_count,
             scrollback_tail_count,
@@ -1766,7 +1730,7 @@ where
             interval_ms,
             connect_timeout_ms,
             startup_timeout_ms,
-        )?;
+        })?;
         validate_scrollback_selection_args(ScrollbackSelectionArgFlags {
             no_scrollback_set: raw.no_scrollback,
             scrollback_tail_set,
@@ -1783,7 +1747,10 @@ where
             stdin_input: raw.stdin_input,
             stdin_bytes,
         })?;
-        validate_no_input_resize_args(raw.no_input, live_resize)?;
+        validate_no_input_resize_args(NoInputResizeArgs {
+            no_input_set: raw.no_input,
+            live_resize,
+        })?;
         validate_mode_args(ClientModeArgs {
             live,
             follow: raw.follow,
@@ -2591,7 +2558,7 @@ fn required_context_env(name: &str) -> Result<String, Box<dyn std::error::Error>
     }
 }
 
-fn parse_numeric_arg<T>(flag: &str, value: String) -> Result<T, String>
+fn parse_numeric_arg<T>(flag: &str, value: &str) -> Result<T, String>
 where
     T: FromStr,
     T::Err: std::fmt::Display,
@@ -2603,12 +2570,54 @@ where
 
 fn clap_error_message(error: clap::Error) -> String {
     let first_line = error.to_string();
-    first_line
+    let first_line = first_line
         .lines()
         .next()
         .unwrap_or("invalid command line")
         .trim_start_matches("error: ")
-        .to_owned()
+        .to_owned();
+    if let Some((_, reason)) = first_line.rsplit_once(": ") {
+        if reason.starts_with("--") {
+            return reason.to_owned();
+        }
+    }
+    first_line
+}
+
+fn parse_scrollback_start_arg(value: &str) -> Result<u64, String> {
+    parse_numeric_arg("--scrollback-start", value)
+}
+
+fn parse_scrollback_count_arg(value: &str) -> Result<u32, String> {
+    parse_numeric_arg("--scrollback-count", value)
+}
+
+fn parse_scrollback_tail_arg(value: &str) -> Result<u32, String> {
+    parse_numeric_arg("--scrollback-tail", value)
+}
+
+fn parse_cols_arg(value: &str) -> Result<u32, String> {
+    parse_numeric_arg("--cols", value)
+}
+
+fn parse_rows_arg(value: &str) -> Result<u32, String> {
+    parse_numeric_arg("--rows", value)
+}
+
+fn parse_interval_ms_arg(value: &str) -> Result<u64, String> {
+    parse_numeric_arg("--interval-ms", value)
+}
+
+fn parse_connect_timeout_ms_arg(value: &str) -> Result<u64, String> {
+    parse_numeric_arg("--connect-timeout-ms", value)
+}
+
+fn parse_startup_timeout_ms_arg(value: &str) -> Result<u64, String> {
+    parse_numeric_arg("--startup-timeout-ms", value)
+}
+
+fn parse_iterations_arg(value: &str) -> Result<usize, String> {
+    parse_numeric_arg("--iterations", value)
 }
 
 fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
@@ -2624,17 +2633,21 @@ fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
     Ok((key.to_owned(), value.to_owned()))
 }
 
-fn validate_no_input_resize_args(
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct NoInputResizeArgs {
     no_input_set: bool,
     live_resize: Option<(u32, u32)>,
-) -> Result<(), &'static str> {
-    if no_input_set && live_resize.is_some() {
+}
+
+fn validate_no_input_resize_args(args: NoInputResizeArgs) -> Result<(), &'static str> {
+    if args.no_input_set && args.live_resize.is_some() {
         return Err("--no-input cannot be combined with --cols/--rows");
     }
     Ok(())
 }
 
-fn validate_positive_numeric_args(
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PositiveNumericArgs {
     scrollback_start_line: u64,
     scrollback_line_count: u32,
     scrollback_tail_count: Option<u32>,
@@ -2642,26 +2655,28 @@ fn validate_positive_numeric_args(
     interval_ms: u64,
     connect_timeout_ms: Option<u64>,
     startup_timeout_ms: u64,
-) -> Result<(), &'static str> {
-    if scrollback_start_line == 0 {
+}
+
+fn validate_positive_numeric_args(args: PositiveNumericArgs) -> Result<(), &'static str> {
+    if args.scrollback_start_line == 0 {
         return Err("--scrollback-start must be greater than 0");
     }
-    if scrollback_line_count == 0 {
+    if args.scrollback_line_count == 0 {
         return Err("--scrollback-count must be greater than 0");
     }
-    if scrollback_tail_count == Some(0) {
+    if args.scrollback_tail_count == Some(0) {
         return Err("--scrollback-tail must be greater than 0");
     }
-    if interval_ms == 0 {
+    if args.interval_ms == 0 {
         return Err("--interval-ms must be greater than 0");
     }
-    if connect_timeout_ms == Some(0) {
+    if args.connect_timeout_ms == Some(0) {
         return Err("--connect-timeout-ms must be greater than 0");
     }
-    if startup_timeout_ms == 0 {
+    if args.startup_timeout_ms == 0 {
         return Err("--startup-timeout-ms must be greater than 0");
     }
-    if live_resize.is_some_and(|(cols, rows)| {
+    if args.live_resize.is_some_and(|(cols, rows)| {
         cols == 0 || rows == 0 || cols > u16::MAX as u32 || rows > u16::MAX as u32
     }) {
         return Err("--cols and --rows must be between 1 and 65535");
@@ -3083,6 +3098,14 @@ fn parse_key_modifiers(value: &str) -> Result<u32, &'static str> {
     Ok(modifiers)
 }
 
+fn parse_key_modifiers_for_clap(value: &str) -> Result<u32, String> {
+    parse_key_modifiers(value).map_err(|err| format!("--key-modifiers {err}"))
+}
+
+fn parse_mouse_modifiers_for_clap(value: &str) -> Result<u32, String> {
+    parse_key_modifiers(value).map_err(|err| format!("--mouse-modifiers {err}"))
+}
+
 fn parse_mouse_event(value: &str) -> Result<MouseEvent, &'static str> {
     let mut parts = value.split(':');
     let action = parse_mouse_action(
@@ -3171,18 +3194,18 @@ mod tests {
     use super::{
         ClientModeArgs, DetachKey, ExplicitInputModeArgs, FocusEvent,
         InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
-        LiveUpdatePrintKind, LocalEcho, MouseEvent, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES,
-        ScrollbackSelectionArgFlags, SigwinchResizeContext, StateInfoSocketSummary, args_from_iter,
-        format_cli_error_json, format_context_json, format_input_choices_json,
-        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
-        format_live_detach_json, format_live_error_json, format_live_surface_update_json,
-        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        format_state_info_json, format_state_info_text, interim_surface_fidelity_warning_needed,
-        live_update_print_kind, parse_detach_key, parse_env_assignment, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
+        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScrollbackSelectionArgFlags,
+        SigwinchResizeContext, StateInfoSocketSummary, args_from_iter, format_cli_error_json,
+        format_context_json, format_input_choices_json, format_key_names_json,
+        format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
+        format_live_error_json, format_live_surface_update_json, format_live_workspace_json,
+        format_rendered_attach_json, format_scrollback, format_state_info_json,
+        format_state_info_text, interim_surface_fidelity_warning_needed, live_update_print_kind,
+        parse_detach_key, parse_env_assignment, parse_focus_event, parse_key_modifiers,
+        parse_key_name, parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -3214,6 +3237,18 @@ mod tests {
             styles: Vec::new(),
             hyperlinks: Vec::new(),
             text: String::new(),
+        }
+    }
+
+    fn positive_numeric_defaults() -> PositiveNumericArgs {
+        PositiveNumericArgs {
+            scrollback_start_line: 1,
+            scrollback_line_count: 2,
+            scrollback_tail_count: None,
+            live_resize: None,
+            interval_ms: 1000,
+            connect_timeout_ms: None,
+            startup_timeout_ms: 1,
         }
     }
 
@@ -4555,63 +4590,124 @@ mod tests {
     #[test]
     fn no_input_resize_validation_rejects_conflict() {
         assert_eq!(
-            validate_no_input_resize_args(true, Some((80, 24))),
+            validate_no_input_resize_args(NoInputResizeArgs {
+                no_input_set: true,
+                live_resize: Some((80, 24)),
+            }),
             Err("--no-input cannot be combined with --cols/--rows")
         );
-        assert!(validate_no_input_resize_args(true, None).is_ok());
-        assert!(validate_no_input_resize_args(false, Some((80, 24))).is_ok());
+        assert!(
+            validate_no_input_resize_args(NoInputResizeArgs {
+                no_input_set: true,
+                live_resize: None,
+            })
+            .is_ok()
+        );
+        assert!(
+            validate_no_input_resize_args(NoInputResizeArgs {
+                no_input_set: false,
+                live_resize: Some((80, 24)),
+            })
+            .is_ok()
+        );
     }
 
     #[test]
     fn numeric_validation_rejects_zero_live_loop_values() {
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, None, 0, None, 1),
+            validate_positive_numeric_args(PositiveNumericArgs {
+                interval_ms: 0,
+                ..positive_numeric_defaults()
+            }),
             Err("--interval-ms must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, Some((0, 24)), 1000, None, 1),
+            validate_positive_numeric_args(PositiveNumericArgs {
+                live_resize: Some((0, 24)),
+                ..positive_numeric_defaults()
+            }),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, Some((80, 0)), 1000, None, 1),
+            validate_positive_numeric_args(PositiveNumericArgs {
+                live_resize: Some((80, 0)),
+                ..positive_numeric_defaults()
+            }),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, Some((65536, 24)), 1000, None, 1),
+            validate_positive_numeric_args(PositiveNumericArgs {
+                live_resize: Some((65536, 24)),
+                ..positive_numeric_defaults()
+            }),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, Some((80, 65536)), 1000, None, 1),
+            validate_positive_numeric_args(PositiveNumericArgs {
+                live_resize: Some((80, 65536)),
+                ..positive_numeric_defaults()
+            }),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, None, 1000, Some(0), 1),
+            validate_positive_numeric_args(PositiveNumericArgs {
+                connect_timeout_ms: Some(0),
+                ..positive_numeric_defaults()
+            }),
             Err("--connect-timeout-ms must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, None, 1000, None, 0),
+            validate_positive_numeric_args(PositiveNumericArgs {
+                startup_timeout_ms: 0,
+                ..positive_numeric_defaults()
+            }),
             Err("--startup-timeout-ms must be greater than 0")
         );
-        assert!(validate_positive_numeric_args(1, 2, None, None, 1000, Some(1), 1).is_ok());
-        assert!(validate_positive_numeric_args(1, 2, Some(1), None, 1000, None, 1).is_ok());
-        assert!(validate_positive_numeric_args(1, 2, None, None, 1000, None, 1).is_ok());
         assert!(
-            validate_positive_numeric_args(1, 2, None, Some((65535, 65535)), 1000, None, 1).is_ok()
+            validate_positive_numeric_args(PositiveNumericArgs {
+                connect_timeout_ms: Some(1),
+                ..positive_numeric_defaults()
+            })
+            .is_ok()
+        );
+        assert!(
+            validate_positive_numeric_args(PositiveNumericArgs {
+                scrollback_tail_count: Some(1),
+                ..positive_numeric_defaults()
+            })
+            .is_ok()
+        );
+        assert!(validate_positive_numeric_args(positive_numeric_defaults()).is_ok());
+        assert!(
+            validate_positive_numeric_args(PositiveNumericArgs {
+                live_resize: Some((65535, 65535)),
+                ..positive_numeric_defaults()
+            })
+            .is_ok()
         );
     }
 
     #[test]
     fn numeric_validation_rejects_zero_scrollback_values() {
         assert_eq!(
-            validate_positive_numeric_args(0, 2, None, None, 1000, None, 1),
+            validate_positive_numeric_args(PositiveNumericArgs {
+                scrollback_start_line: 0,
+                ..positive_numeric_defaults()
+            }),
             Err("--scrollback-start must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 0, None, None, 1000, None, 1),
+            validate_positive_numeric_args(PositiveNumericArgs {
+                scrollback_line_count: 0,
+                ..positive_numeric_defaults()
+            }),
             Err("--scrollback-count must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, Some(0), None, 1000, None, 1),
+            validate_positive_numeric_args(PositiveNumericArgs {
+                scrollback_tail_count: Some(0),
+                ..positive_numeric_defaults()
+            }),
             Err("--scrollback-tail must be greater than 0")
         );
     }
@@ -4715,7 +4811,7 @@ mod tests {
 
     #[test]
     fn numeric_args_report_flag_names_on_parse_errors() {
-        let err = parse_numeric_arg::<u64>("--interval-ms", "slow".to_owned())
+        let err = parse_numeric_arg::<u64>("--interval-ms", "slow")
             .expect_err("invalid interval should include flag name");
         assert!(err.contains("--interval-ms requires a valid number"));
 
