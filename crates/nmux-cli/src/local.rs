@@ -1632,7 +1632,7 @@ pub fn workspace_summary_from_frame(
         pane_id: pane.pane_id().unwrap_or_default().to_owned(),
         cols: pane.cols(),
         rows: pane.rows(),
-        resize_policy: pane.resize_policy(),
+        resize_policy: validate_resize_policy(pane.resize_policy())?,
     })
 }
 
@@ -2125,7 +2125,7 @@ pub fn error_summary_from_frame(frame: &[u8]) -> Result<ErrorSummary, Box<dyn st
     }
     let error = envelope.body_as_error().ok_or("missing error body")?;
     Ok(ErrorSummary {
-        code: error.code(),
+        code: validate_error_code(error.code())?,
         message: error.message().unwrap_or_default().to_owned(),
         retryable: error.retryable(),
         pane_id: error.pane_id().map(ToOwned::to_owned),
@@ -2309,7 +2309,7 @@ pub fn resize_intent_from_frame(
         actor_id: resize.actor_id().unwrap_or_default().to_owned(),
         cols: resize.desired_cols(),
         rows: resize.desired_rows(),
-        reason: resize.reason(),
+        reason: validate_resize_reason(resize.reason())?,
     })
 }
 
@@ -2322,11 +2322,12 @@ pub fn presence_from_frame(frame: &[u8]) -> Result<PresenceSummary, Box<dyn std:
     let presence = envelope
         .body_as_presence_update()
         .ok_or("missing presence update body")?;
+    validate_presence_kind(presence.kind())?;
     Ok(PresenceSummary {
         actor_id: presence.actor_id().unwrap_or_default().to_owned(),
         user_id: presence.user_id().unwrap_or_default().to_owned(),
         display_name: presence.display_name().unwrap_or_default().to_owned(),
-        mode: attach_mode_from_protocol(presence.mode()),
+        mode: attach_mode_from_protocol(presence.mode())?,
         focused_pane_id: presence.focused_pane_id().map(ToOwned::to_owned),
     })
 }
@@ -2345,7 +2346,7 @@ pub fn attach_status_from_frame(
     Ok(AttachStatusSummary {
         pane_id: status.pane_id().unwrap_or_default().to_owned(),
         surface_version: status.surface_version(),
-        surface_state: status.surface_state(),
+        surface_state: validate_attach_surface_state(status.surface_state())?,
     })
 }
 
@@ -2466,7 +2467,12 @@ fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
         actor_id: request.actor_id().unwrap_or("local-actor").to_owned(),
         user_id: request.user_id().unwrap_or("local-user").to_owned(),
         display_name: request.display_name().unwrap_or("local").to_owned(),
-        mode: attach_mode_from_protocol(request.mode()),
+        mode: attach_mode_from_protocol(request.mode()).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid attach mode: {err}"),
+            )
+        })?,
         focused_pane_id: request.focused_pane_id().map(ToOwned::to_owned),
         known_surfaces,
     })
@@ -2608,12 +2614,62 @@ fn attach_mode_as_protocol(mode: AttachMode) -> protocol::AttachMode {
     }
 }
 
-fn attach_mode_from_protocol(mode: protocol::AttachMode) -> AttachMode {
-    if mode == protocol::AttachMode::ReadWrite {
-        AttachMode::ReadWrite
-    } else {
-        AttachMode::ReadOnly
+fn validate_resize_policy(
+    policy: protocol::ResizePolicy,
+) -> Result<protocol::ResizePolicy, Box<dyn std::error::Error>> {
+    if policy.variant_name().is_none() {
+        return Err(format!("unknown resize policy {}", policy.0).into());
     }
+    Ok(policy)
+}
+
+fn validate_resize_reason(
+    reason: protocol::ResizeReason,
+) -> Result<protocol::ResizeReason, Box<dyn std::error::Error>> {
+    if reason.variant_name().is_none() {
+        return Err(format!("unknown resize reason {}", reason.0).into());
+    }
+    Ok(reason)
+}
+
+fn validate_error_code(
+    code: protocol::ErrorCode,
+) -> Result<protocol::ErrorCode, Box<dyn std::error::Error>> {
+    if code.variant_name().is_none() {
+        return Err(format!("unknown error code {}", code.0).into());
+    }
+    Ok(code)
+}
+
+fn validate_attach_surface_state(
+    state: protocol::AttachSurfaceState,
+) -> Result<protocol::AttachSurfaceState, Box<dyn std::error::Error>> {
+    if state.variant_name().is_none() {
+        return Err(format!("unknown attach surface state {}", state.0).into());
+    }
+    Ok(state)
+}
+
+fn validate_presence_kind(
+    kind: protocol::PresenceKind,
+) -> Result<protocol::PresenceKind, Box<dyn std::error::Error>> {
+    if kind.variant_name().is_none() {
+        return Err(format!("unknown presence kind {}", kind.0).into());
+    }
+    Ok(kind)
+}
+
+fn attach_mode_from_protocol(
+    mode: protocol::AttachMode,
+) -> Result<AttachMode, Box<dyn std::error::Error>> {
+    if mode.variant_name().is_none() {
+        return Err(format!("unknown attach mode {}", mode.0).into());
+    }
+    Ok(match mode {
+        protocol::AttachMode::ReadOnly => AttachMode::ReadOnly,
+        protocol::AttachMode::ReadWrite => AttachMode::ReadWrite,
+        _ => unreachable!("validated attach mode enum"),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3151,9 +3207,7 @@ fn validate_no_row_patch_payload(
     Ok(())
 }
 
-fn validate_patch_kind(
-    patch_kind: protocol::PatchKind,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn validate_patch_kind(patch_kind: protocol::PatchKind) -> Result<(), Box<dyn std::error::Error>> {
     if patch_kind.variant_name().is_some() {
         Ok(())
     } else {
@@ -3161,9 +3215,7 @@ fn validate_patch_kind(
     }
 }
 
-fn validate_surface_kind(
-    surface: protocol::SurfaceKind,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn validate_surface_kind(surface: protocol::SurfaceKind) -> Result<(), Box<dyn std::error::Error>> {
     if surface.variant_name().is_some() {
         Ok(())
     } else {
@@ -4922,6 +4974,167 @@ mod tests {
         builder.finished_data().to_vec()
     }
 
+    fn presence_update_frame_with_mode(mode: protocol::AttachMode) -> Vec<u8> {
+        presence_update_frame_with_mode_and_kind(mode, protocol::PresenceKind::Joined)
+    }
+
+    fn presence_update_frame_with_mode_and_kind(
+        mode: protocol::AttachMode,
+        kind: protocol::PresenceKind,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let actor_id = builder.create_string("local-actor");
+        let user_id = builder.create_string("local-user");
+        let display_name = builder.create_string("local");
+        let focused_pane_id = builder.create_string("pane-1");
+        let presence = protocol::PresenceUpdate::create(
+            &mut builder,
+            &protocol::PresenceUpdateArgs {
+                actor_id: Some(actor_id),
+                user_id: Some(user_id),
+                display_name: Some(display_name),
+                mode,
+                kind,
+                focused_pane_id: Some(focused_pane_id),
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::PresenceUpdate,
+            presence.as_union_value(),
+        )
+    }
+
+    fn attach_request_frame_with_mode(mode: protocol::AttachMode) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let actor_id = builder.create_string("local-actor");
+        let user_id = builder.create_string("local-user");
+        let display_name = builder.create_string("local");
+        let focused_pane_id = builder.create_string("pane-1");
+        let request = protocol::AttachRequest::create(
+            &mut builder,
+            &protocol::AttachRequestArgs {
+                actor_id: Some(actor_id),
+                user_id: Some(user_id),
+                display_name: Some(display_name),
+                mode,
+                focused_pane_id: Some(focused_pane_id),
+                known_surfaces: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::AttachRequest,
+            request.as_union_value(),
+        )
+    }
+
+    fn workspace_tree_frame_with_resize_policy(policy: protocol::ResizePolicy) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let pane_id = builder.create_string("pane-1");
+        let pane = protocol::PaneNode::create(
+            &mut builder,
+            &protocol::PaneNodeArgs {
+                pane_id: Some(pane_id),
+                kind: protocol::PaneKind::Pty,
+                split_axis: protocol::SplitAxis::None,
+                children: None,
+                surface_version: 1,
+                cols: 80,
+                rows: 24,
+                resize_policy: policy,
+            },
+        );
+        let tab_id = builder.create_string("tab-1");
+        let title = builder.create_string("main");
+        let active_pane_id = builder.create_string("pane-1");
+        let tab = protocol::TabNode::create(
+            &mut builder,
+            &protocol::TabNodeArgs {
+                tab_id: Some(tab_id),
+                title: Some(title),
+                root: Some(pane),
+                active_pane_id: Some(active_pane_id),
+            },
+        );
+        let tabs = builder.create_vector(&[tab]);
+        let session_id = builder.create_string("local");
+        let active_tab_id = builder.create_string("tab-1");
+        let snapshot = protocol::WorkspaceTreeSnapshot::create(
+            &mut builder,
+            &protocol::WorkspaceTreeSnapshotArgs {
+                version: 1,
+                session_id: Some(session_id),
+                tabs: Some(tabs),
+                active_tab_id: Some(active_tab_id),
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::WorkspaceTreeSnapshot,
+            snapshot.as_union_value(),
+        )
+    }
+
+    fn resize_intent_frame_with_reason(reason: protocol::ResizeReason) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let pane_id = builder.create_string("pane-1");
+        let actor_id = builder.create_string("local-actor");
+        let resize = protocol::ResizeIntent::create(
+            &mut builder,
+            &protocol::ResizeIntentArgs {
+                pane_id: Some(pane_id),
+                actor_id: Some(actor_id),
+                desired_cols: 80,
+                desired_rows: 24,
+                reason,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::ResizeIntent,
+            resize.as_union_value(),
+        )
+    }
+
+    fn error_frame_with_code(code: protocol::ErrorCode) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let message = builder.create_string("unsupported input");
+        let error = protocol::Error::create(
+            &mut builder,
+            &protocol::ErrorArgs {
+                code,
+                message: Some(message),
+                retryable: false,
+                pane_id: None,
+                input_seq: 0,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::Error,
+            error.as_union_value(),
+        )
+    }
+
+    fn attach_status_frame_with_surface_state(state: protocol::AttachSurfaceState) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let pane_id = builder.create_string("pane-1");
+        let status = protocol::AttachStatus::create(
+            &mut builder,
+            &protocol::AttachStatusArgs {
+                pane_id: Some(pane_id),
+                surface_version: 2,
+                surface_state: state,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::AttachStatus,
+            status.as_union_value(),
+        )
+    }
+
     fn pane_surface_snapshot_with_hyperlink_frame() -> Vec<u8> {
         pane_surface_snapshot_with_run_refs_frame(0, CELL_RUN_FLAG_HYPERLINK_PRESENT, 7)
     }
@@ -5176,13 +5389,7 @@ mod tests {
         semantic_content: protocol::CellSemanticContent,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_run_with_metadata(
-            &mut builder,
-            0,
-            0,
-            0,
-            semantic_content,
-        );
+        let run = flatbuffer_run_with_metadata(&mut builder, 0, 0, 0, semantic_content);
         let runs = builder.create_vector(&[run]);
         let row = protocol::RowUpdate::create(
             &mut builder,
@@ -10108,6 +10315,16 @@ mod tests {
     }
 
     #[test]
+    fn rejects_attach_request_with_unknown_attach_mode() {
+        let frame = attach_request_frame_with_mode(protocol::AttachMode(99));
+        let err = read_attach_request(&mut frame.as_slice())
+            .expect_err("unknown attach mode should be rejected");
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("unknown attach mode"));
+    }
+
+    #[test]
     fn read_only_attach_receives_state_without_sending_input() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -10235,6 +10452,50 @@ mod tests {
                 focused_pane_id: Some("pane-1".to_owned()),
             }
         );
+    }
+
+    #[test]
+    fn rejects_presence_update_with_unknown_attach_mode() {
+        let frame = presence_update_frame_with_mode(protocol::AttachMode(99));
+        let err = presence_from_frame(&frame)
+            .expect_err("presence update with unknown attach mode should be rejected");
+
+        assert!(err.to_string().contains("unknown attach mode"));
+    }
+
+    #[test]
+    fn rejects_unknown_control_plane_enums_from_frames() {
+        let workspace_err = workspace_summary_from_frame(&workspace_tree_frame_with_resize_policy(
+            protocol::ResizePolicy(99),
+        ))
+        .expect_err("workspace with unknown resize policy should be rejected");
+        assert!(workspace_err.to_string().contains("unknown resize policy"));
+
+        let resize_err =
+            resize_intent_from_frame(&resize_intent_frame_with_reason(protocol::ResizeReason(99)))
+                .expect_err("resize intent with unknown reason should be rejected");
+        assert!(resize_err.to_string().contains("unknown resize reason"));
+
+        let presence_err = presence_from_frame(&presence_update_frame_with_mode_and_kind(
+            protocol::AttachMode::ReadOnly,
+            protocol::PresenceKind(99),
+        ))
+        .expect_err("presence update with unknown kind should be rejected");
+        assert!(presence_err.to_string().contains("unknown presence kind"));
+
+        let status_err = attach_status_from_frame(&attach_status_frame_with_surface_state(
+            protocol::AttachSurfaceState(99),
+        ))
+        .expect_err("attach status with unknown surface state should be rejected");
+        assert!(
+            status_err
+                .to_string()
+                .contains("unknown attach surface state")
+        );
+
+        let error_err = error_summary_from_frame(&error_frame_with_code(protocol::ErrorCode(99)))
+            .expect_err("error frame with unknown code should be rejected");
+        assert!(error_err.to_string().contains("unknown error code"));
     }
 
     #[test]
