@@ -217,7 +217,7 @@ Done:
 - [Future protocol tracks](protocol-futures.md) split hyperlink identity, images,
   richer damage, command lifecycle metadata, and physical-key/text-event input
   into explicit pre-schema work.
-- README, running docs, and the terminal extraction checklist use post-M14 language for roadmap focus, implemented `libghostty-vt` mapping, attached-pane authority during reconnect, and explicit scrollback range semantics.
+- README, running docs, and the terminal extraction checklist use post-M14 language for roadmap focus, implemented `libghostty-vt` mapping, attached-pane authority during reconnect, explicit scrollback range semantics, and a first-reader quick-start path before deeper protocol or evidence detail.
 - [Toolchain notes](toolchain.md) document the supported Nix path, Makefile
   tool preflight, and non-Nix requirements checklist; promotion still needs
   platform-specific validation, repeated CI evidence with cache classification,

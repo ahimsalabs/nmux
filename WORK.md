@@ -603,7 +603,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   keep local attach, reconnect, live streaming, scrollback fetch, cached state, and daemon-owned structured-input behavior stable while the default-engine decision is made
   use docs/upstream trackers for upstream-blocked work instead of treating it as local implementation debt
   README, running docs, and the terminal extraction checklist now use post-M14 language instead of treating M13 extraction as the active roadmap target or assuming pane-1/fixed scrollback behavior
-  README and AGENTS now keep first-reader check guidance short, point exhaustive target inventories to docs/toolchain.md and docs/contributor-workflow.md, and separate backend default-engine blockers from the frontend Ghostty renderer hydration track
+  README, docs/running.md, and AGENTS now keep first-reader check and quick-start guidance short, point exhaustive target inventories to docs/toolchain.md and docs/contributor-workflow.md, and separate backend default-engine blockers from the frontend Ghostty renderer hydration track
   docs/toolchain.md now documents the supported Nix path and non-Nix requirements checklist without counting that checklist as default-engine promotion evidence
   docs/toolchain.md now includes a required field template for future non-Nix promotion attempts, covering setup commands, exact tool versions, source mode, cache state, timing, packaging follow-up, and gaps
   docs/source-fetch-policy.md now records current opt-in libghostty-vt-sys fetch behavior and keeps packaged/default-build source policy as explicit promotion work
