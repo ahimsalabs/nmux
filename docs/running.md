@@ -48,6 +48,7 @@ For a private local workspace owned by one client command, use `--start`:
 
 ```sh
 nix develop . -c cargo run --bin nmux -- --start --command "printf 'hello from pty\n'; cat >/dev/null"
+nix develop . -c cargo run --bin nmux -- --start --cwd "$PWD" --env NMUX_DEMO=1 --command 'printf "cwd:%s env:%s\n" "$PWD" "$NMUX_DEMO"; cat >/dev/null'
 nix develop . -c cargo run --bin nmux -- --start --live --stdin-bytes --redraw --command '$SHELL'
 ```
 
@@ -56,7 +57,9 @@ With `--live`, it runs a managed `nmuxd --live-forever --ready-json`. Both
 forms use a short temporary socket path by default, wait for the daemon
 readiness event internally, attach through the normal nmux protocol, and stop
 the managed daemon when the client exits. If `--command SHELL` is omitted, the
-managed daemon runs `$SHELL` and falls back to `sh`.
+managed daemon runs `$SHELL` and falls back to `sh`. Managed `--cwd DIR` and
+repeatable `--env KEY=VALUE` are passed to the private daemon before
+daemon-owned `NMUX_*` identity variables are injected.
 
 Each attach starts with an `AttachRequest` carrying actor identity, attach mode,
 focused pane, and known pane surface versions. The daemon polls process output
@@ -249,7 +252,9 @@ fail before the client tries to connect.
 `nmux --start` is the single-command form for a private managed daemon; it uses
 an isolated temporary socket and state path unless `--socket` or `--state` is
 supplied explicitly. Add `--live` when the managed daemon should remain
-attached after the initial one-shot response.
+attached after the initial one-shot response. Add `--cwd DIR` or repeatable
+`--env KEY=VALUE` when the managed pane command needs launch context without a
+separate `nmuxd` shell.
 
 By default, `nmuxd` and `nmux` use the same local socket path. The precedence
 is explicit `--socket`, then a valid absolute `NMUX_SOCKET`, then

@@ -856,6 +856,42 @@ fn managed_start_one_shot_cli_can_print_attach_json() {
 }
 
 #[test]
+fn managed_start_passes_cwd_and_env_to_private_daemon() {
+    let cwd = test_state_path();
+    let _ = fs::remove_dir_all(&cwd);
+    fs::create_dir(&cwd).expect("create managed cwd");
+    let expected_cwd = fs::canonicalize(&cwd).expect("canonical cwd");
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--start",
+            "--cwd",
+            cwd.to_str().expect("cwd path"),
+            "--env",
+            "NMUX_MANAGED_TEST=visible",
+            "--command",
+            "printf 'cwd:%s env:%s\n' \"$PWD\" \"$NMUX_MANAGED_TEST\"; cat >/dev/null",
+        ])
+        .output()
+        .expect("run nmux --start with cwd/env");
+
+    let _ = fs::remove_dir_all(&cwd);
+
+    assert!(
+        client.status.success(),
+        "nmux --start --cwd --env failed: {}\n{}",
+        String::from_utf8_lossy(&client.stderr),
+        String::from_utf8_lossy(&client.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains(&format!("cwd:{} env:visible", expected_cwd.display())),
+        "missing managed cwd/env output:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_cli_can_stream_json_events() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

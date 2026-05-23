@@ -601,7 +601,13 @@ fn run_managed(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         ManagedDaemonMode::OneShot
     };
-    let daemon = match ManagedDaemon::start(&args.socket_path, daemon_mode, &command) {
+    let daemon = match ManagedDaemon::start(
+        &args.socket_path,
+        daemon_mode,
+        &command,
+        args.start_working_dir.as_deref(),
+        &args.start_env,
+    ) {
         Ok(daemon) => daemon,
         Err(err) => {
             if args.live {
@@ -676,19 +682,31 @@ impl ManagedDaemon {
         socket_path: &Path,
         mode: ManagedDaemonMode,
         command: &str,
+        working_dir: Option<&str>,
+        env: &[(String, String)],
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let nmuxd = nmuxd_binary_path()?;
+        let socket_path = socket_path
+            .to_str()
+            .ok_or("managed socket path is not UTF-8")?;
+        let mut command_args = vec![
+            "--socket".to_owned(),
+            socket_path.to_owned(),
+            "--ready-json".to_owned(),
+            mode.flag().to_owned(),
+            "--command".to_owned(),
+            command.to_owned(),
+        ];
+        if let Some(working_dir) = working_dir {
+            command_args.push("--cwd".to_owned());
+            command_args.push(working_dir.to_owned());
+        }
+        for (key, value) in env {
+            command_args.push("--env".to_owned());
+            command_args.push(format!("{key}={value}"));
+        }
         let mut child = Command::new(nmuxd)
-            .args([
-                "--socket",
-                socket_path
-                    .to_str()
-                    .ok_or("managed socket path is not UTF-8")?,
-                "--ready-json",
-                mode.flag(),
-                "--command",
-                command,
-            ])
+            .args(command_args)
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|err| format!("failed to start managed nmuxd: {err}"))?;
@@ -1367,6 +1385,8 @@ struct Args {
     live: bool,
     start: bool,
     start_command: Option<String>,
+    start_working_dir: Option<String>,
+    start_env: Vec<(String, String)>,
     stdin_input: bool,
     stdin_bytes: bool,
     no_input: bool,
@@ -1418,6 +1438,8 @@ where
     let mut live = false;
     let mut start = false;
     let mut start_command = None;
+    let mut start_working_dir = None;
+    let mut start_env = Vec::new();
     let mut stdin_input = false;
     let mut stdin_bytes = false;
     let mut local_echo = LocalEcho::Off;
@@ -1592,6 +1614,18 @@ where
             "--command" => {
                 start_command = Some(args.next().ok_or("--command requires a shell command")?);
             }
+            "--cwd" => {
+                let value = args.next().ok_or("--cwd requires a directory path")?;
+                if value.is_empty() {
+                    return Err("--cwd requires a non-empty directory path".into());
+                }
+                start_working_dir = Some(value);
+            }
+            "--env" => {
+                start_env.push(parse_env_assignment(
+                    &args.next().ok_or("--env requires KEY=VALUE")?,
+                )?);
+            }
             "--stdin" => {
                 stdin_input = true;
             }
@@ -1713,6 +1747,8 @@ where
             mouse_pixels_set,
             start,
             start_command.is_some(),
+            start_working_dir.is_some(),
+            !start_env.is_empty(),
         )?;
     }
     if let Some(mouse_event) = mouse_event.as_mut() {
@@ -1754,6 +1790,8 @@ where
         live,
         start,
         start_command,
+        start_working_dir,
+        start_env,
         stdin_input,
         stdin_bytes,
         no_input: no_input_set,
@@ -2500,6 +2538,19 @@ where
         .map_err(|err| format!("{flag} requires a valid number: {err}"))
 }
 
+fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
+    let Some((key, value)) = value.split_once('=') else {
+        return Err("--env requires KEY=VALUE".to_owned());
+    };
+    if key.is_empty() {
+        return Err("--env requires a non-empty key".to_owned());
+    }
+    if key.contains('\0') || value.contains('\0') {
+        return Err("--env cannot contain NUL bytes".to_owned());
+    }
+    Ok((key.to_owned(), value.to_owned()))
+}
+
 fn validate_no_input_resize_args(
     no_input_set: bool,
     live_resize: Option<(u32, u32)>,
@@ -2669,12 +2720,20 @@ fn validate_mode_args(
     mouse_pixels_set: bool,
     start: bool,
     start_command_set: bool,
+    start_working_dir_set: bool,
+    start_env_set: bool,
 ) -> Result<(), &'static str> {
     if start && follow {
         return Err("--start cannot be combined with --follow");
     }
     if start_command_set && !start {
         return Err("--command requires --start");
+    }
+    if start_working_dir_set && !start {
+        return Err("--cwd requires --start");
+    }
+    if start_env_set && !start {
+        return Err("--env requires --start");
     }
     if live && follow {
         return Err("--follow cannot be combined with --live");
@@ -2770,6 +2829,8 @@ Options:
   --live                     Keep one attach connection open
   --start                    Start a private local nmuxd before attaching
   --command SHELL            Managed nmuxd pane command for --start
+  --cwd DIR                  Managed nmuxd pane working directory for --start
+  --env KEY=VALUE            Managed nmuxd pane environment for --start
   --stdin                    Stream newline-delimited stdin in live mode
   --stdin-bytes              Stream raw stdin chunks in live mode
   --local-echo off|tty       Local TTY echo policy for --stdin-bytes
@@ -2802,7 +2863,7 @@ Examples:
   nmux --live --cols 100 --rows 30
   nmux --live --no-input
   nmux --live --stdin-bytes --redraw
-  nmux --start --command \"printf 'hello from pty\\n'; cat >/dev/null\"
+  nmux --start --cwd /tmp --env NMUX_DEMO=1 --command 'pwd; env | grep ^NMUX_DEMO=; cat >/dev/null'
   nmux --start --live --stdin-bytes --redraw --command '$SHELL'
 "
 }
@@ -2978,10 +3039,10 @@ mod tests {
         format_live_error_json, format_live_surface_update_json, format_live_workspace_json,
         format_rendered_attach_json, format_scrollback, format_state_info_json,
         format_state_info_text, interim_surface_fidelity_warning_needed, live_update_print_kind,
-        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
-        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag,
-        raw_terminal_mode_needed, redraw_terminal_guard_needed, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -3018,6 +3079,8 @@ mod tests {
             paste_set,
             focus_set,
             key_name_set,
+            false,
+            false,
             false,
             false,
             false,
@@ -3080,10 +3143,40 @@ mod tests {
 
     #[test]
     fn start_args_accept_managed_command() {
-        let args = args_from_iter(["--start", "--command", "printf hi"]).expect("args");
+        let args = args_from_iter([
+            "--start",
+            "--command",
+            "printf hi",
+            "--cwd",
+            "/tmp",
+            "--env",
+            "NMUX_DEMO=one=two",
+        ])
+        .expect("args");
         assert!(args.start);
         assert!(!args.live);
         assert_eq!(args.start_command.as_deref(), Some("printf hi"));
+        assert_eq!(args.start_working_dir.as_deref(), Some("/tmp"));
+        assert_eq!(
+            args.start_env,
+            vec![("NMUX_DEMO".to_owned(), "one=two".to_owned())]
+        );
+    }
+
+    #[test]
+    fn env_arg_accepts_key_value_with_equals_in_value() {
+        assert_eq!(
+            parse_env_assignment("NMUX_TEST=one=two"),
+            Ok(("NMUX_TEST".to_owned(), "one=two".to_owned()))
+        );
+        assert_eq!(
+            parse_env_assignment("=value"),
+            Err("--env requires a non-empty key".to_owned())
+        );
+        assert_eq!(
+            parse_env_assignment("missing"),
+            Err("--env requires KEY=VALUE".to_owned())
+        );
     }
 
     #[test]
@@ -3843,16 +3936,30 @@ mod tests {
         assert_eq!(
             super_validate_mode_args(
                 false, true, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, false, false, true, false
+                false, false, false, false, false, true, false, false, false
             ),
             Err("--start cannot be combined with --follow")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, false, false, false, true
+                false, false, false, false, false, false, true, false, false
             ),
             Err("--command requires --start")
+        );
+        assert_eq!(
+            super_validate_mode_args(
+                true, false, false, false, false, false, None, None, false, false, false, false,
+                false, false, false, false, false, false, false, true, false
+            ),
+            Err("--cwd requires --start")
+        );
+        assert_eq!(
+            super_validate_mode_args(
+                true, false, false, false, false, false, None, None, false, false, false, false,
+                false, false, false, false, false, false, false, false, true
+            ),
+            Err("--env requires --start")
         );
         assert_eq!(
             validate_mode_args(
@@ -3881,7 +3988,7 @@ mod tests {
         assert_eq!(
             super_validate_mode_args(
                 false, true, false, false, false, false, None, None, false, false, false, false,
-                false, false, true, false, false, false, false
+                false, false, true, false, false, false, false, false, false
             ),
             Err("--follow cannot be combined with --mouse")
         );
@@ -3963,35 +4070,35 @@ mod tests {
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                false, true, false, false, false, false, false
+                false, true, false, false, false, false, false, false, false
             ),
             Err("--key-modifiers requires --key-name")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, true, false, false, false
+                false, false, false, true, false, false, false, false, false
             ),
             Err("--mouse-modifiers requires --mouse")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, false, true, false, false
+                false, false, false, false, true, false, false, false, false
             ),
             Err("--mouse-pixels requires --mouse")
         );
         assert_eq!(
             super_validate_mode_args(
                 false, true, false, false, false, false, None, None, true, false, false, false,
-                false, false, false, false, false, false, false
+                false, false, false, false, false, false, false, false, false
             ),
             Err("--json cannot be combined with --follow")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, true, None, None, true, false, false, false,
-                false, false, false, false, false, false, false
+                false, false, false, false, false, false, false, false, false
             ),
             Err("--json cannot be combined with --redraw")
         );
@@ -4006,6 +4113,8 @@ mod tests {
                 None,
                 Some(1),
                 true,
+                false,
+                false,
                 false,
                 false,
                 false,
@@ -4045,7 +4154,7 @@ mod tests {
         assert!(
             super_validate_mode_args(
                 false, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, true, false, false, false, false
+                false, false, true, false, false, false, false, false, false
             )
             .is_ok()
         );
@@ -4348,6 +4457,8 @@ mod tests {
         assert!(usage.contains("--state-info-json"));
         assert!(usage.contains("--start"));
         assert!(usage.contains("--command SHELL"));
+        assert!(usage.contains("--cwd DIR"));
+        assert!(usage.contains("--env KEY=VALUE"));
         assert!(usage.contains("--version-json"));
         assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--connect-timeout-ms MS"));

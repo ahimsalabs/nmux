@@ -44,6 +44,8 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--redraw"));
     assert!(stdout.contains("--start"));
     assert!(stdout.contains("--command SHELL"));
+    assert!(stdout.contains("--cwd DIR"));
+    assert!(stdout.contains("--env KEY=VALUE"));
     assert!(stdout.contains("--start waits for nmuxd --ready-json"));
     assert!(stdout.contains("Without an explicit input or resize flag"));
     assert!(stdout.contains("interim text surface"));
@@ -729,6 +731,8 @@ fn nmux_rejects_live_only_flags_outside_live_mode() {
         &["--command", "printf hi"],
         "nmux: --command requires --start",
     );
+    assert_nmux_rejects(&["--cwd", "/tmp"], "nmux: --cwd requires --start");
+    assert_nmux_rejects(&["--env", "NMUX_DEMO=1"], "nmux: --env requires --start");
     assert_nmux_rejects(
         &["--cols", "100", "--rows", "30"],
         "nmux: --cols and --rows require --live",
