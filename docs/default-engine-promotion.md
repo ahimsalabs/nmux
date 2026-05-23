@@ -87,15 +87,16 @@ engine or a regular CI requirement.
 - `make promotion-evidence-bundle` runs the local sample and gathers its log,
   toolchain output, bundle start/completion timestamps plus elapsed duration,
   extracted `make check-all` timing, source-fetch report, package provenance,
-  cargo tree, archive checksum, observed cache-state report, and bundle artifact manifest under
-  `target/promotion-evidence`.
+  cargo tree, package archive, archive checksum, observed cache-state report,
+  and bundle artifact manifest under `target/promotion-evidence`.
 - `make promotion-evidence-verify` checks an existing bundle for required
   summary identity fields, bundle timing fields, `make check-all` timing
   fields, artifact files, bundle-relative summary artifact names, cache-state
   artifact, relocation-safe `BUNDLE_MANIFEST.txt` hashes,
-  source/provenance records, archive hash, `packaging-provenance-verify`
-  output, and packaged runtime smoke result. The bundle target runs it before
-  printing the artifact list.
+  source/provenance records, package archive bytes, archive hash,
+  `packaging-archive-verify` output, `packaging-provenance-verify` output, and
+  packaged runtime smoke result. The bundle target runs it before printing the
+  artifact list.
 - `make source-fetch-provenance-sample` writes the active source mode and
   locked `libghostty-vt` Cargo package records without inspecting Ghostty
   source.
@@ -114,8 +115,12 @@ engine or a regular CI requirement.
   runtime-library, per-binary `libghostty-vt` dynamic-dependency, or cargo-tree
   records are missing.
 - `make packaging-archive-sample` writes a tar archive and SHA-256 file for the
-  staged layout, extracts it, and verifies the wrapped binaries from the
-  extracted archive.
+  staged layout, extracts it, verifies the wrapped binaries from the extracted
+  archive, and then runs the no-rebuild archive verifier.
+- `make packaging-archive-verify` validates an already-produced archive plus
+  sidecar hash without rebuilding, including extracted layout, package metadata,
+  provenance file hashes, native runtime library, dynamic dependency records,
+  and wrapped binary version checks.
 - `make packaging-archive-runtime-smoke` extracts the archive into a fresh
   `/tmp` install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset,
   then starts the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped
@@ -202,6 +207,7 @@ support, or native-library provenance by themselves.
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-archive-sample` | Passed. Wrote `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`, SHA-256 `1f824cdc7634e5f85e092d72fe20635cce8be834bbae33c000ac3a522fba8bdd`, extracted it under `target/packaging-libghostty-vt/archive/check`, and verified wrapped `nmux --version` and `nmuxd --version` from the extracted layout. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above; runtime smoke socket allocated under `/tmp` to keep Unix socket path below platform limits | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-archive-runtime-smoke` | Passed. Wrote and extracted `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`, SHA-256 `56dab0d0af12a744dff48f79108a804d768592b90e4dc7aa40ad9542edd227f0`, verified wrapped binary versions, started wrapped `nmuxd --terminal-engine libghostty-vt --one-shot`, attached wrapped `nmux`, and observed sentinel output `packaged-runtime-smoke` from the packaged daemon. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above; runtime smoke socket allocated under `/tmp`; working copy included package metadata plus relocated clean-env runtime smoke checks | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-archive-runtime-smoke` | Passed. Wrote archive SHA-256 `55e4a4de55858d5c90f35a8f1d257a4e169437b6740f37fc90fb86f956eebab0`, included `PACKAGE_METADATA.txt`, extracted the archive into fresh install root `/tmp/nmuxpkg.q6pGO8/install`, ran wrapped `nmuxd --terminal-engine libghostty-vt --one-shot` and wrapped `nmux` with `DYLD_LIBRARY_PATH`/`LD_LIBRARY_PATH` unset, and observed sentinel output `packaged-runtime-smoke`. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; working copy included the no-rebuild archive verifier and evidence-bundle archive bytes | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-archive-verify` | Passed against the existing archive at `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`. Verified the sidecar SHA-256, extracted layout, `PACKAGE_METADATA.txt`, `PROVENANCE.txt`, `CARGO_TREE.txt`, staged file hashes against extracted files, bundled `libghostty-vt` runtime libraries, dynamic dependency records, and wrapped `nmux --version`/`nmuxd --version` with library-path environment variables unset. |
 
 ## Local Combined Samples
 
@@ -219,6 +225,7 @@ multi-platform evidence.
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout with existing Nix/Cargo/native build caches; working copy included relocation-safe `BUNDLE_MANIFEST.txt` hashes and bundle-relative summary artifact names; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-evidence-bundle` | Passed. `make promotion-evidence-verify` checked exact bundle manifest hashes and accepted the generated bundle. `SUMMARY.txt` recorded `started_at_utc=2026-05-23T10:34:13Z`, `completed_at_utc=2026-05-23T10:34:33Z`, `bundle_elapsed_seconds=20`, `check_all_real_seconds=16.40`, `check_all_user_seconds=2.63`, and `check_all_sys_seconds=3.05`; package archive SHA-256 `893eb422b01085eb52c543b162ddfd4212efe6f5fcafcfe9efbd130d943341d9`; packaged runtime smoke passed with sentinel `packaged-runtime-smoke`. A copied bundle at `/tmp/nmux-promotion-evidence-copy` also passed `make PROMOTION_EVIDENCE_DIR=/tmp/nmux-promotion-evidence-copy promotion-evidence-verify`. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, observed cache context in `CACHE_STATE.txt`: Nix store present, Cargo home/registry present, Cargo Git missing, default target dir present, promotion-cold target dir present, packaging default target dir present, packaging libghostty-vt target dir present; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-evidence-bundle` | Passed. `make promotion-evidence-verify` checked exact bundle manifest hashes including `CACHE_STATE.txt` and accepted the generated bundle. `SUMMARY.txt` recorded `started_at_utc=2026-05-23T10:40:40Z`, `completed_at_utc=2026-05-23T10:41:01Z`, `bundle_elapsed_seconds=21`, `check_all_real_seconds=16.42`, `check_all_user_seconds=2.64`, and `check_all_sys_seconds=3.11`; package archive SHA-256 `2b7c956e76b4b492d86144be51d0c48cabcc5448baf9b5e9e1e342eece7238ab`; packaged runtime smoke passed with sentinel `packaged-runtime-smoke`. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, observed cache context in `CACHE_STATE.txt`: Nix store present, Cargo home/registry present, Cargo Git missing, default target dir present, promotion-cold target dir present, packaging default target dir present, packaging libghostty-vt target dir present; working copy included package metadata plus relocated clean-env runtime smoke checks; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-evidence-bundle` | Passed. `make promotion-evidence-verify` accepted the generated bundle and checked `RUN.log` for relocated package install root plus `packaged_runtime_smoke_library_env=unset`. `SUMMARY.txt` recorded `started_at_utc=2026-05-23T10:52:03Z`, `completed_at_utc=2026-05-23T10:52:25Z`, `bundle_elapsed_seconds=22`, `check_all_real_seconds=16.27`, `check_all_user_seconds=2.63`, and `check_all_sys_seconds=3.20`; package archive SHA-256 `9b9d04776901e9a99ea92e1415815eaff52dc0d4d56a694281596794b667b506`; packaged runtime smoke passed from `/tmp/nmuxpkg.U3JXnl/install` with sentinel `packaged-runtime-smoke`. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, observed cache context in `CACHE_STATE.txt`: Nix store present, Cargo home/registry present, Cargo Git missing, default target dir present, promotion-cold target dir present, packaging default target dir present, packaging libghostty-vt target dir present; working copy included bundled package archive bytes plus no-rebuild archive verification; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-evidence-bundle` | Passed. Bundle included `PACKAGE_ARCHIVE.tar.gz` and `ARCHIVE.sha256`; `make promotion-evidence-verify` invoked `make packaging-archive-verify` against the bundled archive bytes. `SUMMARY.txt` recorded `started_at_utc=2026-05-23T11:02:36Z`, `completed_at_utc=2026-05-23T11:03:00Z`, `bundle_elapsed_seconds=24`, `check_all_real_seconds=16.29`, `check_all_user_seconds=2.63`, and `check_all_sys_seconds=3.20`; package archive SHA-256 `3311324fb31461098e8382e11b84aa40c28f2b68ba15e99ffd35b09b9a313719`; packaged runtime smoke passed from `/tmp/nmuxpkg.uXsdko/install` with sentinel `packaged-runtime-smoke`. A copied bundle at `/tmp/nmux-promotion-evidence-copy` also passed `make PROMOTION_EVIDENCE_DIR=/tmp/nmux-promotion-evidence-copy promotion-evidence-verify`, validating the relocation/download path. |
 
 ## CI Promotion Samples
 
@@ -251,8 +258,8 @@ smoke result, outcome, and follow-up.
   provenance, signing/notarization where relevant, release checks, and recorded
   `make packaging-sample`, `make packaging-layout-sample`,
   `make packaging-provenance-sample`, `make packaging-provenance-verify`,
-  `make packaging-archive-sample`, and `make packaging-archive-runtime-smoke`
-  results. The current Darwin packaging
+  `make packaging-archive-sample`, `make packaging-archive-verify`, and
+  `make packaging-archive-runtime-smoke` results. The current Darwin packaging
   samples show the opt-in release binaries can run with an explicit runtime
   library path and staged wrapper layout, but packaged binaries still need
   signing and platform distribution strategy.

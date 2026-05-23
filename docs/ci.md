@@ -49,7 +49,7 @@ Record each manual run with these fields:
 | Cache state | `CACHE_STATE.txt` plus CI cache setup context; classify whether Nix, Cargo registry, Cargo Git, Rust target, and native Ghostty/Zig build caches were cold, warm, restored, or unknown. |
 | Timings | `check_all_real_seconds`, `check_all_user_seconds`, `check_all_sys_seconds`, `bundle_elapsed_seconds`, and total GitHub job duration. |
 | Provenance | `nmux-promotion-evidence` artifact, `SOURCE_FETCH.txt`, `Cargo.lock` hash, and locked `libghostty-vt`/`libghostty-vt-sys` records. |
-| Packaging | Archive name, SHA-256, package metadata, `packaging-provenance-verify` result, relocated install root, clean library-path environment, and packaged runtime smoke result. |
+| Packaging | Archive name, SHA-256, package metadata, `packaging-archive-verify` result, `packaging-provenance-verify` result, relocated install root, clean library-path environment, and packaged runtime smoke result. |
 | Outcome | Passed, failed, or canceled, including failed command and error summary. |
 | Follow-up | Any flake, cache miss, source-fetch, packaging, or platform issue created from the run. |
 
@@ -59,9 +59,9 @@ that is not under `target/promotion-evidence`, run
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify`. The
 verifier checks the required summary identity fields, timing fields,
 bundle-relative summary artifact names, cache-state artifact, relocation-safe
-`BUNDLE_MANIFEST.txt` hashes, source/provenance records, archive hash, and
-packaged runtime smoke result; it does not replace human judgment about cache
-classification, flake rate, or platform coverage.
+`BUNDLE_MANIFEST.txt` hashes, source/provenance records, package archive bytes,
+archive hash, and packaged runtime smoke result; it does not replace human
+judgment about cache classification, flake rate, or platform coverage.
 
 The bundle summary records GitHub Actions fields when present:
 `github_server_url`, `github_repository`, `github_run_id`,

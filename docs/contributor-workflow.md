@@ -69,6 +69,7 @@ nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
+nix develop . -c make packaging-archive-verify
 nix develop . -c make packaging-archive-runtime-smoke
 ```
 
@@ -100,9 +101,10 @@ promotion tracker with source-provenance, validation, and packaging/archive
 runtime results.
 `make promotion-evidence-bundle` runs the local sample and gathers
 `RUN.log`, `TOOLCHAIN.txt`, `SOURCE_FETCH.txt`, `PACKAGE_PROVENANCE.txt`,
-`CARGO_TREE.txt`, `ARCHIVE.sha256`, `CACHE_STATE.txt`, `SUMMARY.txt`, and
-`BUNDLE_MANIFEST.txt` under `target/promotion-evidence` for easier
-transcription into the promotion tracker or manual CI evidence records.
+`CARGO_TREE.txt`, `PACKAGE_ARCHIVE.tar.gz`, `ARCHIVE.sha256`,
+`CACHE_STATE.txt`, `SUMMARY.txt`, and `BUNDLE_MANIFEST.txt` under
+`target/promotion-evidence` for easier transcription into the promotion tracker
+or manual CI evidence records.
 `SUMMARY.txt` includes the extracted `time -p make check-all` values as
 `check_all_real_seconds`, `check_all_user_seconds`, and
 `check_all_sys_seconds`, plus `started_at_utc`, `completed_at_utc`, and
@@ -116,7 +118,8 @@ artifact names, and `SUMMARY.txt` records bundle artifacts by those same
 relative names so copied or downloaded bundles remain verifiable.
 It runs `make promotion-evidence-verify` before printing the artifact list.
 Run `make promotion-evidence-verify` directly when reviewing an existing bundle
-without regenerating the native build and packaging sample. Use
+without regenerating the native build and packaging sample; it validates the
+bundled archive bytes through `make packaging-archive-verify`. Use
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify` when
 checking a downloaded artifact outside `target/promotion-evidence`.
 
@@ -139,8 +142,12 @@ required toolchain, source-mode, locked native-VT package, staged-file,
 runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree
 records are present.
 `make packaging-archive-sample` archives the staged layout, writes an archive
-SHA-256 file, extracts it, and verifies the wrapped binaries from the extracted
-layout.
+SHA-256 file, extracts it, verifies the wrapped binaries from the extracted
+layout, and then runs the no-rebuild archive verifier.
+`make packaging-archive-verify` validates an already-produced archive plus
+sidecar hash without rebuilding. Override `PACKAGING_ARCHIVE` and
+`PACKAGING_ARCHIVE_SHA256` when checking an artifact outside the default
+`target/packaging-libghostty-vt/archive` path.
 `make packaging-archive-runtime-smoke` extracts the archive into a fresh `/tmp`
 install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset, then starts
 the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped client to

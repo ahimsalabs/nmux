@@ -50,6 +50,7 @@ nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
+nix develop . -c make packaging-archive-verify
 nix develop . -c make packaging-archive-runtime-smoke
 ```
 
@@ -66,12 +67,13 @@ sample, and the package archive runtime smoke for one local evidence pass.
 `make promotion-evidence-bundle` runs that local sample and gathers the log,
 toolchain output, bundle start/completion timestamps plus elapsed duration,
 extracted `make check-all` timing, source-fetch report, package provenance,
-cargo tree, archive checksum, observed cache-state report, and bundle artifact manifest under
-`target/promotion-evidence`, then runs the verifier.
+cargo tree, package archive, archive checksum, observed cache-state report, and
+bundle artifact manifest under `target/promotion-evidence`, then runs the
+verifier.
 `make promotion-evidence-verify` checks an existing bundle for the required
 summary fields, bundle timing fields, `make check-all` timing fields, artifact
 files, cache-state report, artifact manifest hashes, source/provenance records,
-archive hash, and packaged runtime smoke result.
+package archive bytes, archive hash, and packaged runtime smoke result.
 `make source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `make packaging-sample` builds default and opt-in release binaries in separate
@@ -86,7 +88,12 @@ required toolchain, source-mode, locked native-VT package, staged-file,
 runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree
 records are present.
 `make packaging-archive-sample` archives the staged layout, writes a SHA-256
-file, extracts it, and verifies the wrapped binaries from the archive.
+file, extracts it, verifies the wrapped binaries from the archive, and then runs
+the no-rebuild archive verifier.
+`make packaging-archive-verify` checks an already-produced archive plus its
+`.sha256` file without rebuilding: it verifies the archive hash, extracted
+layout, package metadata, provenance file hashes, native runtime library,
+dynamic dependency records, and wrapped binary version checks.
 `make packaging-archive-runtime-smoke` extracts the archive into a fresh `/tmp`
 install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset, then starts
 the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped client to

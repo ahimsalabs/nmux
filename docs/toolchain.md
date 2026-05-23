@@ -17,6 +17,7 @@ nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
+nix develop . -c make packaging-archive-verify
 nix develop . -c make packaging-archive-runtime-smoke
 ```
 
@@ -74,10 +75,11 @@ The local sample target runs `make source-fetch-provenance-sample`,
 bundle target runs the same local sample and gathers the run log, toolchain
 output, bundle start/completion timestamps plus elapsed duration, extracted
 `time -p make check-all` values, source-fetch report, package provenance, cargo
-tree, archive checksum, observed cache-state report, and bundle artifact manifest under
-`target/promotion-evidence`, then runs
+tree, package archive, archive checksum, observed cache-state report, and
+bundle artifact manifest under `target/promotion-evidence`, then runs
 `make promotion-evidence-verify`. Run the verifier directly to check an
-existing bundle without rebuilding the native VT package, or pass
+existing bundle without rebuilding the native VT package; it validates the
+bundled archive bytes through `make packaging-archive-verify`. Pass
 `PROMOTION_EVIDENCE_DIR=/path/to/artifact` for a downloaded bundle outside the
 default `target/promotion-evidence` path.
 For source-fetch provenance evidence, use:
@@ -130,11 +132,16 @@ For local archive evidence, use:
 
 ```sh
 nix develop . -c make packaging-archive-sample
+nix develop . -c make packaging-archive-verify
 ```
 
 That target writes `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`,
-writes a matching `.sha256` file, extracts the archive, and verifies the wrapped
-`nmux` and `nmuxd` binaries from the extracted layout.
+writes a matching `.sha256` file, extracts the archive, verifies the wrapped
+`nmux` and `nmuxd` binaries from the extracted layout, and then runs the
+no-rebuild archive verifier. Run `make packaging-archive-verify` directly to
+check an already-produced archive. Override `PACKAGING_ARCHIVE` and
+`PACKAGING_ARCHIVE_SHA256` when verifying a downloaded artifact outside the
+default `target/packaging-libghostty-vt/archive` path.
 For local packaged runtime evidence, use:
 
 ```sh

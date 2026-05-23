@@ -83,9 +83,22 @@ cannot pass with a structurally incomplete local provenance manifest.
 `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` and
 a matching `.sha256` file, extracts the archive under
 `target/packaging-libghostty-vt/archive/check`, and verifies the wrapped
-`nmux --version` and `nmuxd --version` commands from the extracted layout. This
-is a local release-artifact smoke check; it is still not a signed, notarized,
-published, or platform-native package.
+`nmux --version` and `nmuxd --version` commands from the extracted layout. It
+then runs `make packaging-archive-verify` against the produced archive and
+sidecar hash. This is a local release-artifact smoke check; it is still not a
+signed, notarized, published, or platform-native package.
+
+`make packaging-archive-verify` is the no-rebuild archive verifier. By default
+it checks the archive at
+`target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` and
+its `.sha256` file, but `PACKAGING_ARCHIVE=/path/to/archive.tar.gz` and
+`PACKAGING_ARCHIVE_SHA256=/path/to/archive.sha256` can point it at an existing
+or downloaded artifact. The verifier checks the archive bytes against the
+sidecar hash, rejects unsafe archive paths, extracts into a temporary directory,
+requires the package metadata/provenance/cargo-tree files, validates staged
+file hashes against the extracted files, requires bundled `libghostty-vt`
+runtime libraries and dynamic dependency records, and runs wrapped `nmux` and
+`nmuxd` version checks with library-path environment variables unset.
 
 `make packaging-archive-runtime-smoke` builds on the archive sample, extracts
 the archive into a fresh `/tmp` install root outside `target/`, unsets
