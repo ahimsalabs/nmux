@@ -3712,10 +3712,10 @@ impl ClientAttachState {
                             application_cursor: parse_state_bool(application_cursor)?,
                             origin: parse_state_bool(origin)?,
                             wraparound: parse_state_bool(wraparound)?,
-                            mouse_tracking_mode: protocol::MouseTrackingMode(parse_state_i8(
+                            mouse_tracking_mode: parse_state_mouse_tracking_mode(
                                 mouse_tracking_mode,
-                            )?),
-                            mouse_format: protocol::MouseFormat(parse_state_i8(mouse_format)?),
+                            )?,
+                            mouse_format: parse_state_mouse_format(mouse_format)?,
                         };
                     }
                     ["title", value] => {
@@ -4014,6 +4014,30 @@ fn parse_state_i8(value: &str) -> io::Result<i8> {
     value
         .parse()
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn parse_state_mouse_tracking_mode(value: &str) -> io::Result<protocol::MouseTrackingMode> {
+    let mode = protocol::MouseTrackingMode(parse_state_i8(value)?);
+    if mode.variant_name().is_some() {
+        Ok(mode)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid mouse tracking mode in client state",
+        ))
+    }
+}
+
+fn parse_state_mouse_format(value: &str) -> io::Result<protocol::MouseFormat> {
+    let format = protocol::MouseFormat(parse_state_i8(value)?);
+    if format.variant_name().is_some() {
+        Ok(format)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid mouse format in client state",
+        ))
+    }
 }
 
 fn parse_state_bool(value: &str) -> io::Result<bool> {
@@ -5548,6 +5572,26 @@ mod tests {
         .expect_err("reserved hyperlink id should be rejected");
 
         assert!(err.to_string().contains("reserved id 0"));
+    }
+
+    #[test]
+    fn client_attach_state_rejects_invalid_cached_mouse_mode() {
+        let err = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 7\nsurface 70616e652d31 7 80 24 0\ncursor none\nmodes 0 1 0 0 0 0 1 99 2\nrow 0 636163686564\nend\n",
+        )
+        .expect_err("invalid cached mouse tracking mode should be rejected");
+
+        assert!(err.to_string().contains("invalid mouse tracking mode"));
+    }
+
+    #[test]
+    fn client_attach_state_rejects_invalid_cached_mouse_format() {
+        let err = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 7\nsurface 70616e652d31 7 80 24 0\ncursor none\nmodes 0 1 0 0 0 0 1 4 99\nrow 0 636163686564\nend\n",
+        )
+        .expect_err("invalid cached mouse format should be rejected");
+
+        assert!(err.to_string().contains("invalid mouse format"));
     }
 
     #[test]
