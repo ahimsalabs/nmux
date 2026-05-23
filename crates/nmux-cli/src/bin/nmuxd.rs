@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use clap::{ArgAction, Parser};
+use clap::{ArgAction, Parser, ValueEnum};
 use nmux_cli::local;
 use nmux_core::host::{CommandSpec, LocalPtyHost, ProcessHost};
 use nmux_core::session::Session;
@@ -227,6 +227,45 @@ struct Args {
     terminal_engine_kind: TerminalEngineKind,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ResizePolicyArg {
+    Fixed,
+    Leader,
+    #[value(name = "active-client")]
+    ActiveClient,
+    Manual,
+}
+
+impl From<ResizePolicyArg> for protocol::ResizePolicy {
+    fn from(value: ResizePolicyArg) -> Self {
+        match value {
+            ResizePolicyArg::Fixed => protocol::ResizePolicy::Fixed,
+            ResizePolicyArg::Leader => protocol::ResizePolicy::Leader,
+            ResizePolicyArg::ActiveClient => protocol::ResizePolicy::ActiveClient,
+            ResizePolicyArg::Manual => protocol::ResizePolicy::Manual,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum TerminalEngineArg {
+    Interim,
+    #[value(name = "libghostty-vt")]
+    LibghosttyVt,
+}
+
+impl TerminalEngineArg {
+    fn into_terminal_engine_kind(self) -> Result<TerminalEngineKind, &'static str> {
+        match self {
+            Self::Interim => Ok(TerminalEngineKind::InterimText),
+            #[cfg(feature = "libghostty-vt")]
+            Self::LibghosttyVt => Ok(TerminalEngineKind::LibghosttyVt),
+            #[cfg(not(feature = "libghostty-vt"))]
+            Self::LibghosttyVt => Err("libghostty-vt requires the libghostty-vt feature"),
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "nmuxd",
@@ -282,16 +321,11 @@ struct RawArgs {
     env: Vec<(String, String)>,
     #[arg(
         long = "resize-policy",
-        value_name = "fixed|leader|active-client|manual",
-        value_parser = parse_resize_policy_for_clap
+        value_name = "fixed|leader|active-client|manual"
     )]
-    resize_policy: Option<protocol::ResizePolicy>,
-    #[arg(
-        long = "terminal-engine",
-        value_name = "interim|libghostty-vt",
-        value_parser = parse_terminal_engine_kind_for_clap
-    )]
-    terminal_engine_kind: Option<TerminalEngineKind>,
+    resize_policy: Option<ResizePolicyArg>,
+    #[arg(long = "terminal-engine", value_name = "interim|libghostty-vt")]
+    terminal_engine_kind: Option<TerminalEngineArg>,
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
@@ -316,9 +350,15 @@ where
         }
         value => value,
     };
-    let resize_policy = raw.resize_policy.unwrap_or(protocol::ResizePolicy::Fixed);
+    let resize_policy = raw
+        .resize_policy
+        .map(protocol::ResizePolicy::from)
+        .unwrap_or(protocol::ResizePolicy::Fixed);
     let terminal_engine_kind = raw
         .terminal_engine_kind
+        .map(TerminalEngineArg::into_terminal_engine_kind)
+        .transpose()
+        .map_err(|err| format!("--terminal-engine {err}"))?
         .unwrap_or(TerminalEngineKind::InterimText);
 
     if !(raw.help
@@ -600,6 +640,7 @@ Examples:
 "
 }
 
+#[cfg(test)]
 fn parse_resize_policy(value: &str) -> Result<protocol::ResizePolicy, &'static str> {
     match value {
         "fixed" => Ok(protocol::ResizePolicy::Fixed),
@@ -610,10 +651,7 @@ fn parse_resize_policy(value: &str) -> Result<protocol::ResizePolicy, &'static s
     }
 }
 
-fn parse_resize_policy_for_clap(value: &str) -> Result<protocol::ResizePolicy, String> {
-    parse_resize_policy(value).map_err(|err| format!("--resize-policy {err}"))
-}
-
+#[cfg(test)]
 fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'static str> {
     match value {
         "interim" => Ok(TerminalEngineKind::InterimText),
@@ -623,10 +661,6 @@ fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'stati
         "libghostty-vt" => Err("libghostty-vt requires the libghostty-vt feature"),
         _ => Err("requires interim or libghostty-vt"),
     }
-}
-
-fn parse_terminal_engine_kind_for_clap(value: &str) -> Result<TerminalEngineKind, String> {
-    parse_terminal_engine_kind(value).map_err(|err| format!("--terminal-engine {err}"))
 }
 
 #[cfg(test)]
@@ -778,6 +812,8 @@ mod tests {
             "NMUX_TEST=one=two",
             "--resize-policy",
             "active-client",
+            "--terminal-engine",
+            "interim",
         ])
         .expect("args");
 
@@ -791,6 +827,7 @@ mod tests {
             vec![("NMUX_TEST".to_owned(), "one=two".to_owned())]
         );
         assert_eq!(args.resize_policy, protocol::ResizePolicy::ActiveClient);
+        assert_eq!(args.terminal_engine_kind, TerminalEngineKind::InterimText);
     }
 
     #[test]
