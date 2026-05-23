@@ -65,6 +65,7 @@ nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-archive-sample
+nix develop . -c make packaging-archive-runtime-smoke
 ```
 
 Record the host, command, result, timing, cache state, source-fetch mode, and
@@ -84,9 +85,10 @@ they are setup evidence for the non-Nix checklist, not passing promotion
 evidence.
 
 `make promotion-local-sample` runs `make source-fetch-provenance-sample`,
-`make promotion-sample`, and then `make packaging-archive-sample` with clear
-section headers. Use it for a local evidence pass before updating the promotion
-tracker with source-provenance, validation, and packaging/archive results.
+`make promotion-sample`, and then `make packaging-archive-runtime-smoke` with
+clear section headers. Use it for a local evidence pass before updating the
+promotion tracker with source-provenance, validation, and packaging/archive
+runtime results.
 
 `make source-fetch-provenance-sample` writes the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source. Use it
@@ -105,6 +107,9 @@ artifacts, and dynamic dependency output.
 `make packaging-archive-sample` archives the staged layout, writes an archive
 SHA-256 file, extracts it, and verifies the wrapped binaries from the extracted
 layout.
+`make packaging-archive-runtime-smoke` starts the extracted opt-in
+`libghostty-vt` daemon and attaches the extracted client to prove the packaged
+runtime layout can serve a real pane.
 
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty

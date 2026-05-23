@@ -13,6 +13,7 @@ nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-archive-sample
+nix develop . -c make packaging-archive-runtime-smoke
 ```
 
 `flake.nix` currently provides:
@@ -53,7 +54,7 @@ nix develop . -c make promotion-local-sample
 ```
 
 That target runs `make source-fetch-provenance-sample`, `make promotion-sample`,
-and then `make packaging-archive-sample`.
+and then `make packaging-archive-runtime-smoke`.
 For source-fetch provenance evidence, use:
 
 ```sh
@@ -104,6 +105,14 @@ nix develop . -c make packaging-archive-sample
 That target writes `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`,
 writes a matching `.sha256` file, extracts the archive, and verifies the wrapped
 `nmux` and `nmuxd` binaries from the extracted layout.
+For local packaged runtime evidence, use:
+
+```sh
+nix develop . -c make packaging-archive-runtime-smoke
+```
+
+That target starts the extracted opt-in `libghostty-vt` daemon and attaches the
+extracted client to prove the packaged runtime layout can serve a real pane.
 
 ## Non-Nix Equivalents
 

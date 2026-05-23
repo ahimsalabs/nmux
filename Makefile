@@ -3,7 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-sample promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-provenance-sample toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-sample promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-provenance-sample toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -21,8 +21,8 @@ promotion-local-sample:
 	$(MAKE) source-fetch-provenance-sample
 	@echo "== promotion local sample: validation =="
 	$(MAKE) promotion-sample
-	@echo "== promotion local sample: packaging archive =="
-	$(MAKE) packaging-archive-sample
+	@echo "== promotion local sample: packaging archive runtime smoke =="
+	$(MAKE) packaging-archive-runtime-smoke
 
 source-fetch-provenance-sample: toolchain-info
 	@echo "writing source-fetch provenance report"
@@ -219,6 +219,41 @@ packaging-archive-sample: packaging-provenance-sample
 	"$$check_dir/package/bin/nmux" --version; \
 	printf 'archived libghostty-vt nmuxd version: '; \
 	"$$check_dir/package/bin/nmuxd" --version
+
+packaging-archive-runtime-smoke: packaging-archive-sample
+	@echo "running packaged opt-in libghostty-vt archive runtime smoke"
+	@pkg_dir=target/packaging-libghostty-vt/archive/check/package; \
+	work_dir="$$(mktemp -d "/tmp/nmuxpkg.XXXXXX")"; \
+	socket="$$work_dir/nmuxd.sock"; \
+	client_out="$$work_dir/client.out"; \
+	client_err="$$work_dir/client.err"; \
+	daemon_out="$$work_dir/daemon.out"; \
+	daemon_err="$$work_dir/daemon.err"; \
+	daemon_pid=""; \
+	trap 'status=$$?; if [ -n "$${daemon_pid:-}" ] && kill -0 "$$daemon_pid" >/dev/null 2>&1; then kill "$$daemon_pid" >/dev/null 2>&1 || true; wait "$$daemon_pid" >/dev/null 2>&1 || true; fi; rm -rf "$$work_dir"; exit "$$status"' EXIT INT TERM; \
+	"$$pkg_dir/bin/nmuxd" --socket "$$socket" --one-shot --terminal-engine libghostty-vt --command "printf 'packaged-runtime-smoke\n'; cat >/dev/null" >"$$daemon_out" 2>"$$daemon_err" & \
+	daemon_pid="$$!"; \
+	if ! "$$pkg_dir/bin/nmux" --socket "$$socket" --connect-timeout-ms 5000 --no-input --scrollback-start 1 --scrollback-count 5 >"$$client_out" 2>"$$client_err"; then \
+		echo "packaged runtime smoke client failed" >&2; \
+		cat "$$client_err" >&2; \
+		exit 1; \
+	fi; \
+	if ! wait "$$daemon_pid"; then \
+		daemon_pid=""; \
+		echo "packaged runtime smoke daemon failed" >&2; \
+		cat "$$daemon_err" >&2; \
+		exit 1; \
+	fi; \
+	daemon_pid=""; \
+	if ! grep -q 'packaged-runtime-smoke' "$$client_out"; then \
+		echo "packaged runtime smoke output missing sentinel" >&2; \
+		cat "$$client_out" >&2; \
+		cat "$$client_err" >&2; \
+		cat "$$daemon_err" >&2; \
+		exit 1; \
+	fi; \
+	printf 'packaged_runtime_smoke=passed\n'; \
+	printf 'packaged_runtime_smoke_output=%s\n' "$$(grep -m1 'packaged-runtime-smoke' "$$client_out")"
 
 check-schema: require-flatc
 	flatc --json --strict-json --no-warnings -o /tmp $(SCHEMA)

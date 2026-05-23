@@ -72,7 +72,8 @@ engine or a regular CI requirement.
 - `make promotion-sample` prints that toolchain information and then times
   `make check-all` with `time -p` for a single local evidence command.
 - `make promotion-local-sample` runs source-fetch provenance, the timed
-  validation sample, and package archive sample in one local evidence pass.
+  validation sample, and package archive runtime smoke in one local evidence
+  pass.
 - `make source-fetch-provenance-sample` writes the active source mode and
   locked `libghostty-vt` Cargo package records without inspecting Ghostty
   source.
@@ -88,6 +89,9 @@ engine or a regular CI requirement.
 - `make packaging-archive-sample` writes a tar archive and SHA-256 file for the
   staged layout, extracts it, and verifies the wrapped binaries from the
   extracted archive.
+- `make packaging-archive-runtime-smoke` starts the extracted opt-in
+  `libghostty-vt` daemon and attaches the extracted client to prove the packaged
+  runtime layout can serve a real pane.
 - The optional VT preflight rejects an invalid `GHOSTTY_SOURCE_DIR` before the
   native build starts, while unset `GHOSTTY_SOURCE_DIR` is recorded as the
   pinned-fetch source mode.
@@ -158,17 +162,18 @@ support, or native-library provenance by themselves.
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-layout-sample` | Passed. Staged opt-in package layout at `target/packaging-libghostty-vt/package` with `bin/nmux`, `bin/nmuxd`, `libexec/nmux`, `libexec/nmuxd`, and `lib/libghostty-vt*`; wrapped `nmux --version` and `nmuxd --version` both reported 0.1.0 from the staged layout. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-provenance-sample` | Passed. Wrote `target/packaging-libghostty-vt/package/PROVENANCE.txt` with toolchain/source mode, `Cargo.lock` SHA-256 `2e28c9036cf76971ebefb3f43a39bf3f3c122aeac89981cbf666105eb20d88c4`, staged file sizes and hashes, native runtime-library artifacts, `otool -L` output, and locked dependency tree. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-archive-sample` | Passed. Wrote `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`, SHA-256 `1f824cdc7634e5f85e092d72fe20635cce8be834bbae33c000ac3a522fba8bdd`, extracted it under `target/packaging-libghostty-vt/archive/check`, and verified wrapped `nmux --version` and `nmuxd --version` from the extracted layout. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above; runtime smoke socket allocated under `/tmp` to keep Unix socket path below platform limits | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-archive-runtime-smoke` | Passed. Wrote and extracted `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`, SHA-256 `56dab0d0af12a744dff48f79108a804d768592b90e4dc7aa40ad9542edd227f0`, verified wrapped binary versions, started wrapped `nmuxd --terminal-engine libghostty-vt --one-shot`, attached wrapped `nmux`, and observed sentinel output `packaged-runtime-smoke` from the packaged daemon. |
 
 ## Local Combined Samples
 
 These samples run source-fetch provenance, validation, and archive packaging
-evidence together. They are useful before updating separate provenance, timing,
-and packaging rows, but they do not replace CI, cold-cache, or multi-platform
-evidence.
+runtime evidence together. They are useful before updating separate provenance,
+timing, and packaging rows, but they do not replace CI, cold-cache, or
+multi-platform evidence.
 
 | Date | Host | Command | Result |
 | --- | --- | --- | --- |
-| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-local-sample` | Passed. Wrote `target/source-fetch-provenance/SOURCE_FETCH.txt` with pinned-fetch source mode and locked `libghostty-vt` package records; timed inner `make check-all`: `real 16.42`, `user 2.64`, `sys 3.17`; then wrote and verified `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` with SHA-256 `bb99af3b5916b0baf4e511ccc37a6fc622251b86fc20768f733e72f5fae5958f` and verified wrapped `nmux --version` and `nmuxd --version` from the extracted archive. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-local-sample` | Passed. Wrote `target/source-fetch-provenance/SOURCE_FETCH.txt` with pinned-fetch source mode and locked `libghostty-vt` package records; timed inner `make check-all`: `real 16.42`, `user 2.63`, `sys 3.17`; then wrote and verified `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` with SHA-256 `778306572191745af4da969657daf2e3c5ccf548098ecec18fff6e9b66e0cf56`, verified wrapped binary versions, started wrapped `nmuxd --terminal-engine libghostty-vt --one-shot`, attached wrapped `nmux`, and observed sentinel output `packaged-runtime-smoke` from the packaged daemon. |
 
 ## Open Work
 
@@ -188,11 +193,11 @@ evidence.
   dependency, including supported targets, static/dynamic linkage, artifact
   provenance, signing/notarization where relevant, release checks, and recorded
   `make packaging-sample`, `make packaging-layout-sample`,
-  `make packaging-provenance-sample`, and `make packaging-archive-sample`
-  results. The current Darwin packaging samples show the opt-in release
-  binaries can run with an explicit runtime library path and staged wrapper
-  layout, but packaged binaries still need signing and platform distribution
-  strategy.
+  `make packaging-provenance-sample`, `make packaging-archive-sample`, and
+  `make packaging-archive-runtime-smoke` results. The current Darwin packaging
+  samples show the opt-in release binaries can run with an explicit runtime
+  library path and staged wrapper layout, but packaged binaries still need
+  signing and platform distribution strategy.
 - Keep contributor workflow guidance current as default-engine, opt-in
   terminal-correctness, and promotion-evidence responsibilities change.
 

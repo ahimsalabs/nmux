@@ -114,6 +114,7 @@ nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-archive-sample
+nix develop . -c make packaging-archive-runtime-smoke
 ```
 
 `check-all` runs the regular default-engine gate plus the opt-in
@@ -121,7 +122,8 @@ nix develop . -c make packaging-archive-sample
 `promotion-sample` prints `toolchain-info` and times `check-all` for evidence
 rows in `docs/default-engine-promotion.md`.
 `promotion-local-sample` runs `source-fetch-provenance-sample`,
-`promotion-sample`, and `packaging-archive-sample` for one local evidence pass.
+`promotion-sample`, and `packaging-archive-runtime-smoke` for one local evidence
+pass.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `packaging-sample` builds default and opt-in release binaries in separate target
@@ -134,6 +136,9 @@ release format decision.
 toolchain/source mode, dependency tree, and dynamic dependency output.
 `packaging-archive-sample` archives the staged layout, writes a SHA-256 file,
 extracts it, and verifies the wrapped binaries from the archive.
+`packaging-archive-runtime-smoke` starts the extracted opt-in `libghostty-vt`
+daemon and attaches the extracted client to prove the packaged runtime layout
+can serve a real pane.
 GitHub Actions runs `make check` on pull requests and pushes to `main`; the
 promotion-local-sample job is manual and does not make `libghostty-vt` a
 required CI gate.

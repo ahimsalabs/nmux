@@ -24,6 +24,7 @@ nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-archive-sample
+nix develop . -c make packaging-archive-runtime-smoke
 ```
 
 The target prints `make toolchain-info`, validates the optional native-VT
@@ -73,6 +74,13 @@ a matching `.sha256` file, extracts the archive under
 `nmux --version` and `nmuxd --version` commands from the extracted layout. This
 is a local release-artifact smoke check; it is still not a signed, notarized,
 published, or platform-native package.
+
+`make packaging-archive-runtime-smoke` builds on the extracted archive and runs
+the wrapped `nmuxd --terminal-engine libghostty-vt --one-shot` plus wrapped
+`nmux` client against a temporary socket. It asserts that the client observes a
+known PTY sentinel from the packaged daemon. This proves the extracted package
+layout can serve a real opt-in native-VT pane locally; it is still not a
+multi-platform or installed-package guarantee.
 
 Current local Darwin evidence shows the default release binaries run directly
 and the opt-in `libghostty-vt` release binaries run when the produced

@@ -40,6 +40,7 @@ nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-archive-sample
+nix develop . -c make packaging-archive-runtime-smoke
 ```
 
 The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
@@ -49,7 +50,7 @@ backend `libghostty-vt` changes. `make check-all` runs both when validating
 release-style or default-engine-promotion work. `make promotion-sample` prints
 toolchain evidence and times `make check-all` in the same run.
 `make promotion-local-sample` runs source-fetch provenance, the timed validation
-sample, and the package archive sample for one local evidence pass.
+sample, and the package archive runtime smoke for one local evidence pass.
 `make source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `make packaging-sample` builds default and opt-in release binaries in separate
@@ -60,6 +61,9 @@ wrappers that resolve the native VT library from `../lib`.
 toolchain/source mode, dependency tree, and dynamic dependency output.
 `make packaging-archive-sample` archives the staged layout, writes a SHA-256
 file, extracts it, and verifies the wrapped binaries from the archive.
+`make packaging-archive-runtime-smoke` starts the extracted opt-in
+`libghostty-vt` daemon and attaches the extracted client to prove the packaged
+runtime layout can serve a real pane.
 See [docs/contributor-workflow.md](docs/contributor-workflow.md) for when to use
 the default gate, the opt-in VT gate, or the combined promotion-evidence gate.
 See [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions
