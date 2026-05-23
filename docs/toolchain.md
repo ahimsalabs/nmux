@@ -59,3 +59,5 @@ Git URL rewrite rules from changing the HTTPS source fetch used by
 that source policy before using the result as promotion evidence.
 See [source-fetch-policy.md](source-fetch-policy.md) for the current opt-in
 policy and the remaining source-fetch decisions for packaged/default builds.
+See [packaging.md](packaging.md) for binary distribution questions that remain
+outside the supported development shell.

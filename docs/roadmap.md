@@ -176,6 +176,8 @@ Done:
 - [Source fetch policy](source-fetch-policy.md) records the current opt-in
   `libghostty-vt-sys` fetch behavior and the remaining packaged/default-build
   policy choices.
+- [Packaging notes](packaging.md) record the current no-release-binary stance
+  and the native-VT binary distribution questions that remain before promotion.
 
 Next:
 

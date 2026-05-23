@@ -564,6 +564,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   README, running docs, and the terminal extraction checklist now use post-M14 language instead of treating M13 extraction as the active roadmap target or assuming pane-1/fixed scrollback behavior
   docs/toolchain.md now documents the supported Nix path and non-Nix requirements checklist without counting that checklist as default-engine promotion evidence
   docs/source-fetch-policy.md now records current opt-in libghostty-vt-sys fetch behavior and keeps packaged/default-build source policy as explicit promotion work
+  docs/packaging.md now records the current no-release-binary stance and native-VT packaging questions required before default promotion
 ```
 
 The crisp product phrase is:

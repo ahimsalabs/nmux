@@ -48,6 +48,9 @@ engine or a regular CI requirement.
   `libghostty-vt-sys` fetch behavior and the remaining policy choices for
   packaged/default builds. It allows local correctness work, but does not close
   the promotion blocker by itself.
+- [Packaging notes](packaging.md) document the current source-checkout
+  distribution path and the binary packaging questions that must be answered
+  before native VT builds become default or regular CI.
 - `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
   suites with `--features libghostty-vt` and sets `GIT_CONFIG_GLOBAL=/dev/null`
   to avoid local Git URL rewrite interference.
@@ -77,7 +80,8 @@ evidence or measurements from every supported platform.
   CI/cache controls, vendored or mirrored source, `GHOSTTY_SOURCE_DIR`
   prefetching, or a native-library package/artifact cache.
 - Define packaging expectations for binaries that include the native Ghostty VT
-  dependency.
+  dependency, including supported targets, static/dynamic linkage, artifact
+  provenance, signing/notarization where relevant, and release checks.
 
 ## Promotion Rule
 

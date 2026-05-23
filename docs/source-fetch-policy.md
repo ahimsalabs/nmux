@@ -36,3 +36,4 @@ these source policies and record the consequences:
 That decision also needs offline-build behavior, cache invalidation, provenance,
 and binary packaging expectations. Until then, the default engine remains
 `interim`, and `make check` remains independent of the native Ghostty/Zig build.
+See [packaging.md](packaging.md) for the matching binary distribution questions.

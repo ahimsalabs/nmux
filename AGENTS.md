@@ -13,6 +13,8 @@ nmux is a portable Ghostty-style terminal workspace. The current direction is do
   non-Nix requirements checklist.
 - [docs/source-fetch-policy.md](docs/source-fetch-policy.md) for opt-in
   `libghostty-vt-sys` source-fetch rules and remaining promotion blockers.
+- [docs/packaging.md](docs/packaging.md) for current distribution posture and
+  native-VT packaging questions.
 - [docs/running.md](docs/running.md) for runnable local smoke tests.
 - [docs/protocol.md](docs/protocol.md) for the FlatBuffers state-sync contract.
 - [docs/default-engine-promotion.md](docs/default-engine-promotion.md) for the
@@ -104,6 +106,8 @@ do not treat an unvalidated local setup as default-engine promotion evidence.
 Use [docs/source-fetch-policy.md](docs/source-fetch-policy.md) when changing
 `libghostty-vt-sys` source-fetch behavior; do not inspect or copy generated
 Ghostty build output under `target/`.
+Use [docs/packaging.md](docs/packaging.md) when discussing release binaries or
+native-VT distribution.
 
 ## Licensing Rules
 

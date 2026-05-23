@@ -23,6 +23,7 @@ See [docs/toolchain.md](toolchain.md) for the supported Nix development path
 and the non-Nix requirements checklist.
 See [docs/source-fetch-policy.md](source-fetch-policy.md) for the opt-in
 `libghostty-vt-sys` fetch policy.
+See [docs/packaging.md](packaging.md) for the current no-release-binary stance.
 
 Start a one-shot daemon with the default local shell:
 
