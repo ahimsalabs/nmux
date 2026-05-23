@@ -222,7 +222,8 @@ cached client-state compatibility, cached terminal metadata reattach,
 current-surface live key, paste, named-key, focus, and mouse forwarding,
 current-surface live focus/mouse rejection, libghostty-vt current-surface
 bracketed-paste wrapping, libghostty-vt current-surface mouse forwarding,
-libghostty-vt current-surface CLI SGR mouse forwarding, mode-aware
+libghostty-vt current-surface CLI SGR mouse forwarding, live CLI SGR-pixel
+mouse forwarding, mode-aware
 libghostty-vt current-surface application-keypad and application-cursor
 named-key forwarding,
 protocol-visible host input, live resize, and output polling failures,
