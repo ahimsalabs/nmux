@@ -33,6 +33,23 @@ passing or failing results into
 source-fetch, packaging, and flake context before using them as promotion
 evidence.
 
+Record each manual run with these fields:
+
+| Field | Required Content |
+| --- | --- |
+| Date | UTC date of the workflow run. |
+| Workflow run | GitHub Actions run URL or run number. |
+| Git revision | Commit SHA and branch or pull request ref. |
+| Runner | Runner OS, architecture, image label, and hosted/self-hosted status. |
+| Toolchain | `make toolchain-info` output from the run. |
+| Source mode | `ghostty_source_mode`, `GHOSTTY_SOURCE_DIR`, and `GIT_CONFIG_GLOBAL`. |
+| Cache state | Whether Nix, Cargo registry, Cargo Git, Rust target, and native Ghostty/Zig build caches were cold, warm, restored, or unknown. |
+| Timings | `time -p make check-all` output from `promotion-sample` and total job duration. |
+| Provenance | `SOURCE_FETCH.txt` location or artifact, `Cargo.lock` hash, and locked `libghostty-vt`/`libghostty-vt-sys` records. |
+| Packaging | Archive name, SHA-256, `packaging-provenance-verify` result, and packaged runtime smoke result. |
+| Outcome | Passed, failed, or canceled, including failed command and error summary. |
+| Follow-up | Any flake, cache miss, source-fetch, packaging, or platform issue created from the run. |
+
 Before this manual job can become a required or regular native-VT CI gate, a
 later ADR must satisfy
 [ADR 0026](adr/0026-native-vt-ci-promotion-criteria.md), including runner

@@ -80,7 +80,8 @@ runtime layout can serve a real pane.
 See [docs/contributor-workflow.md](docs/contributor-workflow.md) for when to use
 the default gate, the opt-in VT gate, or the combined promotion-evidence gate.
 See [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions
-gate and the manual promotion-local-sample workflow.
+gate, the manual promotion-local-sample workflow, and the CI promotion evidence
+recording template.
 See [docs/toolchain.md](docs/toolchain.md) for the supported Nix path and the
 non-Nix requirements checklist that still needs validation before default-engine
 promotion. `make toolchain-info` prints the active tool versions for evidence

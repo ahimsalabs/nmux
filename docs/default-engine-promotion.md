@@ -63,8 +63,9 @@ engine or a regular CI requirement.
 - [Contributor workflow](contributor-workflow.md) documents when contributors
   should use the default gate, the opt-in terminal-correctness gate, and the
   combined promotion-evidence gate.
-- [CI notes](ci.md) document the required GitHub Actions default-engine gate and
-  the manual promotion-local-sample job.
+- [CI notes](ci.md) document the required GitHub Actions default-engine gate,
+  the manual promotion-local-sample job, and the fields required when recording
+  CI promotion evidence here.
 - [ADR 0026](adr/0026-native-vt-ci-promotion-criteria.md) defines the criteria
   a later decision must satisfy before native VT becomes regular or required CI.
 - The Makefile performs local tool preflight checks for `cargo`, `flatc`
@@ -189,6 +190,17 @@ multi-platform evidence.
 | Date | Host | Command | Result |
 | --- | --- | --- | --- |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-local-sample` | Passed. Wrote `target/source-fetch-provenance/SOURCE_FETCH.txt` with pinned-fetch source mode and locked `libghostty-vt` package records; timed inner `make check-all`: `real 16.42`, `user 2.63`, `sys 3.17`; then wrote and verified `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` with SHA-256 `778306572191745af4da969657daf2e3c5ccf548098ecec18fff6e9b66e0cf56`, verified wrapped binary versions, started wrapped `nmuxd --terminal-engine libghostty-vt --one-shot`, attached wrapped `nmux`, and observed sentinel output `packaged-runtime-smoke` from the packaged daemon. |
+
+## CI Promotion Samples
+
+No manual GitHub Actions promotion-local-sample run has been recorded yet. When
+one is run, record it here with the field set in [CI notes](ci.md): workflow
+run, git revision, runner, toolchain, source mode, cache state, timings,
+source-fetch provenance, packaging/archive SHA-256, runtime smoke result,
+outcome, and follow-up.
+
+| Date | Workflow Run | Runner | Command | Result |
+| --- | --- | --- | --- | --- |
 
 ## Open Work
 

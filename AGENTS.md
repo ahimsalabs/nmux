@@ -155,7 +155,8 @@ daemon and attaches the extracted client to prove the packaged runtime layout
 can serve a real pane.
 GitHub Actions runs `make check` on pull requests and pushes to `main`; the
 promotion-local-sample job is manual and does not make `libghostty-vt` a
-required CI gate.
+required CI gate. Use the field template in `docs/ci.md` when recording manual
+CI promotion evidence.
 
 If `nix develop` itself is unavailable, do not rewrite the flake or check in
 machine-local store paths. Either use an already entered dev shell, or record the
