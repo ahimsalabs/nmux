@@ -33,6 +33,11 @@ regular CI requirement, it still needs platform-specific setup commands,
 timings, cache behavior, and packaging decisions recorded in
 [the default-engine promotion tracker](default-engine-promotion.md).
 
+Current validation status: no non-Nix `make check-ghostty-vt` or
+`make check-all` run has been recorded as promotion evidence. Until such a run
+is recorded, the Nix shell is the only validated local workflow for the optional
+native Ghostty VT path.
+
 A non-Nix environment must provide:
 
 - a Rust toolchain new enough for Cargo workspace resolver 3 and edition 2024;

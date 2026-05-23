@@ -44,6 +44,9 @@ engine or a regular CI requirement.
   minimum non-Nix equivalents for Rust, FlatBuffers, make, Zig 0.15, and
   `libghostty-vt-sys` source-fetch policy. That checklist is setup guidance,
   not promotion evidence by itself.
+- No non-Nix `make check-ghostty-vt` or `make check-all` validation run has
+  been recorded as promotion evidence; the Nix shell remains the only validated
+  local workflow for the optional native Ghostty VT path.
 - [Source fetch policy](source-fetch-policy.md) documents the current opt-in
   `libghostty-vt-sys` fetch behavior and the remaining policy choices for
   packaged/default builds. It allows local correctness work, but does not close
