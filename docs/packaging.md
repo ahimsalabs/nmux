@@ -29,9 +29,11 @@ toolchain preflight, builds default release `nmux` and `nmuxd` binaries into
 binaries into `target/packaging-libghostty-vt`, then prints artifact paths,
 byte sizes, discovered `libghostty-vt` dynamic-library artifacts, and
 `--version` output. The opt-in build uses `GIT_CONFIG_GLOBAL=/dev/null` and the
-same `GHOSTTY_SOURCE_DIR` validation as the terminal-correctness gate. If a
-built binary cannot run its version check, the target exits nonzero after
-reporting all version-check failures.
+same `GHOSTTY_SOURCE_DIR` validation as the terminal-correctness gate. For the
+version checks, it discovers the `ghostty-install/lib` directory produced by
+`libghostty-vt-sys` and sets `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` for the
+opt-in binaries. If a built binary cannot run its version check, the target
+exits nonzero after reporting all version-check failures.
 
 Record successful or failed samples in
 [default-engine-promotion.md](default-engine-promotion.md) with host, source
@@ -40,11 +42,12 @@ packaging sample proves the release binaries build in that environment; it does
 not answer install paths, signing/notarization, update channels, target support,
 or native-library provenance by itself.
 
-Current local Darwin evidence shows the default release binaries run, but the
-opt-in `libghostty-vt` release binaries fail at runtime because
-`@rpath/libghostty-vt.dylib` is not discoverable and the binaries have no
-`LC_RPATH`. This must be resolved before native-VT binaries are treated as
-shippable.
+Current local Darwin evidence shows the default release binaries run directly
+and the opt-in `libghostty-vt` release binaries run when the produced
+`ghostty-install/lib` directory is supplied as a runtime library path. A real
+package still needs an explicit runtime-library strategy, such as rpath,
+bundling, platform package dependency, or another artifact layout, before
+native-VT binaries are treated as shippable.
 
 ## Default-Engine Promotion Packaging Questions
 

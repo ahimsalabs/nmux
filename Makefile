@@ -41,14 +41,21 @@ packaging-sample: toolchain-info check-vt-toolchain
 	done
 	@echo "opt-in libghostty-vt dynamic library artifacts"
 	@find target/packaging-libghostty-vt/release -name 'libghostty-vt*.dylib' -o -name 'libghostty-vt*.so' -o -name 'libghostty-vt*.dll'
-	@printf 'libghostty-vt nmux version: '
 	@status=0; \
-	if ! target/packaging-libghostty-vt/release/nmux --version; then \
+	lib_path="$$(find target/packaging-libghostty-vt/release -path '*/ghostty-install/lib/libghostty-vt.*' -print -quit)"; \
+	if [ -z "$$lib_path" ]; then \
+		echo "missing packaged libghostty-vt runtime library directory" >&2; \
+		exit 1; \
+	fi; \
+	lib_dir="$$(dirname "$$lib_path")"; \
+	printf 'libghostty-vt_runtime_library_dir=%s\n' "$$lib_dir"; \
+	printf 'libghostty-vt nmux version: '; \
+	if ! DYLD_LIBRARY_PATH="$$lib_dir" LD_LIBRARY_PATH="$$lib_dir" target/packaging-libghostty-vt/release/nmux --version; then \
 		echo "libghostty-vt nmux version check failed" >&2; \
 		status=1; \
 	fi; \
 	printf 'libghostty-vt nmuxd version: '; \
-	if ! target/packaging-libghostty-vt/release/nmuxd --version; then \
+	if ! DYLD_LIBRARY_PATH="$$lib_dir" LD_LIBRARY_PATH="$$lib_dir" target/packaging-libghostty-vt/release/nmuxd --version; then \
 		echo "libghostty-vt nmuxd version check failed" >&2; \
 		status=1; \
 	fi; \

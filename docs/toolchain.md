@@ -48,8 +48,9 @@ nix develop . -c make packaging-sample
 
 That target builds default and opt-in `libghostty-vt` release binaries in
 separate target directories, then prints artifact sizes, dynamic-library
-artifacts, and binary versions. A failed opt-in binary version check is
-packaging evidence and should be recorded in
+artifacts, the discovered runtime library directory, and binary versions. A
+failed opt-in binary version check is packaging evidence and should be recorded
+in
 [the default-engine promotion tracker](default-engine-promotion.md).
 
 ## Non-Nix Equivalents

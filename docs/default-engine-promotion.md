@@ -131,7 +131,7 @@ support, or native-library provenance by themselves.
 
 | Date | Host | Command | Result |
 | --- | --- | --- | --- |
-| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-sample` | Failed after successful release builds. Default binaries ran `--version`; sizes: `nmux` 1065296 bytes, `nmuxd` 1182352 bytes. Opt-in `libghostty-vt` binaries built; sizes: `nmux` 1065424 bytes, `nmuxd` 1251648 bytes; both `--version` checks failed because `@rpath/libghostty-vt.dylib` was not loaded and dyld reported no `LC_RPATH`s found. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-sample` | Passed. Default binaries ran `--version`; sizes: `nmux` 1065296 bytes, `nmuxd` 1182352 bytes. Opt-in `libghostty-vt` binaries built; sizes: `nmux` 1065424 bytes, `nmuxd` 1251648 bytes; `--version` passed with `DYLD_LIBRARY_PATH`/`LD_LIBRARY_PATH` set to the produced `ghostty-install/lib` runtime-library directory. |
 
 ## Open Work
 
@@ -151,8 +151,9 @@ support, or native-library provenance by themselves.
   dependency, including supported targets, static/dynamic linkage, artifact
   provenance, signing/notarization where relevant, release checks, and recorded
   `make packaging-sample` results. The current Darwin packaging sample shows
-  the opt-in release binaries need an explicit runtime-library strategy for
-  `libghostty-vt.dylib`.
+  the opt-in release binaries can run with an explicit runtime library path,
+  but packaged binaries still need an rpath, bundling, platform dependency, or
+  other distribution strategy for `libghostty-vt.dylib`.
 - Keep contributor workflow guidance current as default-engine, opt-in
   terminal-correctness, and promotion-evidence responsibilities change.
 
