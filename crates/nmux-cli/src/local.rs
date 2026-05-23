@@ -25,6 +25,8 @@ const INPUT_MODIFIER_MASK: u32 = 0x0f;
 pub struct SocketIdentity {
     dev: u64,
     ino: u64,
+    ctime: i64,
+    ctime_nsec: i64,
 }
 
 pub trait ProcessHostOutput: ProcessHost + ProcessOutput {}
@@ -68,6 +70,8 @@ pub fn socket_identity(path: &Path) -> io::Result<SocketIdentity> {
     Ok(SocketIdentity {
         dev: metadata.dev(),
         ino: metadata.ino(),
+        ctime: metadata.ctime(),
+        ctime_nsec: metadata.ctime_nsec(),
     })
 }
 
@@ -3944,12 +3948,16 @@ impl ClientAttachState {
     }
 
     fn encode(&self) -> String {
-        let mut encoded = String::from("NMUX_CLIENT_STATE 7\n");
+        let mut encoded = String::from("NMUX_CLIENT_STATE 8\n");
         if let Some(scope) = self.scope {
             encoded.push_str("scope socket ");
             encoded.push_str(&scope.dev.to_string());
             encoded.push(' ');
             encoded.push_str(&scope.ino.to_string());
+            encoded.push(' ');
+            encoded.push_str(&scope.ctime.to_string());
+            encoded.push(' ');
+            encoded.push_str(&scope.ctime_nsec.to_string());
             encoded.push('\n');
         }
         for scrollback in &self.scrollbacks {
@@ -4141,6 +4149,7 @@ impl ClientAttachState {
             && header != "NMUX_CLIENT_STATE 5"
             && header != "NMUX_CLIENT_STATE 6"
             && header != "NMUX_CLIENT_STATE 7"
+            && header != "NMUX_CLIENT_STATE 8"
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -4157,6 +4166,17 @@ impl ClientAttachState {
                 scope = Some(SocketIdentity {
                     dev: parse_state_u64(dev)?,
                     ino: parse_state_u64(ino)?,
+                    ctime: 0,
+                    ctime_nsec: 0,
+                });
+                continue;
+            }
+            if let ["scope", "socket", dev, ino, ctime, ctime_nsec] = scope_parts.as_slice() {
+                scope = Some(SocketIdentity {
+                    dev: parse_state_u64(dev)?,
+                    ino: parse_state_u64(ino)?,
+                    ctime: parse_state_i64(ctime)?,
+                    ctime_nsec: parse_state_i64(ctime_nsec)?,
                 });
                 continue;
             }
@@ -4613,6 +4633,12 @@ fn state_save_tmp_path(path: &Path) -> PathBuf {
 }
 
 fn parse_state_u64(value: &str) -> io::Result<u64> {
+    value
+        .parse()
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn parse_state_i64(value: &str) -> io::Result<i64> {
     value
         .parse()
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
@@ -5086,6 +5112,24 @@ mod tests {
             "/tmp/nmux-{}-{nanos}-{id}.sock",
             std::process::id()
         ))
+    }
+
+    fn test_socket_identity(dev: u64, ino: u64) -> SocketIdentity {
+        test_socket_identity_with_ctime(dev, ino, 100, 200)
+    }
+
+    fn test_socket_identity_with_ctime(
+        dev: u64,
+        ino: u64,
+        ctime: i64,
+        ctime_nsec: i64,
+    ) -> SocketIdentity {
+        SocketIdentity {
+            dev,
+            ino,
+            ctime,
+            ctime_nsec,
+        }
     }
 
     #[test]
@@ -8109,7 +8153,7 @@ mod tests {
     #[test]
     fn client_attach_state_round_trips_cached_surface() {
         let mut state = ClientAttachState::default();
-        let expected_scope = SocketIdentity { dev: 10, ino: 20 };
+        let expected_scope = test_socket_identity(10, 20);
         state.apply_scope(Some(expected_scope));
         let mut snapshot = surface_update(
             SurfaceUpdateKind::Snapshot,
@@ -8217,7 +8261,12 @@ mod tests {
             state.known_surfaces()
         );
         assert_eq!(
-            decoded.known_surfaces_for_scope(Some(SocketIdentity { dev: 10, ino: 21 })),
+            decoded.known_surfaces_for_scope(Some(test_socket_identity(10, 21))),
+            Vec::new()
+        );
+        assert_eq!(
+            decoded
+                .known_surfaces_for_scope(Some(test_socket_identity_with_ctime(10, 20, 100, 201))),
             Vec::new()
         );
         assert_eq!(decoded.cached_scrollback_version("pane-1", 4, 1), Some(11));
@@ -8228,7 +8277,16 @@ mod tests {
         );
         assert_eq!(
             decoded.cached_scrollback_version_for_scope(
-                Some(SocketIdentity { dev: 10, ino: 21 }),
+                Some(test_socket_identity(10, 21)),
+                "pane-1",
+                4,
+                1,
+            ),
+            None
+        );
+        assert_eq!(
+            decoded.cached_scrollback_version_for_scope(
+                Some(test_socket_identity_with_ctime(10, 20, 100, 201)),
                 "pane-1",
                 4,
                 1,
@@ -8282,11 +8340,11 @@ mod tests {
         let _ = fs::remove_dir_all(&state_dir);
 
         let mut state = ClientAttachState::default();
-        state.apply_scope(Some(SocketIdentity { dev: 42, ino: 77 }));
+        state.apply_scope(Some(test_socket_identity(42, 77)));
         state.save(&state_path).expect("save state");
 
         let loaded = ClientAttachState::load(&state_path).expect("load saved state");
-        assert_eq!(loaded.scope, Some(SocketIdentity { dev: 42, ino: 77 }));
+        assert_eq!(loaded.scope, Some(test_socket_identity(42, 77)));
 
         let temp_files = fs::read_dir(&state_dir)
             .expect("read state dir")
@@ -8299,6 +8357,19 @@ mod tests {
     }
 
     #[test]
+    fn client_attach_state_decodes_legacy_socket_scope_as_nonmatching_identity() {
+        let decoded = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 7\nscope socket 10 20\nsurface 70616e652d31 7 80 24 0\ncursor none\nmodes 0 0 0 0 0 0 1 0 0\nrow 0 636163686564\nend\n",
+        )
+        .expect("decode legacy scoped state");
+
+        assert_eq!(
+            decoded.known_surfaces_for_scope(Some(test_socket_identity(10, 20))),
+            Vec::new()
+        );
+    }
+
+    #[test]
     fn client_attach_state_decodes_cached_surface_without_surface_kind() {
         let decoded = ClientAttachState::decode(
             "NMUX_CLIENT_STATE 1\nsurface 70616e652d31 7 80 24\ncursor none\nrow 0 636163686564\nend\n",
@@ -8307,7 +8378,7 @@ mod tests {
 
         assert_eq!(decoded.scope, None);
         assert_eq!(
-            decoded.known_surfaces_for_scope(Some(SocketIdentity { dev: 1, ino: 2 })),
+            decoded.known_surfaces_for_scope(Some(test_socket_identity(1, 2))),
             Vec::new()
         );
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
@@ -8437,7 +8508,7 @@ mod tests {
     #[test]
     fn client_attach_state_scope_change_drops_cached_scrollback() {
         let mut state = ClientAttachState::default();
-        state.apply_scope(Some(SocketIdentity { dev: 10, ino: 20 }));
+        state.apply_scope(Some(test_socket_identity(10, 20)));
         state
             .render_attach(AttachSnapshot {
                 workspace: WorkspaceSummary {
@@ -8470,7 +8541,7 @@ mod tests {
             .expect("render scrollback");
         assert_eq!(state.cached_scrollback_version("pane-1", 1, 1), Some(3));
 
-        state.apply_scope(Some(SocketIdentity { dev: 10, ino: 21 }));
+        state.apply_scope(Some(test_socket_identity(10, 21)));
 
         assert_eq!(state.cached_scrollback_version("pane-1", 1, 1), None);
         assert!(state.scrollbacks.is_empty());
@@ -8479,7 +8550,7 @@ mod tests {
     #[test]
     fn client_attach_state_preserves_distinct_cached_scrollback_ranges() {
         let mut state = ClientAttachState::default();
-        state.apply_scope(Some(SocketIdentity { dev: 10, ino: 20 }));
+        state.apply_scope(Some(test_socket_identity(10, 20)));
 
         state.cache_scrollback_chunk(&ScrollbackChunkSummary {
             pane_id: "pane-1".to_owned(),
