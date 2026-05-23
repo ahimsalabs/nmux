@@ -22,6 +22,8 @@ the default `interim` terminal engine. `make check-ghostty-vt` and
 `make check-all` are explicit opt-in gates for changes that touch backend
 `libghostty-vt` extraction, feature-sensitive attach/reconnect behavior, cached
 state, daemon-owned structured input, or default-engine promotion evidence.
+See [contributor-workflow.md](contributor-workflow.md) for choosing between
+those gates.
 
 ## Non-Nix Equivalents
 

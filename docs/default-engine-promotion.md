@@ -51,6 +51,9 @@ engine or a regular CI requirement.
 - [Packaging notes](packaging.md) document the current source-checkout
   distribution path and the binary packaging questions that must be answered
   before native VT builds become default or regular CI.
+- [Contributor workflow](contributor-workflow.md) documents when contributors
+  should use the default gate, the opt-in terminal-correctness gate, and the
+  combined promotion-evidence gate.
 - `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
   suites with `--features libghostty-vt` and sets `GIT_CONFIG_GLOBAL=/dev/null`
   to avoid local Git URL rewrite interference.
@@ -82,6 +85,8 @@ evidence or measurements from every supported platform.
 - Define packaging expectations for binaries that include the native Ghostty VT
   dependency, including supported targets, static/dynamic linkage, artifact
   provenance, signing/notarization where relevant, and release checks.
+- Keep contributor workflow guidance current as default-engine, opt-in
+  terminal-correctness, and promotion-evidence responsibilities change.
 
 ## Promotion Rule
 

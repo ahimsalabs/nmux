@@ -8,6 +8,9 @@ Run all checks:
 nix develop . -c make check
 ```
 
+See [docs/contributor-workflow.md](contributor-workflow.md) for which checks
+apply to default-engine work, terminal-correctness work, and promotion evidence.
+
 Run the regular default-engine gate plus the opt-in backend `libghostty-vt`
 gate when doing release-style validation or gathering default-engine-promotion
 evidence:

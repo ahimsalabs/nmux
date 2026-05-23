@@ -9,6 +9,8 @@ nmux is a portable Ghostty-style terminal workspace. The current direction is do
 - [README.md](README.md) for the seed idea.
 - [docs/roadmap.md](docs/roadmap.md) for current milestone status and next steps.
 - [WORK.md](WORK.md) for background product and architecture garden notes.
+- [docs/contributor-workflow.md](docs/contributor-workflow.md) for default,
+  opt-in VT, and promotion-evidence check paths.
 - [docs/toolchain.md](docs/toolchain.md) for supported Nix tooling and the
   non-Nix requirements checklist.
 - [docs/source-fetch-policy.md](docs/source-fetch-policy.md) for opt-in
@@ -108,6 +110,8 @@ Use [docs/source-fetch-policy.md](docs/source-fetch-policy.md) when changing
 Ghostty build output under `target/`.
 Use [docs/packaging.md](docs/packaging.md) when discussing release binaries or
 native-VT distribution.
+Use [docs/contributor-workflow.md](docs/contributor-workflow.md) when changing
+which work requires `make check`, `make check-ghostty-vt`, or `make check-all`.
 
 ## Licensing Rules
 

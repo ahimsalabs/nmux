@@ -178,6 +178,8 @@ Done:
   policy choices.
 - [Packaging notes](packaging.md) record the current no-release-binary stance
   and the native-VT binary distribution questions that remain before promotion.
+- [Contributor workflow](contributor-workflow.md) records the default-engine,
+  opt-in terminal-correctness, and promotion-evidence check paths.
 
 Next:
 
