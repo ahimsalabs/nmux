@@ -62,10 +62,11 @@ platform-native package.
 `make packaging-provenance-sample` writes
 `target/packaging-libghostty-vt/package/PROVENANCE.txt` for that staged layout.
 The manifest includes toolchain and source-mode fields, `Cargo.lock` hash,
-staged file byte sizes and SHA-256 hashes, native runtime-library artifacts,
-best-effort dynamic dependency output from `otool -L` or `ldd`, and a locked
-`cargo tree` for `nmux-cli --features libghostty-vt`. This is local provenance
-evidence, not a release signing or supply-chain attestation format.
+locked `libghostty-vt` and `libghostty-vt-sys` package records, staged file
+byte sizes and SHA-256 hashes, native runtime-library artifacts, best-effort
+dynamic dependency output from `otool -L` or `ldd`, and a locked `cargo tree`
+for `nmux-cli --features libghostty-vt`. This is local provenance evidence,
+not a release signing or supply-chain attestation format.
 
 `make packaging-archive-sample` writes
 `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` and

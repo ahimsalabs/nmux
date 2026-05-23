@@ -163,6 +163,14 @@ packaging-provenance-sample: packaging-layout-sample
 			shasum -a 256 "$$1" | awk '{print $$1}'; \
 		fi; \
 	}; \
+	cargo_lock_record() { \
+		awk -v package="$$1" '\
+			$$0 == "[[package]]" { block = $$0 ORS; in_block = 1; name = ""; next } \
+			in_block { block = block $$0 ORS } \
+			in_block && $$1 == "name" && $$3 == "\"" package "\"" { name = package } \
+			in_block && $$0 == "" { if (name == package) { printf "%s", block; found = 1 } in_block = 0; block = ""; name = "" } \
+			END { if (in_block && name == package) { printf "%s", block; found = 1 } if (!found) { exit 1 } }' Cargo.lock; \
+	}; \
 	{ \
 		printf 'nmux packaging provenance sample\n'; \
 		printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
@@ -174,6 +182,10 @@ packaging-provenance-sample: packaging-layout-sample
 		$(MAKE) --no-print-directory toolchain-info; \
 		printf '\n[cargo_lock]\n'; \
 		printf 'Cargo.lock sha256=%s\n' "$$(hash_file Cargo.lock)"; \
+		printf '\n[cargo_lock:libghostty-vt]\n'; \
+		cargo_lock_record libghostty-vt; \
+		printf '\n[cargo_lock:libghostty-vt-sys]\n'; \
+		cargo_lock_record libghostty-vt-sys; \
 		printf '\n[staged_files]\n'; \
 		find "$$pkg_dir" -type f ! -name PROVENANCE.txt | sort | while read -r file; do \
 			printf '%s bytes=%s sha256=%s\n' "$$file" "$$(wc -c < "$$file" | tr -d ' ')" "$$(hash_file "$$file")"; \

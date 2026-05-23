@@ -92,8 +92,9 @@ engine or a regular CI requirement.
   scripts, and `libghostty-vt` runtime-library artifacts in a local package
   layout and verifies the wrapped binaries run from that layout.
 - `make packaging-provenance-sample` writes a provenance manifest for the
-  staged layout, including file hashes, toolchain/source mode, dependency tree,
-  native runtime-library artifacts, and dynamic dependency output.
+  staged layout, including file hashes, toolchain/source mode, locked
+  `libghostty-vt` package records, dependency tree, native runtime-library
+  artifacts, and dynamic dependency output.
 - `make packaging-archive-sample` writes a tar archive and SHA-256 file for the
   staged layout, extracts it, and verifies the wrapped binaries from the
   extracted archive.
