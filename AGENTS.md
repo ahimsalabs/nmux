@@ -19,6 +19,8 @@ nmux is a portable Ghostty-style terminal workspace. The current direction is do
   for criteria a future native-VT source-policy promotion decision must satisfy.
 - [docs/packaging.md](docs/packaging.md) for current distribution posture and
   native-VT packaging questions.
+- [docs/adr/0025-native-vt-packaging-criteria.md](docs/adr/0025-native-vt-packaging-criteria.md)
+  for criteria a future native-VT packaging promotion decision must satisfy.
 - [docs/running.md](docs/running.md) for runnable local smoke tests.
 - [docs/protocol.md](docs/protocol.md) for the FlatBuffers state-sync contract.
 - [docs/protocol-futures.md](docs/protocol-futures.md) for withheld protocol

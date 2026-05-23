@@ -592,6 +592,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   docs/source-fetch-policy.md now records current opt-in libghostty-vt-sys fetch behavior and keeps packaged/default-build source policy as explicit promotion work
   ADR 0024 defines acceptance criteria for any future native-VT source-policy promotion decision, including source-mode evidence, cache/offline behavior, provenance, and license-review scope
   docs/packaging.md now records the current no-release-binary stance and native-VT packaging questions required before default promotion
+  ADR 0025 defines acceptance criteria for any future native-VT packaging promotion decision, including supported targets, runtime-library strategy, release checks, provenance, signing/update expectations, and runtime smoke coverage
   docs/contributor-workflow.md now records default-engine, terminal-correctness, and promotion-evidence check paths
 ```
 

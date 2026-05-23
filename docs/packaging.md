@@ -89,10 +89,11 @@ package still needs an explicit runtime-library strategy, such as rpath,
 bundling, platform package dependency, or another artifact layout, before
 native-VT binaries are treated as shippable.
 
-## Default-Engine Promotion Packaging Questions
+## Default-Engine Promotion Packaging Criteria
 
 Before a later ADR can make `libghostty-vt` the default engine or a regular CI
-requirement, packaging work must answer:
+requirement, packaging work must satisfy
+[ADR 0025](adr/0025-native-vt-packaging-criteria.md) and answer:
 
 - which target triples are supported for binaries that include the native
   Ghostty VT dependency;

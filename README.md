@@ -25,6 +25,8 @@ The current implementation is a Rust workspace with:
 - packaging notes in [docs/packaging.md](docs/packaging.md);
 - native VT source-policy criteria in
   [docs/adr/0024-native-vt-source-policy-criteria.md](docs/adr/0024-native-vt-source-policy-criteria.md);
+- native VT packaging criteria in
+  [docs/adr/0025-native-vt-packaging-criteria.md](docs/adr/0025-native-vt-packaging-criteria.md);
 - the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on post-M14 default-engine promotion evidence, frontend hydration tracking, future protocol-object decisions, and local usability.
 
 ## Check
