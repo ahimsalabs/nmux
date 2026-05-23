@@ -21,11 +21,16 @@
           src = ./.;
           filter =
             path: type:
-            !(builtins.elem (builtins.baseNameOf path) [
+            let
+              name = builtins.baseNameOf path;
+            in
+            !(builtins.elem name [
               "target"
               ".git"
               ".jj"
+              "result"
             ])
+            && !(pkgs.lib.hasPrefix "result-" name)
             && pkgs.lib.cleanSourceFilter path type;
         };
 
@@ -44,6 +49,11 @@
             exit 1
           fi
 
+          if [ -e "$flakeSrc/result" ] || find "$flakeSrc" -maxdepth 1 -name 'result-*' -print -quit | grep -q .; then
+            echo "flake input source unexpectedly contains Nix result symlinks" >&2
+            exit 1
+          fi
+
           if [ -e "$flakeSrc/.git" ] || [ -e "$flakeSrc/.jj" ]; then
             echo "flake input source unexpectedly contains VCS metadata" >&2
             exit 1
@@ -51,6 +61,11 @@
 
           if [ -e "$src/target" ]; then
             echo "flake source unexpectedly contains target/" >&2
+            exit 1
+          fi
+
+          if [ -e "$src/result" ] || find "$src" -maxdepth 1 -name 'result-*' -print -quit | grep -q .; then
+            echo "flake source unexpectedly contains Nix result symlinks" >&2
             exit 1
           fi
 
@@ -74,9 +89,11 @@
           mkdir -p "$out"
           {
             printf 'flake_input_source_excludes_build_output=passed\n'
+            printf 'flake_input_source_excludes_result_links=passed\n'
             printf 'flake_input_source_size_kib=%s\n' "$flake_source_kib"
             printf 'flake_input_source_max_kib=%s\n' "$maxFlakeSourceKiB"
             printf 'flake_source_excludes_build_output=passed\n'
+            printf 'flake_source_excludes_result_links=passed\n'
             printf 'flake_source_size_kib=%s\n' "$source_kib"
             printf 'flake_source_max_kib=%s\n' "$maxSourceKiB"
           } > "$out/source-audit.txt"
