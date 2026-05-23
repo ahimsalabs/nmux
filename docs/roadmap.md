@@ -470,7 +470,8 @@ Exit evidence:
   schema fields are added.
 
 Status: Done. ADR 0023 keeps `libghostty-vt` opt-in after M13, names the
-native build, CI, packaging, source-fetch, and developer-workflow evidence
-needed before default promotion, keeps frontend Ghostty renderer hydration in
-the upstream/API track, and requires future protocol-object expansions to carry
-their own ADRs and compatibility plans before schema changes.
+native build cost, regular CI, non-Nix/toolchain provisioning, source-fetch
+policy, packaging, and developer-workflow evidence needed before default
+promotion, keeps frontend Ghostty renderer hydration in the upstream/API track,
+and requires future protocol-object expansions to carry their own ADRs and
+compatibility plans before schema changes.

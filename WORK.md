@@ -565,7 +565,7 @@ M13: backend libghostty-vt extraction [done for opt-in correctness milestone]
   do not copy code from GPL or AGPL terminal parsers
 
 M14: post-M13 promotion and product split [decision accepted in ADR 0023]
-  libghostty-vt remains opt-in after M13 until a later decision accepts concrete native build, regular CI, packaging, source-fetch, and developer-workflow evidence
+  libghostty-vt remains opt-in after M13 until a later decision accepts concrete native build cost, regular CI, non-Nix/toolchain provisioning, source-fetch policy, packaging, and developer-workflow evidence
   docs/default-engine-promotion.md tracks the native build, CI, toolchain, source-fetch, packaging, workflow, and state-sync evidence required before promotion
   the tracker now includes multiple warm local Darwin arm64 make check-all timing samples, including a post-info-flag run and a make promotion-sample run with toolchain-info output; this is useful evidence, not enough for promotion by itself
   docs/toolchain.md and docs/default-engine-promotion.md explicitly record that the Nix shell provisions flatc 25.12.19, while no non-Nix optional native-VT validation run has passed as promotion evidence yet

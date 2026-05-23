@@ -354,7 +354,7 @@ default workflow proves the local state-sync spine: server-owned workspace
 state, server-owned pane surface state derived from a local PTY, server-owned
 scrollback ranges, FlatBuffers envelope framing, client-side rendering from
 decoded state objects, and client-to-daemon input/control forwarding.
-`nmuxd --terminal-engine interim` selects this current implementation explicitly. Backend `libghostty-vt` extraction is imported behind the `libghostty-vt` Cargo feature, but the default build keeps the interim engine to avoid making the native Ghostty/Zig build part of every development loop. ADR 0023 keeps that opt-in split after the M13 extraction milestone until native build, CI, packaging, source-fetch, and workflow costs are accepted deliberately.
+`nmuxd --terminal-engine interim` selects this current implementation explicitly. Backend `libghostty-vt` extraction is imported behind the `libghostty-vt` Cargo feature, but the default build keeps the interim engine to avoid making the native Ghostty/Zig build part of every development loop. ADR 0023 keeps that opt-in split after the M13 extraction milestone until native build cost, regular CI, non-Nix/toolchain provisioning, source-fetch policy, packaging, and workflow costs are accepted deliberately.
 
 ## Optional libghostty-vt Build
 
