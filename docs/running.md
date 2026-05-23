@@ -374,6 +374,19 @@ nmux snapshots, patches, and scrollback chunks. The local CLI prints non-empty
 terminal title and OSC 7 working-directory metadata alongside the rendered pane
 surface, including redraw output.
 
+To smoke the opt-in engine manually, build the daemon with the Cargo feature
+and select the engine at runtime:
+
+```sh
+rm -f /tmp/nmux-vt.sock
+# shell 1
+nix develop . -c env GIT_CONFIG_GLOBAL=/dev/null cargo run -p nmux-cli --features libghostty-vt --bin nmuxd -- --socket /tmp/nmux-vt.sock --terminal-engine libghostty-vt --one-shot --command "printf '\033[31mvt engine\033[0m\n'; cat >/dev/null"
+# shell 2
+nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux-vt.sock
+```
+
+Expected client output includes `vt engine` without raw ANSI escape bytes.
+
 Current coverage includes:
 
 - cursor position/visibility/shape/blink, terminal title metadata, OSC 7
