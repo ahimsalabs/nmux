@@ -71,7 +71,9 @@ For an interactive local workspace, start a daemon in one shell and attach from
 another:
 
 ```sh
+# shell 1
 nix develop . -c cargo run --bin nmuxd -- --live-forever
+# shell 2
 nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 ```
 
