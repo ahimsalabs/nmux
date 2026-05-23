@@ -76,160 +76,36 @@ The current implementation is a Rust workspace:
 
 ## Checks
 
-Use the Nix development shell for repo checks:
+Use the narrowest Nix-shell gate that matches the work:
+
+| Work | Commands |
+| --- | --- |
+| Default-engine, CLI, local workflow, docs, ADRs | `nix develop . -c make check` and `nix develop . -c make local-smoke` |
+| Optional backend `libghostty-vt` correctness | `nix develop . -c make check` and `nix develop . -c make check-ghostty-vt` |
+| Schema changes | `nix develop . -c make generate-schema`, then the matching default or optional gate |
+| Release-style or default-engine-promotion evidence | Follow [docs/contributor-workflow.md](docs/contributor-workflow.md) and [docs/toolchain.md](docs/toolchain.md). |
+
+The supported development shell provides Rust, `flatc`, Make, and Zig for the
+optional native VT build. `make check` runs FlatBuffers schema validation and
+`cargo test --workspace` against the default `interim` engine. `make
+local-smoke` runs a real default-engine local daemon/client smoke over a
+temporary socket and persisted state file. `make check-ghostty-vt` runs the
+full feature-enabled `nmux-core` and `nmux-cli` suites with
+`RUST_TEST_THREADS=1` and `GIT_CONFIG_GLOBAL=/dev/null`; keep it opt-in unless
+a later ADR promotes the native Ghostty/Zig build path.
+
+Print active tool versions and source-fetch settings with:
 
 ```sh
-nix develop . -c flatc --version
 nix develop . -c make toolchain-info
-nix develop . -c make check
 ```
 
-The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
-FlatBuffers install is needed for schema validation in the supported
-development path. `make check` runs FlatBuffers schema validation and
-`cargo test --workspace`. For narrower iteration, prefer targeted `cargo test`
-commands inside the same `nix develop . -c ...` wrapper, then run full
-`make check` before committing implementation changes.
-`make toolchain-info` prints the active cargo, rustc, flatc, Zig, and
-source-fetch environment values used for promotion-evidence records.
-
-If `schema/nmux.fbs` changes, regenerate bindings with:
-
-```sh
-nix develop . -c make generate-schema
-```
-
-The experimental backend Ghostty VT engine is feature-gated. Use this full
-feature-enabled package check when changing the optional path:
-
-```sh
-nix develop . -c make check-ghostty-vt
-```
-
-The target runs `nmux-core` and `nmux-cli` with `--features libghostty-vt` and
-`RUST_TEST_THREADS=1`, not only name-filtered smoke tests. It sets
-`GIT_CONFIG_GLOBAL=/dev/null` to avoid local GitHub HTTPS-to-SSH rewrites while
-`libghostty-vt-sys` fetches its pinned Ghostty source. The Nix shell pins Zig
-0.15 for that native build. Keep this path opt-in unless a later ADR explicitly
-makes the native Ghostty/Zig build part of regular CI, default development, and
-packaging.
-
-Use the explicit combined gate for release-style validation or
-default-engine-promotion evidence:
-
-```sh
-nix develop . -c make check-all
-nix develop . -c make local-smoke
-nix develop . -c make promotion-sample
-nix develop . -c make promotion-cold-target-sample
-nix develop . -c make promotion-cold-deps-sample
-nix develop . -c make promotion-cold-deps-verify
-nix develop . -c make promotion-local-sample
-nix develop . -c make promotion-evidence-bundle
-nix develop . -c make promotion-evidence-verify
-nix develop . -c make source-fetch-provenance-sample
-nix develop . -c make source-fetch-provenance-verify
-nix develop . -c make source-fetch-offline-probe
-nix develop . -c make source-fetch-offline-probe-verify
-nix develop . -c make packaging-sample
-nix develop . -c make packaging-layout-sample
-nix develop . -c make packaging-layout-verify
-nix develop . -c make packaging-provenance-sample
-nix develop . -c make packaging-provenance-verify
-nix develop . -c make packaging-provenance-manifest-verify
-nix develop . -c make packaging-archive-sample
-nix develop . -c make packaging-archive-verify
-nix develop . -c make packaging-archive-runtime-smoke
-```
-
-`check-all` runs the regular default-engine gate plus the opt-in
-`libghostty-vt` gate without changing what `make check` means.
-`local-smoke` runs a real default-engine local daemon/client live smoke over a
-temporary socket and persisted client state file, verifies persisted read-only
-reattach, verifies nested `nmux --print-context` sees the pane identity
-environment, and verifies same-path socket recreation does not render stale
-cached state. Use it for quick user-level workflow checks. The default GitHub
-Actions job runs both `make check` and `make local-smoke`.
-`promotion-sample` prints `toolchain-info` and times `check-all` for evidence
-rows in `docs/default-engine-promotion.md`.
-`promotion-cold-target-sample` clears `target/promotion-cold` and times
-`check-all` with that fresh Rust target directory; it does not clear Cargo
-registry, Git source, or Nix store caches.
-`promotion-cold-deps-sample` clears `target/promotion-cold-deps` and times
-`check-all` with isolated repo-owned Cargo home and target directories; it is
-dependency/source-fetch evidence, not full cold machine evidence.
-`promotion-cold-deps-verify` checks the existing cold-deps report and run log
-without rerunning the isolated dependency/source-fetch sample.
-`promotion-local-sample` runs `source-fetch-provenance-sample`,
-`promotion-sample`, `local-smoke`, `source-fetch-offline-probe`, and
-`packaging-archive-runtime-smoke` for one local evidence pass.
-`promotion-evidence-bundle` runs `promotion-local-sample` and gathers the log,
-toolchain output, bundle start/completion timestamps plus elapsed duration,
-extracted `make check-all` timing, `local_smoke`,
-`local_smoke_reattach`, `local_smoke_print_context`, and
-`local_smoke_socket_recreation` results, source-fetch report, package
-provenance, cargo tree, package archive, archive checksum, observed cache-state
-report, offline probe report, VCS status report, open-work snapshot, and bundle artifact manifest under
-`target/promotion-evidence`.
-The bundled `ARCHIVE.sha256` must name `PACKAGE_ARCHIVE.tar.gz`, not the
-original build-tree archive path, so downloaded evidence stays self-contained.
-`promotion-evidence-verify` checks an existing bundle for required summary,
-bundle timing, `make check-all` timing, local-smoke result fields, artifact
-files, cache-state report, artifact manifest hashes, source/provenance records,
-VCS status report, summary/VCS git revision agreement, package archive bytes,
-archive hash, exact open-work snapshot lines, package provenance verification,
-archive verification, and packaged runtime smoke output; CI-generated bundles
-must also carry concrete GitHub run/ref/SHA/runner fields with `github_sha`
-matching the bundled revision. It runs the no-rebuild package provenance
-manifest verifier against bundled `PACKAGE_PROVENANCE.txt` evidence. The bundle
-target runs it before printing the artifact list.
-`source-fetch-provenance-sample` records the active source mode and locked
-`libghostty-vt` Cargo package records without inspecting Ghostty source.
-`source-fetch-provenance-verify` checks an existing source-fetch provenance
-report against the current `Cargo.lock` without regenerating it; override
-`SOURCE_FETCH_REPORT` when checking a copied or bundled report.
-`source-fetch-offline-probe` clears `target/source-fetch-offline` and checks
-whether `nmux-core --features libghostty-vt` can compile from current caches
-with `CARGO_NET_OFFLINE=true`; treat it as cache-present evidence only.
-`source-fetch-offline-probe-verify` checks the existing offline probe report and
-log without rerunning the cache-present probe; override
-`SOURCE_FETCH_OFFLINE_PROBE_REPORT` and `SOURCE_FETCH_OFFLINE_PROBE_LOG` when
-checking copied or bundled evidence.
-`packaging-sample` builds default and opt-in release binaries in separate target
-directories and prints artifact sizes plus binary versions for packaging
-evidence rows.
-`packaging-layout-sample` stages a local opt-in package layout with wrappers
-that resolve `libghostty-vt` from `../lib`; it is packaging evidence, not a
-release format decision.
-`packaging-layout-verify` checks an existing staged layout without rebuilding,
-and `packaging-archive-verify` reuses it against extracted archive layouts.
-`packaging-provenance-sample` writes a local manifest with staged file hashes,
-package metadata, toolchain/source mode, dependency tree, and dynamic dependency
-output.
-`packaging-provenance-verify` regenerates that manifest and asserts the
-required toolchain, source-mode, locked native-VT package, staged-file,
-runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree
-records are present.
-`packaging-provenance-manifest-verify` checks an existing manifest without
-rebuilding; override `PACKAGING_PROVENANCE_MANIFEST` for copied or bundled
-package provenance evidence.
-`packaging-archive-sample` archives the staged layout, writes a SHA-256 file,
-extracts it, verifies the wrapped binaries from the archive, and then runs the
-no-rebuild archive verifier.
-`packaging-archive-verify` checks an already-produced archive plus its `.sha256`
-file without rebuilding, including extracted layout, package metadata,
-provenance file hashes, native runtime library, dynamic dependency records, and
-wrapped binary version checks.
-`packaging-archive-runtime-smoke` extracts the archive into a fresh `/tmp`
-install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset, then starts
-the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped client to
-prove the relocated package layout can serve a real pane.
+For narrower iteration, prefer targeted `cargo test` commands inside
+`nix develop . -c ...`, then run the matching full gate before committing.
 GitHub Actions runs `make check` and `make local-smoke` on pull requests and
 pushes to `main`; the promotion-evidence-bundle job is manual and does not make
-`libghostty-vt` a required CI gate. That manual path uploads
-`nmux-promotion-evidence` and then a dependent job downloads the artifact and
-runs `make promotion-evidence-verify` against the downloaded copy. Use the
-field template in `docs/ci.md` when recording manual CI promotion evidence.
+`libghostty-vt` a required CI gate. Use [docs/ci.md](docs/ci.md) when recording
+manual CI promotion evidence.
 
 If `nix develop` itself is unavailable, do not rewrite the flake or check in
 machine-local store paths. Either use an already entered dev shell, or record the
