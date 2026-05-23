@@ -1671,6 +1671,7 @@ pub fn surface_update_from_frame(
                     row.kitty_virtual_placeholder(),
                 )
             });
+            validate_row_update_terminal_enums(&row_updates)?;
             validate_row_update_style_ids(&row_updates, &styles)?;
             validate_row_update_hyperlink_ids(&row_updates, &hyperlinks)?;
             let text = render_decoded_rows(&row_updates);
@@ -2367,6 +2368,8 @@ pub fn scrollback_chunk_from_frame(
     for index in 0..rows.len() {
         let row = rows.get(index);
         let runs = row.runs().map(decoded_cell_runs).unwrap_or_default();
+        validate_row_semantic_prompt(row.semantic_prompt())?;
+        validate_cell_run_semantic_content(&runs)?;
         validate_cell_run_style_ids(&runs, &styles)?;
         validate_cell_run_hyperlink_ids(&runs, &hyperlinks)?;
         lines.push(ScrollbackLine {
@@ -3112,6 +3115,41 @@ fn validate_row_update_indices(
             return Err(format!("surface row {} is repeated in one update", row.row).into());
         }
         *seen_row = true;
+    }
+    Ok(())
+}
+
+fn validate_row_update_terminal_enums(
+    rows: &[SurfaceRowUpdate],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for row in rows {
+        validate_row_semantic_prompt(row.semantic_prompt)?;
+        validate_cell_run_semantic_content(&row.runs)?;
+    }
+    Ok(())
+}
+
+fn validate_row_semantic_prompt(
+    prompt: protocol::RowSemanticPrompt,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if prompt.variant_name().is_some() {
+        Ok(())
+    } else {
+        Err(format!("unknown row semantic prompt {}", prompt.0).into())
+    }
+}
+
+fn validate_cell_run_semantic_content(
+    runs: &[CellRunSummary],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for run in runs {
+        if run.semantic_content.variant_name().is_none() {
+            return Err(format!(
+                "cell run references unknown semantic content {}",
+                run.semantic_content.0
+            )
+            .into());
+        }
     }
     Ok(())
 }
@@ -4701,17 +4739,12 @@ mod tests {
         )
     }
 
-    fn flatbuffer_linked_run<'a>(
-        builder: &mut FlatBufferBuilder<'a>,
-    ) -> flatbuffers::WIPOffset<protocol::CellRun<'a>> {
-        flatbuffer_run_with_refs(builder, 0, CELL_RUN_FLAG_HYPERLINK_PRESENT, 7)
-    }
-
-    fn flatbuffer_run_with_refs<'a>(
+    fn flatbuffer_run_with_metadata<'a>(
         builder: &mut FlatBufferBuilder<'a>,
         style_id: u32,
         flags: u32,
         hyperlink_id: u32,
+        semantic_content: protocol::CellSemanticContent,
     ) -> flatbuffers::WIPOffset<protocol::CellRun<'a>> {
         let text = builder.create_string("linked");
         let widths = builder.create_vector(&[1u8, 1, 1, 1, 1, 1]);
@@ -4723,7 +4756,7 @@ mod tests {
                 style_id,
                 flags,
                 hyperlink_id,
-                semantic_content: protocol::CellSemanticContent::Output,
+                semantic_content,
             },
         )
     }
@@ -4761,8 +4794,30 @@ mod tests {
         flags: u32,
         hyperlink_id: u32,
     ) -> Vec<u8> {
+        pane_surface_snapshot_with_run_metadata_frame(
+            style_id,
+            flags,
+            hyperlink_id,
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent::Output,
+        )
+    }
+
+    fn pane_surface_snapshot_with_run_metadata_frame(
+        style_id: u32,
+        flags: u32,
+        hyperlink_id: u32,
+        semantic_prompt: protocol::RowSemanticPrompt,
+        semantic_content: protocol::CellSemanticContent,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_run_with_refs(&mut builder, style_id, flags, hyperlink_id);
+        let run = flatbuffer_run_with_metadata(
+            &mut builder,
+            style_id,
+            flags,
+            hyperlink_id,
+            semantic_content,
+        );
         let runs = builder.create_vector(&[run]);
         let row = protocol::SurfaceRow::create(
             &mut builder,
@@ -4770,7 +4825,7 @@ mod tests {
                 row: 0,
                 runs: Some(runs),
                 dirty_hash: 1,
-                semantic_prompt: protocol::RowSemanticPrompt::None,
+                semantic_prompt,
                 dirty: false,
                 kitty_virtual_placeholder: false,
                 row_state_hash: 1,
@@ -4807,8 +4862,24 @@ mod tests {
     }
 
     fn scrollback_chunk_with_hyperlink_frame() -> Vec<u8> {
+        scrollback_chunk_with_run_metadata_frame(
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent::Output,
+        )
+    }
+
+    fn scrollback_chunk_with_run_metadata_frame(
+        semantic_prompt: protocol::RowSemanticPrompt,
+        semantic_content: protocol::CellSemanticContent,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_linked_run(&mut builder);
+        let run = flatbuffer_run_with_metadata(
+            &mut builder,
+            0,
+            CELL_RUN_FLAG_HYPERLINK_PRESENT,
+            7,
+            semantic_content,
+        );
         let runs = builder.create_vector(&[run]);
         let row = protocol::ScrollbackRow::create(
             &mut builder,
@@ -4816,7 +4887,7 @@ mod tests {
                 line: 1,
                 runs: Some(runs),
                 dirty_hash: 1,
-                semantic_prompt: protocol::RowSemanticPrompt::None,
+                semantic_prompt,
                 dirty: false,
                 kitty_virtual_placeholder: false,
                 row_state_hash: 1,
@@ -5135,6 +5206,36 @@ mod tests {
     }
 
     #[test]
+    fn rejects_surface_snapshot_with_unknown_row_semantic_prompt() {
+        let frame = pane_surface_snapshot_with_run_metadata_frame(
+            0,
+            0,
+            0,
+            protocol::RowSemanticPrompt(99),
+            protocol::CellSemanticContent::Output,
+        );
+        let err = surface_update_from_frame(&frame)
+            .expect_err("surface snapshot with unknown row semantic prompt should be rejected");
+
+        assert!(err.to_string().contains("unknown row semantic prompt"));
+    }
+
+    #[test]
+    fn rejects_surface_snapshot_with_unknown_cell_semantic_content() {
+        let frame = pane_surface_snapshot_with_run_metadata_frame(
+            0,
+            0,
+            0,
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent(99),
+        );
+        let err = surface_update_from_frame(&frame)
+            .expect_err("surface snapshot with unknown cell semantic content should be rejected");
+
+        assert!(err.to_string().contains("unknown semantic content"));
+    }
+
+    #[test]
     fn decodes_scrollback_chunk_hyperlink_table_from_frame() {
         let frame = scrollback_chunk_with_hyperlink_frame();
         let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
@@ -5150,6 +5251,29 @@ mod tests {
         );
         assert_eq!(chunk.lines[0].runs[0].hyperlink_id, 7);
         assert_eq!(chunk.lines[0].text, "linked");
+    }
+
+    #[test]
+    fn rejects_scrollback_chunk_with_unknown_semantic_enums() {
+        let prompt_frame = scrollback_chunk_with_run_metadata_frame(
+            protocol::RowSemanticPrompt(99),
+            protocol::CellSemanticContent::Output,
+        );
+        let prompt_err = scrollback_chunk_from_frame(&prompt_frame)
+            .expect_err("scrollback row with unknown prompt should be rejected");
+        assert!(
+            prompt_err
+                .to_string()
+                .contains("unknown row semantic prompt")
+        );
+
+        let content_frame = scrollback_chunk_with_run_metadata_frame(
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent(99),
+        );
+        let content_err = scrollback_chunk_from_frame(&content_frame)
+            .expect_err("scrollback run with unknown semantic content should be rejected");
+        assert!(content_err.to_string().contains("unknown semantic content"));
     }
 
     #[test]
