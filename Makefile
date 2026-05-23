@@ -3,7 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-layout-sample packaging-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-layout-sample packaging-provenance-sample packaging-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -97,6 +97,55 @@ packaging-layout-sample: packaging-sample
 	"$$pkg_dir/bin/nmux" --version; \
 	printf 'packaged libghostty-vt nmuxd version: '; \
 	"$$pkg_dir/bin/nmuxd" --version
+
+packaging-provenance-sample: packaging-layout-sample
+	@echo "writing opt-in libghostty-vt package provenance manifest"
+	@pkg_dir=target/packaging-libghostty-vt/package; \
+	manifest="$$pkg_dir/PROVENANCE.txt"; \
+	tree_file="$$pkg_dir/CARGO_TREE.txt"; \
+	cargo tree --locked -p nmux-cli --features libghostty-vt > "$$tree_file"; \
+	hash_file() { \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			sha256sum "$$1" | awk '{print $$1}'; \
+		else \
+			shasum -a 256 "$$1" | awk '{print $$1}'; \
+		fi; \
+	}; \
+	{ \
+		printf 'nmux packaging provenance sample\n'; \
+		printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+		printf 'package_layout=%s\n' "$$pkg_dir"; \
+		printf 'ghostty_source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"; \
+		printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
+		printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
+		printf '\n[toolchain]\n'; \
+		$(MAKE) --no-print-directory toolchain-info; \
+		printf '\n[cargo_lock]\n'; \
+		printf 'Cargo.lock sha256=%s\n' "$$(hash_file Cargo.lock)"; \
+		printf '\n[staged_files]\n'; \
+		find "$$pkg_dir" -type f ! -name PROVENANCE.txt | sort | while read -r file; do \
+			printf '%s bytes=%s sha256=%s\n' "$$file" "$$(wc -c < "$$file" | tr -d ' ')" "$$(hash_file "$$file")"; \
+		done; \
+		printf '\n[native_runtime_libraries]\n'; \
+		find "$$pkg_dir/lib" -type f | sort; \
+		printf '\n[dynamic_dependencies]\n'; \
+		if command -v otool >/dev/null 2>&1; then \
+			for bin in "$$pkg_dir/libexec/nmux" "$$pkg_dir/libexec/nmuxd"; do \
+				printf '%s\n' "$$bin"; \
+				otool -L "$$bin"; \
+			done; \
+		elif command -v ldd >/dev/null 2>&1; then \
+			for bin in "$$pkg_dir/libexec/nmux" "$$pkg_dir/libexec/nmuxd"; do \
+				printf '%s\n' "$$bin"; \
+				ldd "$$bin"; \
+			done; \
+		else \
+			printf 'dynamic dependency inspector unavailable\n'; \
+		fi; \
+		printf '\n[cargo_tree]\n'; \
+		cat "$$tree_file"; \
+	} > "$$manifest"; \
+	printf 'provenance_manifest=%s\n' "$$manifest"
 
 check-schema: require-flatc
 	flatc --json --strict-json --no-warnings -o /tmp $(SCHEMA)

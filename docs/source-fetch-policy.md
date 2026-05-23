@@ -44,3 +44,9 @@ That decision also needs offline-build behavior, cache invalidation, provenance,
 and binary packaging expectations. Until then, the default engine remains
 `interim`, and `make check` remains independent of the native Ghostty/Zig build.
 See [packaging.md](packaging.md) for the matching binary distribution questions.
+
+Local package provenance samples should record the active source mode and
+`GHOSTTY_SOURCE_DIR` value, but that record is not enough to settle the source
+policy for default or packaged builds. A later promotion decision still needs to
+choose how the pinned Ghostty source, local-source overrides, offline builds,
+cache provenance, and license review are represented in release artifacts.

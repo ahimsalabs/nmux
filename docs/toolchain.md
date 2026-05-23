@@ -9,6 +9,7 @@ nix develop . -c make check-all
 nix develop . -c make promotion-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
+nix develop . -c make packaging-provenance-sample
 ```
 
 `flake.nix` currently provides:
@@ -62,6 +63,16 @@ nix develop . -c make packaging-layout-sample
 That target stages the opt-in binaries, wrapper scripts, and `libghostty-vt`
 runtime libraries under `target/packaging-libghostty-vt/package`, then verifies
 the wrapped binaries can run from that layout.
+For local package provenance evidence, use:
+
+```sh
+nix develop . -c make packaging-provenance-sample
+```
+
+That target writes `target/packaging-libghostty-vt/package/PROVENANCE.txt` with
+staged file sizes and SHA-256 hashes, `Cargo.lock` hash, toolchain/source mode,
+dependency tree, native runtime-library artifacts, and best-effort dynamic
+dependency output.
 
 ## Non-Nix Equivalents
 

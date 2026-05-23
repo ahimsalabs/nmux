@@ -22,6 +22,7 @@ default engine:
 ```sh
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
+nix develop . -c make packaging-provenance-sample
 ```
 
 The target prints `make toolchain-info`, validates the optional native-VT
@@ -56,6 +57,14 @@ The wrappers resolve their own directory, set `DYLD_LIBRARY_PATH` and
 native VT build, but it is still not a signed, installed, notarized, or
 platform-native package.
 
+`make packaging-provenance-sample` writes
+`target/packaging-libghostty-vt/package/PROVENANCE.txt` for that staged layout.
+The manifest includes toolchain and source-mode fields, `Cargo.lock` hash,
+staged file byte sizes and SHA-256 hashes, native runtime-library artifacts,
+best-effort dynamic dependency output from `otool -L` or `ldd`, and a locked
+`cargo tree` for `nmux-cli --features libghostty-vt`. This is local provenance
+evidence, not a release signing or supply-chain attestation format.
+
 Current local Darwin evidence shows the default release binaries run directly
 and the opt-in `libghostty-vt` release binaries run when the produced
 `ghostty-install/lib` directory is supplied as a runtime library path. A real
@@ -74,6 +83,7 @@ requirement, packaging work must answer:
   supplied by a platform package/artifact cache;
 - how source-fetch policy, offline builds, cache provenance, and license review
   are handled for the native Ghostty source;
+- which provenance and checksum manifest is required for release artifacts;
 - whether `nmuxd --terminal-engine libghostty-vt` is enabled in shipped
   binaries or reserved for developer builds;
 - how release checks map to `make check`, `make check-ghostty-vt`, and
