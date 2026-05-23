@@ -117,8 +117,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if args.list_key_names {
-        print_key_names();
+    if args.list_key_names || args.list_key_names_json {
+        print_key_names(args.list_key_names_json);
         return Ok(());
     }
 
@@ -1010,6 +1010,7 @@ struct Args {
     version: bool,
     version_json: bool,
     list_key_names: bool,
+    list_key_names_json: bool,
     print_context: bool,
     print_context_json: bool,
     print_socket: bool,
@@ -1052,6 +1053,7 @@ where
     let mut version = false;
     let mut version_json = false;
     let mut list_key_names = false;
+    let mut list_key_names_json = false;
     let mut print_context = false;
     let mut print_context_json = false;
     let mut print_socket = false;
@@ -1105,6 +1107,9 @@ where
             }
             "--list-key-names" => {
                 list_key_names = true;
+            }
+            "--list-key-names-json" => {
+                list_key_names_json = true;
             }
             "--print-context" => {
                 print_context = true;
@@ -1265,6 +1270,7 @@ where
         || version
         || version_json
         || list_key_names
+        || list_key_names_json
         || print_context
         || print_context_json
         || print_socket
@@ -1335,6 +1341,7 @@ where
         version,
         version_json,
         list_key_names,
+        list_key_names_json,
         print_context,
         print_context_json,
         print_socket,
@@ -1390,13 +1397,37 @@ fn print_context(json: bool) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn print_key_names() {
-    for key_name in SUPPORTED_KEY_NAMES {
-        println!("{key_name}");
+fn print_key_names(json: bool) {
+    if json {
+        println!("{}", format_key_names_json());
+    } else {
+        for key_name in SUPPORTED_KEY_NAMES {
+            println!("{key_name}");
+        }
+        for (alias, canonical) in KEY_NAME_ALIASES {
+            println!("{alias} -> {canonical}");
+        }
     }
-    for (alias, canonical) in KEY_NAME_ALIASES {
-        println!("{alias} -> {canonical}");
-    }
+}
+
+fn format_key_names_json() -> String {
+    let names = SUPPORTED_KEY_NAMES
+        .iter()
+        .map(|name| local::json_string(name))
+        .collect::<Vec<_>>()
+        .join(",");
+    let aliases = KEY_NAME_ALIASES
+        .iter()
+        .map(|(alias, canonical)| {
+            format!(
+                "{{\"alias\":{},\"canonical\":{}}}",
+                local::json_string(alias),
+                local::json_string(canonical)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{\"names\":[{names}],\"aliases\":[{aliases}]}}")
 }
 
 fn format_context_json(session_id: &str, pane_id: &str, socket: &str, origin: &str) -> String {
@@ -1645,6 +1676,7 @@ Options:
   --key TEXT                 Text input to send; opts into read-write attach
   --key-name NAME            Send a supported named key; repeat for a sequence
   --list-key-names           List supported --key-name values and aliases
+  --list-key-names-json      List supported --key-name values as JSON
   --key-modifiers MODS       Modifiers for --key-name: shift,ctrl,alt,super
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send focus input; daemon rejects if reporting is off
@@ -1854,12 +1886,12 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 mod tests {
     use super::{
         FocusEvent, KEY_NAME_ALIASES, LiveUpdatePrintKind, LocalEcho, MouseEvent,
-        SUPPORTED_KEY_NAMES, args_from_iter, format_context_json, format_scrollback,
-        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        SUPPORTED_KEY_NAMES, args_from_iter, format_context_json, format_key_names_json,
+        format_scrollback, interim_surface_fidelity_warning_needed, live_update_print_kind,
+        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
+        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag,
+        raw_terminal_mode_needed, redraw_terminal_guard_needed, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args,
@@ -1941,6 +1973,7 @@ mod tests {
         assert!(!args.version);
         assert!(!args.version_json);
         assert!(!args.list_key_names);
+        assert!(!args.list_key_names_json);
         assert!(!args.print_context);
         assert!(!args.print_context_json);
         assert!(!args.print_socket);
@@ -1963,6 +1996,22 @@ mod tests {
     fn list_key_names_arg_exits_before_mode_validation() {
         let args = args_from_iter(["--list-key-names", "--cols", "80"]).expect("args");
         assert!(args.list_key_names);
+    }
+
+    #[test]
+    fn list_key_names_json_arg_exits_before_mode_validation() {
+        let args = args_from_iter(["--list-key-names-json", "--cols", "80"]).expect("args");
+        assert!(args.list_key_names_json);
+    }
+
+    #[test]
+    fn key_names_json_lists_names_and_aliases() {
+        let json = format_key_names_json();
+        assert!(json.starts_with("{\"names\":["));
+        assert!(json.contains("\"numpad-enter\""));
+        assert!(json.contains("\"space\""));
+        assert!(json.contains("{\"alias\":\"esc\",\"canonical\":\"escape\"}"));
+        assert!(json.contains("{\"alias\":\"kp-0\",\"canonical\":\"numpad-0\"}"));
     }
 
     #[test]

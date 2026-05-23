@@ -28,6 +28,8 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--version-json"));
     assert!(stdout.contains("--key-name NAME"));
     assert!(stdout.contains("Send a supported named key"));
+    assert!(stdout.contains("--list-key-names"));
+    assert!(stdout.contains("--list-key-names-json"));
     assert!(stdout.contains("--paste TEXT"));
     assert!(stdout.contains("--focus gained|lost"));
     assert!(stdout.contains("daemon rejects if reporting is off"));
@@ -355,6 +357,33 @@ fn no_connect_client_flags_skip_attach_mode_validation() {
     assert!(
         !json_socket_path.exists(),
         "json no-connect flags should not create a socket path"
+    );
+
+    let key_names_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--list-key-names-json",
+            "--cols",
+            "100",
+            "--iterations",
+            "0",
+        ])
+        .output()
+        .expect("run nmux --list-key-names-json with attach flags");
+
+    assert!(
+        key_names_output.status.success(),
+        "nmux --list-key-names-json should exit before attach-mode validation: {}",
+        String::from_utf8_lossy(&key_names_output.stderr)
+    );
+    let key_names_stdout = String::from_utf8_lossy(&key_names_output.stdout);
+    assert!(key_names_stdout.contains("\"names\""));
+    assert!(key_names_stdout.contains("\"numpad-enter\""));
+    assert!(key_names_stdout.contains("{\"alias\":\"esc\",\"canonical\":\"escape\"}"));
+    assert!(
+        !socket_path.exists(),
+        "key-name list flags should not create a socket path"
     );
 }
 
