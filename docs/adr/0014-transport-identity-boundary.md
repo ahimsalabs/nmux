@@ -70,6 +70,10 @@ NMUX_SOCKET=<socket-path-or-endpoint>
 NMUX_ORIGIN=<host-identity>
 ```
 
+Current local implementation: `nmuxd` injects these variables into the command
+environment for the local pane PTY before the process starts. Automatic nested
+client origin-chain attachment is still future protocol/client work.
+
 When `nmux` (the client) runs inside an nmux-managed pane, it reads these variables and includes the parent's origin in its `AttachRequest`. Each hop appends to the origin chain. This enables automatic chain discovery without explicit proxy configuration for the common case.
 
 Known pitfalls and mitigations:

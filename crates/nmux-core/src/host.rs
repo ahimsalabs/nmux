@@ -50,6 +50,7 @@ pub struct CommandSpec {
     pub program: String,
     pub args: Vec<String>,
     pub working_dir: Option<String>,
+    pub env: Vec<(String, String)>,
 }
 
 impl CommandSpec {
@@ -58,6 +59,7 @@ impl CommandSpec {
             program: program.into(),
             args: Vec::new(),
             working_dir: None,
+            env: Vec::new(),
         }
     }
 
@@ -72,6 +74,28 @@ impl CommandSpec {
 
     pub fn with_working_dir(mut self, working_dir: impl Into<String>) -> Self {
         self.working_dir = Some(working_dir.into());
+        self
+    }
+
+    pub fn with_env<K, V>(mut self, key: K, value: V) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.env.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn with_envs<I, K, V>(mut self, env: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.env.extend(
+            env.into_iter()
+                .map(|(key, value)| (key.into(), value.into())),
+        );
         self
     }
 }
@@ -302,6 +326,9 @@ impl ProcessHost for LocalPtyHost {
             .map_err(|error| Self::io_error(pane_id, "openpty", error))?;
         let mut command = CommandBuilder::new(&spec.command.program);
         command.args(&spec.command.args);
+        for (key, value) in &spec.command.env {
+            command.env(key, value);
+        }
         if let Some(working_dir) = &spec.command.working_dir {
             command.cwd(working_dir);
         }
@@ -446,6 +473,7 @@ impl ProcessHost for LocalProcessHost {
         let mut command = Command::new(&spec.command.program);
         command
             .args(&spec.command.args)
+            .envs(spec.command.env.iter().map(|(key, value)| (key, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -664,6 +692,8 @@ mod tests {
         PlanningHost, ProcessHost, ProcessOutput, ProcessStatus, RecordingOutput,
         UnsupportedSandboxHost,
     };
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn local_host_choice_can_start_pane_process() {
@@ -853,6 +883,41 @@ mod tests {
             Err(HostError::NotRunning {
                 pane_id: "pane-1".to_owned(),
             })
+        );
+    }
+
+    #[test]
+    fn local_pty_host_passes_command_environment() {
+        let spec = HostSpec::local(
+            "local",
+            CommandSpec::new("sh")
+                .with_args([
+                    "-c",
+                    "printf 'env:%s:%s\\n' \"$NMUX_SESSION_ID\" \"$NMUX_PANE_ID\"; sleep 1",
+                ])
+                .with_envs([("NMUX_SESSION_ID", "session-1"), ("NMUX_PANE_ID", "pane-7")]),
+        );
+        let mut host = LocalPtyHost::default();
+        let mut buffer = [0_u8; 128];
+
+        host.start_pane("pane-7", &spec).expect("start pty pane");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut output = String::new();
+        while Instant::now() < deadline && !output.contains("env:session-1:pane-7") {
+            let count = host
+                .try_read_output("pane-7", &mut buffer)
+                .expect("read pty output");
+            if count > 0 {
+                output.push_str(&String::from_utf8_lossy(&buffer[..count]));
+            } else {
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+        host.stop_pane("pane-7").expect("stop pty pane");
+
+        assert!(
+            output.contains("env:session-1:pane-7"),
+            "missing command environment in pty output:\n{output}"
         );
     }
 

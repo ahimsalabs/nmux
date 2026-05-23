@@ -93,6 +93,8 @@ Done:
 - `nmuxd` and `nmux` share a stable default socket path for local workflows without `--socket`, and a valid absolute `NMUX_SOCKET` can select a shell-scoped local workspace.
 - `nmux --print-socket` and `nmuxd --print-socket` print the resolved socket path without connecting or binding, including `NMUX_SOCKET` and explicit `--socket` precedence.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
+- Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
+  tooling without changing the current local socket protocol.
 - Numeric `nmux` flags report the failing flag name for invalid-number errors before connecting.
 - ADR 0012 documents the backend terminal engine boundary.
 - `nmux-core` routes pane output and cursor ownership through a terminal engine trait, with the interim text engine as the current implementation.

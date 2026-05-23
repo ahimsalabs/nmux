@@ -10,6 +10,53 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn one_shot_cli_receives_nmux_pane_environment() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = format!(
+        "printf 'env:%s:%s:%s:%s:%s\\n' \"$NMUX\" \"$NMUX_SESSION_ID\" \"$NMUX_PANE_ID\" \"$NMUX_SOCKET\" \"$NMUX_ORIGIN\"; cat >/dev/null"
+    );
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            &command,
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args(["--socket", socket_path.to_str().expect("socket path")])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    let expected = format!(
+        "env:1:local:pane-1:{}:local",
+        socket_path.to_str().expect("socket path")
+    );
+    assert!(
+        stdout.contains(&expected),
+        "missing nmux pane environment {expected:?}:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_cli_streams_command_output_and_committed_resize() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
