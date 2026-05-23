@@ -181,9 +181,19 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --follow --iter
 
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
-## Live Attach Prototype
+## Live Attach CLI
 
-The live attach prototype keeps one local connection open for repeated input/output cycles. It is not a terminal UI yet; without an explicit input or resize flag it observes read-only, while `--key` sends the same text on each bounded client cycle, `--stdin` line-streams stdin, and `--stdin-bytes` forwards raw stdin byte chunks. It renders streamed pane surface updates through the same client-side pane surface state used by reconnects. Explicit input modes such as `--key`, `--key-name`, `--paste`, `--focus`, `--mouse`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive. Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes fail before the client tries to connect.
+Live attach keeps one local connection open for repeated input/output cycles.
+It is the current CLI workspace path, not a full terminal-emulator UI; without
+an explicit input or resize flag it observes read-only, while `--key` sends the
+same text on each bounded client cycle, `--stdin` line-streams stdin, and
+`--stdin-bytes` forwards raw stdin byte chunks. It renders streamed pane surface
+updates through the same client-side pane surface state used by reconnects.
+Explicit input modes such as `--key`, `--key-name`, `--paste`, `--focus`,
+`--mouse`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.
+Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and
+`--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes
+fail before the client tries to connect.
 
 By default, `nmuxd` and `nmux` use the same local socket path. The precedence
 is explicit `--socket`, then a valid absolute `NMUX_SOCKET`, then
