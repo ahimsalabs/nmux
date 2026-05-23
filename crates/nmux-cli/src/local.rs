@@ -1944,6 +1944,14 @@ fn decoded_terminal_colors(
     })
 }
 
+fn required_string(value: Option<&str>, field: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let value = value.ok_or_else(|| format!("missing {field}"))?;
+    if value.is_empty() {
+        return Err(format!("empty {field}").into());
+    }
+    Ok(value.to_owned())
+}
+
 fn default_style_summaries() -> Vec<StyleSummary> {
     vec![StyleSummary {
         fg_rgba: 0,
@@ -2294,8 +2302,8 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         other => return Err(format!("unexpected input kind: {other:?}").into()),
     };
     Ok(InputSummary {
-        pane_id: input.pane_id().unwrap_or_default().to_owned(),
-        actor_id: input.actor_id().unwrap_or_default().to_owned(),
+        pane_id: required_string(input.pane_id(), "input pane_id")?,
+        actor_id: required_string(input.actor_id(), "input actor_id")?,
         input_seq: input.input_seq(),
         text: String::from_utf8_lossy(&bytes).into_owned(),
         bytes,
@@ -2373,8 +2381,8 @@ pub fn resize_intent_from_frame(
         .body_as_resize_intent()
         .ok_or("missing resize intent body")?;
     Ok(ResizeIntentSummary {
-        pane_id: resize.pane_id().unwrap_or_default().to_owned(),
-        actor_id: resize.actor_id().unwrap_or_default().to_owned(),
+        pane_id: required_string(resize.pane_id(), "resize pane_id")?,
+        actor_id: required_string(resize.actor_id(), "resize actor_id")?,
         cols: resize.desired_cols(),
         rows: resize.desired_rows(),
         reason: validate_resize_reason(resize.reason())?,
@@ -2430,8 +2438,8 @@ pub fn scrollback_fetch_from_frame(
         .body_as_scrollback_fetch()
         .ok_or("missing scrollback fetch body")?;
     Ok(ScrollbackFetchSummary {
-        pane_id: fetch.pane_id().unwrap_or_default().to_owned(),
-        actor_id: fetch.actor_id().unwrap_or_default().to_owned(),
+        pane_id: required_string(fetch.pane_id(), "scrollback fetch pane_id")?,
+        actor_id: required_string(fetch.actor_id(), "scrollback fetch actor_id")?,
         start_line: fetch.start_line(),
         line_count: fetch.line_count(),
         known_scrollback_version: fetch.known_scrollback_version(),
@@ -5149,6 +5157,82 @@ mod tests {
             &mut builder,
             protocol::EnvelopeBody::InputEvent,
             input.as_union_value(),
+        )
+    }
+
+    fn input_frame_with_ids(pane_id: Option<&str>, actor_id: Option<&str>) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
+        let actor_id = actor_id.map(|actor_id| builder.create_string(actor_id));
+        let text = builder.create_string("x");
+        let key = protocol::KeyInput::create(
+            &mut builder,
+            &protocol::KeyInputArgs {
+                text_utf8: Some(text),
+                key_name: None,
+                modifiers: 0,
+            },
+        );
+        let input = protocol::InputEvent::create(
+            &mut builder,
+            &protocol::InputEventArgs {
+                pane_id,
+                actor_id,
+                input_seq: 2,
+                kind: protocol::InputKind::Key,
+                key: Some(key),
+                mouse: None,
+                paste: None,
+                raw: None,
+                focus: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::InputEvent,
+            input.as_union_value(),
+        )
+    }
+
+    fn resize_intent_frame_with_ids(pane_id: Option<&str>, actor_id: Option<&str>) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
+        let actor_id = actor_id.map(|actor_id| builder.create_string(actor_id));
+        let resize = protocol::ResizeIntent::create(
+            &mut builder,
+            &protocol::ResizeIntentArgs {
+                pane_id,
+                actor_id,
+                desired_cols: 80,
+                desired_rows: 24,
+                reason: protocol::ResizeReason::UserCommand,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::ResizeIntent,
+            resize.as_union_value(),
+        )
+    }
+
+    fn scrollback_fetch_frame_with_ids(pane_id: Option<&str>, actor_id: Option<&str>) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
+        let actor_id = actor_id.map(|actor_id| builder.create_string(actor_id));
+        let fetch = protocol::ScrollbackFetch::create(
+            &mut builder,
+            &protocol::ScrollbackFetchArgs {
+                pane_id,
+                actor_id,
+                start_line: 1,
+                line_count: 2,
+                known_scrollback_version: 0,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::ScrollbackFetch,
+            fetch.as_union_value(),
         )
     }
 
@@ -11125,6 +11209,85 @@ mod tests {
             assert!(
                 err.to_string().contains(expected),
                 "expected {expected:?} for {kind:?}, got {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_pane_scoped_client_frames_with_missing_or_empty_ids() {
+        for (frame, expected) in [
+            (
+                input_frame_with_ids(None, Some("actor-1")),
+                "missing input pane_id",
+            ),
+            (
+                input_frame_with_ids(Some(""), Some("actor-1")),
+                "empty input pane_id",
+            ),
+            (
+                input_frame_with_ids(Some("pane-1"), None),
+                "missing input actor_id",
+            ),
+            (
+                input_frame_with_ids(Some("pane-1"), Some("")),
+                "empty input actor_id",
+            ),
+        ] {
+            let err = input_summary_from_frame(&frame).expect_err("input ids should be required");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
+
+        for (frame, expected) in [
+            (
+                resize_intent_frame_with_ids(None, Some("actor-1")),
+                "missing resize pane_id",
+            ),
+            (
+                resize_intent_frame_with_ids(Some(""), Some("actor-1")),
+                "empty resize pane_id",
+            ),
+            (
+                resize_intent_frame_with_ids(Some("pane-1"), None),
+                "missing resize actor_id",
+            ),
+            (
+                resize_intent_frame_with_ids(Some("pane-1"), Some("")),
+                "empty resize actor_id",
+            ),
+        ] {
+            let err = resize_intent_from_frame(&frame).expect_err("resize ids should be required");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
+
+        for (frame, expected) in [
+            (
+                scrollback_fetch_frame_with_ids(None, Some("actor-1")),
+                "missing scrollback fetch pane_id",
+            ),
+            (
+                scrollback_fetch_frame_with_ids(Some(""), Some("actor-1")),
+                "empty scrollback fetch pane_id",
+            ),
+            (
+                scrollback_fetch_frame_with_ids(Some("pane-1"), None),
+                "missing scrollback fetch actor_id",
+            ),
+            (
+                scrollback_fetch_frame_with_ids(Some("pane-1"), Some("")),
+                "empty scrollback fetch actor_id",
+            ),
+        ] {
+            let err =
+                scrollback_fetch_from_frame(&frame).expect_err("scrollback ids should be required");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
             );
         }
     }

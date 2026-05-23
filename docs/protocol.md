@@ -157,10 +157,13 @@ socket close. `Error.pane_id` identifies the pane-scoped request that failed
 when the daemon can attribute the failure to a pane. `Error.input_seq` carries
 the originating `InputEvent.input_seq` for input failures and remains zero for
 non-input failures. The local CLI reports the frame with the server-provided
-reason. Pane-scoped client intents for unknown panes, missing active-tab or
-active-pane metadata during attach, and unauthorized control intents return
-protocol `Error` frames instead of hanging, silently omitting a response, or
-falling through to process host behavior.
+reason. Pane-scoped client input, resize, and scrollback-fetch frames must carry
+non-empty `pane_id` and `actor_id` strings; malformed frames are rejected during
+decode instead of being treated as requests for an empty pane. Pane-scoped client
+intents for unknown panes, missing active-tab or active-pane metadata during
+attach, and unauthorized control intents return protocol `Error` frames instead
+of hanging, silently omitting a response, or falling through to process host
+behavior.
 
 ## Validation
 
