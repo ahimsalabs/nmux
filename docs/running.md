@@ -26,6 +26,7 @@ local_smoke_reattach=passed
 local_smoke_socket_recreation=passed
 local_smoke_print_context=passed
 local_smoke_json_info=passed
+local_smoke_ready_json=passed
 local_smoke=passed
 ```
 
@@ -70,10 +71,10 @@ and packaging/promotion evidence targets.
 `make local-smoke` starts a temporary local daemon, sends live stdin through a
 client, reattaches a read-only client with persisted state, verifies the echoed
 output remains visible, verifies nested `nmux --print-context` receives the
-pane identity environment, verifies JSON informational flags, then reuses the
-same socket path for a new daemon and checks that the old cached surface is not
-rendered. It is the shortest runnable end-to-end workflow check for the default
-engine.
+pane identity environment, verifies JSON informational flags and daemon
+readiness JSON, then reuses the same socket path for a new daemon and checks
+that the old cached surface is not rendered. It is the shortest runnable
+end-to-end workflow check for the default engine.
 
 For scripts that start a daemon and then attach a client, add `--ready-json` to
 `nmuxd`. It prints one stdout line after the socket is bound and the initial

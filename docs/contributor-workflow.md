@@ -83,9 +83,9 @@ engine by itself.
 it starts `nmuxd` and sequential `nmux` live clients over a temporary socket,
 sends piped stdin input, verifies the echoed output survives read-only reattach
 through a persisted state file, verifies nested context and JSON informational
-flags, then starts a new daemon on the same socket path and verifies the old
-cached surface does not leak across socket recreation. It exits without leaving
-the socket behind.
+flags plus daemon readiness JSON, then starts a new daemon on the same socket
+path and verifies the old cached surface does not leak across socket
+recreation. It exits without leaving the socket behind.
 
 `make promotion-sample` prints `make toolchain-info` output and then times
 `make check-all` with `time -p`. Outside the Nix shell, run the same target for
@@ -130,8 +130,8 @@ archive path, so copied or downloaded bundles stay self-contained.
 `check_all_real_seconds`, `check_all_user_seconds`, and
 `check_all_sys_seconds`, the `local_smoke=passed`,
 `local_smoke_reattach=passed`, `local_smoke_print_context=passed`,
-`local_smoke_json_info=passed`, and `local_smoke_socket_recreation=passed`
-results, plus
+`local_smoke_json_info=passed`, `local_smoke_ready_json=passed`, and
+`local_smoke_socket_recreation=passed` results, plus
 `started_at_utc`, `completed_at_utc`, and `bundle_elapsed_seconds` for the
 bundle artifact generation and verifier pass
 before final console output. `CACHE_STATE.txt` records observed cache-related

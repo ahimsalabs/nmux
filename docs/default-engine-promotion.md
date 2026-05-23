@@ -105,16 +105,17 @@ engine or a regular CI requirement.
 - `make promotion-evidence-bundle` runs the local sample and gathers its log,
   toolchain output, bundle start/completion timestamps plus elapsed duration,
   extracted `make check-all` timing, `local_smoke` result, persisted-reattach,
-  print-context, and socket-recreation smoke subresults, source-fetch report,
-  offline probe report, package provenance, cargo tree, package archive,
-  archive checksum, observed cache-state report, VCS status report, open-work
-  snapshot, and bundle artifact manifest under `target/promotion-evidence`. The bundled
+  print-context, ready-json, and socket-recreation smoke subresults,
+  source-fetch report, offline probe report, package provenance, cargo tree,
+  package archive, archive checksum, observed cache-state report, VCS status
+  report, open-work snapshot, and bundle artifact manifest under
+  `target/promotion-evidence`. The bundled
   `ARCHIVE.sha256` uses the bundle-relative `PACKAGE_ARCHIVE.tar.gz` path.
 - `make promotion-evidence-verify` checks an existing bundle for required
   summary identity fields, bundle timing fields, `make check-all` timing
-  fields, `local_smoke` result, persisted-reattach, print-context, and
-  socket-recreation smoke subresults, artifact files, bundle-relative summary artifact names,
-  cache-state artifact, VCS status artifact, open-work snapshot,
+  fields, `local_smoke` result, persisted-reattach, print-context, ready-json,
+  and socket-recreation smoke subresults, artifact files, bundle-relative
+  summary artifact names, cache-state artifact, VCS status artifact, open-work snapshot,
   relocation-safe `BUNDLE_MANIFEST.txt` hashes, source/provenance records,
   cache-present offline probe result, package archive bytes, archive hash,
   `packaging-provenance-manifest-verify` against the bundled package

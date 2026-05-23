@@ -64,7 +64,7 @@ local-smoke: check-toolchain
 	cargo run --quiet --bin nmux -- --socket "$$socket" --print-socket-json >"$$info_nmux_socket_json"; \
 	cargo run --quiet --bin nmuxd -- --socket "$$socket" --print-socket-json >"$$info_nmuxd_socket_json"; \
 	command_text="printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$$line\"; done"; \
-	cargo run --quiet --bin nmuxd -- --socket "$$socket" --live-clients 2 --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
+	cargo run --quiet --bin nmuxd -- --socket "$$socket" --ready-json --live-clients 2 --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
 	daemon_pid="$$!"; \
 	if ! printf 'ping\n' | cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --state "$$state" --live --iterations 1 --stdin --scrollback-start 1 --scrollback-count 8 >"$$client1_out" 2>"$$client1_err"; then \
 		cat "$$daemon_err" "$$client1_err" >&2; \
@@ -80,6 +80,11 @@ local-smoke: check-toolchain
 		exit 1; \
 	fi; \
 	daemon_pid=""; \
+	if ! grep -Fq '"event":"ready"' "$$daemon_out" || ! grep -Fq "\"NMUX_SOCKET\":\"$$socket\"" "$$daemon_out" || ! grep -Fq '"mode":"live-clients"' "$$daemon_out"; then \
+		echo "missing local smoke ready-json output" >&2; \
+		cat "$$daemon_out" "$$daemon_err" >&2; \
+		exit 1; \
+	fi; \
 	: >"$$daemon_out"; \
 	: >"$$daemon_err"; \
 	command_text="printf 'fresh daemon\n'; sleep 1"; \
@@ -177,6 +182,7 @@ local-smoke: check-toolchain
 	printf 'local_smoke_socket_recreation=passed\n'; \
 	printf 'local_smoke_print_context=passed\n'; \
 	printf 'local_smoke_json_info=passed\n'; \
+	printf 'local_smoke_ready_json=passed\n'; \
 	printf 'local_smoke=passed\n'
 
 check-ghostty-vt: check-vt-toolchain
@@ -370,6 +376,11 @@ promotion-evidence-bundle:
 		echo "missing local_smoke_json_info result in $$run_log" >&2; \
 		exit 1; \
 	fi; \
+	local_smoke_ready_json="$$(grep -m1 '^local_smoke_ready_json=' "$$run_log" | cut -d= -f2- || true)"; \
+	if [ -z "$$local_smoke_ready_json" ]; then \
+		echo "missing local_smoke_ready_json result in $$run_log" >&2; \
+		exit 1; \
+	fi; \
 	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_sys="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^sys [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
@@ -518,6 +529,7 @@ promotion-evidence-bundle:
 			printf 'local_smoke_socket_recreation=%s\n' "$$local_smoke_socket_recreation"; \
 			printf 'local_smoke_print_context=%s\n' "$$local_smoke_print_context"; \
 			printf 'local_smoke_json_info=%s\n' "$$local_smoke_json_info"; \
+			printf 'local_smoke_ready_json=%s\n' "$$local_smoke_ready_json"; \
 			printf 'local_smoke=%s\n' "$$local_smoke"; \
 			printf 'archive_sha256=%s\n' "$$archive_sha"; \
 			printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
@@ -709,6 +721,7 @@ promotion-evidence-verify:
 	require_exact "$$summary" 'local_smoke_socket_recreation=passed' 'local workflow socket recreation smoke'; \
 	require_exact "$$summary" 'local_smoke_print_context=passed' 'local workflow print-context smoke'; \
 	require_exact "$$summary" 'local_smoke_json_info=passed' 'local workflow JSON informational smoke'; \
+	require_exact "$$summary" 'local_smoke_ready_json=passed' 'local workflow ready-json smoke'; \
 	require_exact "$$summary" 'local_smoke=passed' 'local workflow smoke'; \
 	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
@@ -762,6 +775,7 @@ promotion-evidence-verify:
 	require_exact "$$run_log" 'local_smoke_socket_recreation=passed' 'local smoke socket recreation result'; \
 	require_exact "$$run_log" 'local_smoke_print_context=passed' 'local smoke print-context result'; \
 	require_exact "$$run_log" 'local_smoke_json_info=passed' 'local smoke JSON informational result'; \
+	require_exact "$$run_log" 'local_smoke_ready_json=passed' 'local smoke ready-json result'; \
 	require_exact "$$run_log" 'local_smoke=passed' 'local smoke result'; \
 	require_line "$$package_provenance" '^\[staged_files\]$$' 'packaging staged file hashes'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux wrapper hash'; \
