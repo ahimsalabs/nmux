@@ -825,7 +825,10 @@ fn finish_live(
     client_state: &local::ClientAttachState,
     reason: LiveDetachReason,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    save_live_state(args, client_state)?;
+    if let Err(err) = save_live_state(args, client_state) {
+        report_live_setup_error(args, err.as_ref())?;
+        return Err(err);
+    }
     if args.output_json {
         println!("{}", format_live_detach_json(reason));
         flush_stdout()?;

@@ -229,7 +229,8 @@ protocol failures are emitted as structured JSON error objects. In live mode,
 structured surface update row payloads plus a final detach event with a reason
 such as `iteration-limit`, `stdin-eof`, `local-detach`, or `server-closed`.
 Setup failures such as unreadable `--state` files or missing daemon sockets,
-and protocol errors after attach, are emitted as live JSON `error` events.
+final state-save failures, and protocol errors after attach are emitted as live
+JSON `error` events.
 `--json` is mutually exclusive with `--redraw`.
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache, including cached terminal metadata, when the daemon has no newer surface update to send. One-shot, follow, and live attach paths all reuse that scoped cached surface instead of replaying PTY bytes. Follow mode is observation-only and rejects input flags instead of silently dropping them.
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that

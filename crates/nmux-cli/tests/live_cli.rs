@@ -195,6 +195,79 @@ fn one_shot_json_reports_state_save_error() {
 }
 
 #[test]
+fn live_json_reports_state_save_error() {
+    let socket_path = test_socket_path();
+    let blocking_parent = test_state_path();
+    let state_path = blocking_parent.join("client.state");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_dir_all(&blocking_parent);
+    fs::create_dir(&blocking_parent).expect("create read-only parent");
+    fs::set_permissions(&blocking_parent, fs::Permissions::from_mode(0o500))
+        .expect("make parent read-only");
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'live-save-error\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--json",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "100",
+        ])
+        .output()
+        .expect("run nmux --live --json");
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::set_permissions(&blocking_parent, fs::Permissions::from_mode(0o700));
+    let _ = fs::remove_dir_all(&blocking_parent);
+
+    assert!(
+        !client.status.success(),
+        "nmux unexpectedly succeeded:\n{}",
+        String::from_utf8_lossy(&client.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("\"event\":\"attach\""),
+        "missing initial live attach event:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"event\":\"error\""),
+        "missing live JSON error event:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"message\":\"failed to save client state")
+            && stdout.contains(state_path.to_str().expect("state path")),
+        "missing state-save JSON error context:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains("nmux: failed to save client state"),
+        "missing stderr state-save context:\n{stderr}"
+    );
+}
+
+#[test]
 fn one_shot_cli_can_request_scrollback_tail() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

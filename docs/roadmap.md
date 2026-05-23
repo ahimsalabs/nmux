@@ -125,9 +125,9 @@ Done:
   structured current surface rows/styles/hyperlinks, rendered surface text, and
   structured scrollback rows, and emits structured setup/state-save/protocol
   error objects when attach output cannot be produced; `nmux --live --json`
-  streams newline-delimited attach, workspace, surface update, setup/protocol
-  error, and final detach events with structured row payloads and lifecycle
-  reasons for scripts.
+  streams newline-delimited attach, workspace, surface update,
+  setup/state-save/protocol error, and final detach events with structured row
+  payloads and lifecycle reasons for scripts.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - `nmuxd --ready-json` emits a single startup JSON object after socket bind and
   initial pane startup, or a startup error event if readiness fails first, so
