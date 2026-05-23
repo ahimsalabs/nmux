@@ -567,6 +567,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   docs/default-engine-promotion.md tracks the native build, CI, toolchain, source-fetch, packaging, workflow, and state-sync evidence required before promotion
   the tracker now includes multiple warm local Darwin arm64 make check-all timing samples, including a post-info-flag run, and the Nix-provided flatc version; this is useful evidence, not enough for promotion by itself
   docs/toolchain.md and docs/default-engine-promotion.md explicitly record that no non-Nix optional native-VT validation run has been captured as promotion evidence yet
+  a local non-Nix make check-all attempt is recorded as failing during tool preflight because flatc is not on the host PATH, and Makefile preflight now reports missing cargo/flatc/zig requirements with Nix fallback guidance
   make check-all is the explicit combined default-plus-libghostty-vt validation gate for release-style checks and promotion evidence without changing regular make check
   keep frontend Ghostty renderer hydration separate from backend terminal-state extraction until upstream can render externally supplied nmux state without client-side PTY replay
   split future protocol expansion into explicit tracks before schema changes: wired hyperlink IDs, image placement/pixel data, richer damage objects, semantic command lifecycle metadata, and physical-key/text-event forwarding

@@ -57,6 +57,9 @@ engine or a regular CI requirement.
 - [Contributor workflow](contributor-workflow.md) documents when contributors
   should use the default gate, the opt-in terminal-correctness gate, and the
   combined promotion-evidence gate.
+- The Makefile performs local tool preflight checks for `cargo`, `flatc`, and
+  the optional native-VT `zig` requirement so non-Nix validation attempts fail
+  with setup guidance instead of an opaque missing-command error.
 - `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
   suites with `--features libghostty-vt` and sets `GIT_CONFIG_GLOBAL=/dev/null`
   to avoid local Git URL rewrite interference.
@@ -79,14 +82,25 @@ evidence or measurements from every supported platform.
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; opt-in source fetch path already available locally; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `/usr/bin/time -p nix --extra-experimental-features 'nix-command flakes' develop . -c make check-all` | Passed; `real 30.89`, `user 8.78`, `sys 9.51` |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout after local usability/info-flag changes; existing Nix/Cargo/native build caches; opt-in source fetch path already available locally; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `/usr/bin/time -p nix --extra-experimental-features 'nix-command flakes' develop . -c make check-all` | Passed; `real 34.42`, `user 10.95`, `sys 11.09` |
 
+## Non-Nix Local Attempts
+
+These attempts validate the documented non-Nix checklist. Failed setup attempts
+are not promotion evidence for the optional native VT path, but they identify
+the missing host requirements needed before a complete non-Nix timing sample can
+be recorded.
+
+| Date | Host | Command | Result |
+| --- | --- | --- | --- |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, repository caches present; host shell outside Nix; no `flatc` on PATH | `/usr/bin/time -p env GIT_CONFIG_GLOBAL=/dev/null make check-all` | Failed during tool preflight before schema or Rust tests; missing `flatc`; `real 0.01`, `user 0.00`, `sys 0.00` |
+
 ## Open Work
 
 - Measure and record `make check-all` timing on more supported local systems,
   including at least one cold-checkout or cold-cache run.
 - Exercise the same gate in CI before making it a required check.
 - Validate the non-Nix toolchain checklist with platform-specific setup
-  commands and timings, or explicitly decide that Nix remains the only
-  supported native-build workflow for now.
+  commands and timings; the current local non-Nix attempt failed before tests
+  because `flatc` was absent from the host PATH.
 - Choose a source policy for packaged/default builds: pinned network fetch with
   CI/cache controls, vendored or mirrored source, `GHOSTTY_SOURCE_DIR`
   prefetching, or a native-library package/artifact cache.

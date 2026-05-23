@@ -34,9 +34,11 @@ timings, cache behavior, and packaging decisions recorded in
 [the default-engine promotion tracker](default-engine-promotion.md).
 
 Current validation status: no non-Nix `make check-ghostty-vt` or
-`make check-all` run has been recorded as promotion evidence. Until such a run
-is recorded, the Nix shell is the only validated local workflow for the optional
-native Ghostty VT path.
+`make check-all` run has passed as promotion evidence. A local non-Nix
+`make check-all` attempt on 2026-05-23 failed during Makefile tool preflight
+because `flatc` was not on the host PATH. Until a complete run is recorded, the
+Nix shell is the only validated local workflow for the optional native Ghostty
+VT path.
 
 A non-Nix environment must provide:
 
@@ -52,6 +54,10 @@ For the default engine, the command shape is:
 ```sh
 make check
 ```
+
+The Makefile checks for required tools before running schema or Rust tests. A
+missing `flatc`, `cargo`, or optional native-VT `zig` reports the missing tool
+and the matching Nix command to use.
 
 For the opt-in VT engine, the command shape is:
 
