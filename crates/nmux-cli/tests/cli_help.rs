@@ -36,6 +36,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--redraw"));
     assert!(stdout.contains("Without an explicit input or resize flag"));
     assert!(stdout.contains("interim text surface"));
+    assert!(stdout.contains("Informational flags exit before attach-mode validation"));
     assert!(stdout.contains("not a VT-correct terminal emulator"));
     assert!(stdout.contains("Default socket: --socket, else valid absolute $NMUX_SOCKET"));
     assert!(stdout.contains("valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock"));
@@ -170,6 +171,66 @@ fn print_context_rejects_missing_nmux_context() {
     assert!(
         stderr.contains("nmux: not running inside an nmux pane"),
         "missing context error:\n{stderr}"
+    );
+}
+
+#[test]
+fn no_connect_client_flags_skip_attach_mode_validation() {
+    let socket_path = test_socket_path();
+    let context_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--print-context",
+            "--stdin",
+            "--stdin-bytes",
+            "--cols",
+            "100",
+            "--iterations",
+            "0",
+        ])
+        .env("NMUX", "1")
+        .env("NMUX_SESSION_ID", "session-7")
+        .env("NMUX_PANE_ID", "pane-3")
+        .env("NMUX_SOCKET", &socket_path)
+        .env("NMUX_ORIGIN", "local")
+        .output()
+        .expect("run nmux --print-context with attach flags");
+
+    assert!(
+        context_output.status.success(),
+        "nmux --print-context should exit before attach-mode validation: {}",
+        String::from_utf8_lossy(&context_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&context_output.stdout).contains("NMUX_PANE_ID=pane-3"),
+        "missing context output"
+    );
+
+    let socket_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--print-socket",
+            "--redraw",
+            "--cols",
+            "100",
+            "--iterations",
+            "0",
+        ])
+        .output()
+        .expect("run nmux --print-socket with attach flags");
+
+    assert!(
+        socket_output.status.success(),
+        "nmux --print-socket should exit before attach-mode validation: {}",
+        String::from_utf8_lossy(&socket_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&socket_output.stdout).trim(),
+        socket_path.to_str().expect("socket path")
+    );
+    assert!(
+        !socket_path.exists(),
+        "no-connect flags should not create a socket path"
     );
 }
 

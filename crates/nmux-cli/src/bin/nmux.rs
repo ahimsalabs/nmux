@@ -1113,50 +1113,60 @@ where
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
-    let live_resize = match (live_cols, live_rows) {
-        (Some(cols), Some(rows)) => Some((cols, rows)),
-        (None, None) => None,
-        _ => return Err("--cols and --rows must be provided together".into()),
+    let exits_before_attach = help || version || print_context || print_socket;
+    let live_resize = if exits_before_attach {
+        match (live_cols, live_rows) {
+            (Some(cols), Some(rows)) => Some((cols, rows)),
+            _ => None,
+        }
+    } else {
+        match (live_cols, live_rows) {
+            (Some(cols), Some(rows)) => Some((cols, rows)),
+            (None, None) => None,
+            _ => return Err("--cols and --rows must be provided together".into()),
+        }
     };
-    if stdin_input && stdin_bytes {
-        return Err("--stdin and --stdin-bytes cannot be used together".into());
+    if !exits_before_attach {
+        if stdin_input && stdin_bytes {
+            return Err("--stdin and --stdin-bytes cannot be used together".into());
+        }
+        validate_positive_numeric_args(
+            scrollback_start_line,
+            scrollback_line_count,
+            live_resize,
+            interval_ms,
+            connect_timeout_ms,
+        )?;
+        validate_explicit_input_modes(
+            key_set,
+            key_name_set,
+            paste_set,
+            focus_set,
+            mouse_set,
+            no_input_set,
+            stdin_input,
+            stdin_bytes,
+        )?;
+        validate_no_input_resize_args(no_input_set, live_resize)?;
+        validate_mode_args(
+            live,
+            follow,
+            stdin_input,
+            stdin_bytes,
+            local_echo_set,
+            redraw,
+            live_resize,
+            iterations,
+            key_set,
+            paste_set,
+            focus_set,
+            key_name_set,
+            key_modifiers_set,
+            mouse_set,
+            mouse_modifiers_set,
+            mouse_pixels_set,
+        )?;
     }
-    validate_positive_numeric_args(
-        scrollback_start_line,
-        scrollback_line_count,
-        live_resize,
-        interval_ms,
-        connect_timeout_ms,
-    )?;
-    validate_explicit_input_modes(
-        key_set,
-        key_name_set,
-        paste_set,
-        focus_set,
-        mouse_set,
-        no_input_set,
-        stdin_input,
-        stdin_bytes,
-    )?;
-    validate_no_input_resize_args(no_input_set, live_resize)?;
-    validate_mode_args(
-        live,
-        follow,
-        stdin_input,
-        stdin_bytes,
-        local_echo_set,
-        redraw,
-        live_resize,
-        iterations,
-        key_set,
-        paste_set,
-        focus_set,
-        key_name_set,
-        key_modifiers_set,
-        mouse_set,
-        mouse_modifiers_set,
-        mouse_pixels_set,
-    )?;
     if let Some(mouse_event) = mouse_event.as_mut() {
         mouse_event.modifiers = mouse_modifiers;
         if let Some((pixel_x, pixel_y)) = mouse_pixels {
@@ -1471,6 +1481,7 @@ Options:
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   --print-context prints inherited NMUX_* pane identity without connecting.
+  Informational flags exit before attach-mode validation or socket/state work.
   Without an explicit input or resize flag, nmux attaches read-only.
   The current renderer uses an interim text surface, not a VT-correct terminal emulator.
 

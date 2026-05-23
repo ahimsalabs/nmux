@@ -125,6 +125,10 @@ shell-scoped local workspace, or pass `--socket` on both sides when you want an
 isolated smoke-test socket.
 Use `nmux --print-socket` or `nmuxd --print-socket` to print the resolved socket
 path without connecting or binding.
+Client informational flags such as `--version`, `--help`, `--print-socket`,
+and `--print-context` exit before attach-mode validation or socket/state work,
+so scripts can reuse broader command templates without accidentally opening a
+connection.
 
 ```sh
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --print-socket
