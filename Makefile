@@ -530,6 +530,11 @@ promotion-evidence-verify:
 	require_line "$$source_fetch" '^checksum = "[0-9a-f]{64}"$$' 'source-fetch package checksum'; \
 	require_line "$$source_fetch" '^\[cargo_lock:libghostty-vt-sys\]$$' 'source-fetch libghostty-vt-sys record'; \
 	require_line "$$source_fetch" '^name = "libghostty-vt-sys"$$' 'source-fetch libghostty-vt-sys package name'; \
+	require_line "$$run_log" '^== promotion local sample: source-fetch provenance ==$$' 'source-fetch provenance run-log section'; \
+	require_exact "$$run_log" 'writing source-fetch provenance report' 'source-fetch provenance report writer ran'; \
+	require_exact "$$run_log" 'verifying source-fetch provenance report' 'source-fetch provenance verifier ran'; \
+	require_exact "$$run_log" 'source_fetch_provenance_verified=target/source-fetch-provenance/SOURCE_FETCH.txt' 'source-fetch provenance verifier result'; \
+	require_exact "$$run_log" 'source_fetch_provenance=target/source-fetch-provenance/SOURCE_FETCH.txt' 'source-fetch provenance artifact path'; \
 	require_exact "$$offline_probe" 'nmux source-fetch offline probe' 'offline probe title'; \
 	require_exact "$$offline_probe" 'probe_scope=cache-present opt-in native VT build only; not cold checkout, CI cache miss, network-failure, or default/package source policy evidence' 'offline probe scope'; \
 	require_exact "$$offline_probe" 'CARGO_NET_OFFLINE=true' 'offline probe Cargo offline mode'; \

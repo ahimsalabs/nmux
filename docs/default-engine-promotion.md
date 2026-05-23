@@ -113,7 +113,8 @@ engine or a regular CI requirement.
   offline probe result, package archive bytes, archive hash,
   `packaging-archive-verify` output,
   `packaging-provenance-verify` output, packaged runtime smoke result, exact
-  current open-work blocker lines, and run-log evidence that the cache-present
+  current open-work blocker lines, run-log evidence that source-fetch
+  provenance verification ran, and run-log evidence that the cache-present
   offline probe compiled the opt-in native-VT test binary and ran its verifier.
   The bundle target runs it before printing the artifact list.
 - `make source-fetch-provenance-sample` writes the active source mode and
