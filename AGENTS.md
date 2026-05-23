@@ -15,6 +15,8 @@ nmux is a portable Ghostty-style terminal workspace. The current direction is do
   non-Nix requirements checklist.
 - [docs/source-fetch-policy.md](docs/source-fetch-policy.md) for opt-in
   `libghostty-vt-sys` source-fetch rules and remaining promotion blockers.
+- [docs/adr/0024-native-vt-source-policy-criteria.md](docs/adr/0024-native-vt-source-policy-criteria.md)
+  for criteria a future native-VT source-policy promotion decision must satisfy.
 - [docs/packaging.md](docs/packaging.md) for current distribution posture and
   native-VT packaging questions.
 - [docs/running.md](docs/running.md) for runnable local smoke tests.

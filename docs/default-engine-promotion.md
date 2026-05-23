@@ -52,8 +52,10 @@ engine or a regular CI requirement.
   native Ghostty VT path.
 - [Source fetch policy](source-fetch-policy.md) documents the current opt-in
   `libghostty-vt-sys` fetch behavior and the remaining policy choices for
-  packaged/default builds. It allows local correctness work, but does not close
-  the promotion blocker by itself.
+  packaged/default builds. [ADR 0024](adr/0024-native-vt-source-policy-criteria.md)
+  defines the criteria a later source-policy promotion decision must satisfy.
+  This allows local correctness work, but does not close the promotion blocker
+  by itself.
 - [Packaging notes](packaging.md) document the current source-checkout
   distribution path and the binary packaging questions that must be answered
   before native VT builds become default or regular CI.

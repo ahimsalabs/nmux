@@ -23,6 +23,8 @@ The current implementation is a Rust workspace with:
 - future protocol-object tracks in [docs/protocol-futures.md](docs/protocol-futures.md);
 - opt-in native source-fetch policy in [docs/source-fetch-policy.md](docs/source-fetch-policy.md);
 - packaging notes in [docs/packaging.md](docs/packaging.md);
+- native VT source-policy criteria in
+  [docs/adr/0024-native-vt-source-policy-criteria.md](docs/adr/0024-native-vt-source-policy-criteria.md);
 - the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on post-M14 default-engine promotion evidence, frontend hydration tracking, future protocol-object decisions, and local usability.
 
 ## Check

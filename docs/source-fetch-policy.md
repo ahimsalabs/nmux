@@ -45,8 +45,9 @@ source-fetch path, not a default or packaged-build source-policy decision.
 ## Promotion Blockers
 
 Before `libghostty-vt` can become the documented default engine, a regular CI
-requirement, or a packaged binary dependency, a later ADR must choose one of
-these source policies and record the consequences:
+requirement, or a packaged binary dependency, a later ADR must satisfy
+[ADR 0024](adr/0024-native-vt-source-policy-criteria.md), choose one of these
+source policies, and record the consequences:
 
 - pinned network fetch with CI/cache controls;
 - vendored or mirrored source with update and license-review rules;
@@ -54,8 +55,9 @@ these source policies and record the consequences:
 - platform package or artifact cache for the native Ghostty VT library.
 
 That decision also needs offline-build behavior, cache invalidation, provenance,
-and binary packaging expectations. Until then, the default engine remains
-`interim`, and `make check` remains independent of the native Ghostty/Zig build.
+license-review scope, and binary packaging expectations. Until then, the
+default engine remains `interim`, and `make check` remains independent of the
+native Ghostty/Zig build.
 See [packaging.md](packaging.md) for the matching binary distribution questions.
 
 Local package provenance samples should record the active source mode and
