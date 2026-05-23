@@ -18,6 +18,7 @@ Use a broader target only when the change needs the extra evidence:
 | --- | --- |
 | Normal default-engine or docs work | `nix develop . -c make check` and `nix develop . -c make local-smoke` |
 | Backend `libghostty-vt` correctness work | `nix develop . -c make check` and `nix develop . -c make check-ghostty-vt` |
+| Renderer-equivalence fixture work | `nix develop . -c make renderer-equivalence-smoke` |
 | Release-style local validation | `nix develop . -c make check-all` |
 | Self-contained promotion evidence bundle | `nix develop . -c make promotion-evidence-bundle` then `nix develop . -c make promotion-evidence-verify` |
 | Source-fetch evidence | `nix develop . -c make source-fetch-provenance-sample` or `nix develop . -c make source-fetch-offline-probe` |
@@ -28,6 +29,7 @@ The common check and evidence target inventory is:
 ```sh
 nix develop . -c make check
 nix develop . -c make check-ghostty-vt
+nix develop . -c make renderer-equivalence-smoke
 nix develop . -c make check-all
 nix develop . -c make local-smoke
 nix develop . -c make promotion-sample
@@ -69,6 +71,9 @@ state, daemon-owned structured input, or default-engine promotion evidence.
 `make local-smoke` is a default-engine user workflow smoke for the local
 daemon/client path; it does not enable the native VT feature or replace the
 test suite.
+`make renderer-equivalence-smoke` is a focused opt-in fixture projection check
+for renderer-equivalence work. It is not a trusted renderer oracle comparison
+and is not part of the normal default gate.
 See [contributor-workflow.md](contributor-workflow.md) for choosing between
 those gates.
 

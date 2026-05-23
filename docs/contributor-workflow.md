@@ -56,6 +56,12 @@ broader than a filtered Ghostty smoke test. The serial harness setting is part
 of the current native-VT evidence gate; do not replace it with filtered tests
 when changing terminal engine behavior.
 
+`make renderer-equivalence-smoke` is narrower: it runs the current
+renderer-equivalence fixture corpus projection through the opt-in
+`libghostty-vt` path. Use it while building renderer-equivalence evidence, but
+do not treat a pass as a trusted renderer oracle comparison or as default-engine
+promotion evidence.
+
 ## Promotion Evidence Work
 
 Use this path when collecting evidence for making `libghostty-vt` the default

@@ -47,6 +47,19 @@ terminal state.
 - User-facing claim map: documented wording for what nmux can and cannot claim
   after the evidence passes.
 
+## Current Harness
+
+`make renderer-equivalence-smoke` runs a focused feature-gated corpus projection
+check through `nmux-core --features libghostty-vt`. The current corpus proves
+that representative server-owned terminal state for styled text, default text,
+wide cells, title metadata, bracketed paste mode, mouse tracking mode, and
+hyperlink presence is projected into nmux `TerminalUpdate` rows, runs, styles,
+modes, and metadata without raw ANSI text leaking into fallback rows.
+
+This is nmux-side fixture evidence only. It is intentionally not wired into the
+normal default gate, and it does not satisfy the oracle renderer or pixel/state
+comparison requirements above.
+
 ## Open Questions
 
 - Which renderer is the first oracle: Ghostty/libghostty, a screenshot-based

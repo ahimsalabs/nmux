@@ -1371,6 +1371,179 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "libghostty-vt")]
+    struct RendererEquivalenceFixture {
+        name: &'static str,
+        cols: u32,
+        rows: u32,
+        output: &'static [u8],
+        expected_lines: &'static [&'static str],
+        expected_title: Option<&'static str>,
+        expected_bracketed_paste: bool,
+        expected_mouse_tracking: bool,
+        expectations: &'static [RendererFixtureExpectation],
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    enum RendererFixtureExpectation {
+        DefaultStyleRun(&'static str),
+        NonDefaultStyleRun(&'static str),
+        DoubleWidthChar(char),
+        HyperlinkRun(&'static str),
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn assert_renderer_equivalence_fixture(fixture: RendererEquivalenceFixture) {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(fixture.cols, fixture.rows, &empty, &empty),
+                fixture.output,
+            )
+            .unwrap_or_else(|| panic!("{} did not produce a terminal update", fixture.name));
+
+        for expected in fixture.expected_lines {
+            assert!(
+                update.surface_lines.iter().any(|line| line == expected),
+                "{} missing expected visible row {expected:?}: {:?}",
+                fixture.name,
+                update.surface_lines
+            );
+        }
+        if let Some(expected_title) = fixture.expected_title {
+            assert_eq!(
+                update.title, expected_title,
+                "{} title mismatch",
+                fixture.name
+            );
+        }
+        assert_eq!(
+            update.modes.bracketed_paste, fixture.expected_bracketed_paste,
+            "{} bracketed paste mode mismatch",
+            fixture.name
+        );
+        assert_eq!(
+            update.modes.mouse_tracking, fixture.expected_mouse_tracking,
+            "{} mouse tracking mode mismatch",
+            fixture.name
+        );
+
+        for expectation in fixture.expectations {
+            match *expectation {
+                RendererFixtureExpectation::DefaultStyleRun(text) => {
+                    let run = renderer_fixture_run_containing(&update, text, fixture.name);
+                    assert_eq!(
+                        run.style_id, 0,
+                        "{} expected default style for run {text:?}",
+                        fixture.name
+                    );
+                }
+                RendererFixtureExpectation::NonDefaultStyleRun(text) => {
+                    let run = renderer_fixture_run_containing(&update, text, fixture.name);
+                    assert_ne!(
+                        run.style_id, 0,
+                        "{} expected non-default style for run {text:?}",
+                        fixture.name
+                    );
+                }
+                RendererFixtureExpectation::DoubleWidthChar(ch) => {
+                    let run = update
+                        .surface_row_runs
+                        .iter()
+                        .flat_map(|row| row.iter())
+                        .find(|run| run.text.contains(ch))
+                        .unwrap_or_else(|| {
+                            panic!("{} missing run containing {ch:?}", fixture.name)
+                        });
+                    let width_index = run
+                        .text
+                        .chars()
+                        .position(|candidate| candidate == ch)
+                        .unwrap_or_else(|| {
+                            panic!("{} missing char {ch:?} in run {:?}", fixture.name, run.text)
+                        });
+                    assert_eq!(
+                        run.cell_widths[width_index], 2,
+                        "{} expected {ch:?} to occupy two cells",
+                        fixture.name
+                    );
+                }
+                RendererFixtureExpectation::HyperlinkRun(text) => {
+                    let run = renderer_fixture_run_containing(&update, text, fixture.name);
+                    assert_ne!(
+                        run.flags & super::CELL_RUN_FLAG_HYPERLINK_PRESENT,
+                        0,
+                        "{} expected hyperlink presence for run {text:?}",
+                        fixture.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn renderer_fixture_run_containing<'a>(
+        update: &'a super::TerminalUpdate,
+        text: &str,
+        fixture_name: &str,
+    ) -> &'a super::CellRun {
+        update
+            .surface_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains(text))
+            .unwrap_or_else(|| panic!("{fixture_name} missing run containing {text:?}"))
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn renderer_equivalence_fixture_corpus_projects_server_owned_surface() {
+        let fixtures = [
+            RendererEquivalenceFixture {
+                name: "style and width",
+                cols: 80,
+                rows: 3,
+                output: b"\x1b[31mred\x1b[0m plain\r\nwide:\xe4\xb8\xad",
+                expected_lines: &["red plain", "wide:中"],
+                expected_title: None,
+                expected_bracketed_paste: false,
+                expected_mouse_tracking: false,
+                expectations: &[
+                    RendererFixtureExpectation::NonDefaultStyleRun("red"),
+                    RendererFixtureExpectation::DefaultStyleRun(" plain"),
+                    RendererFixtureExpectation::DoubleWidthChar('中'),
+                ],
+            },
+            RendererEquivalenceFixture {
+                name: "metadata and modes",
+                cols: 80,
+                rows: 3,
+                output: b"\x1b]0;fixture title\x07\x1b[?2004h\x1b[?1000hready",
+                expected_lines: &["ready"],
+                expected_title: Some("fixture title"),
+                expected_bracketed_paste: true,
+                expected_mouse_tracking: true,
+                expectations: &[],
+            },
+            RendererEquivalenceFixture {
+                name: "hyperlink presence",
+                cols: 80,
+                rows: 3,
+                output: b"\x1b]8;;https://example.invalid\x1b\\link\x1b]8;;\x1b\\",
+                expected_lines: &["link"],
+                expected_title: None,
+                expected_bracketed_paste: false,
+                expected_mouse_tracking: false,
+                expectations: &[RendererFixtureExpectation::HyperlinkRun("link")],
+            },
+        ];
+
+        for fixture in fixtures {
+            assert_renderer_equivalence_fixture(fixture);
+        }
+    }
+
     #[test]
     fn interim_text_engine_normalizes_process_output() {
         let mut engine = InterimTextTerminalEngine;
