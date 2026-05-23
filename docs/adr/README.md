@@ -6,29 +6,31 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 
 ## Records
 
-- [0001: Backend-Owned Terminal State](0001-backend-owned-terminal-state.md)
-- [0002: Rust Core Runtime](0002-rust-core-runtime.md)
-- [0003: Scrollback As A Separate Object](0003-scrollback-as-separate-object.md)
-- [0004: Presence And Attach Modes](0004-presence-and-attach-modes.md)
-- [0005: Process Host Boundary](0005-process-host-boundary.md)
-- [0006: Interim PTY Text Surface](0006-interim-pty-text-surface.md)
-- [0007: Ghostty/libghostty Frontend Boundary](0007-ghostty-libghostty-frontend-boundary.md)
-- [0008: FlatBuffers Attach Request](0008-flatbuffers-attach-request.md)
-- [0009: tmux Adapter Process Boundary](0009-tmux-adapter-process-boundary.md)
-- [0010: herdr Integration Boundary](0010-herdr-integration-boundary.md)
-- [0011: Live Local Interactive Attach](0011-live-local-interactive-attach.md)
-- [0012: Backend Terminal Engine Boundary](0012-backend-terminal-engine-boundary.md)
-- [0013: Optional libghostty-vt Backend](0013-optional-libghostty-vt-backend.md)
-- [0014: Transport Identity Boundary](0014-transport-identity-boundary.md)
-- [0015: Cell Semantic Content](0015-cell-semantic-content.md)
-- [0016: Terminal Color State](0016-terminal-color-state.md)
-- [0017: Terminal Input Mode State](0017-terminal-input-mode-state.md)
-- [0018: libghostty-vt Default And CI Gate](0018-libghostty-vt-default-and-ci-gate.md)
-- [0019: Color-Only Palette Diffs](0019-color-only-palette-diffs.md)
-- [0020: Attributed Error Frames](0020-attributed-error-frames.md)
-- [0021: Explicit Attach Status](0021-explicit-attach-status.md)
-- [0022: Hyperlink Identity Table](0022-hyperlink-identity-table.md)
-- [0023: Post-M13 Default Engine And Product Split](0023-post-m13-default-engine-and-product-split.md)
-- [0024: Native VT Source Policy Criteria](0024-native-vt-source-policy-criteria.md)
-- [0025: Native VT Packaging Criteria](0025-native-vt-packaging-criteria.md)
-- [0026: Native VT CI Promotion Criteria](0026-native-vt-ci-promotion-criteria.md)
+| ADR | Status |
+| --- | --- |
+| [0001: Backend-Owned Terminal State](0001-backend-owned-terminal-state.md) | Proposed |
+| [0002: Rust Core Runtime](0002-rust-core-runtime.md) | Proposed |
+| [0003: Scrollback As A Separate Object](0003-scrollback-as-separate-object.md) | Proposed |
+| [0004: Presence And Attach Modes](0004-presence-and-attach-modes.md) | Proposed |
+| [0005: Process Host Boundary](0005-process-host-boundary.md) | Proposed |
+| [0006: Interim PTY Text Surface](0006-interim-pty-text-surface.md) | Proposed |
+| [0007: Ghostty/libghostty Frontend Boundary](0007-ghostty-libghostty-frontend-boundary.md) | Accepted |
+| [0008: FlatBuffers Attach Request](0008-flatbuffers-attach-request.md) | Accepted |
+| [0009: tmux Adapter Process Boundary](0009-tmux-adapter-process-boundary.md) | Accepted |
+| [0010: herdr Integration Boundary](0010-herdr-integration-boundary.md) | Accepted |
+| [0011: Live Local Interactive Attach](0011-live-local-interactive-attach.md) | Accepted |
+| [0012: Backend Terminal Engine Boundary](0012-backend-terminal-engine-boundary.md) | Accepted |
+| [0013: Optional libghostty-vt Backend](0013-optional-libghostty-vt-backend.md) | Accepted |
+| [0014: Transport Identity Boundary](0014-transport-identity-boundary.md) | Proposed |
+| [0015: Cell Semantic Content](0015-cell-semantic-content.md) | Accepted |
+| [0016: Terminal Color State](0016-terminal-color-state.md) | Accepted |
+| [0017: Terminal Input Mode State](0017-terminal-input-mode-state.md) | Accepted |
+| [0018: libghostty-vt Default And CI Gate](0018-libghostty-vt-default-and-ci-gate.md) | Accepted |
+| [0019: Color-Only Palette Diffs](0019-color-only-palette-diffs.md) | Accepted |
+| [0020: Attributed Error Frames](0020-attributed-error-frames.md) | Accepted |
+| [0021: Explicit Attach Status](0021-explicit-attach-status.md) | Accepted |
+| [0022: Hyperlink Identity Table](0022-hyperlink-identity-table.md) | Accepted |
+| [0023: Post-M13 Default Engine And Product Split](0023-post-m13-default-engine-and-product-split.md) | Accepted |
+| [0024: Native VT Source Policy Criteria](0024-native-vt-source-policy-criteria.md) | Accepted |
+| [0025: Native VT Packaging Criteria](0025-native-vt-packaging-criteria.md) | Accepted |
+| [0026: Native VT CI Promotion Criteria](0026-native-vt-ci-promotion-criteria.md) | Accepted |
