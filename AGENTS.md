@@ -64,10 +64,16 @@ The current implementation is a Rust workspace:
 Use the Nix development shell for repo checks:
 
 ```sh
+nix develop . -c flatc --version
 nix develop . -c make check
 ```
 
-`make check` runs FlatBuffers schema validation and `cargo test --workspace`. For narrower iteration, prefer targeted `cargo test` commands inside the same `nix develop . -c ...` wrapper, then run full `make check` before committing implementation changes.
+The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
+FlatBuffers install is needed for schema validation in the supported
+development path. `make check` runs FlatBuffers schema validation and
+`cargo test --workspace`. For narrower iteration, prefer targeted `cargo test`
+commands inside the same `nix develop . -c ...` wrapper, then run full
+`make check` before committing implementation changes.
 
 If `schema/nmux.fbs` changes, regenerate bindings with:
 
