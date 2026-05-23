@@ -55,7 +55,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let listener = local::bind_listener(&args.socket_path)?;
+    let listener = match local::bind_listener(&args.socket_path) {
+        Ok(listener) => listener,
+        Err(err) => {
+            report_ready_json_error(&args, &err)?;
+            return Err(err.into());
+        }
+    };
     let _socket_cleanup = SocketCleanup::new(args.socket_path.clone());
     eprintln!("nmuxd: listening on {}", args.socket_path.display());
     let ready_json = if args.ready_json {
@@ -65,14 +71,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut session = Session::initial();
-    if let Some(command) = args.command {
+    if let Some(command) = args.command.as_deref() {
         session.tabs[0].root.host.command = CommandSpec::new("sh").with_args(["-lc", &command]);
     }
-    if let Some(working_dir) = args.working_dir {
-        session.tabs[0].root.host.command.working_dir = Some(working_dir);
+    if let Some(working_dir) = args.working_dir.as_ref() {
+        session.tabs[0].root.host.command.working_dir = Some(working_dir.clone());
     }
     if !args.env.is_empty() {
-        session.tabs[0].root.host.command.env.extend(args.env);
+        session.tabs[0]
+            .root
+            .host
+            .command
+            .env
+            .extend(args.env.iter().cloned());
     }
     session.set_pane_resize_policy("pane-1", args.resize_policy);
     let pane_id = "pane-1";
@@ -84,9 +95,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     let host_spec = session.tabs[0].root.host.clone();
     let mut pty_host = LocalPtyHost::default();
-    pty_host.start_pane(pane_id, &host_spec)?;
+    if let Err(err) = pty_host.start_pane(pane_id, &host_spec) {
+        report_ready_json_error(&args, &err)?;
+        return Err(Box::new(err));
+    }
     let mut terminal_engines = PaneTerminalEngines::new(args.terminal_engine_kind);
-    wait_for_pane_output(&mut session, &mut pty_host, pane_id, &mut terminal_engines)?;
+    if let Err(err) =
+        wait_for_pane_output(&mut session, &mut pty_host, pane_id, &mut terminal_engines)
+    {
+        report_ready_json_error(&args, err.as_ref())?;
+        return Err(err);
+    }
     if let Some(ready_json) = ready_json {
         println!("{ready_json}");
         io::stdout().flush()?;
@@ -366,6 +385,24 @@ fn format_ready_json(args: &Args) -> String {
     )
 }
 
+fn report_ready_json_error(
+    args: &Args,
+    error: &(dyn std::error::Error + 'static),
+) -> io::Result<()> {
+    if args.ready_json {
+        println!("{}", format_ready_error_json(error));
+        io::stdout().flush()?;
+    }
+    Ok(())
+}
+
+fn format_ready_error_json(error: &(dyn std::error::Error + 'static)) -> String {
+    format!(
+        "{{\"event\":\"error\",\"error\":{{\"message\":{}}}}}",
+        local::json_string(&error.to_string())
+    )
+}
+
 fn daemon_mode_name(args: &Args) -> &'static str {
     if args.live_forever {
         "live-forever"
@@ -541,9 +578,9 @@ fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'stati
 #[cfg(test)]
 mod tests {
     use super::{
-        Args, SocketCleanup, format_daemon_choices_json, format_ready_json, parse_env_assignment,
-        parse_numeric_arg, parse_resize_policy, parse_terminal_engine_kind, usage,
-        validate_mode_args,
+        Args, SocketCleanup, format_daemon_choices_json, format_ready_error_json,
+        format_ready_json, parse_env_assignment, parse_numeric_arg, parse_resize_policy,
+        parse_terminal_engine_kind, usage, validate_mode_args,
     };
     use nmux_cli::local;
     use nmux_core::terminal::TerminalEngineKind;
@@ -643,6 +680,16 @@ mod tests {
         assert_eq!(
             format_ready_json(&args),
             "{\"event\":\"ready\",\"NMUX_SOCKET\":\"/tmp/nmux-ready.sock\",\"source\":\"--socket\",\"mode\":\"live-forever\",\"terminal_engine\":\"interim\",\"resize_policy\":\"active-client\"}"
+        );
+    }
+
+    #[test]
+    fn ready_error_json_reports_startup_failure() {
+        let error = std::io::Error::other("bind failed");
+
+        assert_eq!(
+            format_ready_error_json(&error),
+            "{\"event\":\"error\",\"error\":{\"message\":\"bind failed\"}}"
         );
     }
 

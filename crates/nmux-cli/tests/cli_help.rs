@@ -963,6 +963,43 @@ fn nmuxd_reports_existing_socket_path() {
 }
 
 #[test]
+fn nmuxd_ready_json_reports_existing_socket_error() {
+    let socket_path = test_socket_path();
+    fs::write(&socket_path, "not a socket").expect("write placeholder");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--ready-json",
+            "--one-shot",
+        ])
+        .output()
+        .expect("run nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(!output.status.success(), "nmuxd unexpectedly succeeded");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"event\":\"error\""),
+        "missing ready-json error event:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("socket path already exists"),
+        "missing ready-json error message:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(socket_path.to_str().expect("socket path")),
+        "missing socket path:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nmuxd: socket path already exists"),
+        "missing stderr error:\n{stderr}"
+    );
+}
+
+#[test]
 fn nmuxd_reports_socket_path_when_bind_fails() {
     let socket_path = std::env::temp_dir().join(format!("nmux-{}.sock", "x".repeat(160)));
 

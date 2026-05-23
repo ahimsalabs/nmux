@@ -129,8 +129,8 @@ Done:
   scripts.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - `nmuxd --ready-json` emits a single startup JSON object after socket bind and
-  initial pane startup, so scripts can wait on daemon stdout instead of polling
-  the socket path.
+  initial pane startup, or a startup error event if readiness fails first, so
+  scripts can wait on daemon stdout instead of polling the socket path.
 - Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
   tooling without changing the current local socket protocol; nested local
   daemons append inherited `NMUX_ORIGIN` values as a local hop-chain hint.

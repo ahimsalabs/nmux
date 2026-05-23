@@ -90,7 +90,8 @@ nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 
 Detach the live client with Ctrl-]; stop the daemon in shell 1 with Ctrl-C when
 finished. `--ready-json` prints one JSON line after the socket is bound and the
-initial pane starts, so scripts do not need to poll the socket path. See
+initial pane starts, or an `event:error` line if startup fails before readiness,
+so scripts do not need to poll the socket path. See
 [docs/running.md](docs/running.md) for socket selection, one-shot attach,
 persisted reattach, scrollback, resize, and opt-in `libghostty-vt`
 examples.
@@ -225,7 +226,8 @@ survives repeated live client detach and reattach until you stop it with Ctrl-C
 in the daemon shell.
 Add `--ready-json` to have `nmuxd` print a single readiness object after bind
 and pane startup; the object includes the socket path/source, daemon mode,
-terminal engine, and resize policy.
+terminal engine, and resize policy. If bind or pane startup fails first, the
+same flag prints a single JSON error event before the usual stderr failure.
 State load/save failures include the state path in the error, and state saves
 write a temporary file before renaming it into place.
 Bounded client loops require `--iterations` greater than zero.

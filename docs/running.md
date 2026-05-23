@@ -84,6 +84,13 @@ pane has started:
 {"event":"ready","NMUX_SOCKET":"/tmp/nmux.sock","source":"--socket","mode":"live-forever","terminal_engine":"interim","resize_policy":"fixed"}
 ```
 
+If startup fails before that point, `--ready-json` prints an error event before
+the usual stderr message:
+
+```json
+{"event":"error","error":{"message":"socket path already exists: /tmp/nmux.sock; remove it if it is stale or pass --socket PATH for a different workspace"}}
+```
+
 Run the timed default-plus-opt-in backend `libghostty-vt` validation sample
 when gathering local default-engine-promotion evidence:
 
