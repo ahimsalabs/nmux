@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, TryRecvError};
+use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -101,6 +101,7 @@ const FOCUS_EVENT_NAMES: &[&str] = &["gained", "lost"];
 const MOUSE_ACTION_NAMES: &[&str] = &["press", "release", "motion"];
 const MOUSE_BUTTON_NAMES: &[&str] = &["none", "left", "middle", "right", "wheel-up", "wheel-down"];
 const LOCAL_ECHO_NAMES: &[&str] = &["off", "tty"];
+const DEFAULT_MANAGED_STARTUP_TIMEOUT_MS: u64 = 5000;
 
 fn main() {
     if let Err(err) = run() {
@@ -590,7 +591,7 @@ fn run_managed(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
         args.state_path = Some(workspace.state_path.clone());
     }
     if args.connect_timeout_ms.is_none() {
-        args.connect_timeout_ms = Some(5000);
+        args.connect_timeout_ms = Some(DEFAULT_MANAGED_STARTUP_TIMEOUT_MS);
     }
     let command = args
         .start_command
@@ -609,6 +610,7 @@ fn run_managed(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
         &command,
         args.start_working_dir.as_deref(),
         &args.start_env,
+        Duration::from_millis(args.startup_timeout_ms),
     ) {
         Ok(daemon) => daemon,
         Err(err) => {
@@ -686,6 +688,7 @@ impl ManagedDaemon {
         command: &str,
         working_dir: Option<&str>,
         env: &[(String, String)],
+        startup_timeout: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let nmuxd = nmuxd_binary_path()?;
         let socket_path = socket_path
@@ -716,20 +719,47 @@ impl ManagedDaemon {
             .stdout
             .take()
             .ok_or("managed nmuxd stdout was not captured")?;
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => {
+        let (ready_tx, ready_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+            let result = match reader.read_line(&mut line) {
+                Ok(0) => Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "managed nmuxd exited before readiness",
+                )),
+                Ok(_) => Ok(line),
+                Err(err) => Err(err),
+            };
+            let _ = ready_tx.send(result);
+        });
+
+        let line = match ready_rx.recv_timeout(startup_timeout) {
+            Ok(Ok(line)) => line,
+            Ok(Err(err)) if err.kind() == io::ErrorKind::UnexpectedEof => {
                 let _ = child.wait();
                 return Err("managed nmuxd exited before readiness".into());
             }
-            Ok(_) => {}
-            Err(err) => {
+            Ok(Err(err)) => {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(format!("failed to read managed nmuxd readiness: {err}").into());
             }
-        }
+            Err(RecvTimeoutError::Timeout) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "managed nmuxd did not become ready within {} ms",
+                    startup_timeout.as_millis()
+                )
+                .into());
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("managed nmuxd readiness reader stopped unexpectedly".into());
+            }
+        };
         if line.contains("\"event\":\"ready\"") {
             return Ok(Self { child });
         }
@@ -1412,6 +1442,7 @@ struct Args {
     start_command: Option<String>,
     start_working_dir: Option<String>,
     start_env: Vec<(String, String)>,
+    startup_timeout_ms: u64,
     stdin_input: bool,
     stdin_bytes: bool,
     no_input: bool,
@@ -1524,6 +1555,8 @@ struct RawArgs {
         allow_hyphen_values = true
     )]
     start_env: Vec<(String, String)>,
+    #[arg(long = "startup-timeout-ms", value_name = "MS")]
+    startup_timeout_ms: Option<String>,
     #[arg(long = "stdin", action = ArgAction::SetTrue)]
     stdin_input: bool,
     #[arg(long = "stdin-bytes", action = ArgAction::SetTrue)]
@@ -1581,6 +1614,7 @@ where
     let scrollback_start_set = raw.scrollback_start.is_some();
     let scrollback_count_set = raw.scrollback_count.is_some();
     let scrollback_tail_set = raw.scrollback_tail.is_some();
+    let startup_timeout_set = raw.startup_timeout_ms.is_some();
     let scrollback_start_line = raw
         .scrollback_start
         .map(|value| parse_numeric_arg("--scrollback-start", value))
@@ -1612,6 +1646,11 @@ where
         .connect_timeout_ms
         .map(|value| parse_numeric_arg("--connect-timeout-ms", value))
         .transpose()?;
+    let startup_timeout_ms = raw
+        .startup_timeout_ms
+        .map(|value| parse_numeric_arg("--startup-timeout-ms", value))
+        .transpose()?
+        .unwrap_or(DEFAULT_MANAGED_STARTUP_TIMEOUT_MS);
     let iterations = raw
         .iterations
         .map(|value| parse_numeric_arg("--iterations", value))
@@ -1706,6 +1745,7 @@ where
             live_resize,
             interval_ms,
             connect_timeout_ms,
+            startup_timeout_ms,
         )?;
         validate_scrollback_selection_args(ScrollbackSelectionArgFlags {
             no_scrollback_set: raw.no_scrollback,
@@ -1746,6 +1786,7 @@ where
             start_command_set: raw.start_command.is_some(),
             start_working_dir_set: start_working_dir.is_some(),
             start_env_set: !raw.start_env.is_empty(),
+            startup_timeout_set,
         })?;
     }
     if let Some(mouse_event) = mouse_event.as_mut() {
@@ -1790,6 +1831,7 @@ where
         start_command: raw.start_command,
         start_working_dir,
         start_env: raw.start_env,
+        startup_timeout_ms,
         stdin_input: raw.stdin_input,
         stdin_bytes,
         no_input: raw.no_input,
@@ -2576,6 +2618,7 @@ fn validate_positive_numeric_args(
     live_resize: Option<(u32, u32)>,
     interval_ms: u64,
     connect_timeout_ms: Option<u64>,
+    startup_timeout_ms: u64,
 ) -> Result<(), &'static str> {
     if scrollback_start_line == 0 {
         return Err("--scrollback-start must be greater than 0");
@@ -2591,6 +2634,9 @@ fn validate_positive_numeric_args(
     }
     if connect_timeout_ms == Some(0) {
         return Err("--connect-timeout-ms must be greater than 0");
+    }
+    if startup_timeout_ms == 0 {
+        return Err("--startup-timeout-ms must be greater than 0");
     }
     if live_resize.is_some_and(|(cols, rows)| {
         cols == 0 || rows == 0 || cols > u16::MAX as u32 || rows > u16::MAX as u32
@@ -2749,6 +2795,7 @@ struct ClientModeArgs {
     start_command_set: bool,
     start_working_dir_set: bool,
     start_env_set: bool,
+    startup_timeout_set: bool,
 }
 
 fn validate_mode_args(args: ClientModeArgs) -> Result<(), &'static str> {
@@ -2763,6 +2810,9 @@ fn validate_mode_args(args: ClientModeArgs) -> Result<(), &'static str> {
     }
     if args.start_env_set && !args.start {
         return Err("--env requires --start");
+    }
+    if args.startup_timeout_set && !args.start {
+        return Err("--startup-timeout-ms requires --start");
     }
     if args.live && args.follow {
         return Err("--follow cannot be combined with --live");
@@ -2835,6 +2885,7 @@ Options:
   --print-socket             Print the resolved socket path and exit
   --print-socket-json        Print the resolved socket path as JSON and exit
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
+  --startup-timeout-ms MS    Wait up to this long for managed nmuxd readiness
   --state-info               Inspect --state cache without connecting
   --state-info-json          Inspect --state cache as JSON without connecting
   --key TEXT                 Text input to send; opts into read-write attach
@@ -2882,6 +2933,7 @@ Notes:
   --state-info and --state-info-json require --state PATH and do not connect.
   --json emits one object for one-shot attach, or newline-delimited live events.
   --start waits for nmuxd --ready-json and cleans up the private daemon on exit.
+  --startup-timeout-ms controls that managed readiness wait and defaults to 5000.
   --shell is shorthand for --start --live --stdin-bytes --redraw using $SHELL or sh.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
@@ -3990,6 +4042,13 @@ mod tests {
         );
         assert_eq!(
             super_validate_mode_args(ClientModeArgs {
+                startup_timeout_set: true,
+                ..ClientModeArgs::default()
+            }),
+            Err("--startup-timeout-ms requires --start")
+        );
+        assert_eq!(
+            super_validate_mode_args(ClientModeArgs {
                 follow: true,
                 key_set: true,
                 ..ClientModeArgs::default()
@@ -4437,49 +4496,53 @@ mod tests {
     #[test]
     fn numeric_validation_rejects_zero_live_loop_values() {
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, None, 0, None),
+            validate_positive_numeric_args(1, 2, None, None, 0, None, 1),
             Err("--interval-ms must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, Some((0, 24)), 1000, None),
+            validate_positive_numeric_args(1, 2, None, Some((0, 24)), 1000, None, 1),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, Some((80, 0)), 1000, None),
+            validate_positive_numeric_args(1, 2, None, Some((80, 0)), 1000, None, 1),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, Some((65536, 24)), 1000, None),
+            validate_positive_numeric_args(1, 2, None, Some((65536, 24)), 1000, None, 1),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, Some((80, 65536)), 1000, None),
+            validate_positive_numeric_args(1, 2, None, Some((80, 65536)), 1000, None, 1),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, None, 1000, Some(0)),
+            validate_positive_numeric_args(1, 2, None, None, 1000, Some(0), 1),
             Err("--connect-timeout-ms must be greater than 0")
         );
-        assert!(validate_positive_numeric_args(1, 2, None, None, 1000, Some(1)).is_ok());
-        assert!(validate_positive_numeric_args(1, 2, Some(1), None, 1000, None).is_ok());
-        assert!(validate_positive_numeric_args(1, 2, None, None, 1000, None).is_ok());
+        assert_eq!(
+            validate_positive_numeric_args(1, 2, None, None, 1000, None, 0),
+            Err("--startup-timeout-ms must be greater than 0")
+        );
+        assert!(validate_positive_numeric_args(1, 2, None, None, 1000, Some(1), 1).is_ok());
+        assert!(validate_positive_numeric_args(1, 2, Some(1), None, 1000, None, 1).is_ok());
+        assert!(validate_positive_numeric_args(1, 2, None, None, 1000, None, 1).is_ok());
         assert!(
-            validate_positive_numeric_args(1, 2, None, Some((65535, 65535)), 1000, None).is_ok()
+            validate_positive_numeric_args(1, 2, None, Some((65535, 65535)), 1000, None, 1).is_ok()
         );
     }
 
     #[test]
     fn numeric_validation_rejects_zero_scrollback_values() {
         assert_eq!(
-            validate_positive_numeric_args(0, 2, None, None, 1000, None),
+            validate_positive_numeric_args(0, 2, None, None, 1000, None, 1),
             Err("--scrollback-start must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 0, None, None, 1000, None),
+            validate_positive_numeric_args(1, 0, None, None, 1000, None, 1),
             Err("--scrollback-count must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, Some(0), None, 1000, None),
+            validate_positive_numeric_args(1, 2, Some(0), None, 1000, None, 1),
             Err("--scrollback-tail must be greater than 0")
         );
     }
@@ -4552,6 +4615,13 @@ mod tests {
     fn no_scrollback_arg_skips_scrollback_fetch() {
         let args = args_from_iter(["--no-scrollback"]).expect("parse no-scrollback args");
         assert!(args.no_scrollback);
+    }
+
+    #[test]
+    fn startup_timeout_arg_controls_managed_readiness_wait() {
+        let args = args_from_iter(["--start", "--startup-timeout-ms", "123"])
+            .expect("parse startup timeout args");
+        assert_eq!(args.startup_timeout_ms, 123);
     }
 
     #[test]

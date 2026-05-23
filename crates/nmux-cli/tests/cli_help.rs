@@ -20,6 +20,7 @@ fn nmux_help_lists_live_client_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
+    assert!(stdout.contains("--startup-timeout-ms MS"));
     assert!(stdout.contains("--print-context"));
     assert!(stdout.contains("--print-context-json"));
     assert!(stdout.contains("--print-socket"));
@@ -49,6 +50,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--cwd DIR"));
     assert!(stdout.contains("--env KEY=VALUE"));
     assert!(stdout.contains("--start waits for nmuxd --ready-json"));
+    assert!(stdout.contains("--startup-timeout-ms controls that managed readiness wait"));
     assert!(stdout.contains("Without an explicit input or resize flag"));
     assert!(stdout.contains("interim text surface"));
     assert!(
@@ -737,6 +739,10 @@ fn nmux_rejects_live_only_flags_outside_live_mode() {
     assert_nmux_rejects(&["--cwd", "/tmp"], "nmux: --cwd requires --start");
     assert_nmux_rejects(&["--env", "NMUX_DEMO=1"], "nmux: --env requires --start");
     assert_nmux_rejects(
+        &["--startup-timeout-ms", "100"],
+        "nmux: --startup-timeout-ms requires --start",
+    );
+    assert_nmux_rejects(
         &["--cols", "100", "--rows", "30"],
         "nmux: --cols and --rows require --live",
     );
@@ -791,6 +797,10 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--connect-timeout-ms", "0", "--no-input"],
         "nmux: --connect-timeout-ms must be greater than 0",
+    );
+    assert_nmux_rejects(
+        &["--start", "--startup-timeout-ms", "0"],
+        "nmux: --startup-timeout-ms must be greater than 0",
     );
     assert_nmux_rejects(
         &["--scrollback-start", "0", "--no-input"],

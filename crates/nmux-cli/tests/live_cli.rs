@@ -898,6 +898,8 @@ fn managed_start_one_shot_cli_runs_private_daemon() {
     let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
             "--start",
+            "--startup-timeout-ms",
+            "10000",
             "--command",
             "printf 'managed-one-ready\n'; cat >/dev/null",
         ])

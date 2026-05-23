@@ -135,9 +135,10 @@ Done:
   `nmuxd --live-forever --ready-json` when paired with `--live`, waits for
   readiness internally, attaches over a short temporary socket path, and cleans
   up the managed daemon when the client exits; managed `--cwd DIR` and
-  repeatable `--env KEY=VALUE` are forwarded to the private daemon. `nmux
-  --shell` provides the common interactive private shell shorthand over that
-  same managed path.
+  repeatable `--env KEY=VALUE` are forwarded to the private daemon, and
+  `--startup-timeout-ms MS` controls the managed readiness wait. `nmux --shell`
+  provides the common interactive private shell shorthand over that same
+  managed path.
 - Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
   tooling without changing the current local socket protocol; nested local
   daemons append inherited `NMUX_ORIGIN` values as a local hop-chain hint.

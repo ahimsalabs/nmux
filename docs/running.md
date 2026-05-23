@@ -49,6 +49,7 @@ For a private local workspace owned by one client command, use `--start`:
 ```sh
 nix develop . -c cargo run --bin nmux -- --start --command "printf 'hello from pty\n'; cat >/dev/null"
 nix develop . -c cargo run --bin nmux -- --start --cwd "$PWD" --env NMUX_DEMO=1 --command 'printf "cwd:%s env:%s\n" "$PWD" "$NMUX_DEMO"; cat >/dev/null'
+nix develop . -c cargo run --bin nmux -- --start --startup-timeout-ms 10000 --command "$SHELL"
 nix develop . -c cargo run --bin nmux -- --shell
 ```
 
@@ -59,8 +60,10 @@ readiness event internally, attach through the normal nmux protocol, and stop
 the managed daemon when the client exits. If `--command SHELL` is omitted, the
 managed daemon runs `$SHELL` and falls back to `sh`. Managed `--cwd DIR` and
 repeatable `--env KEY=VALUE` are passed to the private daemon before
-daemon-owned `NMUX_*` identity variables are injected. `nmux --shell` expands
-to the common interactive private shell path: `--start --live --stdin-bytes
+daemon-owned `NMUX_*` identity variables are injected.
+`--startup-timeout-ms MS` controls the managed readiness wait before the client
+kills the private daemon and reports setup failure. `nmux --shell` expands to
+the common interactive private shell path: `--start --live --stdin-bytes
 --redraw`.
 
 Each attach starts with an `AttachRequest` carrying actor identity, attach mode,
@@ -256,7 +259,8 @@ an isolated temporary socket and state path unless `--socket` or `--state` is
 supplied explicitly. Add `--live` when the managed daemon should remain
 attached after the initial one-shot response. Add `--cwd DIR` or repeatable
 `--env KEY=VALUE` when the managed pane command needs launch context without a
-separate `nmuxd` shell.
+separate `nmuxd` shell. Add `--startup-timeout-ms MS` when slow local startup
+needs a longer private-daemon readiness window than the default 5000 ms.
 Use `nmux --shell` for the common local interactive form without spelling the
 managed daemon, live attach, byte input, and redraw flags separately.
 
