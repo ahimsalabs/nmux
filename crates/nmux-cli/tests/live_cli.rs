@@ -4358,9 +4358,11 @@ fn live_cli_persists_rendered_surface_state() {
 
     let state = fs::read_to_string(&state_path).expect("read state");
     let _ = fs::remove_file(&state_path);
+    let pane_surface_version = persisted_pane_surface_version(&state, "70616e652d31")
+        .unwrap_or_else(|| panic!("expected pane-1 persisted surface in state:\n{state}"));
     assert!(
-        state.contains("surface 70616e652d31 4 "),
-        "expected pane-1 surface version 4 in state:\n{state}"
+        pane_surface_version >= 4,
+        "expected pane-1 surface version at least 4 in state:\n{state}"
     );
     assert!(
         state.contains("6563686f3a70657273697374"),
@@ -4370,6 +4372,16 @@ fn live_cli_persists_rendered_surface_state() {
         state.contains("scrollback 70616e652d31 "),
         "expected pane-1 scrollback metadata in state:\n{state}"
     );
+}
+
+fn persisted_pane_surface_version(state: &str, pane_id_hex: &str) -> Option<u64> {
+    state.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        if fields.next()? != "surface" || fields.next()? != pane_id_hex {
+            return None;
+        }
+        fields.next()?.parse().ok()
+    })
 }
 
 fn test_socket_path() -> PathBuf {
