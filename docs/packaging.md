@@ -23,6 +23,7 @@ default engine:
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
+nix develop . -c make packaging-archive-sample
 ```
 
 The target prints `make toolchain-info`, validates the optional native-VT
@@ -65,6 +66,14 @@ best-effort dynamic dependency output from `otool -L` or `ldd`, and a locked
 `cargo tree` for `nmux-cli --features libghostty-vt`. This is local provenance
 evidence, not a release signing or supply-chain attestation format.
 
+`make packaging-archive-sample` writes
+`target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` and
+a matching `.sha256` file, extracts the archive under
+`target/packaging-libghostty-vt/archive/check`, and verifies the wrapped
+`nmux --version` and `nmuxd --version` commands from the extracted layout. This
+is a local release-artifact smoke check; it is still not a signed, notarized,
+published, or platform-native package.
+
 Current local Darwin evidence shows the default release binaries run directly
 and the opt-in `libghostty-vt` release binaries run when the produced
 `ghostty-install/lib` directory is supplied as a runtime library path. A real
@@ -84,6 +93,7 @@ requirement, packaging work must answer:
 - how source-fetch policy, offline builds, cache provenance, and license review
   are handled for the native Ghostty source;
 - which provenance and checksum manifest is required for release artifacts;
+- what archive/package format is published per supported target;
 - whether `nmuxd --terminal-engine libghostty-vt` is enabled in shipped
   binaries or reserved for developer builds;
 - how release checks map to `make check`, `make check-ghostty-vt`, and

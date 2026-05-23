@@ -10,6 +10,7 @@ nix develop . -c make promotion-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
+nix develop . -c make packaging-archive-sample
 ```
 
 `flake.nix` currently provides:
@@ -73,6 +74,15 @@ That target writes `target/packaging-libghostty-vt/package/PROVENANCE.txt` with
 staged file sizes and SHA-256 hashes, `Cargo.lock` hash, toolchain/source mode,
 dependency tree, native runtime-library artifacts, and best-effort dynamic
 dependency output.
+For local archive evidence, use:
+
+```sh
+nix develop . -c make packaging-archive-sample
+```
+
+That target writes `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`,
+writes a matching `.sha256` file, extracts the archive, and verifies the wrapped
+`nmux` and `nmuxd` binaries from the extracted layout.
 
 ## Non-Nix Equivalents
 

@@ -62,6 +62,7 @@ nix develop . -c make promotion-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
+nix develop . -c make packaging-archive-sample
 ```
 
 Record the host, command, result, timing, cache state, source-fetch mode, and
@@ -89,6 +90,9 @@ and verifies the wrapped binaries can run from that local layout.
 `make packaging-provenance-sample` writes a manifest for that staged layout with
 file hashes, toolchain/source mode, dependency tree, native runtime-library
 artifacts, and dynamic dependency output.
+`make packaging-archive-sample` archives the staged layout, writes an archive
+SHA-256 file, extracts it, and verifies the wrapped binaries from the extracted
+layout.
 
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty

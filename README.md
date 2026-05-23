@@ -36,6 +36,7 @@ nix develop . -c make promotion-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
+nix develop . -c make packaging-archive-sample
 ```
 
 The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
@@ -50,6 +51,8 @@ target directories and prints artifact sizes plus binary versions.
 wrappers that resolve the native VT library from `../lib`.
 `make packaging-provenance-sample` writes a manifest with staged file hashes,
 toolchain/source mode, dependency tree, and dynamic dependency output.
+`make packaging-archive-sample` archives the staged layout, writes a SHA-256
+file, extracts it, and verifies the wrapped binaries from the archive.
 See [docs/contributor-workflow.md](docs/contributor-workflow.md) for when to use
 the default gate, the opt-in VT gate, or the combined promotion-evidence gate.
 See [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions
