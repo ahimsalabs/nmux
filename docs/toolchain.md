@@ -118,13 +118,16 @@ nix develop . -c make source-fetch-offline-probe
 nix develop . -c make source-fetch-offline-probe-verify
 ```
 
-That target writes `target/source-fetch-provenance/SOURCE_FETCH.txt` with the
-active source mode, `GHOSTTY_SOURCE_DIR`, `GIT_CONFIG_GLOBAL`, `Cargo.lock`
-SHA-256, toolchain info, and locked `Cargo.lock` records for `libghostty-vt`
-and `libghostty-vt-sys`.
+The provenance sample writes
+`target/source-fetch-provenance/SOURCE_FETCH.txt` with the active source mode,
+`GHOSTTY_SOURCE_DIR`, `GIT_CONFIG_GLOBAL`, `Cargo.lock` SHA-256, toolchain
+info, and locked `Cargo.lock` records for `libghostty-vt` and
+`libghostty-vt-sys`. The provenance verifier checks the existing report
+without collecting a new sample.
 The offline probe writes `target/source-fetch-offline/OFFLINE_PROBE.txt` and
 checks whether `nmux-core --features libghostty-vt` can compile from current
-caches with `CARGO_NET_OFFLINE=true` and `GIT_CONFIG_GLOBAL=/dev/null`. It is
+caches with `CARGO_NET_OFFLINE=true` and `GIT_CONFIG_GLOBAL=/dev/null`. The
+offline-probe verifier checks the existing probe report. Treat the probe as
 cache-present evidence only, not cold-checkout, CI cache-miss, or source-policy
 evidence.
 For local release-binary evidence, use:
@@ -146,9 +149,11 @@ nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-layout-verify
 ```
 
-That target stages the opt-in binaries, wrapper scripts, and `libghostty-vt`
-runtime libraries under `target/packaging-libghostty-vt/package`, then verifies
-the wrapped binaries can run from that layout.
+The sample target stages the opt-in binaries, wrapper scripts, and
+`libghostty-vt` runtime libraries under
+`target/packaging-libghostty-vt/package`, then runs the layout verifier. Run
+`make packaging-layout-verify` directly to check an already staged layout
+without rebuilding it.
 For local package provenance evidence, use:
 
 ```sh
