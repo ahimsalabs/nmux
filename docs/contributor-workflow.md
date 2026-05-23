@@ -65,6 +65,11 @@ any CI or packaging context in
 `make check-all` sample is useful evidence, but it does not change the default
 engine by itself.
 
+Outside the Nix shell, the Makefile checks for `flatc`, `cargo`, and the
+optional native-VT `zig` before running the full gate. Record missing-tool
+failures too; they are setup evidence for the non-Nix checklist, not passing
+promotion evidence.
+
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty
 source policy, or release binaries.

@@ -176,14 +176,21 @@ Done:
 - Feature-gated live CLI coverage now proves a persisted `libghostty-vt` live client can reattach with a known surface version, trigger a style-table change, and recover through a full surface refresh without leaking raw ANSI controls.
 - ADR 0023 closes M13 as the opt-in backend extraction milestone, keeps `libghostty-vt` out of the default path, and splits post-M13 work into default-engine promotion readiness, frontend hydration, future protocol objects, and local usability tracks.
 - [The default-engine promotion evidence tracker](default-engine-promotion.md) records the native build, CI, toolchain, source-fetch, packaging, workflow, and state-sync evidence required before promotion.
-- The tracker includes multiple warm local Darwin arm64 `make check-all` samples, including a post-info-flag run, and confirms the Nix shell provides `flatc`; remaining promotion evidence still needs more local platforms, cold-cache or cold-checkout behavior, CI behavior, non-Nix workflow, source-fetch policy, and packaging decisions.
+- The tracker includes multiple warm local Darwin arm64 `make check-all`
+  samples, including a post-info-flag run, confirms the Nix shell provides
+  `flatc`, and records a local non-Nix `make check-all` attempt that failed
+  during tool preflight because `flatc` was absent from the host PATH; remaining
+  promotion evidence still needs more local platforms, cold-cache or
+  cold-checkout behavior, CI behavior, a complete non-Nix workflow,
+  source-fetch policy, and packaging decisions.
 - [Future protocol tracks](protocol-futures.md) split hyperlink identity, images,
   richer damage, command lifecycle metadata, and physical-key/text-event input
   into explicit pre-schema work.
 - README, running docs, and the terminal extraction checklist use post-M14 language for roadmap focus, implemented `libghostty-vt` mapping, attached-pane authority during reconnect, and explicit scrollback range semantics.
-- [Toolchain notes](toolchain.md) document the supported Nix path and non-Nix
-  requirements checklist; promotion still needs platform-specific validation,
-  CI behavior, source-fetch policy, and packaging decisions.
+- [Toolchain notes](toolchain.md) document the supported Nix path, Makefile
+  tool preflight, and non-Nix requirements checklist; promotion still needs
+  platform-specific validation, CI behavior, source-fetch policy, and packaging
+  decisions.
 - [Source fetch policy](source-fetch-policy.md) records the current opt-in
   `libghostty-vt-sys` fetch behavior and the remaining packaged/default-build
   policy choices.
