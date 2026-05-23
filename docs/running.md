@@ -11,6 +11,26 @@ default-engine smoke path covers live stdin, persisted reattach, nested context
 reporting, and same-path socket recreation so stale cached surfaces do not leak
 into a new daemon.
 
+## Quick Start
+
+Run the default end-to-end smoke first:
+
+```sh
+nix develop . -c make local-smoke
+```
+
+For a persistent local workspace, start the daemon in one shell and attach from
+another:
+
+```sh
+nix develop . -c cargo run --bin nmuxd -- --live-forever
+nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
+```
+
+Detach the live client with Ctrl-]. This uses the default `interim` engine and
+the shared default socket path unless `--socket` or `NMUX_SOCKET` selects a
+different local workspace.
+
 Each attach starts with an `AttachRequest` carrying actor identity, attach mode,
 focused pane, and known pane surface versions. The daemon polls process output
 into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`,
