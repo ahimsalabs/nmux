@@ -2600,11 +2600,30 @@ fn mouse_button_from_protocol(
     })
 }
 
-fn paste_input_bytes(text: &str, bracketed: bool) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BracketedPasteMode {
+    Disabled,
+    Enabled,
+}
+
+impl BracketedPasteMode {
+    fn from_enabled(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
+fn paste_input_bytes(
+    text: &str,
+    mode: BracketedPasteMode,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     if text.contains("\x1b[201~") {
         return Err("paste input contains a bracketed paste terminator".into());
     }
-    if !bracketed {
+    if mode == BracketedPasteMode::Disabled {
         return Ok(text.as_bytes().to_vec());
     }
 
@@ -5273,7 +5292,10 @@ impl InputSummary {
                 .ok_or_else(|| "terminal engine cannot encode mouse input".into());
         }
         if let Some(paste_text) = self.paste_text.as_deref() {
-            return paste_input_bytes(paste_text, session.pane_bracketed_paste(&self.pane_id));
+            return paste_input_bytes(
+                paste_text,
+                BracketedPasteMode::from_enabled(session.pane_bracketed_paste(&self.pane_id)),
+            );
         }
         Ok(self.bytes.clone())
     }
