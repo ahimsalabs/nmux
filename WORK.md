@@ -321,7 +321,8 @@ Current local scriptability is narrower but real: `nmux --json` emits
 machine-readable attach objects with authoritative attach status, terminal
 state, structured current-surface rows, style/hyperlink tables, rendered text,
 and structured scrollback rows; `nmux --live --json` streams newline-delimited
-attach/workspace/surface/error events with structured surface row payloads.
+attach/workspace/surface/error events with structured surface row payloads,
+including setup failures before attach.
 
 Adapters are sidecars:
 
@@ -504,7 +505,7 @@ M12: live workspace usability [done]
   nmux --connect-timeout-ms waits for daemon socket startup races across attach modes
   local PTY commands receive NMUX, NMUX_SESSION_ID, NMUX_PANE_ID, NMUX_SOCKET, and NMUX_ORIGIN environment variables for nested nmux tooling, and nested local daemons append inherited NMUX_ORIGIN as a local hop chain
   nmuxd --cwd and repeatable nmuxd --env KEY=VALUE configure local pane command launch context before daemon-owned NMUX_* identity variables are injected
-  nmux --json and nmux --live --json expose structured surface, scrollback, style, hyperlink, terminal-state, lifecycle, and error payloads for scripts instead of reducing backend-owned state to rendered text only
+  nmux --json and nmux --live --json expose structured surface, scrollback, style, hyperlink, terminal-state, lifecycle, setup-error, and protocol-error payloads for scripts instead of reducing backend-owned state to rendered text only
   nmux --state-info and nmux --state-info-json inspect persisted client cache shape without opening a socket, so localdev scripts can diagnose scoped surfaces and scrollback metadata offline
   help output documents NMUX_ORIGIN local hop-chain behavior for nested clients and daemons
   nmux --print-context reports inherited NMUX_* pane identity as exact key/value lines without connecting, fails clearly outside nmux, and has nested PTY smoke coverage

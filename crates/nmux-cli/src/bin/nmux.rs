@@ -194,15 +194,50 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    let _raw_terminal = RawTerminalGuard::enable_if_needed(args.stdin_bytes, args.local_echo)?;
-    let _redraw_terminal = RedrawTerminalGuard::enable_if_needed(args.redraw, stdout_is_tty())?;
+    let _raw_terminal = match RawTerminalGuard::enable_if_needed(args.stdin_bytes, args.local_echo)
+    {
+        Ok(guard) => guard,
+        Err(err) => {
+            report_live_setup_error(args, &err)?;
+            return Err(err.into());
+        }
+    };
+    let _redraw_terminal = match RedrawTerminalGuard::enable_if_needed(args.redraw, stdout_is_tty())
+    {
+        Ok(guard) => guard,
+        Err(err) => {
+            report_live_setup_error(args, &err)?;
+            return Err(err.into());
+        }
+    };
     warn_if_interim_surface_fidelity_is_visible(args.stdin_bytes);
     let mut sigwinch_resize =
-        SigwinchResize::enable_if_needed(args.stdin_bytes, args.live_resize.is_some())?;
-    let mut client_state = load_client_state(args.state_path.as_deref())?;
-    let mut stream = connect_to_daemon(args)?;
+        match SigwinchResize::enable_if_needed(args.stdin_bytes, args.live_resize.is_some()) {
+            Ok(resize) => resize,
+            Err(err) => {
+                report_live_setup_error(args, &err)?;
+                return Err(err.into());
+            }
+        };
+    let mut client_state = match load_client_state(args.state_path.as_deref()) {
+        Ok(state) => state,
+        Err(err) => {
+            report_live_setup_error(args, err.as_ref())?;
+            return Err(err);
+        }
+    };
+    let mut stream = match connect_to_daemon(args) {
+        Ok(stream) => stream,
+        Err(err) => {
+            report_live_setup_error(args, err.as_ref())?;
+            return Err(err);
+        }
+    };
     let socket_scope = local::socket_identity(&args.socket_path).ok();
-    stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
+    if let Err(err) = stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms))) {
+        report_live_setup_error(args, &err)?;
+        return Err(err.into());
+    }
     let stdin_lines = if args.stdin_input {
         Some(spawn_stdin_line_reader())
     } else {
@@ -252,11 +287,26 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
-    local::write_attach_request(&mut stream, &options.request)?;
-    let snapshot = local::attach_from_stream(&mut stream)?;
+    if let Err(err) = local::write_attach_request(&mut stream, &options.request) {
+        report_live_setup_error(args, &err)?;
+        return Err(err.into());
+    }
+    let snapshot = match local::attach_from_stream(&mut stream) {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            report_live_setup_error(args, err.as_ref())?;
+            return Err(err);
+        }
+    };
     let attached_pane_id = snapshot.status.pane_id.clone();
     client_state.apply_scope(local::socket_identity(&args.socket_path).ok());
-    let mut rendered = client_state.render_attach(snapshot)?;
+    let mut rendered = match client_state.render_attach(snapshot) {
+        Ok(rendered) => rendered,
+        Err(err) => {
+            report_live_setup_error(args, err.as_ref())?;
+            return Err(err);
+        }
+    };
     if rendered.surface_text.is_none() {
         rendered.surface_text = client_state.cached_surface_text(&attached_pane_id);
         if let Some(surface) = client_state.cached_surface_summary(&attached_pane_id) {
@@ -274,14 +324,20 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .surface_text
         .clone()
         .unwrap_or_else(|| current_workspace.display_line());
-    let scrollback = initial_live_scrollback(
+    let scrollback = match initial_live_scrollback(
         args,
         &mut stream,
         &mut client_sequence,
         &attached_pane_id,
         &client_state,
         socket_scope,
-    )?;
+    ) {
+        Ok(scrollback) => scrollback,
+        Err(err) => {
+            report_live_setup_error(args, err.as_ref())?;
+            return Err(err);
+        }
+    };
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
     }
@@ -532,6 +588,17 @@ fn finish_live(
     save_live_state(args, client_state)?;
     if args.output_json {
         println!("{}", format_live_detach_json(reason));
+        flush_stdout()?;
+    }
+    Ok(())
+}
+
+fn report_live_setup_error(
+    args: &Args,
+    error: &(dyn std::error::Error + 'static),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if args.output_json {
+        println!("{}", format_live_cli_error_json(error));
         flush_stdout()?;
     }
     Ok(())
@@ -1652,13 +1719,21 @@ fn format_live_detach_json(reason: LiveDetachReason) -> String {
 }
 
 fn format_cli_error_json(error: &(dyn std::error::Error + 'static)) -> String {
-    if let Some(error) = error.downcast_ref::<local::ServerError>() {
-        return format!("{{\"error\":{}}}", format_error_summary_json(&error.error));
-    }
+    format!("{{\"error\":{}}}", format_cli_error_body_json(error))
+}
+
+fn format_live_cli_error_json(error: &(dyn std::error::Error + 'static)) -> String {
     format!(
-        "{{\"error\":{{\"message\":{}}}}}",
-        local::json_string(&error.to_string())
+        "{{\"event\":\"error\",\"error\":{}}}",
+        format_cli_error_body_json(error)
     )
+}
+
+fn format_cli_error_body_json(error: &(dyn std::error::Error + 'static)) -> String {
+    if let Some(error) = error.downcast_ref::<local::ServerError>() {
+        return format_error_summary_json(&error.error);
+    }
+    format!("{{\"message\":{}}}", local::json_string(&error.to_string()))
 }
 
 fn format_error_summary_json(error: &local::ErrorSummary) -> String {
@@ -2634,13 +2709,14 @@ mod tests {
         FocusEvent, KEY_NAME_ALIASES, LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent,
         SUPPORTED_KEY_NAMES, args_from_iter, format_cli_error_json, format_context_json,
         format_input_choices_json, format_key_names_json, format_live_attach_json,
-        format_live_detach_json, format_live_error_json, format_live_surface_update_json,
-        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        format_state_info_json, format_state_info_text, interim_surface_fidelity_warning_needed,
-        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
+        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
+        format_scrollback, format_state_info_json, format_state_info_text,
+        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -3084,6 +3160,15 @@ mod tests {
         assert_eq!(
             format_cli_error_json(&server_error),
             "{\"error\":{\"code\":\"pane-not-found\",\"message\":\"missing pane\",\"retryable\":false,\"pane_id\":\"pane-99\",\"input_seq\":0}}"
+        );
+        assert_eq!(
+            format_live_cli_error_json(&server_error),
+            "{\"event\":\"error\",\"error\":{\"code\":\"pane-not-found\",\"message\":\"missing pane\",\"retryable\":false,\"pane_id\":\"pane-99\",\"input_seq\":0}}"
+        );
+        let io_error = std::io::Error::other("setup failed");
+        assert_eq!(
+            format_live_cli_error_json(&io_error),
+            "{\"event\":\"error\",\"error\":{\"message\":\"setup failed\"}}"
         );
     }
 

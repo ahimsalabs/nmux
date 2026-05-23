@@ -990,6 +990,42 @@ fn nmux_reports_state_load_path_before_connecting() {
 }
 
 #[test]
+fn nmux_live_json_reports_state_load_setup_error() {
+    let state_path = test_state_path();
+    fs::write(&state_path, "not nmux state\n").expect("write bad state");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--json",
+            "--no-input",
+        ])
+        .output()
+        .expect("run nmux --live --json");
+    let _ = fs::remove_file(&state_path);
+
+    assert!(!output.status.success(), "nmux unexpectedly succeeded");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"event\":\"error\""),
+        "missing JSON error event:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"message\":\"failed to load client state")
+            && stdout.contains(state_path.to_str().expect("state path"))
+            && stdout.contains("invalid nmux client state header"),
+        "missing state-load JSON error context:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nmux: failed to load client state"),
+        "missing stderr state-load context:\n{stderr}"
+    );
+}
+
+#[test]
 fn nmux_reports_socket_path_when_daemon_is_missing() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
@@ -1012,6 +1048,40 @@ fn nmux_reports_socket_path_when_daemon_is_missing() {
     assert!(
         stderr.contains(socket_path.to_str().expect("socket path")),
         "missing socket path:\n{stderr}"
+    );
+}
+
+#[test]
+fn nmux_live_json_reports_missing_daemon_setup_error() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--json",
+            "--no-input",
+        ])
+        .output()
+        .expect("run nmux --live --json");
+
+    assert!(!output.status.success(), "nmux unexpectedly succeeded");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"event\":\"error\""),
+        "missing JSON error event:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"message\":\"failed to connect to nmux daemon at")
+            && stdout.contains(socket_path.to_str().expect("socket path")),
+        "missing socket JSON error context:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nmux: failed to connect to nmux daemon at"),
+        "missing stderr socket context:\n{stderr}"
     );
 }
 

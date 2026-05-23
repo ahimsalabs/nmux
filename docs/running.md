@@ -314,6 +314,9 @@ and hyperlink tables for scripts that need more than rendered fallback text.
 Successful live JSON sessions end with a `detach` event whose reason is
 `iteration-limit`, `stdin-eof`, `local-detach`, or `server-closed`, so scripts
 do not need to parse stderr lifecycle notes.
+Live JSON also emits `error` events for setup failures before attach, such as a
+corrupt `--state` file or missing daemon socket, and for protocol errors after
+attach.
 `--json` is mutually exclusive with `--follow` and `--redraw`.
 
 Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start`/`--scrollback-count` or `--scrollback-tail`; the printed header reports the actual returned row range and includes the total when the response is not the tail. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. State saves write a temporary file in the target directory and rename it into place. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
