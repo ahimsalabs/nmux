@@ -10,12 +10,12 @@ Accepted.
 
 ## Context
 
-ADR 0023 keeps `libghostty-vt` opt-in until native build, CI, source-fetch,
-packaging, and workflow costs are accepted deliberately. Local M14 evidence now
-shows that nmux can build opt-in release binaries, stage wrapper scripts and
-native `libghostty-vt` runtime libraries, archive that layout, verify binary
-versions from the extracted archive, and run a packaged daemon/client smoke
-test.
+ADR 0023 keeps `libghostty-vt` opt-in until native build cost, regular CI,
+non-Nix/toolchain provisioning, source-fetch policy, packaging, and workflow
+costs are accepted deliberately. Local M14 evidence now shows that nmux can
+build opt-in release binaries, stage wrapper scripts and native `libghostty-vt`
+runtime libraries, record package provenance, verify an archived layout, and run
+a relocated packaged daemon/client smoke test.
 
 Those samples prove a useful local layout, but they are not a release packaging
 decision. They do not define supported target triples, install paths, platform
