@@ -1,6 +1,25 @@
 # Toolchain Notes
 
-The supported development path is the Nix shell:
+The supported development path is the Nix shell. Most contributors only need
+the default-engine check and the local daemon/client smoke:
+
+```sh
+nix develop . -c make check
+nix develop . -c make local-smoke
+```
+
+Use a broader target only when the change needs the extra evidence:
+
+| Work type | Target |
+| --- | --- |
+| Normal default-engine or docs work | `nix develop . -c make check` and `nix develop . -c make local-smoke` |
+| Backend `libghostty-vt` correctness work | `nix develop . -c make check` and `nix develop . -c make check-ghostty-vt` |
+| Release-style local validation | `nix develop . -c make check-all` |
+| Default-engine promotion evidence | `nix develop . -c make promotion-evidence-bundle` then `nix develop . -c make promotion-evidence-verify` |
+| Source-fetch evidence | `nix develop . -c make source-fetch-provenance-sample` or `nix develop . -c make source-fetch-offline-probe` |
+| Packaging evidence | Start with `nix develop . -c make packaging-archive-runtime-smoke` |
+
+The complete target inventory is:
 
 ```sh
 nix develop . -c make check
