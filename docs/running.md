@@ -232,7 +232,8 @@ Informational flags such as `--version`, `--version-json`, `--help`,
 validation or socket/PTY work, so scripts can reuse broader command templates
 without accidentally opening a connection or starting a pane process.
 `--state-info` and `--state-info-json` require `--state PATH` and inspect the
-persisted client cache without connecting.
+persisted client cache without connecting. `--state-info-json` reports setup
+failures as JSON error objects.
 
 ```sh
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --print-socket

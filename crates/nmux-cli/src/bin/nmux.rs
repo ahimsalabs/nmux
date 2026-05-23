@@ -150,7 +150,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.state_info || args.state_info_json {
-        print_state_info(&args)?;
+        if let Err(err) = print_state_info(&args) {
+            report_cli_error(&args, err.as_ref())?;
+            return Err(err);
+        }
         return Ok(());
     }
 
@@ -617,7 +620,7 @@ fn report_cli_error(
     args: &Args,
     error: &(dyn std::error::Error + 'static),
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if args.output_json {
+    if args.output_json || args.state_info_json {
         println!("{}", format_cli_error_json(error));
         flush_stdout()?;
     }
