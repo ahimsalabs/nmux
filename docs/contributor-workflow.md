@@ -68,6 +68,7 @@ nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
 nix develop . -c make promotion-evidence-verify
 nix develop . -c make source-fetch-provenance-sample
+nix develop . -c make source-fetch-provenance-verify
 nix develop . -c make source-fetch-offline-probe
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
@@ -152,6 +153,9 @@ CI workflow performs the same downloaded-artifact verification after upload.
 `libghostty-vt` Cargo package records without inspecting Ghostty source. Use it
 when updating source-fetch evidence or comparing pinned-fetch versus local
 `GHOSTTY_SOURCE_DIR` samples.
+`make source-fetch-provenance-verify` checks an existing `SOURCE_FETCH.txt`
+against the current `Cargo.lock`, toolchain records, source-mode fields, and
+policy note without regenerating the report.
 `make source-fetch-offline-probe` checks whether the opt-in
 `nmux-core --features libghostty-vt` build can compile from current caches with
 `CARGO_NET_OFFLINE=true`. Treat this as cache-present evidence only, not
