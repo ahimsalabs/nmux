@@ -112,16 +112,9 @@ In another shell, attach a client:
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock
 ```
 
-Expected output:
-
-```text
-session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed
-nmux pane-1
-server-owned terminal state
-scrollback 1..3:
-nmux pane-1
-server-owned terminal state
-```
+The output starts with the current workspace summary. The following rows depend
+on the user's default shell and startup files, so use an explicit `--command`
+when you need deterministic smoke-test text.
 
 For a deterministic PTY-output smoke test, run the daemon with an explicit shell command:
 
@@ -137,9 +130,9 @@ booting nmux workspace
 nmux pane-1
 server-owned terminal state
 hello from pty
-scrollback 1..4:
+scrollback 1..2:
+booting nmux workspace
 nmux pane-1
-server-owned terminal state
 ```
 
 To prove input-driven output across attaches, keep the daemon running with a command that echoes each submitted line:
