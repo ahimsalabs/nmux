@@ -1679,8 +1679,12 @@ pub fn workspace_summary_from_frame(
         .body_as_workspace_tree_snapshot()
         .ok_or("missing workspace tree body")?;
     let tabs = snapshot.tabs().ok_or("workspace tree has no tabs")?;
+    required_string(snapshot.session_id(), "workspace session_id")?;
+    required_string(snapshot.active_tab_id(), "workspace active_tab_id")?;
     for index in 0..tabs.len() {
         let tab = tabs.get(index);
+        required_string(tab.tab_id(), "workspace tab_id")?;
+        required_string(tab.active_pane_id(), "workspace active_pane_id")?;
         let root = tab.root().ok_or("workspace tab has no root pane")?;
         validate_pane_node(root)?;
     }
@@ -1688,9 +1692,9 @@ pub fn workspace_summary_from_frame(
     let pane = tab.root().ok_or("workspace tab has no root pane")?;
 
     Ok(WorkspaceSummary {
-        session_id: snapshot.session_id().unwrap_or_default().to_owned(),
-        tab_id: tab.tab_id().unwrap_or_default().to_owned(),
-        pane_id: pane.pane_id().unwrap_or_default().to_owned(),
+        session_id: required_string(snapshot.session_id(), "workspace session_id")?,
+        tab_id: required_string(tab.tab_id(), "workspace tab_id")?,
+        pane_id: required_string(pane.pane_id(), "workspace pane_id")?,
         cols: pane.cols(),
         rows: pane.rows(),
         resize_policy: validate_resize_policy(pane.resize_policy())?,
@@ -1746,7 +1750,7 @@ pub fn surface_update_from_frame(
             let text = render_decoded_rows(&row_updates);
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Snapshot,
-                pane_id: snapshot.pane_id().unwrap_or_default().to_owned(),
+                pane_id: required_string(snapshot.pane_id(), "surface snapshot pane_id")?,
                 version: snapshot.version(),
                 base_version: None,
                 patch_kind: None,
@@ -1804,7 +1808,7 @@ pub fn surface_update_from_frame(
             let text = render_decoded_rows(&row_updates);
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Patch,
-                pane_id: patch.pane_id().unwrap_or_default().to_owned(),
+                pane_id: required_string(patch.pane_id(), "surface patch pane_id")?,
                 version: patch.version(),
                 base_version: Some(patch.base_version()),
                 patch_kind: Some(patch.kind()),
@@ -2735,6 +2739,7 @@ fn validate_split_axis(
 }
 
 fn validate_pane_node(pane: protocol::PaneNode<'_>) -> Result<(), Box<dyn std::error::Error>> {
+    required_string(pane.pane_id(), "workspace pane_id")?;
     validate_pane_kind(pane.kind())?;
     validate_split_axis(pane.split_axis())?;
     validate_resize_policy(pane.resize_policy())?;
@@ -5377,6 +5382,77 @@ mod tests {
         )
     }
 
+    fn workspace_tree_frame_with_ids(
+        session_id: Option<&str>,
+        active_tab_id: Option<&str>,
+        tab_id: Option<&str>,
+        active_pane_id: Option<&str>,
+        pane_id: Option<&str>,
+        child_pane_id: Option<Option<&str>>,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let children = child_pane_id.map(|child_pane_id| {
+            let child_pane_id = child_pane_id.map(|pane_id| builder.create_string(pane_id));
+            let child_pane = protocol::PaneNode::create(
+                &mut builder,
+                &protocol::PaneNodeArgs {
+                    pane_id: child_pane_id,
+                    kind: protocol::PaneKind::Pty,
+                    split_axis: protocol::SplitAxis::None,
+                    children: None,
+                    surface_version: 1,
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+            );
+            builder.create_vector(&[child_pane])
+        });
+        let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
+        let pane = protocol::PaneNode::create(
+            &mut builder,
+            &protocol::PaneNodeArgs {
+                pane_id,
+                kind: protocol::PaneKind::Pty,
+                split_axis: protocol::SplitAxis::Horizontal,
+                children,
+                surface_version: 1,
+                cols: 80,
+                rows: 24,
+                resize_policy: protocol::ResizePolicy::Fixed,
+            },
+        );
+        let tab_id = tab_id.map(|tab_id| builder.create_string(tab_id));
+        let title = builder.create_string("main");
+        let active_pane_id = active_pane_id.map(|pane_id| builder.create_string(pane_id));
+        let tab = protocol::TabNode::create(
+            &mut builder,
+            &protocol::TabNodeArgs {
+                tab_id,
+                title: Some(title),
+                root: Some(pane),
+                active_pane_id,
+            },
+        );
+        let tabs = builder.create_vector(&[tab]);
+        let session_id = session_id.map(|session_id| builder.create_string(session_id));
+        let active_tab_id = active_tab_id.map(|tab_id| builder.create_string(tab_id));
+        let snapshot = protocol::WorkspaceTreeSnapshot::create(
+            &mut builder,
+            &protocol::WorkspaceTreeSnapshotArgs {
+                version: 1,
+                session_id,
+                tabs: Some(tabs),
+                active_tab_id,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::WorkspaceTreeSnapshot,
+            snapshot.as_union_value(),
+        )
+    }
+
     fn resize_intent_frame_with_reason(reason: protocol::ResizeReason) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
         let pane_id = builder.create_string("pane-1");
@@ -5587,6 +5663,56 @@ mod tests {
         )
     }
 
+    fn pane_surface_snapshot_with_pane_id(pane_id: Option<&str>) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let run = flatbuffer_run_with_metadata(
+            &mut builder,
+            0,
+            0,
+            0,
+            protocol::CellSemanticContent::Output,
+        );
+        let runs = builder.create_vector(&[run]);
+        let row = protocol::SurfaceRow::create(
+            &mut builder,
+            &protocol::SurfaceRowArgs {
+                row: 0,
+                runs: Some(runs),
+                dirty_hash: 1,
+                semantic_prompt: protocol::RowSemanticPrompt::None,
+                dirty: false,
+                kitty_virtual_placeholder: false,
+                row_state_hash: 1,
+            },
+        );
+        let rows = builder.create_vector(&[row]);
+        let styles = builder.create_vector::<flatbuffers::WIPOffset<protocol::Style>>(&[]);
+        let colors = flatbuffer_terminal_colors(&mut builder);
+        let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
+        let snapshot = protocol::PaneSurfaceSnapshot::create(
+            &mut builder,
+            &protocol::PaneSurfaceSnapshotArgs {
+                pane_id,
+                version: 1,
+                surface: protocol::SurfaceKind::Main,
+                cols: 80,
+                rows: 1,
+                cursor: None,
+                modes: None,
+                metadata: None,
+                styles: Some(styles),
+                rows_data: Some(rows),
+                colors: Some(colors),
+                hyperlinks: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::PaneSurfaceSnapshot,
+            snapshot.as_union_value(),
+        )
+    }
+
     fn scrollback_chunk_with_hyperlink_frame() -> Vec<u8> {
         scrollback_chunk_with_run_metadata_frame(
             protocol::RowSemanticPrompt::None,
@@ -5713,6 +5839,31 @@ mod tests {
                 base_version: 1,
                 version: 2,
                 kind,
+                row_updates: Some(rows),
+                cursor: None,
+                modes: None,
+                metadata: None,
+                colors: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::PaneSurfacePatch,
+            patch.as_union_value(),
+        )
+    }
+
+    fn pane_surface_patch_with_pane_id(pane_id: Option<&str>) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let rows = builder.create_vector::<flatbuffers::WIPOffset<protocol::RowUpdate>>(&[]);
+        let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
+        let patch = protocol::PaneSurfacePatch::create(
+            &mut builder,
+            &protocol::PaneSurfacePatchArgs {
+                pane_id,
+                base_version: 1,
+                version: 2,
+                kind: protocol::PatchKind::CursorOnly,
                 row_updates: Some(rows),
                 cursor: None,
                 modes: None,
@@ -6057,6 +6208,180 @@ mod tests {
             .expect_err("surface snapshot with unknown surface kind should be rejected");
 
         assert!(err.to_string().contains("unknown surface kind"));
+    }
+
+    #[test]
+    fn rejects_workspace_tree_with_missing_or_empty_ids() {
+        for (frame, expected) in [
+            (
+                workspace_tree_frame_with_ids(
+                    None,
+                    Some("tab-1"),
+                    Some("tab-1"),
+                    Some("pane-1"),
+                    Some("pane-1"),
+                    None,
+                ),
+                "missing workspace session_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some(""),
+                    Some("tab-1"),
+                    Some("tab-1"),
+                    Some("pane-1"),
+                    Some("pane-1"),
+                    None,
+                ),
+                "empty workspace session_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some("local"),
+                    None,
+                    Some("tab-1"),
+                    Some("pane-1"),
+                    Some("pane-1"),
+                    None,
+                ),
+                "missing workspace active_tab_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some("local"),
+                    Some(""),
+                    Some("tab-1"),
+                    Some("pane-1"),
+                    Some("pane-1"),
+                    None,
+                ),
+                "empty workspace active_tab_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some("local"),
+                    Some("tab-1"),
+                    None,
+                    Some("pane-1"),
+                    Some("pane-1"),
+                    None,
+                ),
+                "missing workspace tab_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some("local"),
+                    Some("tab-1"),
+                    Some(""),
+                    Some("pane-1"),
+                    Some("pane-1"),
+                    None,
+                ),
+                "empty workspace tab_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some("local"),
+                    Some("tab-1"),
+                    Some("tab-1"),
+                    None,
+                    Some("pane-1"),
+                    None,
+                ),
+                "missing workspace active_pane_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some("local"),
+                    Some("tab-1"),
+                    Some("tab-1"),
+                    Some(""),
+                    Some("pane-1"),
+                    None,
+                ),
+                "empty workspace active_pane_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some("local"),
+                    Some("tab-1"),
+                    Some("tab-1"),
+                    Some("pane-1"),
+                    None,
+                    None,
+                ),
+                "missing workspace pane_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some("local"),
+                    Some("tab-1"),
+                    Some("tab-1"),
+                    Some("pane-1"),
+                    Some(""),
+                    None,
+                ),
+                "empty workspace pane_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some("local"),
+                    Some("tab-1"),
+                    Some("tab-1"),
+                    Some("pane-1"),
+                    Some("pane-1"),
+                    Some(None),
+                ),
+                "missing workspace pane_id",
+            ),
+            (
+                workspace_tree_frame_with_ids(
+                    Some("local"),
+                    Some("tab-1"),
+                    Some("tab-1"),
+                    Some("pane-1"),
+                    Some("pane-1"),
+                    Some(Some("")),
+                ),
+                "empty workspace pane_id",
+            ),
+        ] {
+            let err =
+                workspace_summary_from_frame(&frame).expect_err("workspace IDs should be required");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_surface_updates_with_missing_or_empty_pane_id() {
+        for (frame, expected) in [
+            (
+                pane_surface_snapshot_with_pane_id(None),
+                "missing surface snapshot pane_id",
+            ),
+            (
+                pane_surface_snapshot_with_pane_id(Some("")),
+                "empty surface snapshot pane_id",
+            ),
+            (
+                pane_surface_patch_with_pane_id(None),
+                "missing surface patch pane_id",
+            ),
+            (
+                pane_surface_patch_with_pane_id(Some("")),
+                "empty surface patch pane_id",
+            ),
+        ] {
+            let err =
+                surface_update_from_frame(&frame).expect_err("surface pane ID should be required");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
     }
 
     #[test]

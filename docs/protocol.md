@@ -14,6 +14,8 @@ state-sync envelope bodies:
 - `PaneSurfaceSnapshot` for a full visible or alternate screen surface.
 - `PaneSurfacePatch` for row, cursor, or terminal-mode updates against a known
   surface version.
+- Decoded workspace and surface state rejects missing or empty session, tab, and
+  pane IDs instead of creating empty client cache keys.
 - `ScrollbackFetch` and `ScrollbackChunk` for pane-scoped history ranges.
 - `InputEvent` for key, raw byte, paste, focus, and mouse input from an actor
   to a pane.
