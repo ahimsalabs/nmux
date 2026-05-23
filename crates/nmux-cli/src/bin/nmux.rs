@@ -164,7 +164,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     for iteration in 0..iterations {
         let rendered = attach_once(&args, &mut client_state)?;
         save_client_state(args.state_path.as_deref(), &client_state)?;
-        print_rendered(rendered);
+        if args.output_json {
+            println!("{}", format_rendered_attach_json(&rendered));
+        } else {
+            print_rendered(rendered);
+        }
         flush_stdout()?;
 
         if args.follow && iteration + 1 < iterations {
@@ -1022,6 +1026,7 @@ struct Args {
     list_key_names: bool,
     list_key_names_json: bool,
     list_input_choices_json: bool,
+    output_json: bool,
     print_context: bool,
     print_context_json: bool,
     print_socket: bool,
@@ -1066,6 +1071,7 @@ where
     let mut list_key_names = false;
     let mut list_key_names_json = false;
     let mut list_input_choices_json = false;
+    let mut output_json = false;
     let mut print_context = false;
     let mut print_context_json = false;
     let mut print_socket = false;
@@ -1125,6 +1131,9 @@ where
             }
             "--list-input-choices-json" => {
                 list_input_choices_json = true;
+            }
+            "--json" => {
+                output_json = true;
             }
             "--print-context" => {
                 print_context = true;
@@ -1334,6 +1343,7 @@ where
             redraw,
             live_resize,
             iterations,
+            output_json,
             key_set,
             paste_set,
             focus_set,
@@ -1359,6 +1369,7 @@ where
         list_key_names,
         list_key_names_json,
         list_input_choices_json,
+        output_json,
         print_context,
         print_context_json,
         print_socket,
@@ -1453,6 +1464,76 @@ fn format_input_choices_json() -> String {
         format_json_string_array(MOUSE_BUTTON_NAMES),
         format_json_string_array(LOCAL_ECHO_NAMES)
     )
+}
+
+fn format_rendered_attach_json(rendered: &local::RenderedAttach) -> String {
+    let surface_text = rendered
+        .surface_text
+        .as_ref()
+        .map(|text| local::json_string(text))
+        .unwrap_or_else(|| "null".to_owned());
+    let scrollback = rendered
+        .scrollback
+        .as_ref()
+        .map(format_scrollback_json)
+        .unwrap_or_else(|| "null".to_owned());
+    format!(
+        "{{\"workspace\":{},\"terminal\":{},\"surface_text\":{surface_text},\"scrollback\":{scrollback}}}",
+        format_workspace_json(&rendered.workspace),
+        format_terminal_metadata_json(&rendered.surface_metadata),
+    )
+}
+
+fn format_workspace_json(workspace: &local::WorkspaceSummary) -> String {
+    format!(
+        "{{\"session_id\":{},\"tab_id\":{},\"pane_id\":{},\"cols\":{},\"rows\":{},\"resize_policy\":{}}}",
+        local::json_string(&workspace.session_id),
+        local::json_string(&workspace.tab_id),
+        local::json_string(&workspace.pane_id),
+        workspace.cols,
+        workspace.rows,
+        local::json_string(resize_policy_name(workspace.resize_policy))
+    )
+}
+
+fn format_terminal_metadata_json(metadata: &local::TerminalMetadataSummary) -> String {
+    format!(
+        "{{\"title\":{},\"working_directory\":{}}}",
+        local::json_string(&metadata.title),
+        local::json_string(&metadata.working_directory)
+    )
+}
+
+fn format_scrollback_json(scrollback: &local::ScrollbackChunkSummary) -> String {
+    let lines = scrollback
+        .lines
+        .iter()
+        .map(|line| {
+            format!(
+                "{{\"line\":{},\"text\":{}}}",
+                line.line,
+                local::json_string(&line.text)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"pane_id\":{},\"scrollback_version\":{},\"start_line\":{},\"total_lines\":{},\"lines\":[{lines}]}}",
+        local::json_string(&scrollback.pane_id),
+        scrollback.scrollback_version,
+        scrollback.start_line,
+        scrollback.total_lines
+    )
+}
+
+fn resize_policy_name(policy: protocol::ResizePolicy) -> &'static str {
+    match policy {
+        protocol::ResizePolicy::Fixed => "fixed",
+        protocol::ResizePolicy::Leader => "leader",
+        protocol::ResizePolicy::ActiveClient => "active-client",
+        protocol::ResizePolicy::Manual => "manual",
+        _ => "unknown",
+    }
 }
 
 fn format_json_string_array(values: &[&str]) -> String {
@@ -1635,6 +1716,7 @@ fn validate_mode_args(
     redraw: bool,
     live_resize: Option<(u32, u32)>,
     iterations: Option<usize>,
+    output_json: bool,
     key_set: bool,
     paste_set: bool,
     focus_set: bool,
@@ -1677,6 +1759,12 @@ fn validate_mode_args(
     if live_resize.is_some() && !live {
         return Err("--cols and --rows require --live");
     }
+    if output_json && live {
+        return Err("--json cannot be combined with --live");
+    }
+    if output_json && follow {
+        return Err("--json cannot be combined with --follow");
+    }
     if key_modifiers_set && !key_name_set {
         return Err("--key-modifiers requires --key-name");
     }
@@ -1714,6 +1802,7 @@ Options:
   --list-key-names           List supported --key-name values and aliases
   --list-key-names-json      List supported --key-name values as JSON
   --list-input-choices-json  List structured input choices as JSON
+  --json                     Print one-shot attach output as JSON
   --key-modifiers MODS       Modifiers for --key-name: shift,ctrl,alt,super
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send focus input; daemon rejects if reporting is off
@@ -1743,6 +1832,7 @@ Notes:
   --print-context prints inherited NMUX_* pane identity without connecting.
   --print-context-json prints the same inherited context as a JSON object.
   --print-socket-json prints the resolved socket path and source as JSON.
+  --json is for one-shot attaches; live and follow output are text streams.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
   Without an explicit input or resize flag, nmux attaches read-only.
@@ -1924,11 +2014,12 @@ mod tests {
     use super::{
         FocusEvent, KEY_NAME_ALIASES, LiveUpdatePrintKind, LocalEcho, MouseEvent,
         SUPPORTED_KEY_NAMES, args_from_iter, format_context_json, format_input_choices_json,
-        format_key_names_json, format_scrollback, interim_surface_fidelity_warning_needed,
-        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        format_key_names_json, format_rendered_attach_json, format_scrollback,
+        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args,
@@ -1959,6 +2050,7 @@ mod tests {
             redraw,
             live_resize,
             iterations,
+            false,
             key_set,
             paste_set,
             focus_set,
@@ -2012,6 +2104,7 @@ mod tests {
         assert!(!args.list_key_names);
         assert!(!args.list_key_names_json);
         assert!(!args.list_input_choices_json);
+        assert!(!args.output_json);
         assert!(!args.print_context);
         assert!(!args.print_context_json);
         assert!(!args.print_socket);
@@ -2078,6 +2171,52 @@ mod tests {
             format_context_json("session", "pane-1", "/tmp/nmux.sock", "root>child"),
             "{\"NMUX\":\"1\",\"NMUX_SESSION_ID\":\"session\",\"NMUX_PANE_ID\":\"pane-1\",\"NMUX_SOCKET\":\"/tmp/nmux.sock\",\"NMUX_ORIGIN\":\"root>child\"}"
         );
+    }
+
+    #[test]
+    fn rendered_attach_json_reports_workspace_surface_and_scrollback() {
+        let rendered = local::RenderedAttach {
+            workspace: local::WorkspaceSummary {
+                session_id: "session\"1".to_owned(),
+                tab_id: "tab-1".to_owned(),
+                pane_id: "pane-1".to_owned(),
+                cols: 80,
+                rows: 24,
+                resize_policy: protocol::ResizePolicy::ActiveClient,
+            },
+            surface_metadata: local::TerminalMetadataSummary {
+                title: "build\nshell".to_owned(),
+                working_directory: "/tmp/nmux".to_owned(),
+            },
+            surface_text: Some("hello\nworld".to_owned()),
+            scrollback: Some(local::ScrollbackChunkSummary {
+                pane_id: "pane-1".to_owned(),
+                scrollback_version: 9,
+                start_line: 1,
+                total_lines: 2,
+                styles: Vec::new(),
+                hyperlinks: Vec::new(),
+                colors: local::TerminalColorSummary::default(),
+                lines: vec![local::ScrollbackLine {
+                    line: 1,
+                    text: "older row".to_owned(),
+                    runs: Vec::new(),
+                    dirty_hash: 0,
+                    row_state_hash: 0,
+                    semantic_prompt: protocol::RowSemanticPrompt::None,
+                    dirty: false,
+                    kitty_virtual_placeholder: false,
+                }],
+            }),
+        };
+
+        let json = format_rendered_attach_json(&rendered);
+        assert!(json.contains("\"session_id\":\"session\\\"1\""));
+        assert!(json.contains("\"resize_policy\":\"active-client\""));
+        assert!(json.contains("\"title\":\"build\\nshell\""));
+        assert!(json.contains("\"surface_text\":\"hello\\nworld\""));
+        assert!(json.contains("\"scrollback_version\":9"));
+        assert!(json.contains("{\"line\":1,\"text\":\"older row\"}"));
     }
 
     #[test]
@@ -2424,7 +2563,7 @@ mod tests {
         assert_eq!(
             super_validate_mode_args(
                 false, true, false, false, false, false, None, None, false, false, false, false,
-                false, true, false, false
+                false, false, true, false, false
             ),
             Err("--follow cannot be combined with --mouse")
         );
@@ -2506,23 +2645,37 @@ mod tests {
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                true, false, false, false
+                false, true, false, false, false
             ),
             Err("--key-modifiers requires --key-name")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, true, false
+                false, false, false, true, false
             ),
             Err("--mouse-modifiers requires --mouse")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, true
+                false, false, false, false, true
             ),
             Err("--mouse-pixels requires --mouse")
+        );
+        assert_eq!(
+            super_validate_mode_args(
+                true, false, false, false, false, false, None, None, true, false, false, false,
+                false, false, false, false, false
+            ),
+            Err("--json cannot be combined with --live")
+        );
+        assert_eq!(
+            super_validate_mode_args(
+                false, true, false, false, false, false, None, None, true, false, false, false,
+                false, false, false, false, false
+            ),
+            Err("--json cannot be combined with --follow")
         );
         assert!(
             validate_mode_args(
@@ -2550,7 +2703,7 @@ mod tests {
         assert!(
             super_validate_mode_args(
                 false, false, false, false, false, false, None, None, false, false, false, false,
-                false, true, false, false
+                false, false, true, false, false
             )
             .is_ok()
         );

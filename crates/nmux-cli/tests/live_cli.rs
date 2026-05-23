@@ -57,6 +57,64 @@ fn one_shot_cli_receives_nmux_pane_environment() {
 }
 
 #[test]
+fn one_shot_cli_can_print_attach_json() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = "printf 'json-output\\n'; cat >/dev/null";
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            command,
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+        ])
+        .output()
+        .expect("run nmux --json");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux --json failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.starts_with("{\"workspace\":{"),
+        "not JSON:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"session_id\":\"local\""),
+        "missing workspace:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"resize_policy\":\"fixed\""),
+        "missing policy:\n{stdout}"
+    );
+    assert!(stdout.contains("json-output"), "missing surface:\n{stdout}");
+    assert!(
+        stdout.contains("\"scrollback\":{"),
+        "missing scrollback:\n{stdout}"
+    );
+}
+
+#[test]
 fn one_shot_cli_appends_inherited_nmux_origin() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
