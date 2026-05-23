@@ -109,5 +109,5 @@ layout.
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty
 source policy, or release binaries.
-Use the manual CI promotion-sample job when collecting CI evidence; a normal
+Use the manual CI promotion-local-sample job when collecting CI evidence; a normal
 pull-request run remains default-engine-only.

@@ -18,7 +18,8 @@ The current implementation is a Rust workspace with:
 - toolchain notes in [docs/toolchain.md](docs/toolchain.md);
 - runnable notes in [docs/running.md](docs/running.md);
 - default-engine promotion evidence in [docs/default-engine-promotion.md](docs/default-engine-promotion.md);
-- CI notes in [docs/ci.md](docs/ci.md);
+- CI notes in [docs/ci.md](docs/ci.md), including the default gate and manual
+  promotion-local-sample workflow;
 - future protocol-object tracks in [docs/protocol-futures.md](docs/protocol-futures.md);
 - opt-in native source-fetch policy in [docs/source-fetch-policy.md](docs/source-fetch-policy.md);
 - packaging notes in [docs/packaging.md](docs/packaging.md);
@@ -62,7 +63,7 @@ file, extracts it, and verifies the wrapped binaries from the archive.
 See [docs/contributor-workflow.md](docs/contributor-workflow.md) for when to use
 the default gate, the opt-in VT gate, or the combined promotion-evidence gate.
 See [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions
-gate and the manual promotion-sample workflow.
+gate and the manual promotion-local-sample workflow.
 See [docs/toolchain.md](docs/toolchain.md) for the supported Nix path and the
 non-Nix requirements checklist that still needs validation before default-engine
 promotion. `make toolchain-info` prints the active tool versions for evidence

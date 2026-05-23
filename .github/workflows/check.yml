@@ -27,8 +27,8 @@ jobs:
       - name: Check
         run: nix develop . -c make check
 
-  promotion-sample:
-    name: promotion sample
+  promotion-local-sample:
+    name: promotion local sample
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -39,5 +39,5 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - name: Promotion sample
-        run: nix develop . -c make promotion-sample
+      - name: Promotion local sample
+        run: nix develop . -c make promotion-local-sample

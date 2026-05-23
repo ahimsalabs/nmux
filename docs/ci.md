@@ -16,20 +16,22 @@ This keeps regular CI on the default `interim` engine. A green required CI run
 does not claim `libghostty-vt` correctness and does not change the default
 engine decision.
 
-## Manual Promotion Sample
+## Manual Promotion Evidence
 
 The same workflow exposes a manual `workflow_dispatch` job for promotion
 evidence:
 
 ```sh
-nix develop . -c make promotion-sample
+nix develop . -c make promotion-local-sample
 ```
 
-That job is intentionally manual. It runs the default gate plus the opt-in
-`libghostty-vt` gate, records toolchain/source-fetch context in the log, and
-times the inner `make check-all` run. Copy passing or failing results into
+That job is intentionally manual. It records source-fetch provenance, runs the
+default gate plus the opt-in `libghostty-vt` gate, times the inner
+`make check-all` run, and produces a verifiable native-VT package archive. Copy
+passing or failing results into
 [default-engine-promotion.md](default-engine-promotion.md) with runner, cache,
-source-fetch, and flake context before using them as promotion evidence.
+source-fetch, packaging, and flake context before using them as promotion
+evidence.
 
 ## Nix Setup
 
