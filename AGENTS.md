@@ -153,9 +153,12 @@ The bundled `ARCHIVE.sha256` must name `PACKAGE_ARCHIVE.tar.gz`, not the
 original build-tree archive path, so downloaded evidence stays self-contained.
 `promotion-evidence-verify` checks an existing bundle for required summary,
 bundle timing, `make check-all` timing, artifact files, cache-state report,
-artifact manifest hashes, source/provenance records, VCS status report, package
-archive bytes, archive hash, open-work snapshot, and packaged runtime smoke
-output; the bundle target runs it before printing the artifact list.
+artifact manifest hashes, source/provenance records, VCS status report,
+summary/VCS git revision agreement, package archive bytes, archive hash,
+open-work snapshot, and packaged runtime smoke output; CI-generated bundles
+must also carry concrete GitHub run/ref/SHA/runner fields with `github_sha`
+matching the bundled revision. The bundle target runs it before printing the
+artifact list.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `source-fetch-offline-probe` clears `target/source-fetch-offline` and checks

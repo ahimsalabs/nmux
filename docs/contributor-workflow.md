@@ -128,15 +128,18 @@ environment values and directory presence for Nix, Cargo, target, packaging,
 and source-fetch paths; classify cold, warm, restored, or unknown cache history
 from that artifact plus CI/cache setup context. `VCS_STATUS.txt` records the
 Git revision, Git working-tree status, and optional `jj status` output observed
-when the bundle was generated. `PROMOTION_OPEN_WORK.txt` records the known
-blockers that still keep `libghostty-vt` opt-in. `BUNDLE_MANIFEST.txt` records
-SHA-256 hashes for the evidence files in the bundle using stable relative
-artifact names, and `SUMMARY.txt` records bundle artifacts by those same
-relative names so copied or downloaded bundles remain verifiable.
+when the bundle was generated; `make promotion-evidence-verify` checks that its
+git revision agrees with `SUMMARY.txt`. `PROMOTION_OPEN_WORK.txt` records the
+known blockers that still keep `libghostty-vt` opt-in. `BUNDLE_MANIFEST.txt`
+records SHA-256 hashes for the evidence files in the bundle using stable
+relative artifact names, and `SUMMARY.txt` records bundle artifacts by those
+same relative names so copied or downloaded bundles remain verifiable.
 It runs `make promotion-evidence-verify` before printing the artifact list.
 Run `make promotion-evidence-verify` directly when reviewing an existing bundle
 without regenerating the native build and packaging sample; it validates the
-bundled archive bytes through `make packaging-archive-verify`. Use
+bundled archive bytes through `make packaging-archive-verify`. For
+GitHub-generated bundles, the verifier also requires concrete run, ref, SHA,
+and runner fields and checks that `github_sha` matches the bundled revision. Use
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify` when
 checking a downloaded artifact outside `target/promotion-evidence`. The manual
 CI workflow performs the same downloaded-artifact verification after upload.
