@@ -58,9 +58,9 @@ when changing terminal engine behavior.
 
 `make renderer-equivalence-smoke` is narrower: it runs the current
 renderer-equivalence fixture corpus projection through the opt-in
-`libghostty-vt` path. Use it while building renderer-equivalence evidence, but
-do not treat a pass as a trusted renderer oracle comparison or as default-engine
-promotion evidence.
+`libghostty-vt` path, including a real `nmuxd`/`nmux --json` artifact smoke.
+Use it while building renderer-equivalence evidence, but do not treat a pass as
+a trusted renderer oracle comparison or as default-engine promotion evidence.
 
 ## Promotion Evidence Work
 

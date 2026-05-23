@@ -200,6 +200,7 @@ check-ghostty-vt: check-vt-toolchain
 
 renderer-equivalence-smoke: check-vt-toolchain
 	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt renderer_equivalence
+	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-cli --features libghostty-vt --test renderer_equivalence
 
 promotion-sample: toolchain-info
 	time -p $(MAKE) check-all

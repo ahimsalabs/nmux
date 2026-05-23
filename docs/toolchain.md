@@ -72,8 +72,9 @@ state, daemon-owned structured input, or default-engine promotion evidence.
 daemon/client path; it does not enable the native VT feature or replace the
 test suite.
 `make renderer-equivalence-smoke` is a focused opt-in fixture projection check
-for renderer-equivalence work. It is not a trusted renderer oracle comparison
-and is not part of the normal default gate.
+for renderer-equivalence work. It exercises both a core `TerminalUpdate` corpus
+and a real `nmuxd`/`nmux --json` artifact smoke. It is not a trusted renderer
+oracle comparison and is not part of the normal default gate.
 See [contributor-workflow.md](contributor-workflow.md) for choosing between
 those gates.
 

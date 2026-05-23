@@ -49,12 +49,18 @@ terminal state.
 
 ## Current Harness
 
-`make renderer-equivalence-smoke` runs a focused feature-gated corpus projection
-check through `nmux-core --features libghostty-vt`. The current corpus proves
-that representative server-owned terminal state for styled text, default text,
-wide cells, title metadata, bracketed paste mode, mouse tracking mode, and
-hyperlink presence is projected into nmux `TerminalUpdate` rows, runs, styles,
-modes, and metadata without raw ANSI text leaking into fallback rows.
+`make renderer-equivalence-smoke` runs focused feature-gated corpus projection
+checks. The `nmux-core --features libghostty-vt` corpus proves that
+representative server-owned terminal state for styled text, default text, wide
+cells, title metadata, bracketed paste mode, mouse tracking mode, and hyperlink
+presence is projected into nmux `TerminalUpdate` rows, runs, styles, modes, and
+metadata without raw ANSI text leaking into fallback rows. The `nmux-cli`
+integration smoke runs a real `nmuxd --terminal-engine libghostty-vt` plus
+`nmux --json` attach and checks the exported JSON for structured rows/runs,
+style IDs, cell widths, hyperlink-presence flags, title/OSC 7 metadata, main
+screen restoration after alternate screen, and omission of raw control text.
+Set `NMUX_RENDERER_EQUIVALENCE_ARTIFACT_DIR=target/renderer-equivalence` to
+write the captured JSON fixture artifact.
 
 This is nmux-side fixture evidence only. It is intentionally not wired into the
 normal default gate, and it does not satisfy the oracle renderer or pixel/state
