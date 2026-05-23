@@ -104,10 +104,13 @@ Attach responses send `WorkspaceTreeSnapshot`, `PresenceUpdate`, and then
 `AttachStatus.surface_state` is `Current` when the client already has the
 current surface and no surface frame follows; otherwise it is `Snapshot` or
 `Patch` and the next frame is the corresponding pane surface object. Clients
-should use the status pane ID, not a guessed default, for post-attach input,
-resize, and scrollback requests. If the daemon cannot resolve its active tab or
-active pane, it sends a `PaneNotFound` `Error` instead of publishing an
-`AttachStatus` for a guessed pane.
+should use the status pane ID, not a guessed default or the workspace root pane,
+for current-surface cache lookup and post-attach input, resize, and scrollback
+requests. A `Snapshot` or `Patch` surface frame following `AttachStatus` must
+carry the same pane ID as `AttachStatus.pane_id`; clients reject mismatches
+instead of applying state to the wrong pane. If the daemon cannot resolve its
+active tab or active pane, it sends a `PaneNotFound` `Error` instead of
+publishing an `AttachStatus` for a guessed pane.
 
 Cursor-only, mode-only, and color-only patches can also update
 `TerminalMetadataState` without row updates. Metadata-only updates are therefore

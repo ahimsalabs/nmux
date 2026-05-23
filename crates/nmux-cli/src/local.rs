@@ -1206,7 +1206,7 @@ pub fn attach_with_client_options(
     write_attach_request(&mut stream, &options.request)?;
     let mut sequence = ClientFrameSequence::default();
     let snapshot = attach_from_stream(&mut stream)?;
-    let attached_pane_id = snapshot.workspace.pane_id.clone();
+    let attached_pane_id = snapshot.status.pane_id.clone();
     if mode == AttachMode::ReadWrite {
         let mut sent_input = false;
         if let Some(key_name) = options.key_name.as_deref() {
@@ -1328,7 +1328,15 @@ pub fn attach_from_stream(
         protocol::AttachSurfaceState::Current => None,
         protocol::AttachSurfaceState::Snapshot | protocol::AttachSurfaceState::Patch => {
             let surface_frame = wire::read_default_frame(stream)?;
-            Some(surface_update_from_frame(&surface_frame)?)
+            let update = surface_update_from_frame(&surface_frame)?;
+            if update.pane_id != status.pane_id {
+                return Err(format!(
+                    "attach surface pane_id {} does not match attach status pane_id {}",
+                    update.pane_id, status.pane_id
+                )
+                .into());
+            }
+            Some(update)
         }
         other => return Err(format!("unsupported attach surface state: {other:?}").into()),
     };
@@ -3656,7 +3664,7 @@ impl ClientAttachState {
         &mut self,
         snapshot: AttachSnapshot,
     ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
-        let pane_id = snapshot.workspace.pane_id.clone();
+        let pane_id = snapshot.status.pane_id.clone();
         let (surface_metadata, surface_text) = match snapshot.surface.as_ref() {
             Some(update) => (
                 TerminalMetadataSummary::from_update(update),
@@ -7389,6 +7397,62 @@ mod tests {
     }
 
     #[test]
+    fn client_attach_state_uses_attach_status_pane_for_current_surface_cache() {
+        let mut state = ClientAttachState::default();
+        let mut cached = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            7,
+            None,
+            vec![surface_row(0, "cached status pane")],
+        );
+        cached.pane_id = "pane-2".to_owned();
+        state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-2".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                status: AttachStatusSummary {
+                    pane_id: "pane-2".to_owned(),
+                    surface_version: 7,
+                    surface_state: protocol::AttachSurfaceState::Snapshot,
+                },
+                surface: Some(cached),
+                scrollback: None,
+            })
+            .expect("seed cached surface");
+
+        let rendered = state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                status: AttachStatusSummary {
+                    pane_id: "pane-2".to_owned(),
+                    surface_version: 7,
+                    surface_state: protocol::AttachSurfaceState::Current,
+                },
+                surface: None,
+                scrollback: None,
+            })
+            .expect("render current surface from cache");
+
+        assert_eq!(rendered.workspace.pane_id, "pane-1");
+        assert_eq!(rendered.surface_text.as_deref(), Some("cached status pane"));
+    }
+
+    #[test]
     fn client_attach_state_round_trips_cached_surface() {
         let mut state = ClientAttachState::default();
         let expected_scope = SocketIdentity { dev: 10, ino: 20 };
@@ -7973,6 +8037,156 @@ mod tests {
             event,
             HostEvent::Input { pane_id, .. } if pane_id == "pane-1"
         )));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_with_client_options_uses_attach_status_pane_for_scrollback_precondition() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let workspace_session = Session::initial();
+        let mut status_session = Session::initial();
+        rename_initial_pane(&mut status_session, "pane-2");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            read_attach_request(&mut stream).expect("read attach request");
+            wire::write_default_frame(
+                &mut stream,
+                &workspace_session.workspace_tree_frame("local-client", 1),
+            )
+            .expect("write workspace");
+            wire::write_default_frame(
+                &mut stream,
+                &workspace_session.presence_update_frame(
+                    "local-client",
+                    2,
+                    &Actor {
+                        id: "local-actor".to_owned(),
+                        user_id: "local-user".to_owned(),
+                        display_name: "local".to_owned(),
+                        mode: AttachMode::ReadOnly,
+                        focused_pane_id: Some("pane-2".to_owned()),
+                    },
+                ),
+            )
+            .expect("write presence");
+            wire::write_default_frame(
+                &mut stream,
+                &status_session.attach_status_frame(
+                    "local-client",
+                    3,
+                    "pane-2",
+                    protocol::AttachSurfaceState::Current,
+                ),
+            )
+            .expect("write attach status");
+
+            let fetch = read_scrollback_fetch_from_stream(&mut stream).expect("scrollback fetch");
+            assert_eq!(fetch.pane_id, "pane-2");
+            assert_eq!(fetch.known_scrollback_version, 9);
+            let chunk = status_session
+                .scrollback_chunk_frame_for_pane(
+                    "local-client",
+                    4,
+                    "pane-2",
+                    fetch.start_line,
+                    fetch.line_count,
+                )
+                .expect("pane-2 scrollback chunk");
+            wire::write_default_frame(&mut stream, &chunk).expect("write scrollback chunk");
+        });
+
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                request: AttachRequest {
+                    mode: AttachMode::ReadOnly,
+                    ..AttachOptions::default().request
+                },
+                input_text: None,
+                known_scrollback_versions: vec![KnownScrollbackVersion {
+                    pane_id: "pane-2".to_owned(),
+                    start_line: 1,
+                    line_count: 2,
+                    version: 9,
+                }],
+                ..AttachOptions::default()
+            },
+        )
+        .expect("attach snapshot");
+        server.join().expect("server thread");
+
+        assert_eq!(snapshot.workspace.pane_id, "pane-1");
+        assert_eq!(snapshot.status.pane_id, "pane-2");
+        assert_eq!(
+            snapshot
+                .scrollback
+                .as_ref()
+                .map(|chunk| chunk.pane_id.as_str()),
+            Some("pane-2")
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_from_stream_rejects_surface_pane_mismatch_with_attach_status() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let workspace_session = Session::initial();
+        let mut status_session = Session::initial();
+        rename_initial_pane(&mut status_session, "pane-2");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            wire::write_default_frame(
+                &mut stream,
+                &workspace_session.workspace_tree_frame("local-client", 1),
+            )
+            .expect("write workspace");
+            wire::write_default_frame(
+                &mut stream,
+                &workspace_session.presence_update_frame(
+                    "local-client",
+                    2,
+                    &Actor {
+                        id: "local-actor".to_owned(),
+                        user_id: "local-user".to_owned(),
+                        display_name: "local".to_owned(),
+                        mode: AttachMode::ReadOnly,
+                        focused_pane_id: Some("pane-2".to_owned()),
+                    },
+                ),
+            )
+            .expect("write presence");
+            wire::write_default_frame(
+                &mut stream,
+                &status_session.attach_status_frame(
+                    "local-client",
+                    3,
+                    "pane-2",
+                    protocol::AttachSurfaceState::Snapshot,
+                ),
+            )
+            .expect("write attach status");
+            wire::write_default_frame(
+                &mut stream,
+                &workspace_session.pane_surface_frame("local-client", 4),
+            )
+            .expect("write mismatched surface");
+        });
+
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        let err = attach_from_stream(&mut stream).expect_err("pane mismatch should fail");
+        server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("does not match attach status pane_id"),
+            "unexpected error: {err}"
+        );
 
         let _ = fs::remove_file(socket_path);
     }

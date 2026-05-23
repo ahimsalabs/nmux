@@ -114,12 +114,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
     local::write_attach_request(&mut stream, &options.request)?;
     let snapshot = local::attach_from_stream(&mut stream)?;
+    let attached_pane_id = snapshot.status.pane_id.clone();
     client_state.apply_scope(local::socket_identity(&args.socket_path).ok());
     let mut rendered = client_state.render_attach(snapshot)?;
     if rendered.surface_text.is_none() {
-        rendered.surface_text = client_state.cached_surface_text(&rendered.workspace.pane_id);
+        rendered.surface_text = client_state.cached_surface_text(&attached_pane_id);
         rendered.surface_metadata = client_state
-            .cached_surface_metadata(&rendered.workspace.pane_id)
+            .cached_surface_metadata(&attached_pane_id)
             .unwrap_or_default();
     }
     let mut current_workspace = rendered.workspace.clone();
@@ -128,7 +129,6 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .surface_text
         .clone()
         .unwrap_or_else(|| current_workspace.display_line());
-    let attached_pane_id = rendered.workspace.pane_id.clone();
     let known_scrollback_version = client_state
         .cached_scrollback_version_for_scope(
             socket_scope,
