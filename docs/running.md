@@ -23,7 +23,7 @@ frame follows. `nmux` applies those state objects to a client-side pane surface
 render state before printing, then can send post-attach control frames and
 render returned `ScrollbackChunk` objects.
 
-Run all checks:
+Run the default-engine checks:
 
 ```sh
 nix develop . -c make check
@@ -32,6 +32,9 @@ nix develop . -c make local-smoke
 
 See [docs/contributor-workflow.md](contributor-workflow.md) for which checks
 apply to default-engine work, terminal-correctness work, and promotion evidence.
+Use [docs/toolchain.md](toolchain.md) for the complete Nix command list,
+including `make check-ghostty-vt`, `make check-all`, source-fetch verifiers,
+and packaging/promotion evidence targets.
 `make local-smoke` starts a temporary local daemon, sends live stdin through a
 client, reattaches a read-only client with persisted state, verifies the echoed
 output remains visible, verifies nested `nmux --print-context` receives the
@@ -39,9 +42,8 @@ pane identity environment, then reuses the same socket path for a new daemon
 and checks that the old cached surface is not rendered. It is the shortest
 runnable end-to-end workflow check for the default engine.
 
-Run the regular default-engine gate plus the opt-in backend `libghostty-vt`
-gate when doing release-style validation or gathering default-engine-promotion
-evidence:
+Run the timed default-plus-opt-in backend `libghostty-vt` validation sample
+when gathering local default-engine-promotion evidence:
 
 ```sh
 nix develop . -c make promotion-sample
