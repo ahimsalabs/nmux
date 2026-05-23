@@ -2,8 +2,9 @@ SCHEMA := schema/nmux.fbs
 GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
+PROMOTION_EVIDENCE_DIR ?= target/promotion-evidence
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-target-sample promotion-evidence-bundle promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-provenance-sample toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-provenance-sample toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -32,7 +33,7 @@ promotion-local-sample:
 promotion-evidence-bundle:
 	@echo "writing local promotion evidence bundle"
 	@set -u; \
-	bundle_dir=target/promotion-evidence; \
+	bundle_dir="$(PROMOTION_EVIDENCE_DIR)"; \
 	run_log="$$bundle_dir/RUN.log"; \
 	rm -rf "$$bundle_dir"; \
 	mkdir -p "$$bundle_dir"; \
@@ -82,9 +83,103 @@ promotion-evidence-bundle:
 		printf 'archive_sha256=%s\n' "$$archive_sha"; \
 		printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
 	} > "$$bundle_dir/SUMMARY.txt"; \
+	$(MAKE) --no-print-directory promotion-evidence-verify; \
 	cat "$$run_log"; \
 	printf 'promotion_evidence_bundle=%s\n' "$$bundle_dir"; \
 	find "$$bundle_dir" -type f | sort
+
+promotion-evidence-verify:
+	@echo "verifying local promotion evidence bundle"
+	@bundle_dir="$(PROMOTION_EVIDENCE_DIR)"; \
+	summary="$$bundle_dir/SUMMARY.txt"; \
+	run_log="$$bundle_dir/RUN.log"; \
+	toolchain="$$bundle_dir/TOOLCHAIN.txt"; \
+	source_fetch="$$bundle_dir/SOURCE_FETCH.txt"; \
+	package_provenance="$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
+	cargo_tree="$$bundle_dir/CARGO_TREE.txt"; \
+	archive_sha_file="$$bundle_dir/ARCHIVE.sha256"; \
+	require_file() { \
+		path="$$1"; \
+		if [ ! -s "$$path" ]; then \
+			echo "missing or empty promotion evidence artifact: $$path" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_line() { \
+		file="$$1"; \
+		pattern="$$2"; \
+		description="$$3"; \
+		if ! grep -Eq "$$pattern" "$$file"; then \
+			echo "missing promotion evidence record in $$file: $$description" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_exact() { \
+		file="$$1"; \
+		line="$$2"; \
+		description="$$3"; \
+		if ! grep -Fxq "$$line" "$$file"; then \
+			echo "missing promotion evidence record in $$file: $$description" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_file "$$summary"; \
+	require_file "$$run_log"; \
+	require_file "$$toolchain"; \
+	require_file "$$source_fetch"; \
+	require_file "$$package_provenance"; \
+	require_file "$$cargo_tree"; \
+	require_file "$$archive_sha_file"; \
+	require_exact "$$summary" 'nmux promotion evidence bundle' 'summary title'; \
+	require_line "$$summary" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'generation timestamp'; \
+	require_line "$$summary" '^host=.+$$' 'host identity'; \
+	require_line "$$summary" '^git_revision=(unknown|[0-9a-f]{40})$$' 'git revision'; \
+	require_line "$$summary" '^github_actions=(true|false)$$' 'GitHub Actions flag'; \
+	require_line "$$summary" '^github_server_url=.+$$' 'GitHub server URL field'; \
+	require_line "$$summary" '^github_repository=.+$$' 'GitHub repository field'; \
+	require_line "$$summary" '^github_run_id=.+$$' 'GitHub run ID field'; \
+	require_line "$$summary" '^github_run_attempt=.+$$' 'GitHub run attempt field'; \
+	require_line "$$summary" '^github_ref=.+$$' 'GitHub ref field'; \
+	require_line "$$summary" '^github_sha=.+$$' 'GitHub SHA field'; \
+	require_line "$$summary" '^runner_os=.+$$' 'runner OS field'; \
+	require_line "$$summary" '^runner_arch=.+$$' 'runner architecture field'; \
+	require_line "$$summary" '^runner_name=.+$$' 'runner name field'; \
+	require_line "$$summary" '^ghostty_source_mode=(pinned-fetch|local)$$' 'Ghostty source mode'; \
+	require_line "$$summary" '^GHOSTTY_SOURCE_DIR=.+$$' 'GHOSTTY_SOURCE_DIR field'; \
+	require_line "$$summary" '^GIT_CONFIG_GLOBAL=.+$$' 'GIT_CONFIG_GLOBAL field'; \
+	require_line "$$summary" '^cache_state=.+$$' 'cache state field'; \
+	require_exact "$$summary" "run_log=$$run_log" 'run log path'; \
+	require_exact "$$summary" "toolchain=$$toolchain" 'toolchain path'; \
+	require_exact "$$summary" "source_fetch=$$source_fetch" 'source-fetch path'; \
+	require_exact "$$summary" "package_provenance=$$package_provenance" 'package provenance path'; \
+	require_exact "$$summary" "cargo_tree=$$cargo_tree" 'cargo tree path'; \
+	archive_sha="$$(cat "$$archive_sha_file")"; \
+	require_exact "$$summary" "archive_sha256=$$archive_sha" 'archive SHA-256'; \
+	require_exact "$$summary" 'packaged_runtime_smoke=passed' 'packaged runtime smoke'; \
+	require_line "$$toolchain" '^cargo=cargo ' 'cargo version'; \
+	require_line "$$toolchain" '^rustc=rustc ' 'rustc version'; \
+	require_line "$$toolchain" '^flatc=flatc version 25\.12\.19$$' 'flatc version'; \
+	require_line "$$toolchain" '^zig=0\.15\.' 'Zig version'; \
+	require_line "$$source_fetch" '^Cargo\.lock sha256=[0-9a-f]{64}$$' 'source-fetch Cargo.lock hash'; \
+	require_line "$$source_fetch" '^\[cargo_lock:libghostty-vt\]$$' 'source-fetch libghostty-vt record'; \
+	require_line "$$source_fetch" '^name = "libghostty-vt"$$' 'source-fetch libghostty-vt package name'; \
+	require_line "$$source_fetch" '^checksum = "[0-9a-f]{64}"$$' 'source-fetch package checksum'; \
+	require_line "$$source_fetch" '^\[cargo_lock:libghostty-vt-sys\]$$' 'source-fetch libghostty-vt-sys record'; \
+	require_line "$$source_fetch" '^name = "libghostty-vt-sys"$$' 'source-fetch libghostty-vt-sys package name'; \
+	require_line "$$package_provenance" '^\[staged_files\]$$' 'packaging staged file hashes'; \
+	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux wrapper hash'; \
+	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmuxd bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmuxd wrapper hash'; \
+	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/libexec/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux binary hash'; \
+	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/libexec/nmuxd bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmuxd binary hash'; \
+	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/lib/libghostty-vt.* bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged native runtime library hash'; \
+	require_line "$$package_provenance" '^\[native_runtime_libraries\]$$' 'packaging runtime libraries'; \
+	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/lib/libghostty-vt' 'packaging runtime library path'; \
+	require_line "$$package_provenance" '^\[dynamic_dependencies\]$$' 'packaging dynamic dependencies'; \
+	require_line "$$run_log" '^provenance_manifest_verified=target/packaging-libghostty-vt/package/PROVENANCE\.txt$$' 'package provenance verifier result'; \
+	require_line "$$run_log" '^packaged_runtime_smoke=passed$$' 'runtime smoke result'; \
+	require_line "$$cargo_tree" '^nmux-cli v' 'cargo tree root'; \
+	require_line "$$archive_sha_file" '^[0-9a-f]{64}  target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package\.tar\.gz$$' 'archive SHA-256 file'; \
+	printf 'promotion_evidence_verified=%s\n' "$$summary"
 
 source-fetch-provenance-sample: toolchain-info
 	@echo "writing source-fetch provenance report"

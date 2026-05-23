@@ -10,6 +10,7 @@ nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
+nix develop . -c make promotion-evidence-verify
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
@@ -65,13 +66,18 @@ evidence pass, use:
 ```sh
 nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
+nix develop . -c make promotion-evidence-verify
 ```
 
 The local sample target runs `make source-fetch-provenance-sample`,
 `make promotion-sample`, and then `make packaging-archive-runtime-smoke`. The
 bundle target runs the same local sample and gathers the run log, toolchain
 output, source-fetch report, package provenance, cargo tree, and archive
-checksum under `target/promotion-evidence`.
+checksum under `target/promotion-evidence`, then runs
+`make promotion-evidence-verify`. Run the verifier directly to check an
+existing bundle without rebuilding the native VT package, or pass
+`PROMOTION_EVIDENCE_DIR=/path/to/artifact` for a downloaded bundle outside the
+default `target/promotion-evidence` path.
 For source-fetch provenance evidence, use:
 
 ```sh

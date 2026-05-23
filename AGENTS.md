@@ -117,6 +117,7 @@ nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
+nix develop . -c make promotion-evidence-verify
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
@@ -139,6 +140,10 @@ pass.
 `promotion-evidence-bundle` runs `promotion-local-sample` and gathers the log,
 toolchain output, source-fetch report, package provenance, cargo tree, and
 archive checksum under `target/promotion-evidence`.
+`promotion-evidence-verify` checks an existing bundle for required summary
+fields, artifact files, source/provenance records, archive hash, and packaged
+runtime smoke output; the bundle target runs it before printing the artifact
+list.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `packaging-sample` builds default and opt-in release binaries in separate target

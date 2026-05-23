@@ -62,6 +62,7 @@ nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
+nix develop . -c make promotion-evidence-verify
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
@@ -102,6 +103,11 @@ runtime results.
 `CARGO_TREE.txt`, `ARCHIVE.sha256`, and `SUMMARY.txt` under
 `target/promotion-evidence` for easier transcription into the promotion
 tracker or manual CI evidence records.
+It runs `make promotion-evidence-verify` before printing the artifact list.
+Run `make promotion-evidence-verify` directly when reviewing an existing bundle
+without regenerating the native build and packaging sample. Use
+`make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify` when
+checking a downloaded artifact outside `target/promotion-evidence`.
 
 `make source-fetch-provenance-sample` writes the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source. Use it
