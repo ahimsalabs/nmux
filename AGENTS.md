@@ -6,7 +6,8 @@ This file is the operating guide for agents working in this repository.
 
 nmux is a portable Ghostty-style terminal workspace. The current direction is documented in:
 
-- [README.md](README.md) for the seed idea.
+- [README.md](README.md) for user-facing status, first-run commands, and the
+  high-level project shape.
 - [docs/roadmap.md](docs/roadmap.md) for current milestone status and next steps.
 - [WORK.md](WORK.md) for background product and architecture garden notes.
 - [docs/contributor-workflow.md](docs/contributor-workflow.md) for default,
@@ -21,7 +22,8 @@ nmux is a portable Ghostty-style terminal workspace. The current direction is do
   native-VT packaging questions.
 - [docs/adr/0025-native-vt-packaging-criteria.md](docs/adr/0025-native-vt-packaging-criteria.md)
   for criteria a future native-VT packaging promotion decision must satisfy.
-- [docs/running.md](docs/running.md) for runnable local smoke tests.
+- [docs/running.md](docs/running.md) for runnable local workflows, socket
+  behavior, live attach, persisted reattach, scrollback, and opt-in VT examples.
 - [docs/protocol.md](docs/protocol.md) for the FlatBuffers state-sync contract.
 - [docs/protocol-futures.md](docs/protocol-futures.md) for withheld protocol
   object tracks that need ADRs before schema changes.
@@ -59,7 +61,10 @@ The current implementation is a Rust workspace:
 - Keep commits small enough that each one has a clear review purpose.
 - Preserve user or agent work already present in the worktree unless explicitly told to change it.
 - Prefer documentation under `docs/` once a note needs to outlive the current scratch plan.
-- Keep `WORK.md`, `README.md`, `docs/roadmap.md`, `docs/running.md`, and `docs/terminal-state-extraction.md` aligned when M13 coverage or protocol boundaries change.
+- Keep `WORK.md`, `README.md`, `docs/roadmap.md`, `docs/running.md`,
+  `docs/default-engine-promotion.md`, and `docs/terminal-state-extraction.md`
+  aligned when user-visible workflow status, promotion evidence, terminal-state
+  coverage, or protocol boundaries change.
 - Record upstream/API blockers under `docs/upstream/` when local implementation
   would otherwise require raw PTY replay, duplicated terminal-state tracking, or
   guessing missing `libghostty-vt` data.
