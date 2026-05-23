@@ -94,7 +94,7 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
 
 This avoids freezing a simplistic per-cell ABI before the project has enough implementation feedback about graphemes, combining marks, double-width characters, terminal modes, hyperlinks, and image protocols.
 
-Clients should maintain a pane-surface render state keyed by pane ID and version. A snapshot initializes the local surface buffer and style table, and a patch is applied only when its `base_version` matches the client's current version. Row patches are applied by encoded row index, not by vector order. Clients reject unknown `PatchKind` values instead of treating them as row or cursor updates. Cursor-only patches update cursor state without row updates.
+Clients should maintain a pane-surface render state keyed by pane ID and version. A snapshot initializes the local surface buffer and style table, and a patch is applied only when its `base_version` matches the client's current version. Clients reject unknown `SurfaceKind` values in snapshots, and reject unknown `PatchKind` values instead of treating them as row or cursor updates. Row patches are applied by encoded row index, not by vector order. Cursor-only patches update cursor state without row updates.
 
 Attach responses send `WorkspaceTreeSnapshot`, `PresenceUpdate`, and then
 `AttachStatus`. `AttachStatus.pane_id` is the daemon-selected attached pane.

@@ -1649,6 +1649,7 @@ pub fn surface_update_from_frame(
             let snapshot = envelope
                 .body_as_pane_surface_snapshot()
                 .ok_or("missing pane surface body")?;
+            validate_surface_kind(snapshot.surface())?;
             let rows = snapshot.rows_data().ok_or("pane surface has no rows")?;
             let styles = snapshot
                 .styles()
@@ -2917,6 +2918,7 @@ impl ClientPaneSurface {
             row_kitty_placeholders: Vec::new(),
             row_state_hashes: Vec::new(),
         };
+        validate_surface_kind(surface.surface)?;
         validate_hyperlink_table(&surface.hyperlinks)?;
         let row_count =
             usize::try_from(surface.rows).map_err(|_| "surface row count does not fit in usize")?;
@@ -3132,6 +3134,16 @@ fn validate_patch_kind(
         Ok(())
     } else {
         Err(format!("unknown surface patch kind {}", patch_kind.0).into())
+    }
+}
+
+fn validate_surface_kind(
+    surface: protocol::SurfaceKind,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if surface.variant_name().is_some() {
+        Ok(())
+    } else {
+        Err(format!("unknown surface kind {}", surface.0).into())
     }
 }
 
@@ -4847,6 +4859,24 @@ mod tests {
         semantic_prompt: protocol::RowSemanticPrompt,
         semantic_content: protocol::CellSemanticContent,
     ) -> Vec<u8> {
+        pane_surface_snapshot_with_kind_and_run_metadata_frame(
+            protocol::SurfaceKind::Main,
+            style_id,
+            flags,
+            hyperlink_id,
+            semantic_prompt,
+            semantic_content,
+        )
+    }
+
+    fn pane_surface_snapshot_with_kind_and_run_metadata_frame(
+        surface: protocol::SurfaceKind,
+        style_id: u32,
+        flags: u32,
+        hyperlink_id: u32,
+        semantic_prompt: protocol::RowSemanticPrompt,
+        semantic_content: protocol::CellSemanticContent,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
         let run = flatbuffer_run_with_metadata(
             &mut builder,
@@ -4879,7 +4909,7 @@ mod tests {
             &protocol::PaneSurfaceSnapshotArgs {
                 pane_id: Some(pane_id),
                 version: 1,
-                surface: protocol::SurfaceKind::Main,
+                surface,
                 cols: 80,
                 rows: 1,
                 cursor: None,
@@ -5330,6 +5360,22 @@ mod tests {
     }
 
     #[test]
+    fn rejects_surface_snapshot_with_unknown_surface_kind_from_frame() {
+        let frame = pane_surface_snapshot_with_kind_and_run_metadata_frame(
+            protocol::SurfaceKind(99),
+            0,
+            0,
+            0,
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent::Output,
+        );
+        let err = surface_update_from_frame(&frame)
+            .expect_err("surface snapshot with unknown surface kind should be rejected");
+
+        assert!(err.to_string().contains("unknown surface kind"));
+    }
+
+    #[test]
     fn rejects_no_row_surface_patch_with_row_updates_from_frame() {
         let frame = pane_surface_patch_with_row_frame(protocol::PatchKind::CursorOnly);
         let err = surface_update_from_frame(&frame)
@@ -5703,6 +5749,22 @@ mod tests {
 
         assert!(err.to_string().contains("unknown semantic content"));
         assert_eq!(surface, before);
+    }
+
+    #[test]
+    fn client_surface_rejects_snapshot_with_unknown_surface_kind() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top")],
+        );
+        snapshot.surface = Some(protocol::SurfaceKind(99));
+
+        let err = ClientPaneSurface::from_snapshot(&snapshot)
+            .expect_err("unknown snapshot surface kind should be rejected");
+
+        assert!(err.to_string().contains("unknown surface kind"));
     }
 
     #[test]
