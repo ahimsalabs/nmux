@@ -57,7 +57,9 @@ This schema is not frozen as the final Ghostty-compatible terminal model. ADR
 0007 already calls out likely future additions for externally hydrating a
 Ghostty renderer, and later M13 decisions still withhold wired hyperlink IDs,
 image placement/pixel data, richer damage objects, and broader semantic command
-metadata until their backend/API or protocol shape is explicit.
+metadata until their backend/API or protocol shape is explicit. The local
+pre-schema protocol tracks are maintained in
+[Future Protocol Tracks](../protocol-futures.md).
 
 ## Gaps And Open Questions
 

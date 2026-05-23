@@ -27,6 +27,8 @@ and the non-Nix requirements checklist.
 See [docs/source-fetch-policy.md](source-fetch-policy.md) for the opt-in
 `libghostty-vt-sys` fetch policy.
 See [docs/packaging.md](packaging.md) for the current no-release-binary stance.
+See [docs/protocol-futures.md](protocol-futures.md) for withheld protocol
+objects that need ADRs before schema changes.
 
 Inspect the installed binary versions without connecting or binding a socket:
 

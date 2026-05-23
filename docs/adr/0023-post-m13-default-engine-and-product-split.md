@@ -51,7 +51,8 @@ Split post-M13 work into explicit tracks:
 - Protocol object expansion: require a focused ADR and compatibility plan before
   adding schema fields for wired hyperlink IDs, image placement or pixel data,
   richer damage metadata, semantic command lifecycle data, or physical-key and
-  text-event forwarding.
+  text-event forwarding. Track the pre-schema questions in
+  [Future Protocol Tracks](../protocol-futures.md).
 - Local usability spine: preserve attach, reconnect, live streaming, scrollback
   fetches, cached state, and daemon-owned structured input while those tracks
   progress.
