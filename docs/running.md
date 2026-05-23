@@ -120,6 +120,14 @@ The output starts with the current workspace summary. The following rows depend
 on the user's default shell and startup files, so use an explicit `--command`
 when you need deterministic smoke-test text.
 
+For scripts, add `--json` to a one-shot attach. The client prints one object
+with the workspace, authoritative attach status, terminal metadata, current
+surface text, and requested scrollback rows:
+
+```sh
+nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --json
+```
+
 For a deterministic PTY-output smoke test, run the daemon with an explicit shell command:
 
 ```sh
@@ -280,6 +288,9 @@ nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' -
 ```
 
 Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached. Bounded live and follow loops reject `--iterations 0` before connecting, and `--interval-ms` must be greater than zero.
+For scripts, add `--json` to live mode to print newline-delimited attach,
+workspace, and surface update events instead of renderer text. `--json` is
+mutually exclusive with `--follow` and `--redraw`.
 
 Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`; the printed header reports the actual returned row range and includes the total when the response is not the tail. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. State saves write a temporary file in the target directory and rename it into place. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
 

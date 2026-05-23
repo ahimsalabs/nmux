@@ -18,8 +18,8 @@ Current post-M14 state:
 
 - Usable today: the default `interim` engine supports local one-shot attach,
   live attach, read-only reattach, cached state, daemon-owned scrollback
-  fetches, structured input/control intents, default socket workflows, and
-  `make local-smoke`.
+  fetches, structured input/control intents, script-facing JSON attach/live
+  output, default socket workflows, and `make local-smoke`.
 - Opt-in correctness path: `libghostty-vt` is imported and feature-tested for
   backend-owned terminal-state extraction, but remains outside the normal
   default engine, regular CI gate, and release baseline.
@@ -118,6 +118,10 @@ Done:
 - `nmux --print-socket` and `nmuxd --print-socket` print the resolved socket path without connecting or binding, including `NMUX_SOCKET` and explicit `--socket` precedence.
 - `nmux` and `nmuxd` informational flags exit before mode validation or
   socket/state/PTY work.
+- `nmux --json` prints one-shot attach output as a machine-readable object with
+  workspace, authoritative attach status, terminal metadata, surface text, and
+  scrollback rows; `nmux --live --json` streams newline-delimited attach,
+  workspace, and surface update events for scripts.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
   tooling without changing the current local socket protocol; nested local
