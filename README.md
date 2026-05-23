@@ -36,7 +36,8 @@ The current implementation is a Rust workspace with:
 What works today: local `nmuxd`/`nmux` workflows over a Unix socket, one-shot
 attach, live attach, read-only reattach, explicit input and resize intents,
 persisted client render state, daemon-owned scrollback fetches, nested
-`NMUX_*` context reporting, default-engine CI, and an opt-in
+`NMUX_*` context reporting, daemon command cwd/env configuration,
+default-engine CI, and an opt-in
 `libghostty-vt` correctness path with promotion evidence bundles.
 
 What is not default-ready: the default engine is still the interim text surface,
@@ -143,8 +144,15 @@ nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --one-shot --c
 # shell 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock
 # Or emit a machine-readable attach object with workspace, attach status,
-# terminal metadata, surface text, and scrollback rows:
+# terminal metadata, structured surface/scrollback payloads, and rendered text:
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --json
+```
+
+Pane commands can be launched from an explicit working directory and receive
+additional environment variables:
+
+```sh
+nix develop . -c cargo run --bin nmuxd -- --one-shot --cwd "$PWD" --env NMUX_DEMO=1 --command 'printf "cwd:%s env:%s\n" "$PWD" "$NMUX_DEMO"; cat >/dev/null'
 ```
 
 Bounded live attach:
@@ -192,10 +200,12 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux-context.sock
 
 Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled. Reconnects use `AttachStatus` as an explicit current-surface barrier and pane authority, so a client no longer waits on a timeout to learn that no surface frame follows, does not infer the attached pane from the workspace root, renders cached current surfaces only when the cached version matches `AttachStatus.surface_version`, and rejects responses whose `Snapshot`/`Patch` status disagrees with the following surface frame. When the backend reports terminal title or OSC 7 working-directory metadata, the local CLI prints those metadata lines with the current pane surface; metadata-only `CursorOnly` live updates carry no row changes and print just the changed metadata lines in non-redraw mode.
 Use `nmux --json` for machine-readable one-shot attach output, including the
-workspace summary, authoritative attach status, terminal metadata, current
-surface text, and requested scrollback rows. In live mode, `nmux --live --json`
-prints newline-delimited attach/workspace/surface events. `--json` is mutually
-exclusive with `--follow` and `--redraw`.
+workspace summary, authoritative attach status, terminal metadata, structured
+current-surface rows/styles/hyperlinks, rendered surface text, and requested
+scrollback rows with their structured metadata. In live mode, `nmux --live
+--json` prints newline-delimited attach/workspace/surface events, including
+structured surface update row payloads. `--json` is mutually exclusive with
+`--follow` and `--redraw`.
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache, including cached terminal metadata, when the daemon has no newer surface update to send. One-shot, follow, and live attach paths all reuse that scoped cached surface instead of replaying PTY bytes. Follow mode is observation-only and rejects input flags instead of silently dropping them.
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that
 survives repeated live client detach and reattach until you stop it with Ctrl-C

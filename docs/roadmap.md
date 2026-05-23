@@ -19,7 +19,8 @@ Current post-M14 state:
 - Usable today: the default `interim` engine supports local one-shot attach,
   live attach, read-only reattach, cached state, daemon-owned scrollback
   fetches, structured input/control intents, script-facing JSON attach/live
-  output, default socket workflows, and `make local-smoke`.
+  output with structured surface and scrollback payloads, daemon cwd/env
+  command configuration, default socket workflows, and `make local-smoke`.
 - Opt-in correctness path: `libghostty-vt` is imported and feature-tested for
   backend-owned terminal-state extraction, but remains outside the normal
   default engine, regular CI gate, and release baseline.
@@ -119,13 +120,18 @@ Done:
 - `nmux` and `nmuxd` informational flags exit before mode validation or
   socket/state/PTY work.
 - `nmux --json` prints one-shot attach output as a machine-readable object with
-  workspace, authoritative attach status, terminal metadata, surface text, and
+  workspace, authoritative attach status, terminal metadata, structured current
+  surface rows/styles/hyperlinks, rendered surface text, and structured
   scrollback rows; `nmux --live --json` streams newline-delimited attach,
-  workspace, and surface update events for scripts.
+  workspace, and surface update events with structured row payloads for
+  scripts.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
   tooling without changing the current local socket protocol; nested local
   daemons append inherited `NMUX_ORIGIN` values as a local hop-chain hint.
+- `nmuxd --cwd DIR` and repeatable `nmuxd --env KEY=VALUE` pass explicit launch
+  working directories and environment variables to local pane commands while
+  preserving daemon-injected `NMUX_*` pane identity.
 - `nmux --print-context` reports inherited `NMUX_*` pane identity without
   connecting, prints the exact inherited key/value names, fails clearly outside
   a complete nmux pane context, and has nested PTY smoke coverage.
