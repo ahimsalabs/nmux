@@ -22,6 +22,19 @@ their own object model, compatibility plan, and ADR before fields are added to
 - Keep GPL and AGPL code out of nmux core. Treat incompatible projects as prior
   art or process-bound adapter targets only.
 
+## Track Status
+
+Use this table to decide whether a schema change belongs in current work or
+needs a separate ADR first:
+
+| Track | Current protocol surface | Withheld until ADR |
+| --- | --- | --- |
+| Hyperlinks | Hyperlink table on full surface snapshots and scrollback chunks; run-level presence flag. | Stable URI identity, ID lifetime, patch-table diffs, and nonzero run references from the backend. |
+| Images and graphics | Kitty virtual placeholder presence on rows. | Placement objects, dimensions, pixel payload transfer, persistence, cache limits, and render security policy. |
+| Damage | Row replacement, cursor/mode/color-only patches, row dirty flags, and row state hashes. | Cell/run/region/object damage shapes and compatibility recovery rules beyond `FullRefreshRequired`. |
+| Command lifecycle | OSC 133 row prompt metadata and per-run semantic content. | Command IDs, prompt/input/output ranges, exit status, duration, and lifecycle ownership. |
+| Physical key and text events | Text keys, raw bytes, paste, named keys, focus, mouse, and resize intents. | Layout-independent physical keys, IME/composition ownership, repeat/dead-key semantics, and richer frontend text events. |
+
 ## Hyperlink Identity
 
 Current state: `PaneSurfaceSnapshot` and `ScrollbackChunk` carry a `Hyperlink`
