@@ -793,16 +793,18 @@ fn serve_attached_client(
 }
 
 fn active_pane_id(session: &Session) -> Option<&str> {
-    let pane_id = session
-        .tabs
-        .iter()
-        .find(|tab| tab.id == session.active_tab_id)
-        .or_else(|| session.tabs.first())
-        .map(|tab| tab.active_pane_id.as_str())?;
+    let pane_id = active_tab(session)?.active_pane_id.as_str();
     session
         .surface_version(pane_id)
         .is_some()
         .then_some(pane_id)
+}
+
+fn active_tab<'a>(session: &'a Session) -> Option<&'a nmux_core::session::Tab> {
+    session
+        .tabs
+        .iter()
+        .find(|tab| tab.id == session.active_tab_id)
 }
 
 fn process_one_shot_input(
@@ -923,13 +925,18 @@ fn write_active_pane_not_found_error(
     session: &Session,
     seq: &mut u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let pane_id = session
-        .tabs
-        .iter()
-        .find(|tab| tab.id == session.active_tab_id)
-        .or_else(|| session.tabs.first())
-        .map(|tab| tab.active_pane_id.as_str())
-        .unwrap_or("active-pane");
+    let Some(tab) = active_tab(session) else {
+        return write_protocol_error(
+            stream,
+            session,
+            seq,
+            protocol::ErrorCode::PaneNotFound,
+            &format!("active tab not found: {}", session.active_tab_id),
+            None,
+            0,
+        );
+    };
+    let pane_id = tab.active_pane_id.as_str();
     write_protocol_error(
         stream,
         session,
@@ -7276,6 +7283,33 @@ mod tests {
             err.to_string()
                 .contains("active pane not found: missing-pane"),
             "missing active-pane context: {err}"
+        );
+        assert!(
+            err.to_string().contains("server error"),
+            "missing server error prefix: {err}"
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_rejects_missing_active_tab_without_guessing_first_tab() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        session.active_tab_id = "missing-tab".to_owned();
+
+        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let err = attach_from_stream(&mut stream).expect_err("missing active tab should fail");
+        server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("active tab not found: missing-tab"),
+            "missing active-tab context: {err}"
         );
         assert!(
             err.to_string().contains("server error"),

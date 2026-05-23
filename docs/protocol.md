@@ -102,9 +102,9 @@ Attach responses send `WorkspaceTreeSnapshot`, `PresenceUpdate`, and then
 current surface and no surface frame follows; otherwise it is `Snapshot` or
 `Patch` and the next frame is the corresponding pane surface object. Clients
 should use the status pane ID, not a guessed default, for post-attach input,
-resize, and scrollback requests. If the daemon cannot resolve its active pane,
-it sends a `PaneNotFound` `Error` instead of publishing an `AttachStatus` for a
-guessed pane.
+resize, and scrollback requests. If the daemon cannot resolve its active tab or
+active pane, it sends a `PaneNotFound` `Error` instead of publishing an
+`AttachStatus` for a guessed pane.
 
 Cursor-only, mode-only, and color-only patches can also update
 `TerminalMetadataState` without row updates. Metadata-only updates are therefore
@@ -157,10 +157,10 @@ socket close. `Error.pane_id` identifies the pane-scoped request that failed
 when the daemon can attribute the failure to a pane. `Error.input_seq` carries
 the originating `InputEvent.input_seq` for input failures and remains zero for
 non-input failures. The local CLI reports the frame with the server-provided
-reason. Pane-scoped client intents for unknown panes, missing active-pane
-metadata during attach, and unauthorized control intents return protocol
-`Error` frames instead of hanging, silently omitting a response, or falling
-through to process host behavior.
+reason. Pane-scoped client intents for unknown panes, missing active-tab or
+active-pane metadata during attach, and unauthorized control intents return
+protocol `Error` frames instead of hanging, silently omitting a response, or
+falling through to process host behavior.
 
 ## Validation
 
