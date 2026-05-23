@@ -30,6 +30,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("Send a supported named key"));
     assert!(stdout.contains("--list-key-names"));
     assert!(stdout.contains("--list-key-names-json"));
+    assert!(stdout.contains("--list-input-choices-json"));
     assert!(stdout.contains("--paste TEXT"));
     assert!(stdout.contains("--focus gained|lost"));
     assert!(stdout.contains("daemon rejects if reporting is off"));
@@ -384,6 +385,33 @@ fn no_connect_client_flags_skip_attach_mode_validation() {
     assert!(
         !socket_path.exists(),
         "key-name list flags should not create a socket path"
+    );
+
+    let input_choices_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--list-input-choices-json",
+            "--cols",
+            "100",
+            "--iterations",
+            "0",
+        ])
+        .output()
+        .expect("run nmux --list-input-choices-json with attach flags");
+
+    assert!(
+        input_choices_output.status.success(),
+        "nmux --list-input-choices-json should exit before attach-mode validation: {}",
+        String::from_utf8_lossy(&input_choices_output.stderr)
+    );
+    let input_choices_stdout = String::from_utf8_lossy(&input_choices_output.stdout);
+    assert!(input_choices_stdout.contains("\"key_modifiers\""));
+    assert!(input_choices_stdout.contains("\"focus_events\":[\"gained\",\"lost\"]"));
+    assert!(input_choices_stdout.contains("\"mouse_buttons\""));
+    assert!(
+        !socket_path.exists(),
+        "input-choice list flags should not create a socket path"
     );
 }
 

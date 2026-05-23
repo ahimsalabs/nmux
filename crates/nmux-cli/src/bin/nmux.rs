@@ -93,6 +93,11 @@ const KEY_NAME_ALIASES: &[(&str, &str)] = &[
     ("pagedown", "page-down"),
     ("bs", "backspace"),
 ];
+const KEY_MODIFIER_NAMES: &[&str] = &["shift", "ctrl", "alt", "super"];
+const FOCUS_EVENT_NAMES: &[&str] = &["gained", "lost"];
+const MOUSE_ACTION_NAMES: &[&str] = &["press", "release", "motion"];
+const MOUSE_BUTTON_NAMES: &[&str] = &["none", "left", "middle", "right", "wheel-up", "wheel-down"];
+const LOCAL_ECHO_NAMES: &[&str] = &["off", "tty"];
 
 fn main() {
     if let Err(err) = run() {
@@ -119,6 +124,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.list_key_names || args.list_key_names_json {
         print_key_names(args.list_key_names_json);
+        return Ok(());
+    }
+
+    if args.list_input_choices_json {
+        println!("{}", format_input_choices_json());
         return Ok(());
     }
 
@@ -1011,6 +1021,7 @@ struct Args {
     version_json: bool,
     list_key_names: bool,
     list_key_names_json: bool,
+    list_input_choices_json: bool,
     print_context: bool,
     print_context_json: bool,
     print_socket: bool,
@@ -1054,6 +1065,7 @@ where
     let mut version_json = false;
     let mut list_key_names = false;
     let mut list_key_names_json = false;
+    let mut list_input_choices_json = false;
     let mut print_context = false;
     let mut print_context_json = false;
     let mut print_socket = false;
@@ -1110,6 +1122,9 @@ where
             }
             "--list-key-names-json" => {
                 list_key_names_json = true;
+            }
+            "--list-input-choices-json" => {
+                list_input_choices_json = true;
             }
             "--print-context" => {
                 print_context = true;
@@ -1271,6 +1286,7 @@ where
         || version_json
         || list_key_names
         || list_key_names_json
+        || list_input_choices_json
         || print_context
         || print_context_json
         || print_socket
@@ -1342,6 +1358,7 @@ where
         version_json,
         list_key_names,
         list_key_names_json,
+        list_input_choices_json,
         print_context,
         print_context_json,
         print_socket,
@@ -1411,11 +1428,7 @@ fn print_key_names(json: bool) {
 }
 
 fn format_key_names_json() -> String {
-    let names = SUPPORTED_KEY_NAMES
-        .iter()
-        .map(|name| local::json_string(name))
-        .collect::<Vec<_>>()
-        .join(",");
+    let names = format_json_string_array(SUPPORTED_KEY_NAMES);
     let aliases = KEY_NAME_ALIASES
         .iter()
         .map(|(alias, canonical)| {
@@ -1428,6 +1441,29 @@ fn format_key_names_json() -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!("{{\"names\":[{names}],\"aliases\":[{aliases}]}}")
+}
+
+fn format_input_choices_json() -> String {
+    format!(
+        "{{\"key_names\":{},\"key_modifiers\":{},\"focus_events\":{},\"mouse_actions\":{},\"mouse_buttons\":{},\"local_echo\":{}}}",
+        format_key_names_json(),
+        format_json_string_array(KEY_MODIFIER_NAMES),
+        format_json_string_array(FOCUS_EVENT_NAMES),
+        format_json_string_array(MOUSE_ACTION_NAMES),
+        format_json_string_array(MOUSE_BUTTON_NAMES),
+        format_json_string_array(LOCAL_ECHO_NAMES)
+    )
+}
+
+fn format_json_string_array(values: &[&str]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| local::json_string(value))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 fn format_context_json(session_id: &str, pane_id: &str, socket: &str, origin: &str) -> String {
@@ -1677,6 +1713,7 @@ Options:
   --key-name NAME            Send a supported named key; repeat for a sequence
   --list-key-names           List supported --key-name values and aliases
   --list-key-names-json      List supported --key-name values as JSON
+  --list-input-choices-json  List structured input choices as JSON
   --key-modifiers MODS       Modifiers for --key-name: shift,ctrl,alt,super
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send focus input; daemon rejects if reporting is off
@@ -1886,12 +1923,12 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 mod tests {
     use super::{
         FocusEvent, KEY_NAME_ALIASES, LiveUpdatePrintKind, LocalEcho, MouseEvent,
-        SUPPORTED_KEY_NAMES, args_from_iter, format_context_json, format_key_names_json,
-        format_scrollback, interim_surface_fidelity_warning_needed, live_update_print_kind,
-        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
-        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag,
-        raw_terminal_mode_needed, redraw_terminal_guard_needed, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        SUPPORTED_KEY_NAMES, args_from_iter, format_context_json, format_input_choices_json,
+        format_key_names_json, format_scrollback, interim_surface_fidelity_warning_needed,
+        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args,
@@ -1974,6 +2011,7 @@ mod tests {
         assert!(!args.version_json);
         assert!(!args.list_key_names);
         assert!(!args.list_key_names_json);
+        assert!(!args.list_input_choices_json);
         assert!(!args.print_context);
         assert!(!args.print_context_json);
         assert!(!args.print_socket);
@@ -2005,6 +2043,12 @@ mod tests {
     }
 
     #[test]
+    fn list_input_choices_json_arg_exits_before_mode_validation() {
+        let args = args_from_iter(["--list-input-choices-json", "--cols", "80"]).expect("args");
+        assert!(args.list_input_choices_json);
+    }
+
+    #[test]
     fn key_names_json_lists_names_and_aliases() {
         let json = format_key_names_json();
         assert!(json.starts_with("{\"names\":["));
@@ -2012,6 +2056,19 @@ mod tests {
         assert!(json.contains("\"space\""));
         assert!(json.contains("{\"alias\":\"esc\",\"canonical\":\"escape\"}"));
         assert!(json.contains("{\"alias\":\"kp-0\",\"canonical\":\"numpad-0\"}"));
+    }
+
+    #[test]
+    fn input_choices_json_lists_structured_input_vocabularies() {
+        let json = format_input_choices_json();
+        assert!(json.contains("\"key_names\":{\"names\":["));
+        assert!(json.contains("\"key_modifiers\":[\"shift\",\"ctrl\",\"alt\",\"super\"]"));
+        assert!(json.contains("\"focus_events\":[\"gained\",\"lost\"]"));
+        assert!(json.contains("\"mouse_actions\":[\"press\",\"release\",\"motion\"]"));
+        assert!(json.contains(
+            "\"mouse_buttons\":[\"none\",\"left\",\"middle\",\"right\",\"wheel-up\",\"wheel-down\"]"
+        ));
+        assert!(json.contains("\"local_echo\":[\"off\",\"tty\"]"));
     }
 
     #[test]
