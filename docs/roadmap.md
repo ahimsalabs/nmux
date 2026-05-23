@@ -9,8 +9,10 @@ local attach/reconnect/live spine stable, keep backend `libghostty-vt`
 extraction opt-in, and choose future work from explicit default-engine
 promotion, frontend hydration, or protocol-object tracks. The default engine
 remains `interim` until a later decision deliberately accepts the native
-Ghostty/Zig build in regular development, CI, and packaging; promotion evidence
-is tracked in [docs/default-engine-promotion.md](default-engine-promotion.md).
+Ghostty/Zig build cost, regular CI, non-Nix/toolchain provisioning,
+source-fetch policy, packaging, and developer workflow costs; promotion
+evidence is tracked in
+[docs/default-engine-promotion.md](default-engine-promotion.md).
 
 Current post-M14 state:
 
