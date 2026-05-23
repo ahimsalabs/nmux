@@ -3764,6 +3764,76 @@ mod tests {
         assert_eq!(palette_diff.get(1), 0x112233ff);
     }
 
+    #[test]
+    fn color_and_mode_only_engine_update_emits_color_only_patch_with_modes() {
+        struct ColorAndModeOnlyEngine;
+
+        impl TerminalEngine for ColorAndModeOnlyEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"color and mode only");
+                let mut update = TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    input.surface_lines.to_vec(),
+                    input.scrollback_lines.to_vec(),
+                );
+                update.modes = TerminalModes {
+                    bracketed_paste: true,
+                    ..input.modes
+                };
+                update.title = input.title.to_owned();
+                update.working_directory = input.working_directory.to_owned();
+                update.colors = TerminalColors {
+                    default_fg_rgba: 0xeeeeeeff,
+                    default_bg_rgba: 0x111111ff,
+                    cursor_rgba: 0xff00ffff,
+                    cursor_rgba_set: true,
+                    palette_rgba: vec![0x000000ff, 0x112233ff],
+                };
+                Some(update)
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = ColorAndModeOnlyEngine;
+
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"color and mode only",
+            &mut engine
+        ));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::ColorOnly)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::ColorOnly);
+        assert_eq!(patch.row_updates().expect("row updates").len(), 0);
+        assert!(patch.modes().expect("modes").bracketed_paste());
+        let colors = patch.colors().expect("colors");
+        assert_eq!(colors.cursor_rgba(), 0xff00ffff);
+        assert!(colors.cursor_rgba_set());
+        assert!(colors.palette_rgba().is_none());
+        assert_eq!(colors.palette_diff_start(), 0);
+    }
+
     #[cfg(feature = "libghostty-vt")]
     #[test]
     fn ghostty_vt_color_state_change_emits_color_only_patch() {
