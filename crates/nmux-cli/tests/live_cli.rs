@@ -431,6 +431,66 @@ fn state_info_reports_matching_live_socket_scope() {
 }
 
 #[test]
+fn nmuxd_ready_json_reports_bound_socket_before_clients() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--ready-json",
+            "--live-forever",
+            "--command",
+            "printf 'ready\n'; cat >/dev/null",
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn nmuxd");
+
+    let stdout = server.stdout.take().expect("server stdout");
+    let mut lines = BufReader::new(stdout).lines();
+    let ready = lines
+        .next()
+        .expect("ready json line")
+        .expect("read ready json");
+    let socket_was_ready = socket_path.exists();
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        ready.contains("\"event\":\"ready\""),
+        "missing ready event:\n{ready}"
+    );
+    assert!(
+        ready.contains(&format!(
+            "\"NMUX_SOCKET\":\"{}\"",
+            socket_path.to_str().expect("socket path")
+        )),
+        "missing socket path:\n{ready}"
+    );
+    assert!(
+        ready.contains("\"source\":\"--socket\""),
+        "missing socket source:\n{ready}"
+    );
+    assert!(
+        ready.contains("\"mode\":\"live-forever\""),
+        "missing daemon mode:\n{ready}"
+    );
+    assert!(
+        ready.contains("\"terminal_engine\":\"interim\""),
+        "missing terminal engine:\n{ready}"
+    );
+    assert!(
+        ready.contains("\"resize_policy\":\"fixed\""),
+        "missing resize policy:\n{ready}"
+    );
+    assert!(socket_was_ready, "ready emitted before socket existed");
+}
+
+#[test]
 fn one_shot_daemon_can_set_command_cwd_and_env() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

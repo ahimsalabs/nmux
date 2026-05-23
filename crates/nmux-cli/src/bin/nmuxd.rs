@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
@@ -57,6 +58,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let listener = local::bind_listener(&args.socket_path)?;
     let _socket_cleanup = SocketCleanup::new(args.socket_path.clone());
     eprintln!("nmuxd: listening on {}", args.socket_path.display());
+    let ready_json = if args.ready_json {
+        Some(format_ready_json(&args))
+    } else {
+        None
+    };
 
     let mut session = Session::initial();
     if let Some(command) = args.command {
@@ -81,6 +87,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     pty_host.start_pane(pane_id, &host_spec)?;
     let mut terminal_engines = PaneTerminalEngines::new(args.terminal_engine_kind);
     wait_for_pane_output(&mut session, &mut pty_host, pane_id, &mut terminal_engines)?;
+    if let Some(ready_json) = ready_json {
+        println!("{ready_json}");
+        io::stdout().flush()?;
+    }
 
     if args.live || args.live_forever || args.live_cycles.is_some() || args.live_clients.is_some() {
         let cycles = args.live_cycles.unwrap_or(usize::MAX);
@@ -182,6 +192,7 @@ struct Args {
     list_daemon_choices_json: bool,
     print_socket: bool,
     print_socket_json: bool,
+    ready_json: bool,
     socket_path: PathBuf,
     socket_source: local::SocketPathSource,
     one_shot: bool,
@@ -203,6 +214,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut list_daemon_choices_json = false;
     let mut print_socket = false;
     let mut print_socket_json = false;
+    let mut ready_json = false;
     let (mut socket_path, mut socket_source) = local::default_socket_path_and_source();
     let mut one_shot = false;
     let mut live = false;
@@ -235,6 +247,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             }
             "--print-socket-json" => {
                 print_socket_json = true;
+            }
+            "--ready-json" => {
+                ready_json = true;
             }
             "--socket" => {
                 socket_path = args
@@ -308,6 +323,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         list_daemon_choices_json,
         print_socket,
         print_socket_json,
+        ready_json,
         socket_path,
         socket_source,
         one_shot,
@@ -337,6 +353,51 @@ fn format_daemon_choices_json() -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!("{{\"resize_policies\":{resize_policies},\"terminal_engines\":[{terminal_engines}]}}")
+}
+
+fn format_ready_json(args: &Args) -> String {
+    format!(
+        "{{\"event\":\"ready\",\"NMUX_SOCKET\":{},\"source\":{},\"mode\":{},\"terminal_engine\":{},\"resize_policy\":{}}}",
+        local::json_string(&args.socket_path.display().to_string()),
+        local::json_string(args.socket_source.label()),
+        local::json_string(daemon_mode_name(args)),
+        local::json_string(terminal_engine_kind_name(args.terminal_engine_kind)),
+        local::json_string(resize_policy_name(args.resize_policy))
+    )
+}
+
+fn daemon_mode_name(args: &Args) -> &'static str {
+    if args.live_forever {
+        "live-forever"
+    } else if args.live_cycles.is_some() {
+        "live-cycles"
+    } else if args.live_clients.is_some() {
+        "live-clients"
+    } else if args.live {
+        "live"
+    } else if args.one_shot {
+        "one-shot"
+    } else {
+        "serve"
+    }
+}
+
+fn terminal_engine_kind_name(kind: TerminalEngineKind) -> &'static str {
+    match kind {
+        TerminalEngineKind::InterimText => "interim",
+        #[cfg(feature = "libghostty-vt")]
+        TerminalEngineKind::LibghosttyVt => "libghostty-vt",
+    }
+}
+
+fn resize_policy_name(policy: protocol::ResizePolicy) -> &'static str {
+    match policy {
+        protocol::ResizePolicy::Fixed => "fixed",
+        protocol::ResizePolicy::Leader => "leader",
+        protocol::ResizePolicy::ActiveClient => "active-client",
+        protocol::ResizePolicy::Manual => "manual",
+        _ => "unknown",
+    }
 }
 
 fn terminal_engine_available(name: &str) -> bool {
@@ -423,6 +484,7 @@ Options:
   --print-socket                        Print the resolved socket path and exit
   --print-socket-json                   Print the resolved socket path/source as JSON
   --list-daemon-choices-json            List daemon configuration choices as JSON
+  --ready-json                          Print a JSON ready event after bind and pane startup
   --one-shot                            Serve one attach client
   --live                                Serve one live client until detach
   --live-forever                        Serve sequential live clients until stopped
@@ -442,6 +504,7 @@ Options:
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   Informational flags exit before daemon-mode validation or socket/PTY work.
+  --ready-json does not exit; it emits one stdout line after socket bind and pane startup.
   Existing socket paths are not replaced automatically.
   When started inside nmux, NMUX_ORIGIN is appended for child pane commands.
   libghostty-vt requires building nmux with the libghostty-vt feature.
@@ -478,9 +541,11 @@ fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'stati
 #[cfg(test)]
 mod tests {
     use super::{
-        SocketCleanup, format_daemon_choices_json, parse_env_assignment, parse_numeric_arg,
-        parse_resize_policy, parse_terminal_engine_kind, usage, validate_mode_args,
+        Args, SocketCleanup, format_daemon_choices_json, format_ready_json, parse_env_assignment,
+        parse_numeric_arg, parse_resize_policy, parse_terminal_engine_kind, usage,
+        validate_mode_args,
     };
+    use nmux_cli::local;
     use nmux_core::terminal::TerminalEngineKind;
     use nmux_proto::protocol;
     use std::fs;
@@ -552,6 +617,36 @@ mod tests {
     }
 
     #[test]
+    fn ready_json_reports_startup_context() {
+        let args = Args {
+            help: false,
+            version: false,
+            version_json: false,
+            list_daemon_choices_json: false,
+            print_socket: false,
+            print_socket_json: false,
+            ready_json: true,
+            socket_path: PathBuf::from("/tmp/nmux-ready.sock"),
+            socket_source: local::SocketPathSource::Explicit,
+            one_shot: false,
+            live: false,
+            live_forever: true,
+            live_cycles: None,
+            live_clients: None,
+            command: None,
+            working_dir: None,
+            env: Vec::new(),
+            resize_policy: protocol::ResizePolicy::ActiveClient,
+            terminal_engine_kind: TerminalEngineKind::InterimText,
+        };
+
+        assert_eq!(
+            format_ready_json(&args),
+            "{\"event\":\"ready\",\"NMUX_SOCKET\":\"/tmp/nmux-ready.sock\",\"source\":\"--socket\",\"mode\":\"live-forever\",\"terminal_engine\":\"interim\",\"resize_policy\":\"active-client\"}"
+        );
+    }
+
+    #[test]
     fn env_arg_accepts_key_value_with_equals_in_value() {
         assert_eq!(
             parse_env_assignment("NMUX_TEST=one=two"),
@@ -573,6 +668,7 @@ mod tests {
         assert!(usage.contains("--live"));
         assert!(usage.contains("--print-socket"));
         assert!(usage.contains("--print-socket-json"));
+        assert!(usage.contains("--ready-json"));
         assert!(usage.contains("--list-daemon-choices-json"));
         assert!(usage.contains("--version-json"));
         assert!(usage.contains("-V, --version"));
@@ -584,6 +680,7 @@ mod tests {
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
         assert!(usage.contains("--terminal-engine interim|libghostty-vt"));
         assert!(usage.contains("libghostty-vt requires building nmux"));
+        assert!(usage.contains("--ready-json does not exit"));
         assert!(usage.contains("Existing socket paths are not replaced automatically"));
     }
 

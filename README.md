@@ -82,14 +82,16 @@ another:
 
 ```sh
 # shell 1
-nix develop . -c cargo run --bin nmuxd -- --live-forever
+nix develop . -c cargo run --bin nmuxd -- --live-forever --ready-json
 # shell 2
 nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 ```
 
 Detach the live client with Ctrl-]; stop the daemon in shell 1 with Ctrl-C when
-finished. See [docs/running.md](docs/running.md) for socket selection, one-shot
-attach, persisted reattach, scrollback, resize, and opt-in `libghostty-vt`
+finished. `--ready-json` prints one JSON line after the socket is bound and the
+initial pane starts, so scripts do not need to poll the socket path. See
+[docs/running.md](docs/running.md) for socket selection, one-shot attach,
+persisted reattach, scrollback, resize, and opt-in `libghostty-vt`
 examples.
 
 ## Check
@@ -219,6 +221,9 @@ Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that
 survives repeated live client detach and reattach until you stop it with Ctrl-C
 in the daemon shell.
+Add `--ready-json` to have `nmuxd` print a single readiness object after bind
+and pane startup; the object includes the socket path/source, daemon mode,
+terminal engine, and resize policy.
 State load/save failures include the state path in the error, and state saves
 write a temporary file before renaming it into place.
 Bounded client loops require `--iterations` greater than zero.

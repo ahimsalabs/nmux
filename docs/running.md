@@ -75,6 +75,14 @@ same socket path for a new daemon and checks that the old cached surface is not
 rendered. It is the shortest runnable end-to-end workflow check for the default
 engine.
 
+For scripts that start a daemon and then attach a client, add `--ready-json` to
+`nmuxd`. It prints one stdout line after the socket is bound and the initial
+pane has started:
+
+```json
+{"event":"ready","NMUX_SOCKET":"/tmp/nmux.sock","source":"--socket","mode":"live-forever","terminal_engine":"interim","resize_policy":"fixed"}
+```
+
 Run the timed default-plus-opt-in backend `libghostty-vt` validation sample
 when gathering local default-engine-promotion evidence:
 
@@ -289,7 +297,7 @@ nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --comma
 Use `--live-forever` to keep the same daemon-owned workspace and PTY alive for sequential live clients until you stop it with Ctrl-C in the daemon shell:
 
 ```sh
-nix develop . -c cargo run --bin nmuxd -- --live-forever --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+nix develop . -c cargo run --bin nmuxd -- --live-forever --ready-json --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 ```
 
 Use `--live-clients COUNT` to keep the same daemon-owned workspace and PTY alive for a bounded number of sequential live clients:

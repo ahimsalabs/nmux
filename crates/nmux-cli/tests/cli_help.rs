@@ -76,6 +76,7 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("--live-cycles COUNT"));
     assert!(stdout.contains("--print-socket"));
     assert!(stdout.contains("--print-socket-json"));
+    assert!(stdout.contains("--ready-json"));
     assert!(stdout.contains("--list-daemon-choices-json"));
     assert!(stdout.contains("-V, --version"));
     assert!(stdout.contains("--version-json"));
@@ -91,6 +92,7 @@ fn nmuxd_help_lists_live_server_flags() {
         stdout
             .contains("Informational flags exit before daemon-mode validation or socket/PTY work")
     );
+    assert!(stdout.contains("--ready-json does not exit"));
     assert!(stdout.contains("Existing socket paths are not replaced automatically"));
     assert!(stdout.contains("NMUX_ORIGIN is appended for child pane commands"));
     assert!(stdout.contains("libghostty-vt requires building nmux"));
