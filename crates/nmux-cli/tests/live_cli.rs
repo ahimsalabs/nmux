@@ -746,7 +746,7 @@ fn live_cli_renders_initial_scrollback_range() {
             "--live-cycles",
             "1",
             "--command",
-            "printf 'ready\nhistory\n'; sleep 1",
+            "printf 'one\ntwo\nthree\nfour\n'; sleep 1",
         ])
         .spawn()
         .expect("spawn nmuxd");
@@ -762,9 +762,9 @@ fn live_cli_renders_initial_scrollback_range() {
             "--iterations",
             "1",
             "--scrollback-start",
-            "1",
+            "4",
             "--scrollback-count",
-            "5",
+            "2",
             "--interval-ms",
             "1000",
         ])
@@ -783,15 +783,15 @@ fn live_cli_renders_initial_scrollback_range() {
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stdout.contains("scrollback 1..5:"),
+        stdout.contains("scrollback 4..5 of 7:"),
         "missing requested live scrollback header:\n{stdout}"
     );
     assert!(
-        stdout.contains("ready"),
+        stdout.contains("one"),
         "missing live scrollback command output:\n{stdout}"
     );
     assert!(
-        stdout.contains("history"),
+        stdout.contains("two"),
         "missing live scrollback command output:\n{stdout}"
     );
 }

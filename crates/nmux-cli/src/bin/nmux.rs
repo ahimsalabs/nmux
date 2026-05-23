@@ -884,16 +884,32 @@ fn append_terminal_metadata(text: &mut String, metadata: &local::TerminalMetadat
 }
 
 fn format_scrollback(scrollback: &local::ScrollbackChunkSummary) -> String {
-    let mut text = format!(
-        "scrollback {}..{}:",
-        scrollback.start_line, scrollback.total_lines
-    );
+    let mut text = format!("scrollback {}:", scrollback_range_label(scrollback));
     text.push('\n');
     for line in &scrollback.lines {
         text.push_str(&line.text);
         text.push('\n');
     }
     text
+}
+
+fn scrollback_range_label(scrollback: &local::ScrollbackChunkSummary) -> String {
+    let Some(first_line) = scrollback.lines.first().map(|line| line.line) else {
+        return format!(
+            "empty from {} of {}",
+            scrollback.start_line, scrollback.total_lines
+        );
+    };
+    let last_line = scrollback
+        .lines
+        .last()
+        .map(|line| line.line)
+        .unwrap_or(first_line);
+    if last_line == scrollback.total_lines {
+        format!("{first_line}..{last_line}")
+    } else {
+        format!("{first_line}..{last_line} of {}", scrollback.total_lines)
+    }
 }
 
 struct Args {
@@ -1754,11 +1770,11 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 mod tests {
     use super::{
         FocusEvent, LiveUpdatePrintKind, LocalEcho, MouseEvent, args_from_iter,
-        format_context_json, interim_surface_fidelity_warning_needed, live_update_print_kind,
-        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
-        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag,
-        raw_terminal_mode_needed, redraw_terminal_guard_needed, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        format_context_json, format_scrollback, interim_surface_fidelity_warning_needed,
+        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args,
@@ -2567,6 +2583,24 @@ mod tests {
     }
 
     #[test]
+    fn scrollback_header_reports_returned_range() {
+        let scrollback = scrollback_summary(4, 9, &[(4, "four"), (5, "five")]);
+        assert_eq!(
+            format_scrollback(&scrollback),
+            "scrollback 4..5 of 9:\nfour\nfive\n"
+        );
+
+        let tail = scrollback_summary(4, 5, &[(4, "four"), (5, "five")]);
+        assert_eq!(format_scrollback(&tail), "scrollback 4..5:\nfour\nfive\n");
+
+        let empty = scrollback_summary(10, 5, &[]);
+        assert_eq!(
+            format_scrollback(&empty),
+            "scrollback empty from 10 of 5:\n"
+        );
+    }
+
+    #[test]
     fn stdin_bytes_detach_splits_before_ctrl_right_bracket() {
         assert_eq!(
             split_stdin_bytes_for_detach(b"ping\n"),
@@ -2577,5 +2611,34 @@ mod tests {
             (Some(b"ping\n".to_vec()), true)
         );
         assert_eq!(split_stdin_bytes_for_detach(b"\x1d"), (None, true));
+    }
+
+    fn scrollback_summary(
+        start_line: u64,
+        total_lines: u64,
+        lines: &[(u64, &str)],
+    ) -> local::ScrollbackChunkSummary {
+        local::ScrollbackChunkSummary {
+            pane_id: "pane-1".to_owned(),
+            scrollback_version: 1,
+            start_line,
+            total_lines,
+            styles: Vec::new(),
+            hyperlinks: Vec::new(),
+            colors: local::TerminalColorSummary::default(),
+            lines: lines
+                .iter()
+                .map(|(line, text)| local::ScrollbackLine {
+                    line: *line,
+                    text: (*text).to_owned(),
+                    runs: Vec::new(),
+                    dirty_hash: 0,
+                    row_state_hash: 0,
+                    semantic_prompt: protocol::RowSemanticPrompt::None,
+                    dirty: false,
+                    kitty_virtual_placeholder: false,
+                })
+                .collect(),
+        }
     }
 }
