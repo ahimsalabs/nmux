@@ -300,6 +300,7 @@ promotion artifact, or verify a downloaded artifact copy.
 | Date | Workflow Run | Runner | Command | Result |
 | --- | --- | --- | --- | --- |
 | 2026-05-23 | [`26333689514`](https://github.com/ahimsalabs/nmux/actions/runs/26333689514), push to `main`, commit `71dfef510faae8557e711ef6f48bc0ec5ed4cbdd` | GitHub Actions `default engine` job on `ubuntu-latest` | `nix develop . -c make toolchain-info`; `nix develop . -c make check`; `nix develop . -c make local-smoke` | Passed. Toolchain info, Check, and Local smoke steps completed successfully; manual promotion-evidence jobs were skipped on this push, as expected. The current `local-smoke` target covers live stdin, persisted reattach, nested `nmux --print-context`, and same-path socket recreation. |
+| 2026-05-23 | [`26336056105`](https://github.com/ahimsalabs/nmux/actions/runs/26336056105), push to `main`, commit `2d37db9239c44b25c982ce3dd682c2e7f51cb962` | GitHub Actions `default engine` job on `ubuntu-latest`; job ID `77529843498` | `nix develop . -c make toolchain-info`; `nix develop . -c make check`; `nix develop . -c make local-smoke` | Passed. Toolchain info, Check, and Local smoke steps completed successfully after README and AGENTS check-guidance simplification; manual promotion-evidence jobs were skipped on this push, as expected. This confirms the current first-reader docs cleanup did not change the required default-engine gate. |
 
 ## CI Promotion Samples
 
