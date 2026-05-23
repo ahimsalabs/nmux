@@ -159,7 +159,8 @@ release format decision.
 toolchain/source mode, dependency tree, and dynamic dependency output.
 `packaging-provenance-verify` regenerates that manifest and asserts the
 required toolchain, source-mode, locked native-VT package, staged-file,
-runtime-library, dynamic-dependency, and cargo-tree records are present.
+runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree
+records are present.
 `packaging-archive-sample` archives the staged layout, writes a SHA-256 file,
 extracts it, and verifies the wrapped binaries from the archive.
 `packaging-archive-runtime-smoke` starts the extracted opt-in `libghostty-vt`

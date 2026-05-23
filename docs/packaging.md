@@ -71,10 +71,10 @@ not a release signing or supply-chain attestation format.
 
 `make packaging-provenance-verify` regenerates that manifest and fails if the
 required toolchain, source-mode, locked native-VT package, staged-file,
-runtime-library, dynamic-dependency, or cargo-tree records are missing. Archive
-packaging depends on this verifier, so `make packaging-archive-sample` and
-`make packaging-archive-runtime-smoke` cannot pass with a structurally
-incomplete local provenance manifest.
+runtime-library, per-binary `libghostty-vt` dynamic-dependency, or cargo-tree
+records are missing. Archive packaging depends on this verifier, so
+`make packaging-archive-sample` and `make packaging-archive-runtime-smoke`
+cannot pass with a structurally incomplete local provenance manifest.
 
 `make packaging-archive-sample` writes
 `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` and

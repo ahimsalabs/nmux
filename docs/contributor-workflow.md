@@ -136,7 +136,8 @@ file hashes, toolchain/source mode, dependency tree, native runtime-library
 artifacts, and dynamic dependency output.
 `make packaging-provenance-verify` regenerates that manifest and asserts the
 required toolchain, source-mode, locked native-VT package, staged-file,
-runtime-library, dynamic-dependency, and cargo-tree records are present.
+runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree
+records are present.
 `make packaging-archive-sample` archives the staged layout, writes an archive
 SHA-256 file, extracts it, and verifies the wrapped binaries from the extracted
 layout.

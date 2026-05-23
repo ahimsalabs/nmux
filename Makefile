@@ -528,6 +528,19 @@ packaging-provenance-verify: packaging-provenance-sample
 			exit 1; \
 		fi; \
 	}; \
+	require_dynamic_dependency() { \
+		bin="$$1"; \
+		dependency="$$2"; \
+		description="$$3"; \
+		if ! awk -v bin="$$bin" -v dependency="$$dependency" '\
+			$$0 == bin || $$0 == bin ":" { in_bin = 1; next } \
+			in_bin && $$0 ~ /^target\/packaging-libghostty-vt\/package\/libexec\/nmuxd?:?$$/ { exit } \
+			in_bin && index($$0, dependency) { found = 1; exit } \
+			END { exit(found ? 0 : 1) }' "$$manifest"; then \
+			echo "missing dynamic dependency record for $$description" >&2; \
+			exit 1; \
+		fi; \
+	}; \
 	cargo_lock_record() { \
 		awk -v package="$$1" '\
 			$$0 == "[[package]]" { block = $$0 ORS; in_block = 1; name = ""; next } \
@@ -585,6 +598,8 @@ packaging-provenance-verify: packaging-provenance-sample
 	require_line '^\[dynamic_dependencies\]$$' 'dynamic dependencies section'; \
 	require_line "^$$pkg_dir/libexec/nmux$$" 'nmux dynamic dependency heading'; \
 	require_line "^$$pkg_dir/libexec/nmuxd$$" 'nmuxd dynamic dependency heading'; \
+	require_dynamic_dependency "$$pkg_dir/libexec/nmux" 'libghostty-vt' 'nmux libghostty-vt runtime library'; \
+	require_dynamic_dependency "$$pkg_dir/libexec/nmuxd" 'libghostty-vt' 'nmuxd libghostty-vt runtime library'; \
 	require_line '^\[cargo_tree\]$$' 'cargo tree section'; \
 	require_line '^nmux-cli v' 'nmux-cli cargo tree root'; \
 	printf 'provenance_manifest_verified=%s\n' "$$manifest"

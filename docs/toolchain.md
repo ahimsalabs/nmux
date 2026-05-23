@@ -123,8 +123,8 @@ with staged file sizes and SHA-256 hashes, `Cargo.lock` hash,
 toolchain/source mode, dependency tree, native runtime-library artifacts, and
 best-effort dynamic dependency output. The verifier regenerates that manifest
 and asserts the required toolchain, source-mode, locked native-VT package,
-staged-file, runtime-library, dynamic-dependency, and cargo-tree records are
-present before archive packaging continues.
+staged-file, runtime-library, per-binary `libghostty-vt` dynamic-dependency,
+and cargo-tree records are present before archive packaging continues.
 For local archive evidence, use:
 
 ```sh
