@@ -17,6 +17,8 @@ promotion-sample: toolchain-info
 	time -p $(MAKE) check-all
 
 promotion-local-sample:
+	@echo "== promotion local sample: source-fetch provenance =="
+	$(MAKE) source-fetch-provenance-sample
 	@echo "== promotion local sample: validation =="
 	$(MAKE) promotion-sample
 	@echo "== promotion local sample: packaging archive =="

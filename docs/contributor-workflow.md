@@ -83,10 +83,10 @@ Record missing-tool, wrong-version, or invalid-source-directory failures too;
 they are setup evidence for the non-Nix checklist, not passing promotion
 evidence.
 
-`make promotion-local-sample` runs `make promotion-sample` and then
-`make packaging-archive-sample` with clear section headers. Use it for a local
-evidence pass before updating the promotion tracker with both validation and
-packaging/archive results.
+`make promotion-local-sample` runs `make source-fetch-provenance-sample`,
+`make promotion-sample`, and then `make packaging-archive-sample` with clear
+section headers. Use it for a local evidence pass before updating the promotion
+tracker with source-provenance, validation, and packaging/archive results.
 
 `make source-fetch-provenance-sample` writes the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source. Use it

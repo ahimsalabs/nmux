@@ -45,13 +45,15 @@ nix develop . -c make promotion-sample
 ```
 
 That target prints `toolchain-info` and then runs `time -p make check-all`.
-For a combined local validation plus packaging/archive evidence pass, use:
+For a combined local source-provenance, validation, and packaging/archive
+evidence pass, use:
 
 ```sh
 nix develop . -c make promotion-local-sample
 ```
 
-That target runs `make promotion-sample` followed by `make packaging-archive-sample`.
+That target runs `make source-fetch-provenance-sample`, `make promotion-sample`,
+and then `make packaging-archive-sample`.
 For source-fetch provenance evidence, use:
 
 ```sh

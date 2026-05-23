@@ -120,8 +120,8 @@ nix develop . -c make packaging-archive-sample
 `libghostty-vt` gate without changing what `make check` means.
 `promotion-sample` prints `toolchain-info` and times `check-all` for evidence
 rows in `docs/default-engine-promotion.md`.
-`promotion-local-sample` runs `promotion-sample` plus `packaging-archive-sample`
-for one local evidence pass.
+`promotion-local-sample` runs `source-fetch-provenance-sample`,
+`promotion-sample`, and `packaging-archive-sample` for one local evidence pass.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `packaging-sample` builds default and opt-in release binaries in separate target

@@ -71,8 +71,8 @@ engine or a regular CI requirement.
   samples.
 - `make promotion-sample` prints that toolchain information and then times
   `make check-all` with `time -p` for a single local evidence command.
-- `make promotion-local-sample` runs the timed validation sample and package
-  archive sample in one local evidence pass.
+- `make promotion-local-sample` runs source-fetch provenance, the timed
+  validation sample, and package archive sample in one local evidence pass.
 - `make source-fetch-provenance-sample` writes the active source mode and
   locked `libghostty-vt` Cargo package records without inspecting Ghostty
   source.
@@ -161,13 +161,14 @@ support, or native-library provenance by themselves.
 
 ## Local Combined Samples
 
-These samples run validation and archive packaging evidence together. They are
-useful before updating separate timing and packaging rows, but they do not
-replace CI, cold-cache, or multi-platform evidence.
+These samples run source-fetch provenance, validation, and archive packaging
+evidence together. They are useful before updating separate provenance, timing,
+and packaging rows, but they do not replace CI, cold-cache, or multi-platform
+evidence.
 
 | Date | Host | Command | Result |
 | --- | --- | --- | --- |
-| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-local-sample` | Passed. Timed inner `make check-all`: `real 16.71`, `user 2.64`, `sys 3.11`; then wrote and verified `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` with SHA-256 `2af9348e1d1ba98c3c18fbbb64ec5409e14dedf86d21f4eb0078c5a4bc171a8c` and verified wrapped `nmux --version` and `nmuxd --version` from the extracted archive. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-local-sample` | Passed. Wrote `target/source-fetch-provenance/SOURCE_FETCH.txt` with pinned-fetch source mode and locked `libghostty-vt` package records; timed inner `make check-all`: `real 16.42`, `user 2.64`, `sys 3.17`; then wrote and verified `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` with SHA-256 `bb99af3b5916b0baf4e511ccc37a6fc622251b86fc20768f733e72f5fae5958f` and verified wrapped `nmux --version` and `nmuxd --version` from the extracted archive. |
 
 ## Open Work
 
