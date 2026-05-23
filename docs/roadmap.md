@@ -52,7 +52,7 @@ Done:
 - ADR 0007 for the Ghostty/libghostty frontend boundary.
 - Client-side pane surface render state can initialize from snapshots, apply row patches by row index, and reject patch base-version mismatches.
 - The `nmux` CLI renders through client-side pane surface state and can persist that state with `--state` so a later attach sends known pane versions and can apply a server patch.
-- The `nmux --follow` local loop keeps one client render state across repeated reconnects, applies snapshots/patches, and renders the scoped cached surface when `AttachStatus` reports a current-version reconnect.
+- The `nmux --follow` local loop keeps one client render state across repeated reconnects, applies snapshots/patches, and renders the scoped cached surface only when `AttachStatus` reports a current-version reconnect matching the cached pane and surface version.
 - ADR 0008 for promoting the local attach prelude into a public FlatBuffers `AttachRequest`.
 - `AttachRequest` and known pane surface versions are public schema objects, the local attach handshake uses a FlatBuffers envelope instead of the text prelude, and decoded attach requests reject missing or empty identity/known-surface pane metadata instead of substituting local defaults.
 - ADR 0009 for the tmux adapter process boundary, including licensing and ownership rules.

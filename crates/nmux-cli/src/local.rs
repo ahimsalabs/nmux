@@ -3739,10 +3739,14 @@ impl ClientAttachState {
                 TerminalMetadataSummary::from_update(update),
                 Some(self.apply_surface_update(update)?),
             ),
-            None => (
-                self.cached_surface_metadata(&pane_id).unwrap_or_default(),
-                self.cached_surface_text(&pane_id),
-            ),
+            None => {
+                let surface =
+                    self.cached_current_surface(&pane_id, snapshot.status.surface_version)?;
+                (
+                    TerminalMetadataSummary::from_surface(surface),
+                    Some(surface.render_text()),
+                )
+            }
         };
 
         if let Some(scrollback) = snapshot.scrollback.as_ref() {
@@ -3783,6 +3787,28 @@ impl ClientAttachState {
             .iter()
             .find(|surface| surface.pane_id == pane_id)
             .map(|surface| surface.modes)
+    }
+
+    fn cached_current_surface(
+        &self,
+        pane_id: &str,
+        version: u64,
+    ) -> Result<&ClientPaneSurface, Box<dyn std::error::Error>> {
+        let Some(surface) = self
+            .surfaces
+            .iter()
+            .find(|surface| surface.pane_id == pane_id)
+        else {
+            return Err(format!("current attach has no cached surface for pane {pane_id}").into());
+        };
+        if surface.version != version {
+            return Err(format!(
+                "current attach surface version mismatch for pane {pane_id}: cached {}, status {}",
+                surface.version, version
+            )
+            .into());
+        }
+        Ok(surface)
     }
 
     pub fn cached_scrollback_version(
@@ -7763,6 +7789,96 @@ mod tests {
     }
 
     #[test]
+    fn client_attach_state_rejects_current_surface_without_cached_pane() {
+        let mut state = ClientAttachState::default();
+
+        let err = state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                status: AttachStatusSummary {
+                    pane_id: "pane-1".to_owned(),
+                    surface_version: 7,
+                    surface_state: protocol::AttachSurfaceState::Current,
+                },
+                surface: None,
+                scrollback: None,
+            })
+            .expect_err("current attach without cached surface should fail");
+
+        assert!(
+            err.to_string()
+                .contains("current attach has no cached surface"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn client_attach_state_rejects_current_surface_version_mismatch() {
+        let mut state = ClientAttachState::default();
+        let cached = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            7,
+            None,
+            vec![surface_row(0, "cached")],
+        );
+        state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                status: AttachStatusSummary {
+                    pane_id: "pane-1".to_owned(),
+                    surface_version: 7,
+                    surface_state: protocol::AttachSurfaceState::Snapshot,
+                },
+                surface: Some(cached),
+                scrollback: None,
+            })
+            .expect("seed cached surface");
+
+        let err = state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                status: AttachStatusSummary {
+                    pane_id: "pane-1".to_owned(),
+                    surface_version: 8,
+                    surface_state: protocol::AttachSurfaceState::Current,
+                },
+                surface: None,
+                scrollback: None,
+            })
+            .expect_err("current attach version mismatch should fail");
+
+        assert!(
+            err.to_string()
+                .contains("current attach surface version mismatch"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn client_attach_state_round_trips_cached_surface() {
         let mut state = ClientAttachState::default();
         let expected_scope = SocketIdentity { dev: 10, ino: 20 };
@@ -8083,7 +8199,12 @@ mod tests {
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 2),
-                surface: None,
+                surface: Some(surface_update(
+                    SurfaceUpdateKind::Snapshot,
+                    2,
+                    None,
+                    vec![surface_row(0, "cached surface")],
+                )),
                 scrollback: Some(ScrollbackChunkSummary {
                     pane_id: "pane-1".to_owned(),
                     scrollback_version: 3,

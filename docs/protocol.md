@@ -108,11 +108,14 @@ current surface and no surface frame follows; otherwise it is `Snapshot` or
 `Patch` and the next frame is the corresponding pane surface object. Clients
 should use the status pane ID, not a guessed default or the workspace root pane,
 for current-surface cache lookup and post-attach input, resize, and scrollback
-requests. A `Snapshot` or `Patch` surface frame following `AttachStatus` must
-carry the same pane ID as `AttachStatus.pane_id`; clients reject mismatches
-instead of applying state to the wrong pane. If the daemon cannot resolve its
-active tab or active pane, it sends a `PaneNotFound` `Error` instead of
-publishing an `AttachStatus` for a guessed pane.
+requests. Clients render `Current` only when their cached surface for
+`AttachStatus.pane_id` exactly matches `AttachStatus.surface_version`;
+otherwise they reject the response instead of showing stale or missing state. A
+`Snapshot` or `Patch` surface frame following `AttachStatus` must carry the same
+pane ID as `AttachStatus.pane_id`; clients reject mismatches instead of applying
+state to the wrong pane. If the daemon cannot resolve its active tab or active
+pane, it sends a `PaneNotFound` `Error` instead of publishing an `AttachStatus`
+for a guessed pane.
 
 Cursor-only, mode-only, and color-only patches can also update
 `TerminalMetadataState` without row updates. Metadata-only updates are therefore
