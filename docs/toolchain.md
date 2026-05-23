@@ -17,7 +17,7 @@ Use a broader target only when the change needs the extra evidence:
 | Release-style local validation | `nix develop . -c make check-all` |
 | Self-contained promotion evidence bundle | `nix develop . -c make promotion-evidence-bundle` then `nix develop . -c make promotion-evidence-verify` |
 | Source-fetch evidence | `nix develop . -c make source-fetch-provenance-sample` or `nix develop . -c make source-fetch-offline-probe` |
-| Packaging evidence | Start with `nix develop . -c make packaging-archive-runtime-smoke` |
+| Packaging evidence | Choose the matching target in [packaging.md](packaging.md#local-packaging-sample); use `nix develop . -c make packaging-sample` for binary-build evidence and `nix develop . -c make packaging-archive-runtime-smoke` only for relocated runtime evidence. |
 
 The complete target inventory is:
 
