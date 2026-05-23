@@ -801,6 +801,50 @@ fn managed_start_live_cli_runs_private_daemon() {
 }
 
 #[test]
+fn managed_shell_cli_runs_private_live_daemon() {
+    let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--shell",
+            "--iterations",
+            "2",
+            "--interval-ms",
+            "100",
+            "--command",
+            "printf 'shell-ready\n'; while IFS= read -r line; do printf 'shell:%s\n' \"$line\"; done",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux --shell");
+    client
+        .stdin
+        .as_mut()
+        .expect("client stdin")
+        .write_all(b"shell\n")
+        .expect("write shell stdin");
+    drop(client.stdin.take());
+    let output = client.wait_with_output().expect("wait for nmux --shell");
+
+    assert!(
+        output.status.success(),
+        "nmux --shell failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("shell-ready"),
+        "missing shell daemon output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("shell:shell"),
+        "missing shell input echo:\n{stdout}"
+    );
+}
+
+#[test]
 fn managed_start_one_shot_cli_runs_private_daemon() {
     let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([

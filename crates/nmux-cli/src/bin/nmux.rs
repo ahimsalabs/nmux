@@ -1484,6 +1484,8 @@ struct RawArgs {
     live: bool,
     #[arg(long = "start", action = ArgAction::SetTrue)]
     start: bool,
+    #[arg(long = "shell", action = ArgAction::SetTrue)]
+    shell: bool,
     #[arg(long = "command", value_name = "SHELL", allow_hyphen_values = true)]
     start_command: Option<String>,
     #[arg(long = "cwd", value_name = "DIR", allow_hyphen_values = true)]
@@ -1546,6 +1548,10 @@ where
     let mouse_modifiers_set = raw.mouse_modifiers.is_some();
     let mouse_pixels_set = raw.mouse_pixels.is_some();
     let local_echo_set = raw.local_echo.is_some();
+    let start = raw.start || raw.shell;
+    let live = raw.live || raw.shell;
+    let stdin_bytes = raw.stdin_bytes || raw.shell;
+    let redraw = raw.redraw || raw.shell;
     let scrollback_start_set = raw.scrollback_start.is_some();
     let scrollback_count_set = raw.scrollback_count.is_some();
     let scrollback_tail_set = raw.scrollback_tail.is_some();
@@ -1664,7 +1670,7 @@ where
         }
     };
     if !exits_before_attach {
-        if raw.stdin_input && raw.stdin_bytes {
+        if raw.stdin_input && stdin_bytes {
             return Err("--stdin and --stdin-bytes cannot be used together".into());
         }
         validate_positive_numeric_args(
@@ -1688,16 +1694,16 @@ where
             mouse_set,
             no_input_set: raw.no_input,
             stdin_input: raw.stdin_input,
-            stdin_bytes: raw.stdin_bytes,
+            stdin_bytes,
         })?;
         validate_no_input_resize_args(raw.no_input, live_resize)?;
         validate_mode_args(ClientModeArgs {
-            live: raw.live,
+            live,
             follow: raw.follow,
             stdin_input: raw.stdin_input,
-            stdin_bytes: raw.stdin_bytes,
+            stdin_bytes,
             local_echo_set,
-            redraw: raw.redraw,
+            redraw,
             live_resize,
             iterations,
             output_json: raw.output_json,
@@ -1709,7 +1715,7 @@ where
             mouse_set,
             mouse_modifiers_set,
             mouse_pixels_set,
-            start: raw.start,
+            start,
             start_command_set: raw.start_command.is_some(),
             start_working_dir_set: start_working_dir.is_some(),
             start_env_set: !raw.start_env.is_empty(),
@@ -1751,16 +1757,16 @@ where
         scrollback_tail_count,
         state_path: raw.state_path,
         follow: raw.follow,
-        live: raw.live,
-        start: raw.start,
+        live,
+        start,
         start_command: raw.start_command,
         start_working_dir,
         start_env: raw.start_env,
         stdin_input: raw.stdin_input,
-        stdin_bytes: raw.stdin_bytes,
+        stdin_bytes,
         no_input: raw.no_input,
         local_echo,
-        redraw: raw.redraw,
+        redraw,
         live_resize,
         interval_ms,
         connect_timeout_ms,
@@ -2808,6 +2814,7 @@ Options:
   --follow                   Reconnect in a polling loop
   --live                     Keep one attach connection open
   --start                    Start a private local nmuxd before attaching
+  --shell                    Start a private live shell with stdin-bytes redraw
   --command SHELL            Managed nmuxd pane command for --start
   --cwd DIR                  Managed nmuxd pane working directory for --start
   --env KEY=VALUE            Managed nmuxd pane environment for --start
@@ -2831,6 +2838,7 @@ Notes:
   --state-info and --state-info-json require --state PATH and do not connect.
   --json emits one object for one-shot attach, or newline-delimited live events.
   --start waits for nmuxd --ready-json and cleans up the private daemon on exit.
+  --shell is shorthand for --start --live --stdin-bytes --redraw using $SHELL or sh.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
   Without an explicit input or resize flag, nmux attaches read-only.
@@ -2843,6 +2851,7 @@ Examples:
   nmux --live --cols 100 --rows 30
   nmux --live --no-input
   nmux --live --stdin-bytes --redraw
+  nmux --shell
   nmux --start --cwd /tmp --env NMUX_DEMO=1 --command 'pwd; env | grep ^NMUX_DEMO=; cat >/dev/null'
   nmux --start --live --stdin-bytes --redraw --command '$SHELL'
 "
@@ -3102,6 +3111,17 @@ mod tests {
             args.start_env,
             vec![("NMUX_DEMO".to_owned(), "one=two".to_owned())]
         );
+    }
+
+    #[test]
+    fn shell_arg_expands_to_private_interactive_workspace() {
+        let args = args_from_iter(["--shell"]).expect("args");
+        assert!(args.start);
+        assert!(args.live);
+        assert!(args.stdin_bytes);
+        assert!(args.redraw);
+        assert!(!args.stdin_input);
+        assert!(args.start_command.is_none());
     }
 
     #[test]

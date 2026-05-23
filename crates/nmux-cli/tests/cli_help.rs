@@ -43,6 +43,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--mouse-modifiers MODS"));
     assert!(stdout.contains("--redraw"));
     assert!(stdout.contains("--start"));
+    assert!(stdout.contains("--shell"));
     assert!(stdout.contains("--command SHELL"));
     assert!(stdout.contains("--cwd DIR"));
     assert!(stdout.contains("--env KEY=VALUE"));
@@ -62,6 +63,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("nmux --live --cols 100 --rows 30"));
     assert!(stdout.contains("nmux --live --no-input"));
     assert!(stdout.contains("nmux --live --stdin-bytes --redraw"));
+    assert!(stdout.contains("nmux --shell"));
 }
 
 #[test]

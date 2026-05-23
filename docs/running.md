@@ -49,7 +49,7 @@ For a private local workspace owned by one client command, use `--start`:
 ```sh
 nix develop . -c cargo run --bin nmux -- --start --command "printf 'hello from pty\n'; cat >/dev/null"
 nix develop . -c cargo run --bin nmux -- --start --cwd "$PWD" --env NMUX_DEMO=1 --command 'printf "cwd:%s env:%s\n" "$PWD" "$NMUX_DEMO"; cat >/dev/null'
-nix develop . -c cargo run --bin nmux -- --start --live --stdin-bytes --redraw --command '$SHELL'
+nix develop . -c cargo run --bin nmux -- --shell
 ```
 
 Without `--live`, `--start` runs a managed `nmuxd --one-shot --ready-json`.
@@ -59,7 +59,9 @@ readiness event internally, attach through the normal nmux protocol, and stop
 the managed daemon when the client exits. If `--command SHELL` is omitted, the
 managed daemon runs `$SHELL` and falls back to `sh`. Managed `--cwd DIR` and
 repeatable `--env KEY=VALUE` are passed to the private daemon before
-daemon-owned `NMUX_*` identity variables are injected.
+daemon-owned `NMUX_*` identity variables are injected. `nmux --shell` expands
+to the common interactive private shell path: `--start --live --stdin-bytes
+--redraw`.
 
 Each attach starts with an `AttachRequest` carrying actor identity, attach mode,
 focused pane, and known pane surface versions. The daemon polls process output
@@ -255,6 +257,8 @@ supplied explicitly. Add `--live` when the managed daemon should remain
 attached after the initial one-shot response. Add `--cwd DIR` or repeatable
 `--env KEY=VALUE` when the managed pane command needs launch context without a
 separate `nmuxd` shell.
+Use `nmux --shell` for the common local interactive form without spelling the
+managed daemon, live attach, byte input, and redraw flags separately.
 
 By default, `nmuxd` and `nmux` use the same local socket path. The precedence
 is explicit `--socket`, then a valid absolute `NMUX_SOCKET`, then
