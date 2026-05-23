@@ -25,6 +25,7 @@ A successful run ends with:
 local_smoke_reattach=passed
 local_smoke_socket_recreation=passed
 local_smoke_print_context=passed
+local_smoke_json_info=passed
 local_smoke=passed
 ```
 
@@ -69,9 +70,10 @@ and packaging/promotion evidence targets.
 `make local-smoke` starts a temporary local daemon, sends live stdin through a
 client, reattaches a read-only client with persisted state, verifies the echoed
 output remains visible, verifies nested `nmux --print-context` receives the
-pane identity environment, then reuses the same socket path for a new daemon
-and checks that the old cached surface is not rendered. It is the shortest
-runnable end-to-end workflow check for the default engine.
+pane identity environment, verifies JSON informational flags, then reuses the
+same socket path for a new daemon and checks that the old cached surface is not
+rendered. It is the shortest runnable end-to-end workflow check for the default
+engine.
 
 Run the timed default-plus-opt-in backend `libghostty-vt` validation sample
 when gathering local default-engine-promotion evidence:
@@ -279,7 +281,7 @@ nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' -
 
 Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached. Bounded live and follow loops reject `--iterations 0` before connecting, and `--interval-ms` must be greater than zero.
 
-Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. State saves write a temporary file in the target directory and rename it into place. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
+Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`; the printed header reports the actual returned row range and includes the total when the response is not the tail. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. State saves write a temporary file in the target directory and rename it into place. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
 
 By default, live mode prints each rendered update as plain text. Add `--redraw` to clear the terminal and repaint the latest workspace summary plus the current client-side pane surface on each update. When stdout is a TTY, `--redraw` uses the alternate screen and hides the cursor for the live session, then restores both on exit. Captured or piped stdout stays as plain clear/home escape output:
 
