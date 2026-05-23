@@ -140,7 +140,7 @@ archive path, so copied or downloaded bundles stay self-contained.
 `SUMMARY.txt` includes the extracted `time -p make check-all` values as
 `check_all_real_seconds`, `check_all_user_seconds`, and
 `check_all_sys_seconds`, the `local_smoke=passed`,
-`local_smoke_reattach=passed`, and
+`local_smoke_reattach=passed`, `local_smoke_print_context=passed`, and
 `local_smoke_socket_recreation=passed` results, plus
 `started_at_utc`, `completed_at_utc`, and `bundle_elapsed_seconds` for the
 bundle artifact generation and verifier pass

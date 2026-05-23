@@ -17,9 +17,10 @@ This keeps regular CI on the default `interim` engine. A green required CI run
 does not claim `libghostty-vt` correctness and does not change the default
 engine decision. `make local-smoke` adds a real default-engine daemon/client
 workflow check: it starts `nmuxd`, sends live stdin through `nmux`, persists
-client state, verifies a sequential read-only reattach sees the output, then
-reuses the same socket path for a new daemon and verifies the old cached
-surface is not rendered.
+client state, verifies a sequential read-only reattach sees the output, verifies
+nested `nmux --print-context` sees the pane identity environment, then reuses
+the same socket path for a new daemon and verifies the old cached surface is
+not rendered.
 
 ## Manual Promotion Evidence
 
@@ -57,7 +58,7 @@ Record each manual run with these fields:
 | VCS status | `VCS_STATUS.txt`, `git_revision`, `working_tree_status`, and any `jj status` output recorded by the bundle. |
 | Open work | `PROMOTION_OPEN_WORK.txt`, including the promotion decision status and remaining CI, platform, non-Nix, source-policy, packaging, and frontend-hydration blockers. |
 | Cache state | `CACHE_STATE.txt` plus CI cache setup context; classify whether Nix, Cargo registry, Cargo Git, Rust target, and native Ghostty/Zig build caches were cold, warm, restored, or unknown. |
-| Timings and local smoke | `check_all_real_seconds`, `check_all_user_seconds`, `check_all_sys_seconds`, `local_smoke`, `local_smoke_reattach`, `local_smoke_socket_recreation`, `bundle_elapsed_seconds`, and total GitHub job duration. |
+| Timings and local smoke | `check_all_real_seconds`, `check_all_user_seconds`, `check_all_sys_seconds`, `local_smoke`, `local_smoke_reattach`, `local_smoke_print_context`, `local_smoke_socket_recreation`, `bundle_elapsed_seconds`, and total GitHub job duration. |
 | Provenance | `nmux-promotion-evidence` artifact, `SOURCE_FETCH.txt`, `OFFLINE_PROBE.txt`, `Cargo.lock` hash, locked `libghostty-vt`/`libghostty-vt-sys` records, and whether the cache-present offline probe passed. |
 | Packaging | Archive name, SHA-256, package metadata, `packaging-provenance-manifest-verify` result against bundled provenance, `packaging-archive-verify` result, `packaging-provenance-verify` run-log result, relocated install root, clean library-path environment, and packaged runtime smoke result. |
 | Artifact round-trip | Whether the dependent artifact-verify job downloaded `nmux-promotion-evidence` and passed `make promotion-evidence-verify` against the downloaded copy. |
@@ -70,10 +71,11 @@ that is not under `target/promotion-evidence`, run
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify`. The
 verifier checks the required summary identity fields, timing fields,
 `local_smoke`, `local_smoke_reattach`, and
-`local_smoke_socket_recreation` results, bundle-relative summary artifact
-names, cache-state artifact, relocation-safe `BUNDLE_MANIFEST.txt` hashes, VCS
-status artifact, summary/VCS git revision agreement, open-work snapshot,
-source/provenance records, cache-present offline probe result, bundled package provenance through
+`local_smoke_print_context`, and `local_smoke_socket_recreation` results,
+bundle-relative summary artifact names, cache-state artifact, relocation-safe
+`BUNDLE_MANIFEST.txt` hashes, VCS status artifact, summary/VCS git revision
+agreement, open-work snapshot, source/provenance records, cache-present offline
+probe result, bundled package provenance through
 `packaging-provenance-manifest-verify`, package archive bytes,
 bundle-relative archive hash, and packaged runtime smoke result. When the bundle
 reports `github_actions=true`, the

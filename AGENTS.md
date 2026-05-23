@@ -140,9 +140,10 @@ nix develop . -c make packaging-archive-runtime-smoke
 `libghostty-vt` gate without changing what `make check` means.
 `local-smoke` runs a real default-engine local daemon/client live smoke over a
 temporary socket and persisted client state file, verifies persisted read-only
-reattach, and verifies same-path socket recreation does not render stale cached
-state. Use it for quick user-level workflow checks. The default GitHub Actions
-job runs both `make check` and `make local-smoke`.
+reattach, verifies nested `nmux --print-context` sees the pane identity
+environment, and verifies same-path socket recreation does not render stale
+cached state. Use it for quick user-level workflow checks. The default GitHub
+Actions job runs both `make check` and `make local-smoke`.
 `promotion-sample` prints `toolchain-info` and times `check-all` for evidence
 rows in `docs/default-engine-promotion.md`.
 `promotion-cold-target-sample` clears `target/promotion-cold` and times
@@ -159,10 +160,10 @@ without rerunning the isolated dependency/source-fetch sample.
 `promotion-evidence-bundle` runs `promotion-local-sample` and gathers the log,
 toolchain output, bundle start/completion timestamps plus elapsed duration,
 extracted `make check-all` timing, `local_smoke`,
-`local_smoke_reattach`, and `local_smoke_socket_recreation` results,
-source-fetch report, package provenance, cargo tree, package archive, archive
-checksum, observed cache-state report, offline probe report, VCS status report,
-open-work snapshot, and bundle artifact manifest under
+`local_smoke_reattach`, `local_smoke_print_context`, and
+`local_smoke_socket_recreation` results, source-fetch report, package
+provenance, cargo tree, package archive, archive checksum, observed cache-state
+report, offline probe report, VCS status report, open-work snapshot, and bundle artifact manifest under
 `target/promotion-evidence`.
 The bundled `ARCHIVE.sha256` must name `PACKAGE_ARCHIVE.tar.gz`, not the
 original build-tree archive path, so downloaded evidence stays self-contained.

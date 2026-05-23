@@ -66,8 +66,8 @@ The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
 FlatBuffers install is needed for the schema check. `make check` is the regular
 default-engine gate. `make local-smoke` runs a real local `nmuxd`/`nmux` live
 daemon/client smoke over a temporary socket and state file, including persisted
-reattach and same-path socket recreation to prove stale cached surfaces are not
-reused across a new daemon. `make
+reattach, nested `nmux --print-context`, and same-path socket recreation to
+prove stale cached surfaces are not reused across a new daemon. `make
 check-ghostty-vt` is the opt-in full feature gate for
 backend `libghostty-vt` changes. `make check-all` runs both when validating
 release-style or default-engine-promotion work. `make promotion-sample` prints
@@ -86,9 +86,9 @@ source-fetch probe, and the package archive runtime smoke for one local
 evidence pass.
 `make promotion-evidence-bundle` runs that local sample and gathers the log,
 toolchain output, bundle start/completion timestamps plus elapsed duration,
-extracted `make check-all` timing, `local_smoke` result, source-fetch report,
-including persisted reattach and socket-recreation subresults, offline probe
-report, package provenance, cargo tree, package archive, archive checksum,
+extracted `make check-all` timing, `local_smoke` result, persisted reattach,
+print-context, and socket-recreation subresults, source-fetch report, offline
+probe report, package provenance, cargo tree, package archive, archive checksum,
 observed cache-state report, VCS status report, open-work snapshot,
 and bundle artifact manifest under `target/promotion-evidence`, then runs the
 verifier.

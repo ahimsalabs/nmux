@@ -20,6 +20,7 @@ check-all: check check-ghostty-vt
 local-smoke: check-toolchain
 	@echo "running local nmux daemon/client smoke"
 	@tmp_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/nmux-local-smoke.XXXXXX")"; \
+	repo_dir="$$(pwd)"; \
 	socket="$$tmp_dir/nmux.sock"; \
 	state="$$tmp_dir/state.json"; \
 	daemon_out="$$tmp_dir/daemon.out"; \
@@ -30,6 +31,8 @@ local-smoke: check-toolchain
 	client2_err="$$tmp_dir/client2.err"; \
 	client3_out="$$tmp_dir/client3.out"; \
 	client3_err="$$tmp_dir/client3.err"; \
+	client4_out="$$tmp_dir/client4.out"; \
+	client4_err="$$tmp_dir/client4.err"; \
 	cleanup() { \
 		status="$$?"; \
 		if [ -n "$${daemon_pid:-}" ] && kill -0 "$$daemon_pid" >/dev/null 2>&1; then \
@@ -72,13 +75,28 @@ local-smoke: check-toolchain
 		exit 1; \
 	fi; \
 	daemon_pid=""; \
+	: >"$$daemon_out"; \
+	: >"$$daemon_err"; \
+	command_text="cd \"$$repo_dir\" && cargo run --quiet --bin nmux -- --print-context; cat >/dev/null"; \
+	cargo run --quiet --bin nmuxd -- --socket "$$socket" --one-shot --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
+	daemon_pid="$$!"; \
+	if ! cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --scrollback-start 1 --scrollback-count 12 >"$$client4_out" 2>"$$client4_err"; then \
+		cat "$$daemon_err" "$$client4_err" >&2; \
+		exit 1; \
+	fi; \
+	if ! wait "$$daemon_pid"; then \
+		daemon_pid=""; \
+		cat "$$daemon_err" >&2; \
+		exit 1; \
+	fi; \
+	daemon_pid=""; \
 	require_output() { \
 		file="$$1"; \
 		text="$$2"; \
 		description="$$3"; \
 		if ! grep -Fq "$$text" "$$file"; then \
 			echo "missing local smoke output: $$description" >&2; \
-			cat "$$daemon_err" "$$client1_err" "$$client2_err" "$$client3_err" >&2; \
+			cat "$$daemon_err" "$$client1_err" "$$client2_err" "$$client3_err" "$$client4_err" >&2; \
 			echo "--- $$file ---" >&2; \
 			cat "$$file" >&2; \
 			exit 1; \
@@ -90,7 +108,7 @@ local-smoke: check-toolchain
 		description="$$3"; \
 		if grep -Fq "$$text" "$$file"; then \
 			echo "unexpected local smoke output: $$description" >&2; \
-			cat "$$daemon_err" "$$client1_err" "$$client2_err" "$$client3_err" >&2; \
+			cat "$$daemon_err" "$$client1_err" "$$client2_err" "$$client3_err" "$$client4_err" >&2; \
 			echo "--- $$file ---" >&2; \
 			cat "$$file" >&2; \
 			exit 1; \
@@ -101,9 +119,15 @@ local-smoke: check-toolchain
 	require_output "$$client2_out" 'echo:ping' 'sequential read-only reattach sees prior output'; \
 	require_output "$$client3_out" 'fresh daemon' 'recreated socket path forces fresh daemon surface'; \
 	reject_output "$$client3_out" 'echo:ping' 'stale cached surface after socket recreation'; \
+	require_output "$$client4_out" 'NMUX=1' 'nested print-context nmux flag'; \
+	require_output "$$client4_out" 'NMUX_SESSION_ID=local' 'nested print-context session id'; \
+	require_output "$$client4_out" 'NMUX_PANE_ID=pane-1' 'nested print-context pane id'; \
+	require_output "$$client4_out" "NMUX_SOCKET=$$socket" 'nested print-context socket path'; \
+	require_output "$$client4_out" 'NMUX_ORIGIN=local' 'nested print-context origin'; \
 	test -s "$$state" || { echo "missing local smoke state file: $$state" >&2; exit 1; }; \
 	printf 'local_smoke_reattach=passed\n'; \
 	printf 'local_smoke_socket_recreation=passed\n'; \
+	printf 'local_smoke_print_context=passed\n'; \
 	printf 'local_smoke=passed\n'
 
 check-ghostty-vt: check-vt-toolchain
@@ -287,6 +311,11 @@ promotion-evidence-bundle:
 		echo "missing local_smoke_socket_recreation result in $$run_log" >&2; \
 		exit 1; \
 	fi; \
+	local_smoke_print_context="$$(grep -m1 '^local_smoke_print_context=' "$$run_log" | cut -d= -f2- || true)"; \
+	if [ -z "$$local_smoke_print_context" ]; then \
+		echo "missing local_smoke_print_context result in $$run_log" >&2; \
+		exit 1; \
+	fi; \
 	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_sys="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^sys [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
@@ -433,6 +462,7 @@ promotion-evidence-bundle:
 			printf 'check_all_sys_seconds=%s\n' "$$check_all_sys"; \
 			printf 'local_smoke_reattach=%s\n' "$$local_smoke_reattach"; \
 			printf 'local_smoke_socket_recreation=%s\n' "$$local_smoke_socket_recreation"; \
+			printf 'local_smoke_print_context=%s\n' "$$local_smoke_print_context"; \
 			printf 'local_smoke=%s\n' "$$local_smoke"; \
 			printf 'archive_sha256=%s\n' "$$archive_sha"; \
 			printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
@@ -622,6 +652,7 @@ promotion-evidence-verify:
 	require_line "$$summary" '^check_all_sys_seconds=[0-9]+([.][0-9]+)?$$' 'check-all sys timing'; \
 	require_exact "$$summary" 'local_smoke_reattach=passed' 'local workflow persisted reattach smoke'; \
 	require_exact "$$summary" 'local_smoke_socket_recreation=passed' 'local workflow socket recreation smoke'; \
+	require_exact "$$summary" 'local_smoke_print_context=passed' 'local workflow print-context smoke'; \
 	require_exact "$$summary" 'local_smoke=passed' 'local workflow smoke'; \
 	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
@@ -673,6 +704,7 @@ promotion-evidence-verify:
 	require_exact "$$run_log" 'running local nmux daemon/client smoke' 'local smoke ran'; \
 	require_exact "$$run_log" 'local_smoke_reattach=passed' 'local smoke persisted reattach result'; \
 	require_exact "$$run_log" 'local_smoke_socket_recreation=passed' 'local smoke socket recreation result'; \
+	require_exact "$$run_log" 'local_smoke_print_context=passed' 'local smoke print-context result'; \
 	require_exact "$$run_log" 'local_smoke=passed' 'local smoke result'; \
 	require_line "$$package_provenance" '^\[staged_files\]$$' 'packaging staged file hashes'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux wrapper hash'; \

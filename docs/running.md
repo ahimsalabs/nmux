@@ -13,9 +13,10 @@ See [docs/contributor-workflow.md](contributor-workflow.md) for which checks
 apply to default-engine work, terminal-correctness work, and promotion evidence.
 `make local-smoke` starts a temporary local daemon, sends live stdin through a
 client, reattaches a read-only client with persisted state, verifies the echoed
-output remains visible, then reuses the same socket path for a new daemon and
-checks that the old cached surface is not rendered. It is the shortest runnable
-end-to-end workflow check for the default engine.
+output remains visible, verifies nested `nmux --print-context` receives the
+pane identity environment, then reuses the same socket path for a new daemon
+and checks that the old cached surface is not rendered. It is the shortest
+runnable end-to-end workflow check for the default engine.
 
 Run the regular default-engine gate plus the opt-in backend `libghostty-vt`
 gate when doing release-style validation or gathering default-engine-promotion

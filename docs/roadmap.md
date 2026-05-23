@@ -103,7 +103,8 @@ Done:
   a complete nmux pane context, and has nested PTY smoke coverage.
 - `make local-smoke` runs a default-engine local daemon/client workflow through
   a temporary socket and persisted state file, verifies piped live stdin output,
-  verifies a sequential read-only reattach sees that output, and verifies a
+  verifies a sequential read-only reattach sees that output, verifies nested
+  `nmux --print-context` sees the pane identity environment, and verifies a
   fresh daemon on the same socket path does not render stale cached state.
 - Numeric `nmux` flags report the failing flag name for invalid-number errors before connecting.
 - ADR 0012 documents the backend terminal engine boundary.
