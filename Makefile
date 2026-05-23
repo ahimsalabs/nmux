@@ -21,6 +21,11 @@ local-smoke: check-toolchain
 	@echo "running local nmux daemon/client smoke"
 	@tmp_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/nmux-local-smoke.XXXXXX")"; \
 	repo_dir="$$(pwd)"; \
+	cargo_target_dir="$${CARGO_TARGET_DIR:-target}"; \
+	case "$$cargo_target_dir" in \
+		/*) nmux_bin="$$cargo_target_dir/debug/nmux" ;; \
+		*) nmux_bin="$$repo_dir/$$cargo_target_dir/debug/nmux" ;; \
+	esac; \
 	socket="$$tmp_dir/nmux.sock"; \
 	state="$$tmp_dir/state.json"; \
 	daemon_out="$$tmp_dir/daemon.out"; \
@@ -87,7 +92,7 @@ local-smoke: check-toolchain
 	daemon_pid=""; \
 	: >"$$daemon_out"; \
 	: >"$$daemon_err"; \
-	command_text="cd \"$$repo_dir\" && ./target/debug/nmux --print-context; cat >/dev/null"; \
+	command_text="\"$$nmux_bin\" --print-context; cat >/dev/null"; \
 	cargo run --quiet --bin nmuxd -- --socket "$$socket" --one-shot --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
 	daemon_pid="$$!"; \
 	if ! cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --scrollback-start 1 --scrollback-count 24 >"$$client4_out" 2>"$$client4_err"; then \
@@ -102,7 +107,7 @@ local-smoke: check-toolchain
 	daemon_pid=""; \
 	: >"$$daemon_out"; \
 	: >"$$daemon_err"; \
-	command_text="cd \"$$repo_dir\" && ./target/debug/nmux --print-context-json; cat >/dev/null"; \
+	command_text="\"$$nmux_bin\" --print-context-json; cat >/dev/null"; \
 	cargo run --quiet --bin nmuxd -- --socket "$$socket" --one-shot --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
 	daemon_pid="$$!"; \
 	if ! cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --scrollback-start 1 --scrollback-count 24 >"$$client5_out" 2>"$$client5_err"; then \
