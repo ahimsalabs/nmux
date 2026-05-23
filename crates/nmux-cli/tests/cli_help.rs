@@ -271,6 +271,14 @@ fn nmuxd_rejects_conflicting_server_modes() {
         &["--live-clients", "0"],
         "nmuxd: --live-clients must be greater than 0",
     );
+    assert_nmuxd_rejects(
+        &["--live-cycles", "many"],
+        "nmuxd: --live-cycles requires a valid number",
+    );
+    assert_nmuxd_rejects(
+        &["--live-clients", "many"],
+        "nmuxd: --live-clients requires a valid number",
+    );
     #[cfg(not(feature = "libghostty-vt"))]
     {
         assert_nmuxd_rejects(

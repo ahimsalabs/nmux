@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -162,18 +163,16 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             "--live" => live = true,
             "--live-forever" => live_forever = true,
             "--live-cycles" => {
-                live_cycles = Some(
-                    args.next()
-                        .ok_or("--live-cycles requires a count")?
-                        .parse()?,
-                );
+                live_cycles = Some(parse_numeric_arg(
+                    "--live-cycles",
+                    args.next().ok_or("--live-cycles requires a count")?,
+                )?);
             }
             "--live-clients" => {
-                live_clients = Some(
-                    args.next()
-                        .ok_or("--live-clients requires a count")?
-                        .parse()?,
-                );
+                live_clients = Some(parse_numeric_arg(
+                    "--live-clients",
+                    args.next().ok_or("--live-clients requires a count")?,
+                )?);
             }
             "--command" => {
                 command = Some(args.next().ok_or("--command requires a shell command")?);
@@ -210,6 +209,16 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         resize_policy,
         terminal_engine_kind,
     })
+}
+
+fn parse_numeric_arg<T>(flag: &str, value: String) -> Result<T, String>
+where
+    T: FromStr,
+    T::Err: std::fmt::Display,
+{
+    value
+        .parse()
+        .map_err(|err| format!("{flag} requires a valid number: {err}"))
 }
 
 fn validate_mode_args(
@@ -297,7 +306,8 @@ fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'stati
 #[cfg(test)]
 mod tests {
     use super::{
-        SocketCleanup, parse_resize_policy, parse_terminal_engine_kind, usage, validate_mode_args,
+        SocketCleanup, parse_numeric_arg, parse_resize_policy, parse_terminal_engine_kind, usage,
+        validate_mode_args,
     };
     use nmux_core::terminal::TerminalEngineKind;
     use nmux_proto::protocol;
@@ -395,6 +405,13 @@ mod tests {
         );
         assert!(validate_mode_args(false, false, false, Some(2), Some(3)).is_ok());
         assert!(validate_mode_args(false, false, true, None, None).is_ok());
+    }
+
+    #[test]
+    fn numeric_args_report_flag_names_on_parse_errors() {
+        let err = parse_numeric_arg::<usize>("--live-cycles", "many".to_owned())
+            .expect_err("invalid live cycle count should include flag name");
+        assert!(err.contains("--live-cycles requires a valid number"));
     }
 
     #[test]
