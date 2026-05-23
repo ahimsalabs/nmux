@@ -1138,11 +1138,21 @@ mod ghostty_vt {
         input: MouseTerminalInput,
     ) -> Option<Vec<u8>> {
         let mut encoder = mouse::Encoder::new().ok()?;
+        let fallback_width = input.cols.checked_mul(8)?;
+        let fallback_height = input.rows.checked_mul(16)?;
+        let screen_width = match input.pixel_x {
+            Some(pixel_x) => fallback_width.max(pixel_x.checked_add(1)?),
+            None => fallback_width,
+        };
+        let screen_height = match input.pixel_y {
+            Some(pixel_y) => fallback_height.max(pixel_y.checked_add(1)?),
+            None => fallback_height,
+        };
         encoder
             .set_options_from_terminal(terminal)
             .set_size(mouse::EncoderSize {
-                screen_width: input.cols.checked_mul(8)?,
-                screen_height: input.rows.checked_mul(16)?,
+                screen_width,
+                screen_height,
                 cell_width: 8,
                 cell_height: 16,
                 padding_top: 0,
@@ -2982,8 +2992,8 @@ mod tests {
             .encode_mouse_input(MouseTerminalInput {
                 row: 0,
                 col: 0,
-                pixel_x: Some(9),
-                pixel_y: Some(17),
+                pixel_x: Some(1000),
+                pixel_y: Some(2000),
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 0,
@@ -2992,7 +3002,7 @@ mod tests {
             })
             .expect("encoded mouse input");
 
-        assert_eq!(bytes, b"\x1b[<0;9;17M");
+        assert_eq!(bytes, b"\x1b[<0;1000;2000M");
     }
 
     #[cfg(feature = "libghostty-vt")]

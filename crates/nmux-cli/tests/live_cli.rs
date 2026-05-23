@@ -1804,7 +1804,7 @@ fn live_libghostty_vt_cli_redraw_prints_terminal_metadata() {
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
         stdout.contains(
-            "\x1b[2J\x1b[Hsession=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed\ntitle=redraw title\nworking-directory=file://localhost/tmp/redraw\nscrollback 1..24:"
+            "\x1b[2J\x1b[Hsession=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed\ntitle=redraw title\nworking-directory=file://localhost/tmp/redraw\nscrollback 1..2 of 24:"
         ),
         "missing redraw metadata context:\n{stdout:?}"
     );
@@ -2147,7 +2147,7 @@ fn live_libghostty_vt_cli_forwards_sgr_pixel_mouse_coordinates() {
             "--terminal-engine",
             "libghostty-vt",
             "--command",
-            "stty -icanon -echo min 10 time 20; printf '\\033[?1000h\\033[?1006h\\033[?1016hready\n'; bytes=$(dd bs=10 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
+            "stty -icanon -echo min 0 time 20; printf '\\033[?1000h\\033[?1006h\\033[?1016hready\n'; bytes=$(dd bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
         ])
         .spawn()
         .expect("spawn nmuxd");
@@ -2164,7 +2164,7 @@ fn live_libghostty_vt_cli_forwards_sgr_pixel_mouse_coordinates() {
             "--mouse",
             "press:left:1:1",
             "--mouse-pixels",
-            "9:17",
+            "1000:2000",
             "--interval-ms",
             "1000",
         ])
@@ -2183,7 +2183,7 @@ fn live_libghostty_vt_cli_forwards_sgr_pixel_mouse_coordinates() {
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stdout.contains("mouse:1b5b3c303b393b31374d"),
+        stdout.contains("mouse:1b5b3c303b313030303b323030304d"),
         "missing SGR-pixels mouse press bytes:\n{stdout}"
     );
 }

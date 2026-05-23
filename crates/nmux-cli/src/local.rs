@@ -4933,17 +4933,6 @@ impl InputSummary {
         if mouse.row >= rows || mouse.col >= cols {
             return Some(InputRejection::MouseCoordinatesOutOfBounds);
         }
-        if let (Some(pixel_x), Some(pixel_y)) = (mouse.pixel_x, mouse.pixel_y) {
-            let Some(width) = cols.checked_mul(8) else {
-                return Some(InputRejection::MousePixelCoordinatesOutOfBounds);
-            };
-            let Some(height) = rows.checked_mul(16) else {
-                return Some(InputRejection::MousePixelCoordinatesOutOfBounds);
-            };
-            if pixel_x >= width || pixel_y >= height {
-                return Some(InputRejection::MousePixelCoordinatesOutOfBounds);
-            }
-        }
         (!mouse_input_allowed(mode, mouse)).then_some(InputRejection::MouseActionRejected(mode))
     }
 
@@ -5006,7 +4995,6 @@ enum InputRejection {
     FocusReportingDisabled,
     MouseTrackingDisabled,
     MouseCoordinatesOutOfBounds,
-    MousePixelCoordinatesOutOfBounds,
     MouseActionRejected(protocol::MouseTrackingMode),
 }
 
@@ -5017,9 +5005,6 @@ impl InputRejection {
             Self::MouseTrackingDisabled => "input rejected: mouse tracking is disabled",
             Self::MouseCoordinatesOutOfBounds => {
                 "input rejected: mouse coordinates are outside pane bounds"
-            }
-            Self::MousePixelCoordinatesOutOfBounds => {
-                "input rejected: mouse pixel coordinates are outside pane bounds"
             }
             Self::MouseActionRejected(protocol::MouseTrackingMode::X10) => {
                 "input rejected: X10 mouse tracking accepts press events only"
@@ -13906,18 +13891,15 @@ mod tests {
             mouse: Some(MouseSummary {
                 row: 23,
                 col: 79,
-                pixel_x: Some(640),
-                pixel_y: Some(10),
+                pixel_x: Some(10_000),
+                pixel_y: Some(20_000),
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 0,
             }),
             ..input
         };
-        assert_eq!(
-            input.forwarding_rejection(&session),
-            Some(InputRejection::MousePixelCoordinatesOutOfBounds)
-        );
+        assert_eq!(input.forwarding_rejection(&session), None);
     }
 
     #[test]
