@@ -1976,6 +1976,61 @@ fn live_libghostty_vt_cli_forwards_sgr_mouse_modifiers() {
 
 #[cfg(feature = "libghostty-vt")]
 #[test]
+fn live_libghostty_vt_cli_forwards_sgr_pixel_mouse_coordinates() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "stty -icanon -echo min 10 time 20; printf '\\033[?1000h\\033[?1006h\\033[?1016hready\n'; bytes=$(dd bs=10 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--mouse",
+            "press:left:1:1",
+            "--mouse-pixels",
+            "9:17",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("mouse:1b5b3c303b393b31374d"),
+        "missing SGR-pixels mouse press bytes:\n{stdout}"
+    );
+}
+
+#[cfg(feature = "libghostty-vt")]
+#[test]
 fn live_libghostty_vt_cli_blocks_motion_in_normal_mouse_mode() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
