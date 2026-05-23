@@ -5764,12 +5764,72 @@ mod tests {
         )
     }
 
-    fn flatbuffer_run_with_metadata<'a>(
-        builder: &mut FlatBufferBuilder<'a>,
+    #[derive(Debug, Clone, Copy)]
+    struct RunMetadataFixture {
         style_id: u32,
         flags: u32,
         hyperlink_id: u32,
         semantic_content: protocol::CellSemanticContent,
+    }
+
+    impl Default for RunMetadataFixture {
+        fn default() -> Self {
+            Self {
+                style_id: 0,
+                flags: 0,
+                hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Output,
+            }
+        }
+    }
+
+    impl RunMetadataFixture {
+        fn hyperlink() -> Self {
+            Self {
+                flags: CELL_RUN_FLAG_HYPERLINK_PRESENT,
+                hyperlink_id: 7,
+                ..Self::default()
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct RowMetadataFixture {
+        semantic_prompt: protocol::RowSemanticPrompt,
+        dirty: bool,
+        kitty_virtual_placeholder: bool,
+    }
+
+    impl Default for RowMetadataFixture {
+        fn default() -> Self {
+            Self {
+                semantic_prompt: protocol::RowSemanticPrompt::None,
+                dirty: false,
+                kitty_virtual_placeholder: false,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct ScrollbackPublicLinesFixture {
+        start_line: u64,
+        row_line: u64,
+        total_lines: u64,
+    }
+
+    impl Default for ScrollbackPublicLinesFixture {
+        fn default() -> Self {
+            Self {
+                start_line: 1,
+                row_line: 1,
+                total_lines: 1,
+            }
+        }
+    }
+
+    fn flatbuffer_run_with_metadata<'a>(
+        builder: &mut FlatBufferBuilder<'a>,
+        metadata: RunMetadataFixture,
     ) -> flatbuffers::WIPOffset<protocol::CellRun<'a>> {
         let text = builder.create_string("linked");
         let widths = builder.create_vector(&[1u8, 1, 1, 1, 1, 1]);
@@ -5778,10 +5838,10 @@ mod tests {
             &protocol::CellRunArgs {
                 text_utf8: Some(text),
                 cell_widths: Some(widths),
-                style_id,
-                flags,
-                hyperlink_id,
-                semantic_content,
+                style_id: metadata.style_id,
+                flags: metadata.flags,
+                hyperlink_id: metadata.hyperlink_id,
+                semantic_content: metadata.semantic_content,
             },
         )
     }
@@ -6302,56 +6362,31 @@ mod tests {
     }
 
     fn pane_surface_snapshot_with_hyperlink_frame() -> Vec<u8> {
-        pane_surface_snapshot_with_run_refs_frame(0, CELL_RUN_FLAG_HYPERLINK_PRESENT, 7)
+        pane_surface_snapshot_with_run_refs_frame(RunMetadataFixture::hyperlink())
     }
 
-    fn pane_surface_snapshot_with_run_refs_frame(
-        style_id: u32,
-        flags: u32,
-        hyperlink_id: u32,
-    ) -> Vec<u8> {
-        pane_surface_snapshot_with_run_metadata_frame(
-            style_id,
-            flags,
-            hyperlink_id,
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent::Output,
-        )
+    fn pane_surface_snapshot_with_run_refs_frame(run_metadata: RunMetadataFixture) -> Vec<u8> {
+        pane_surface_snapshot_with_run_metadata_frame(run_metadata, RowMetadataFixture::default())
     }
 
     fn pane_surface_snapshot_with_run_metadata_frame(
-        style_id: u32,
-        flags: u32,
-        hyperlink_id: u32,
-        semantic_prompt: protocol::RowSemanticPrompt,
-        semantic_content: protocol::CellSemanticContent,
+        run_metadata: RunMetadataFixture,
+        row_metadata: RowMetadataFixture,
     ) -> Vec<u8> {
         pane_surface_snapshot_with_kind_and_run_metadata_frame(
             protocol::SurfaceKind::Main,
-            style_id,
-            flags,
-            hyperlink_id,
-            semantic_prompt,
-            semantic_content,
+            run_metadata,
+            row_metadata,
         )
     }
 
     fn pane_surface_snapshot_with_kind_and_run_metadata_frame(
         surface: protocol::SurfaceKind,
-        style_id: u32,
-        flags: u32,
-        hyperlink_id: u32,
-        semantic_prompt: protocol::RowSemanticPrompt,
-        semantic_content: protocol::CellSemanticContent,
+        run_metadata: RunMetadataFixture,
+        row_metadata: RowMetadataFixture,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_run_with_metadata(
-            &mut builder,
-            style_id,
-            flags,
-            hyperlink_id,
-            semantic_content,
-        );
+        let run = flatbuffer_run_with_metadata(&mut builder, run_metadata);
         let runs = builder.create_vector(&[run]);
         let row = protocol::SurfaceRow::create(
             &mut builder,
@@ -6359,9 +6394,9 @@ mod tests {
                 row: 0,
                 runs: Some(runs),
                 dirty_hash: 1,
-                semantic_prompt,
-                dirty: false,
-                kitty_virtual_placeholder: false,
+                semantic_prompt: row_metadata.semantic_prompt,
+                dirty: row_metadata.dirty,
+                kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
                 row_state_hash: 1,
             },
         );
@@ -6401,13 +6436,7 @@ mod tests {
         mouse_format: protocol::MouseFormat,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_run_with_metadata(
-            &mut builder,
-            0,
-            0,
-            0,
-            protocol::CellSemanticContent::Output,
-        );
+        let run = flatbuffer_run_with_metadata(&mut builder, RunMetadataFixture::default());
         let runs = builder.create_vector(&[run]);
         let row = protocol::SurfaceRow::create(
             &mut builder,
@@ -6454,13 +6483,7 @@ mod tests {
 
     fn pane_surface_snapshot_with_palette_diff_frame() -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_run_with_metadata(
-            &mut builder,
-            0,
-            0,
-            0,
-            protocol::CellSemanticContent::Output,
-        );
+        let run = flatbuffer_run_with_metadata(&mut builder, RunMetadataFixture::default());
         let runs = builder.create_vector(&[run]);
         let row = protocol::SurfaceRow::create(
             &mut builder,
@@ -6504,13 +6527,7 @@ mod tests {
 
     fn pane_surface_snapshot_with_pane_id(pane_id: Option<&str>) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_run_with_metadata(
-            &mut builder,
-            0,
-            0,
-            0,
-            protocol::CellSemanticContent::Output,
-        );
+        let run = flatbuffer_run_with_metadata(&mut builder, RunMetadataFixture::default());
         let runs = builder.create_vector(&[run]);
         let row = protocol::SurfaceRow::create(
             &mut builder,
@@ -6554,81 +6571,71 @@ mod tests {
 
     fn scrollback_chunk_with_hyperlink_frame() -> Vec<u8> {
         scrollback_chunk_with_run_metadata_frame(
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent::Output,
+            RowMetadataFixture::default(),
+            RunMetadataFixture::hyperlink(),
         )
     }
 
     fn scrollback_chunk_with_pane_id(pane_id: Option<&str>) -> Vec<u8> {
         scrollback_chunk_with_pane_id_and_run_metadata(
             pane_id,
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent::Output,
+            RowMetadataFixture::default(),
+            RunMetadataFixture::hyperlink(),
         )
     }
 
     fn scrollback_chunk_with_run_metadata_frame(
-        semantic_prompt: protocol::RowSemanticPrompt,
-        semantic_content: protocol::CellSemanticContent,
+        row_metadata: RowMetadataFixture,
+        run_metadata: RunMetadataFixture,
     ) -> Vec<u8> {
-        scrollback_chunk_with_pane_id_and_run_metadata(
-            Some("pane-1"),
-            semantic_prompt,
-            semantic_content,
-        )
+        scrollback_chunk_with_pane_id_and_run_metadata(Some("pane-1"), row_metadata, run_metadata)
     }
 
     fn scrollback_chunk_with_pane_id_and_run_metadata(
         pane_id: Option<&str>,
-        semantic_prompt: protocol::RowSemanticPrompt,
-        semantic_content: protocol::CellSemanticContent,
+        row_metadata: RowMetadataFixture,
+        run_metadata: RunMetadataFixture,
     ) -> Vec<u8> {
-        scrollback_chunk_with_public_lines(pane_id, semantic_prompt, semantic_content, 1, 1)
+        scrollback_chunk_with_public_lines(
+            pane_id,
+            row_metadata,
+            run_metadata,
+            ScrollbackPublicLinesFixture::default(),
+        )
     }
 
     fn scrollback_chunk_with_public_lines(
         pane_id: Option<&str>,
-        semantic_prompt: protocol::RowSemanticPrompt,
-        semantic_content: protocol::CellSemanticContent,
-        start_line: u64,
-        row_line: u64,
+        row_metadata: RowMetadataFixture,
+        run_metadata: RunMetadataFixture,
+        public_lines: ScrollbackPublicLinesFixture,
     ) -> Vec<u8> {
         scrollback_chunk_with_public_lines_and_total(
             pane_id,
-            semantic_prompt,
-            semantic_content,
-            start_line,
-            row_line,
-            1,
+            row_metadata,
+            run_metadata,
+            public_lines,
         )
     }
 
     fn scrollback_chunk_with_public_lines_and_total(
         pane_id: Option<&str>,
-        semantic_prompt: protocol::RowSemanticPrompt,
-        semantic_content: protocol::CellSemanticContent,
-        start_line: u64,
-        row_line: u64,
-        total_lines: u64,
+        row_metadata: RowMetadataFixture,
+        run_metadata: RunMetadataFixture,
+        public_lines: ScrollbackPublicLinesFixture,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_run_with_metadata(
-            &mut builder,
-            0,
-            CELL_RUN_FLAG_HYPERLINK_PRESENT,
-            7,
-            semantic_content,
-        );
+        let run = flatbuffer_run_with_metadata(&mut builder, run_metadata);
         let runs = builder.create_vector(&[run]);
         let row = protocol::ScrollbackRow::create(
             &mut builder,
             &protocol::ScrollbackRowArgs {
-                line: row_line,
+                line: public_lines.row_line,
                 runs: Some(runs),
                 dirty_hash: 1,
-                semantic_prompt,
-                dirty: false,
-                kitty_virtual_placeholder: false,
+                semantic_prompt: row_metadata.semantic_prompt,
+                dirty: row_metadata.dirty,
+                kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
                 row_state_hash: 1,
             },
         );
@@ -6643,8 +6650,8 @@ mod tests {
             &protocol::ScrollbackChunkArgs {
                 pane_id,
                 scrollback_version: 1,
-                start_line,
-                total_lines,
+                start_line: public_lines.start_line,
+                total_lines: public_lines.total_lines,
                 rows: Some(rows),
                 styles: Some(styles),
                 colors: Some(colors),
@@ -6660,13 +6667,7 @@ mod tests {
 
     fn scrollback_chunk_with_palette_diff_frame() -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_run_with_metadata(
-            &mut builder,
-            0,
-            0,
-            0,
-            protocol::CellSemanticContent::Output,
-        );
+        let run = flatbuffer_run_with_metadata(&mut builder, RunMetadataFixture::default());
         let runs = builder.create_vector(&[run]);
         let row = protocol::ScrollbackRow::create(
             &mut builder,
@@ -6738,18 +6739,18 @@ mod tests {
     fn pane_surface_patch_with_row_frame(kind: protocol::PatchKind) -> Vec<u8> {
         pane_surface_patch_with_run_metadata_frame(
             kind,
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent::Output,
+            RowMetadataFixture::default(),
+            RunMetadataFixture::default(),
         )
     }
 
     fn pane_surface_patch_with_run_metadata_frame(
         kind: protocol::PatchKind,
-        semantic_prompt: protocol::RowSemanticPrompt,
-        semantic_content: protocol::CellSemanticContent,
+        row_metadata: RowMetadataFixture,
+        run_metadata: RunMetadataFixture,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_run_with_metadata(&mut builder, 0, 0, 0, semantic_content);
+        let run = flatbuffer_run_with_metadata(&mut builder, run_metadata);
         let runs = builder.create_vector(&[run]);
         let row = protocol::RowUpdate::create(
             &mut builder,
@@ -6757,9 +6758,9 @@ mod tests {
                 row: 0,
                 runs: Some(runs),
                 dirty_hash: 1,
-                semantic_prompt,
-                dirty: false,
-                kitty_virtual_placeholder: false,
+                semantic_prompt: row_metadata.semantic_prompt,
+                dirty: row_metadata.dirty,
+                kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
                 row_state_hash: 1,
             },
         );
@@ -7121,7 +7122,10 @@ mod tests {
 
     #[test]
     fn rejects_surface_snapshot_with_unknown_style_id() {
-        let frame = pane_surface_snapshot_with_run_refs_frame(1, 0, 0);
+        let frame = pane_surface_snapshot_with_run_refs_frame(RunMetadataFixture {
+            style_id: 1,
+            ..RunMetadataFixture::default()
+        });
         let err = surface_update_from_frame(&frame)
             .expect_err("surface snapshot with unknown style id should be rejected");
 
@@ -7130,8 +7134,11 @@ mod tests {
 
     #[test]
     fn rejects_surface_snapshot_with_unknown_hyperlink_id() {
-        let frame =
-            pane_surface_snapshot_with_run_refs_frame(0, CELL_RUN_FLAG_HYPERLINK_PRESENT, 8);
+        let frame = pane_surface_snapshot_with_run_refs_frame(RunMetadataFixture {
+            flags: CELL_RUN_FLAG_HYPERLINK_PRESENT,
+            hyperlink_id: 8,
+            ..RunMetadataFixture::default()
+        });
         let err = surface_update_from_frame(&frame)
             .expect_err("surface snapshot with unknown hyperlink id should be rejected");
 
@@ -7141,11 +7148,11 @@ mod tests {
     #[test]
     fn rejects_surface_snapshot_with_unknown_row_semantic_prompt() {
         let frame = pane_surface_snapshot_with_run_metadata_frame(
-            0,
-            0,
-            0,
-            protocol::RowSemanticPrompt(99),
-            protocol::CellSemanticContent::Output,
+            RunMetadataFixture::default(),
+            RowMetadataFixture {
+                semantic_prompt: protocol::RowSemanticPrompt(99),
+                ..RowMetadataFixture::default()
+            },
         );
         let err = surface_update_from_frame(&frame)
             .expect_err("surface snapshot with unknown row semantic prompt should be rejected");
@@ -7156,11 +7163,11 @@ mod tests {
     #[test]
     fn rejects_surface_snapshot_with_unknown_cell_semantic_content() {
         let frame = pane_surface_snapshot_with_run_metadata_frame(
-            0,
-            0,
-            0,
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent(99),
+            RunMetadataFixture {
+                semantic_content: protocol::CellSemanticContent(99),
+                ..RunMetadataFixture::default()
+            },
+            RowMetadataFixture::default(),
         );
         let err = surface_update_from_frame(&frame)
             .expect_err("surface snapshot with unknown cell semantic content should be rejected");
@@ -7172,11 +7179,8 @@ mod tests {
     fn rejects_surface_snapshot_with_unknown_surface_kind_from_frame() {
         let frame = pane_surface_snapshot_with_kind_and_run_metadata_frame(
             protocol::SurfaceKind(99),
-            0,
-            0,
-            0,
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent::Output,
+            RunMetadataFixture::default(),
+            RowMetadataFixture::default(),
         );
         let err = surface_update_from_frame(&frame)
             .expect_err("surface snapshot with unknown surface kind should be rejected");
@@ -7504,8 +7508,11 @@ mod tests {
     fn rejects_surface_patch_with_unknown_semantic_enums_from_frame() {
         let prompt_frame = pane_surface_patch_with_run_metadata_frame(
             protocol::PatchKind::ReplaceRows,
-            protocol::RowSemanticPrompt(99),
-            protocol::CellSemanticContent::Output,
+            RowMetadataFixture {
+                semantic_prompt: protocol::RowSemanticPrompt(99),
+                ..RowMetadataFixture::default()
+            },
+            RunMetadataFixture::default(),
         );
         let err = surface_update_from_frame(&prompt_frame)
             .expect_err("surface patch with unknown row semantic prompt should be rejected");
@@ -7513,8 +7520,11 @@ mod tests {
 
         let content_frame = pane_surface_patch_with_run_metadata_frame(
             protocol::PatchKind::ReplaceRows,
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent(99),
+            RowMetadataFixture::default(),
+            RunMetadataFixture {
+                semantic_content: protocol::CellSemanticContent(99),
+                ..RunMetadataFixture::default()
+            },
         );
         let err = surface_update_from_frame(&content_frame)
             .expect_err("surface patch with unknown cell semantic content should be rejected");
@@ -7542,8 +7552,11 @@ mod tests {
     #[test]
     fn rejects_scrollback_chunk_with_unknown_semantic_enums() {
         let prompt_frame = scrollback_chunk_with_run_metadata_frame(
-            protocol::RowSemanticPrompt(99),
-            protocol::CellSemanticContent::Output,
+            RowMetadataFixture {
+                semantic_prompt: protocol::RowSemanticPrompt(99),
+                ..RowMetadataFixture::default()
+            },
+            RunMetadataFixture::hyperlink(),
         );
         let prompt_err = scrollback_chunk_from_frame(&prompt_frame)
             .expect_err("scrollback row with unknown prompt should be rejected");
@@ -7554,8 +7567,11 @@ mod tests {
         );
 
         let content_frame = scrollback_chunk_with_run_metadata_frame(
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent(99),
+            RowMetadataFixture::default(),
+            RunMetadataFixture {
+                semantic_content: protocol::CellSemanticContent(99),
+                ..RunMetadataFixture::hyperlink()
+            },
         );
         let content_err = scrollback_chunk_from_frame(&content_frame)
             .expect_err("scrollback run with unknown semantic content should be rejected");
@@ -7575,10 +7591,12 @@ mod tests {
     fn rejects_scrollback_chunk_with_zero_public_line_numbers() {
         let start_frame = scrollback_chunk_with_public_lines(
             Some("pane-1"),
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent::Output,
-            0,
-            1,
+            RowMetadataFixture::default(),
+            RunMetadataFixture::hyperlink(),
+            ScrollbackPublicLinesFixture {
+                start_line: 0,
+                ..ScrollbackPublicLinesFixture::default()
+            },
         );
         let start_err = scrollback_chunk_from_frame(&start_frame)
             .expect_err("zero scrollback chunk start_line should be rejected");
@@ -7591,10 +7609,12 @@ mod tests {
 
         let row_frame = scrollback_chunk_with_public_lines(
             Some("pane-1"),
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent::Output,
-            1,
-            0,
+            RowMetadataFixture::default(),
+            RunMetadataFixture::hyperlink(),
+            ScrollbackPublicLinesFixture {
+                row_line: 0,
+                ..ScrollbackPublicLinesFixture::default()
+            },
         );
         let row_err = scrollback_chunk_from_frame(&row_frame)
             .expect_err("zero scrollback row line should be rejected");
@@ -14515,11 +14535,13 @@ mod tests {
     fn rejects_scrollback_chunk_with_noncontiguous_public_line_numbers() {
         let frame = scrollback_chunk_with_public_lines_and_total(
             Some("pane-1"),
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent::Output,
-            1,
-            2,
-            2,
+            RowMetadataFixture::default(),
+            RunMetadataFixture::hyperlink(),
+            ScrollbackPublicLinesFixture {
+                row_line: 2,
+                total_lines: 2,
+                ..ScrollbackPublicLinesFixture::default()
+            },
         );
         let err = scrollback_chunk_from_frame(&frame)
             .expect_err("noncontiguous scrollback row line should be rejected");
@@ -14535,11 +14557,13 @@ mod tests {
     fn rejects_scrollback_chunk_rows_beyond_total_lines() {
         let frame = scrollback_chunk_with_public_lines_and_total(
             Some("pane-1"),
-            protocol::RowSemanticPrompt::None,
-            protocol::CellSemanticContent::Output,
-            2,
-            2,
-            1,
+            RowMetadataFixture::default(),
+            RunMetadataFixture::hyperlink(),
+            ScrollbackPublicLinesFixture {
+                start_line: 2,
+                row_line: 2,
+                ..ScrollbackPublicLinesFixture::default()
+            },
         );
         let err = scrollback_chunk_from_frame(&frame)
             .expect_err("scrollback row beyond total_lines should be rejected");
