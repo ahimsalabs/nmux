@@ -116,6 +116,24 @@ later ADR must satisfy
 matrix, cache behavior, source-fetch behavior, packaging claims, runtime, and
 failure-triage expectations.
 
+## Action Runtime Maintenance
+
+The 2026-05-23 manual promotion run
+[`26334374094`](https://github.com/ahimsalabs/nmux/actions/runs/26334374094)
+passed, but GitHub Actions emitted Node.js 20 deprecation warnings for the
+current JavaScript actions. The affected workflow actions were
+`actions/checkout@v4` in every job, `actions/upload-artifact@v4` in the
+promotion bundle job, and `actions/download-artifact@v4` in the artifact
+verification job.
+
+The warning says GitHub will force JavaScript actions to Node.js 24 by default
+starting June 2, 2026, and remove Node.js 20 from runners on September 16,
+2026. Before treating the manual promotion evidence workflow as stable enough
+for required native-VT CI, run at least one clean promotion sample after the
+action-runtime transition or update the workflow to action versions/settings
+that explicitly support Node.js 24 and record that evidence in
+[default-engine-promotion.md](default-engine-promotion.md).
+
 ## Nix Setup
 
 CI installs Nix with `cachix/install-nix-action@v31`, which the action README
