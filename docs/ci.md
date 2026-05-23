@@ -49,6 +49,7 @@ Record each manual run with these fields:
 | Runner | Runner OS, architecture, image label, and hosted/self-hosted status from `SUMMARY.txt`. |
 | Toolchain | `make toolchain-info` output from the run. |
 | Source mode | `ghostty_source_mode`, `GHOSTTY_SOURCE_DIR`, and `GIT_CONFIG_GLOBAL`. |
+| VCS status | `VCS_STATUS.txt`, `git_revision`, `working_tree_status`, and any `jj status` output recorded by the bundle. |
 | Cache state | `CACHE_STATE.txt` plus CI cache setup context; classify whether Nix, Cargo registry, Cargo Git, Rust target, and native Ghostty/Zig build caches were cold, warm, restored, or unknown. |
 | Timings | `check_all_real_seconds`, `check_all_user_seconds`, `check_all_sys_seconds`, `bundle_elapsed_seconds`, and total GitHub job duration. |
 | Provenance | `nmux-promotion-evidence` artifact, `SOURCE_FETCH.txt`, `OFFLINE_PROBE.txt`, `Cargo.lock` hash, locked `libghostty-vt`/`libghostty-vt-sys` records, and whether the cache-present offline probe passed. |
@@ -63,9 +64,10 @@ that is not under `target/promotion-evidence`, run
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify`. The
 verifier checks the required summary identity fields, timing fields,
 bundle-relative summary artifact names, cache-state artifact, relocation-safe
-`BUNDLE_MANIFEST.txt` hashes, source/provenance records, cache-present offline
-probe result, package archive bytes, bundle-relative archive hash, and packaged
-runtime smoke result; it does not replace human judgment about cache
+`BUNDLE_MANIFEST.txt` hashes, VCS status artifact, source/provenance records,
+cache-present offline probe result, package archive bytes, bundle-relative
+archive hash, and packaged runtime smoke result; it does not replace human
+judgment about cache
 classification, flake rate, or platform coverage.
 
 The bundle summary records GitHub Actions fields when present:
@@ -76,6 +78,8 @@ The bundle summary records GitHub Actions fields when present:
 `check_all_user_seconds`, and `check_all_sys_seconds`, plus
 `started_at_utc`, `completed_at_utc`, and `bundle_elapsed_seconds` for the
 bundle artifact generation and verifier pass before final console output.
+`VCS_STATUS.txt` records the Git revision, Git working-tree status, and
+optional `jj status` output observed at bundle generation time.
 `CACHE_STATE.txt` records observed cache-related environment values and
 directory presence; use it with the workflow cache configuration when
 classifying the run as cold, warm, restored, or unknown.

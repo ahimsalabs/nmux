@@ -112,6 +112,45 @@ promotion-evidence-bundle:
 			printf 'cache_state_note=%s\n' 'classify cold, warm, restored, or unknown in the promotion tracker from this artifact plus CI/cache setup context'; \
 		} > "$$cache_state"; \
 	}; \
+	write_vcs_status() { \
+		vcs_status="$$bundle_dir/VCS_STATUS.txt"; \
+		git_status_file="$$(mktemp)"; \
+		vcs_worktree_status=unknown; \
+		if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+			if git status --porcelain=v1 > "$$git_status_file" 2>/dev/null; then \
+				if [ -s "$$git_status_file" ]; then \
+					vcs_worktree_status=dirty; \
+				else \
+					vcs_worktree_status=clean; \
+				fi; \
+			fi; \
+		fi; \
+		{ \
+			printf 'nmux promotion evidence VCS status\n'; \
+			printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+			printf 'vcs_status_scope=%s\n' 'observed repository identity and working-tree state at bundle generation time'; \
+			printf 'git_revision=%s\n' "$$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"; \
+			printf 'git_status_porcelain=%s\n' "$$vcs_worktree_status"; \
+			printf '[git_status_porcelain_v1]\n'; \
+			if [ "$$vcs_worktree_status" = clean ]; then \
+				printf 'clean\n'; \
+			elif [ "$$vcs_worktree_status" = dirty ]; then \
+				cat "$$git_status_file"; \
+			else \
+				printf 'unknown\n'; \
+			fi; \
+			if command -v jj >/dev/null 2>&1; then \
+				printf 'jj_status_available=true\n'; \
+				printf '[jj_status]\n'; \
+				jj status 2>&1 || true; \
+			else \
+				printf 'jj_status_available=false\n'; \
+				printf '[jj_status]\n'; \
+				printf 'unavailable\n'; \
+			fi; \
+		} > "$$vcs_status"; \
+		rm -f "$$git_status_file"; \
+	}; \
 	write_summary() { \
 		completed_utc="$$1"; \
 		elapsed_seconds="$$2"; \
@@ -136,6 +175,8 @@ promotion-evidence-bundle:
 			printf 'ghostty_source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"; \
 			printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
 			printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
+			printf 'working_tree_status=%s\n' "$$vcs_worktree_status"; \
+			printf 'vcs_status=%s\n' 'VCS_STATUS.txt'; \
 			printf 'cache_state=%s\n' 'CACHE_STATE.txt'; \
 			printf 'run_log=%s\n' 'RUN.log'; \
 			printf 'toolchain=%s\n' 'TOOLCHAIN.txt'; \
@@ -165,7 +206,8 @@ promotion-evidence-bundle:
 				RUN.log \
 				SOURCE_FETCH.txt \
 				SUMMARY.txt \
-				TOOLCHAIN.txt; do \
+				TOOLCHAIN.txt \
+				VCS_STATUS.txt; do \
 				printf '%s  %s\n' "$$(hash_file "$$bundle_dir/$$name")" "$$name"; \
 			done; \
 		} > "$$manifest"; \
@@ -173,12 +215,14 @@ promotion-evidence-bundle:
 	end_epoch="$$(date -u '+%s')"; \
 	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
 	write_cache_state; \
+	write_vcs_status; \
 	write_summary "$$completed_utc" "$$((end_epoch - start_epoch))"; \
 	write_manifest; \
 	$(MAKE) --no-print-directory PROMOTION_EVIDENCE_DIR="$$bundle_dir" promotion-evidence-verify; \
 	end_epoch="$$(date -u '+%s')"; \
 	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
 	write_cache_state; \
+	write_vcs_status; \
 	write_summary "$$completed_utc" "$$((end_epoch - start_epoch))"; \
 	write_manifest; \
 	$(MAKE) --no-print-directory PROMOTION_EVIDENCE_DIR="$$bundle_dir" promotion-evidence-verify; \
@@ -199,6 +243,7 @@ promotion-evidence-verify:
 	archive_file="$$bundle_dir/PACKAGE_ARCHIVE.tar.gz"; \
 	archive_sha_file="$$bundle_dir/ARCHIVE.sha256"; \
 	cache_state="$$bundle_dir/CACHE_STATE.txt"; \
+	vcs_status="$$bundle_dir/VCS_STATUS.txt"; \
 	bundle_manifest="$$bundle_dir/BUNDLE_MANIFEST.txt"; \
 	hash_file() { \
 		if command -v sha256sum >/dev/null 2>&1; then \
@@ -242,6 +287,7 @@ promotion-evidence-verify:
 	require_file "$$archive_file"; \
 	require_file "$$archive_sha_file"; \
 	require_file "$$cache_state"; \
+	require_file "$$vcs_status"; \
 	require_file "$$bundle_manifest"; \
 	expected_manifest="$$(mktemp)"; \
 	{ \
@@ -256,7 +302,8 @@ promotion-evidence-verify:
 			RUN.log \
 			SOURCE_FETCH.txt \
 			SUMMARY.txt \
-			TOOLCHAIN.txt; do \
+			TOOLCHAIN.txt \
+			VCS_STATUS.txt; do \
 			printf '%s  %s\n' "$$(hash_file "$$bundle_dir/$$name")" "$$name"; \
 		done; \
 	} > "$$expected_manifest"; \
@@ -286,6 +333,8 @@ promotion-evidence-verify:
 	require_line "$$summary" '^ghostty_source_mode=(pinned-fetch|local)$$' 'Ghostty source mode'; \
 	require_line "$$summary" '^GHOSTTY_SOURCE_DIR=.+$$' 'GHOSTTY_SOURCE_DIR field'; \
 	require_line "$$summary" '^GIT_CONFIG_GLOBAL=.+$$' 'GIT_CONFIG_GLOBAL field'; \
+	require_line "$$summary" '^working_tree_status=(clean|dirty|unknown)$$' 'working tree status'; \
+	require_exact "$$summary" 'vcs_status=VCS_STATUS.txt' 'VCS status path'; \
 	require_exact "$$summary" 'cache_state=CACHE_STATE.txt' 'cache state path'; \
 	require_exact "$$summary" 'run_log=RUN.log' 'run log path'; \
 	require_exact "$$summary" 'toolchain=TOOLCHAIN.txt' 'toolchain path'; \
@@ -362,6 +411,16 @@ promotion-evidence-verify:
 	require_line "$$cache_state" '^packaging_libghostty_vt_target_dir_status=(present|missing)$$' 'native VT target cache status'; \
 	require_line "$$cache_state" '^source_fetch_offline_probe_status=(present|missing)$$' 'source-fetch offline probe status'; \
 	require_line "$$cache_state" '^cache_state_note=.+$$' 'cache state interpretation note'; \
+	require_exact "$$vcs_status" 'nmux promotion evidence VCS status' 'VCS status title'; \
+	require_line "$$vcs_status" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'VCS status timestamp'; \
+	require_line "$$vcs_status" '^vcs_status_scope=.+$$' 'VCS status scope'; \
+	require_line "$$vcs_status" '^git_revision=(unknown|[0-9a-f]{40})$$' 'VCS git revision'; \
+	require_line "$$vcs_status" '^git_status_porcelain=(clean|dirty|unknown)$$' 'VCS git working-tree status'; \
+	require_exact "$$vcs_status" '[git_status_porcelain_v1]' 'VCS git status section'; \
+	require_line "$$vcs_status" '^jj_status_available=(true|false)$$' 'VCS jj availability'; \
+	require_exact "$$vcs_status" '[jj_status]' 'VCS jj status section'; \
+	vcs_worktree_status="$$(awk -F= '/^git_status_porcelain=/{print $$2; exit}' "$$vcs_status")"; \
+	require_exact "$$summary" "working_tree_status=$$vcs_worktree_status" 'summary working tree status matches VCS artifact'; \
 	printf 'promotion_evidence_verified=%s\n' "$$summary"
 
 source-fetch-provenance-sample: toolchain-info

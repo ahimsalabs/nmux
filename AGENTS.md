@@ -143,15 +143,15 @@ registry, Git source, or Nix store caches.
 toolchain output, bundle start/completion timestamps plus elapsed duration,
 extracted `make check-all` timing, source-fetch report, package provenance,
 cargo tree, package archive, archive checksum, observed cache-state report,
-offline probe report, and bundle artifact manifest under
+offline probe report, VCS status report, and bundle artifact manifest under
 `target/promotion-evidence`.
 The bundled `ARCHIVE.sha256` must name `PACKAGE_ARCHIVE.tar.gz`, not the
 original build-tree archive path, so downloaded evidence stays self-contained.
 `promotion-evidence-verify` checks an existing bundle for required summary,
 bundle timing, `make check-all` timing, artifact files, cache-state report,
-artifact manifest hashes, source/provenance records, package archive bytes,
-archive hash, and packaged runtime smoke output; the bundle target runs it
-before printing the artifact list.
+artifact manifest hashes, source/provenance records, VCS status report, package
+archive bytes, archive hash, and packaged runtime smoke output; the bundle
+target runs it before printing the artifact list.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `source-fetch-offline-probe` clears `target/source-fetch-offline` and checks
