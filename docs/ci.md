@@ -54,7 +54,7 @@ Record each manual run with these fields:
 | Cache state | `CACHE_STATE.txt` plus CI cache setup context; classify whether Nix, Cargo registry, Cargo Git, Rust target, and native Ghostty/Zig build caches were cold, warm, restored, or unknown. |
 | Timings | `check_all_real_seconds`, `check_all_user_seconds`, `check_all_sys_seconds`, `bundle_elapsed_seconds`, and total GitHub job duration. |
 | Provenance | `nmux-promotion-evidence` artifact, `SOURCE_FETCH.txt`, `OFFLINE_PROBE.txt`, `Cargo.lock` hash, locked `libghostty-vt`/`libghostty-vt-sys` records, and whether the cache-present offline probe passed. |
-| Packaging | Archive name, SHA-256, package metadata, `packaging-archive-verify` result, `packaging-provenance-verify` result, relocated install root, clean library-path environment, and packaged runtime smoke result. |
+| Packaging | Archive name, SHA-256, package metadata, `packaging-provenance-manifest-verify` result against bundled provenance, `packaging-archive-verify` result, `packaging-provenance-verify` run-log result, relocated install root, clean library-path environment, and packaged runtime smoke result. |
 | Artifact round-trip | Whether the dependent artifact-verify job downloaded `nmux-promotion-evidence` and passed `make promotion-evidence-verify` against the downloaded copy. |
 | Outcome | Passed, failed, or canceled, including failed command and error summary. |
 | Follow-up | Any flake, cache miss, source-fetch, packaging, or platform issue created from the run. |
@@ -67,8 +67,10 @@ verifier checks the required summary identity fields, timing fields,
 bundle-relative summary artifact names, cache-state artifact, relocation-safe
 `BUNDLE_MANIFEST.txt` hashes, VCS status artifact, summary/VCS git revision
 agreement, open-work snapshot, source/provenance records, cache-present offline
-probe result, package archive bytes, bundle-relative archive hash, and packaged
-runtime smoke result. When the bundle reports `github_actions=true`, the
+probe result, bundled package provenance through
+`packaging-provenance-manifest-verify`, package archive bytes,
+bundle-relative archive hash, and packaged runtime smoke result. When the bundle
+reports `github_actions=true`, the
 verifier also requires non-placeholder GitHub run, ref, SHA, and runner fields
 and checks that `github_sha` matches the bundled git revision. It does not
 replace human judgment about cache classification, flake rate, or platform

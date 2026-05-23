@@ -111,11 +111,13 @@ engine or a regular CI requirement.
   artifact, VCS status artifact, open-work snapshot, relocation-safe
   `BUNDLE_MANIFEST.txt` hashes, source/provenance records, cache-present
   offline probe result, package archive bytes, archive hash,
-  `packaging-archive-verify` output,
-  `packaging-provenance-verify` output, packaged runtime smoke result, exact
-  current open-work blocker lines, run-log evidence that source-fetch
-  provenance verification ran, and run-log evidence that the cache-present
-  offline probe compiled the opt-in native-VT test binary and ran its verifier.
+  `packaging-provenance-manifest-verify` against the bundled package
+  provenance, `packaging-archive-verify` output, run-log evidence that
+  `packaging-provenance-verify` ran during bundle generation, packaged runtime
+  smoke result, exact current open-work blocker lines, run-log evidence that
+  source-fetch provenance verification ran, and run-log evidence that the
+  cache-present offline probe compiled the opt-in native-VT test binary and ran
+  its verifier.
   The bundle target runs it before printing the artifact list.
 - `make source-fetch-provenance-sample` writes the active source mode and
   locked `libghostty-vt` Cargo package records without inspecting Ghostty
@@ -149,6 +151,9 @@ engine or a regular CI requirement.
   required toolchain, source-mode, locked native-VT package, staged-file,
   runtime-library, per-binary `libghostty-vt` dynamic-dependency, or cargo-tree
   records are missing.
+- `make packaging-provenance-manifest-verify` validates an existing provenance
+  manifest without rebuilding. Override `PACKAGING_PROVENANCE_MANIFEST` for
+  copied, bundled, or downloaded `PACKAGE_PROVENANCE.txt` evidence.
 - `make packaging-archive-sample` writes a tar archive and SHA-256 file for the
   staged layout, extracts it, verifies the wrapped binaries from the extracted
   archive, and then runs the no-rebuild archive verifier.
@@ -314,8 +319,10 @@ result, outcome, and follow-up.
   provenance, signing/notarization where relevant, release checks, and recorded
   `make packaging-sample`, `make packaging-layout-sample`,
   `make packaging-layout-verify`, `make packaging-provenance-sample`,
-  `make packaging-provenance-verify`, `make packaging-archive-sample`,
-  `make packaging-archive-verify`, and `make packaging-archive-runtime-smoke`
+  `make packaging-provenance-verify`,
+  `make packaging-provenance-manifest-verify`,
+  `make packaging-archive-sample`, `make packaging-archive-verify`, and
+  `make packaging-archive-runtime-smoke`
   results. The current Darwin packaging samples show the opt-in release
   binaries can run with an explicit runtime library path and staged wrapper
   layout, and the staged layout now has a no-rebuild verifier, but packaged

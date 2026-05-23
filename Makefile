@@ -7,10 +7,11 @@ SOURCE_FETCH_REPORT ?= target/source-fetch-provenance/SOURCE_FETCH.txt
 SOURCE_FETCH_OFFLINE_PROBE_REPORT ?= target/source-fetch-offline/OFFLINE_PROBE.txt
 SOURCE_FETCH_OFFLINE_PROBE_LOG ?=
 PACKAGING_LAYOUT ?= target/packaging-libghostty-vt/package
+PACKAGING_PROVENANCE_MANIFEST ?= target/packaging-libghostty-vt/package/PROVENANCE.txt
 PACKAGING_ARCHIVE ?= target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz
 PACKAGING_ARCHIVE_SHA256 ?= $(PACKAGING_ARCHIVE).sha256
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-manifest-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -569,6 +570,7 @@ promotion-evidence-verify:
 	require_line "$$package_provenance" '^terminal_engine=libghostty-vt$$' 'package metadata terminal engine'; \
 	require_line "$$package_provenance" '^terminal_engine_status=opt-in$$' 'package metadata terminal engine status'; \
 	require_line "$$package_provenance" '^\[dynamic_dependencies\]$$' 'packaging dynamic dependencies'; \
+	$(MAKE) --no-print-directory PACKAGING_PROVENANCE_MANIFEST="$$package_provenance" packaging-provenance-manifest-verify; \
 	require_line "$$run_log" '^provenance_manifest_verified=target/packaging-libghostty-vt/package/PROVENANCE\.txt$$' 'package provenance verifier result'; \
 	require_line "$$run_log" '^packaged_runtime_smoke_install_root=/tmp/nmuxpkg\.[^/]+/install$$' 'relocated package install root'; \
 	require_line "$$run_log" '^packaged_runtime_smoke_library_env=unset$$' 'clean packaged runtime library environment'; \
@@ -1098,8 +1100,11 @@ packaging-provenance-sample: packaging-layout-sample
 	printf 'provenance_manifest=%s\n' "$$manifest"
 
 packaging-provenance-verify: packaging-provenance-sample
+	@$(MAKE) --no-print-directory packaging-provenance-manifest-verify
+
+packaging-provenance-manifest-verify:
 	@echo "verifying opt-in libghostty-vt package provenance manifest"
-	@manifest=target/packaging-libghostty-vt/package/PROVENANCE.txt; \
+	@manifest="$(PACKAGING_PROVENANCE_MANIFEST)"; \
 	pkg_dir=target/packaging-libghostty-vt/package; \
 	require_line() { \
 		pattern="$$1"; \

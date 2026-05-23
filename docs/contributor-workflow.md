@@ -76,6 +76,7 @@ nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-layout-verify
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
+nix develop . -c make packaging-provenance-manifest-verify
 nix develop . -c make packaging-archive-sample
 nix develop . -c make packaging-archive-verify
 nix develop . -c make packaging-archive-runtime-smoke
@@ -144,7 +145,8 @@ same relative names so copied or downloaded bundles remain verifiable.
 It runs `make promotion-evidence-verify` before printing the artifact list.
 Run `make promotion-evidence-verify` directly when reviewing an existing bundle
 without regenerating the native build and packaging sample; it validates the
-bundled archive bytes through `make packaging-archive-verify`. For
+bundled package provenance through `make packaging-provenance-manifest-verify`
+and bundled archive bytes through `make packaging-archive-verify`. For
 GitHub-generated bundles, the verifier also requires concrete run, ref, SHA,
 and runner fields and checks that `github_sha` matches the bundled revision. Use
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify` when
@@ -186,6 +188,9 @@ runtime-library artifacts, and dynamic dependency output.
 required toolchain, source-mode, locked native-VT package, staged-file,
 runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree
 records are present.
+`make packaging-provenance-manifest-verify` checks an existing manifest without
+rebuilding; override `PACKAGING_PROVENANCE_MANIFEST` when checking copied or
+bundled `PACKAGE_PROVENANCE.txt` evidence.
 `make packaging-archive-sample` archives the staged layout, writes an archive
 SHA-256 file, extracts it, verifies the wrapped binaries from the extracted
 layout, and then runs the no-rebuild archive verifier.

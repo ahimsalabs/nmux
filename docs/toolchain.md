@@ -17,6 +17,7 @@ nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
+nix develop . -c make packaging-provenance-manifest-verify
 nix develop . -c make packaging-archive-sample
 nix develop . -c make packaging-archive-verify
 nix develop . -c make packaging-archive-runtime-smoke
@@ -91,9 +92,10 @@ report, open-work snapshot, and bundle artifact manifest under
 `make promotion-evidence-verify`. Run the verifier directly to check an
 existing bundle without rebuilding the native VT package; `ARCHIVE.sha256`
 names `PACKAGE_ARCHIVE.tar.gz`, and the verifier validates those bundled
-archive bytes through `make packaging-archive-verify`. The verifier also checks
-that `SUMMARY.txt` matches the recorded `VCS_STATUS.txt` working-tree status
-and names the bundled `PROMOTION_OPEN_WORK.txt` snapshot.
+package provenance and archive bytes through `make
+packaging-provenance-manifest-verify` and `make packaging-archive-verify`. The
+verifier also checks that `SUMMARY.txt` matches the recorded `VCS_STATUS.txt`
+working-tree status and names the bundled `PROMOTION_OPEN_WORK.txt` snapshot.
 Pass
 `PROMOTION_EVIDENCE_DIR=/path/to/artifact` for a downloaded bundle outside the
 default `target/promotion-evidence` path.
@@ -139,6 +141,7 @@ For local package provenance evidence, use:
 ```sh
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
+nix develop . -c make packaging-provenance-manifest-verify
 ```
 
 The sample target writes `target/packaging-libghostty-vt/package/PROVENANCE.txt`
@@ -149,6 +152,9 @@ and asserts the required toolchain, source-mode, locked native-VT package,
 staged-file, package metadata, runtime-library, per-binary `libghostty-vt`
 dynamic-dependency, and cargo-tree records are present before archive packaging
 continues.
+Run `make packaging-provenance-manifest-verify` directly to check an already
+produced manifest without rebuilding. Override `PACKAGING_PROVENANCE_MANIFEST`
+when verifying a copied or bundled `PACKAGE_PROVENANCE.txt`.
 For local archive evidence, use:
 
 ```sh

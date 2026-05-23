@@ -25,6 +25,7 @@ nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-layout-verify
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
+nix develop . -c make packaging-provenance-manifest-verify
 nix develop . -c make packaging-archive-sample
 nix develop . -c make packaging-archive-verify
 nix develop . -c make packaging-archive-runtime-smoke
@@ -90,6 +91,15 @@ runtime-library, per-binary `libghostty-vt` dynamic-dependency, or cargo-tree
 records are missing. Archive packaging depends on this verifier, so
 `make packaging-archive-sample` and `make packaging-archive-runtime-smoke`
 cannot pass with a structurally incomplete local provenance manifest.
+
+`make packaging-provenance-manifest-verify` checks an existing manifest without
+rebuilding. By default it checks
+`target/packaging-libghostty-vt/package/PROVENANCE.txt`, but
+`PACKAGING_PROVENANCE_MANIFEST=/path/to/PACKAGE_PROVENANCE.txt` can point it at
+copied, bundled, or downloaded promotion evidence. `make
+promotion-evidence-verify` uses this path for bundled `PACKAGE_PROVENANCE.txt`
+so it validates the evidence under review rather than regenerating local
+package provenance first.
 
 `make packaging-archive-sample` writes
 `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` and

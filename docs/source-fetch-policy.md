@@ -90,8 +90,10 @@ See [packaging.md](packaging.md) for the matching binary distribution questions.
 Local package provenance samples record the active source mode,
 `GHOSTTY_SOURCE_DIR` value, and locked `libghostty-vt`/`libghostty-vt-sys`
 package records. `make packaging-provenance-verify` asserts those records are
-present before archive packaging continues, but that record is not enough to
-settle the source policy for default or packaged builds. A later promotion
-decision still needs to choose how the pinned Ghostty source, local-source
-overrides, offline builds, cache provenance, and license review are represented
-in release artifacts.
+present before archive packaging continues, and
+`make packaging-provenance-manifest-verify` can check copied or bundled
+manifest evidence without rebuilding. That record is not enough to settle the
+source policy for default or packaged builds. A later promotion decision still
+needs to choose how the pinned Ghostty source, local-source overrides, offline
+builds, cache provenance, and license review are represented in release
+artifacts.

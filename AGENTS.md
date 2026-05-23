@@ -129,6 +129,7 @@ nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-layout-verify
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
+nix develop . -c make packaging-provenance-manifest-verify
 nix develop . -c make packaging-archive-sample
 nix develop . -c make packaging-archive-verify
 nix develop . -c make packaging-archive-runtime-smoke
@@ -164,7 +165,9 @@ summary/VCS git revision agreement, package archive bytes, archive hash, exact
 open-work snapshot lines, package provenance verification, archive
 verification, and packaged runtime smoke output; CI-generated bundles must also
 carry concrete GitHub run/ref/SHA/runner fields with `github_sha` matching the
-bundled revision. The bundle target runs it before printing the artifact list.
+bundled revision. It runs the no-rebuild package provenance manifest verifier
+against bundled `PACKAGE_PROVENANCE.txt` evidence. The bundle target runs it
+before printing the artifact list.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `source-fetch-provenance-verify` checks an existing source-fetch provenance
@@ -192,6 +195,9 @@ output.
 required toolchain, source-mode, locked native-VT package, staged-file,
 runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree
 records are present.
+`packaging-provenance-manifest-verify` checks an existing manifest without
+rebuilding; override `PACKAGING_PROVENANCE_MANIFEST` for copied or bundled
+package provenance evidence.
 `packaging-archive-sample` archives the staged layout, writes a SHA-256 file,
 extracts it, verifies the wrapped binaries from the archive, and then runs the
 no-rebuild archive verifier.
