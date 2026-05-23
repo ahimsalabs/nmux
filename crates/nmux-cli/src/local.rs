@@ -3005,6 +3005,9 @@ pub struct RenderedAttach {
     pub workspace: WorkspaceSummary,
     pub status: AttachStatusSummary,
     pub surface_metadata: TerminalMetadataSummary,
+    pub surface_kind: protocol::SurfaceKind,
+    pub cursor: Option<CursorSummary>,
+    pub modes: TerminalModeSummary,
     pub surface_text: Option<String>,
     pub scrollback: Option<ScrollbackChunkSummary>,
 }
@@ -3020,6 +3023,13 @@ pub struct AttachStatusSummary {
 pub struct TerminalMetadataSummary {
     pub title: String,
     pub working_directory: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CachedSurfaceSummary {
+    pub surface_kind: protocol::SurfaceKind,
+    pub cursor: Option<CursorSummary>,
+    pub modes: TerminalModeSummary,
 }
 
 impl TerminalMetadataSummary {
@@ -3039,13 +3049,6 @@ impl TerminalMetadataSummary {
             ));
         }
         lines
-    }
-
-    fn from_update(update: &SurfaceUpdate) -> Self {
-        Self {
-            title: update.title.clone(),
-            working_directory: update.working_directory.clone(),
-        }
     }
 
     fn from_surface(surface: &ClientPaneSurface) -> Self {
@@ -3893,13 +3896,10 @@ impl ClientAttachState {
         snapshot: AttachSnapshot,
     ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
         let pane_id = snapshot.status.pane_id.clone();
-        let (surface_metadata, surface_text) = match snapshot.surface.as_ref() {
+        let surface_text = match snapshot.surface.as_ref() {
             Some(update) => {
                 validate_attach_surface_update(&snapshot.status, update)?;
-                (
-                    TerminalMetadataSummary::from_update(update),
-                    Some(self.apply_surface_update(update)?),
-                )
+                Some(self.apply_surface_update(update)?)
             }
             None => {
                 if snapshot.status.surface_state != protocol::AttachSurfaceState::Current {
@@ -3911,12 +3911,14 @@ impl ClientAttachState {
                 }
                 let surface =
                     self.cached_current_surface(&pane_id, snapshot.status.surface_version)?;
-                (
-                    TerminalMetadataSummary::from_surface(surface),
-                    Some(surface.render_text()),
-                )
+                Some(surface.render_text())
             }
         };
+        let surface = self.cached_current_surface(&pane_id, snapshot.status.surface_version)?;
+        let surface_metadata = TerminalMetadataSummary::from_surface(surface);
+        let surface_kind = surface.surface;
+        let cursor = surface.cursor;
+        let modes = surface.modes;
 
         if let Some(scrollback) = snapshot.scrollback.as_ref() {
             self.cache_scrollback_chunk(scrollback);
@@ -3926,6 +3928,9 @@ impl ClientAttachState {
             workspace: snapshot.workspace,
             status: snapshot.status,
             surface_metadata,
+            surface_kind,
+            cursor,
+            modes,
             surface_text,
             scrollback: snapshot.scrollback,
         })
@@ -3957,6 +3962,17 @@ impl ClientAttachState {
             .iter()
             .find(|surface| surface.pane_id == pane_id)
             .map(|surface| surface.modes)
+    }
+
+    pub fn cached_surface_summary(&self, pane_id: &str) -> Option<CachedSurfaceSummary> {
+        self.surfaces
+            .iter()
+            .find(|surface| surface.pane_id == pane_id)
+            .map(|surface| CachedSurfaceSummary {
+                surface_kind: surface.surface,
+                cursor: surface.cursor,
+                modes: surface.modes,
+            })
     }
 
     fn cached_current_surface(
@@ -8383,7 +8399,7 @@ mod tests {
                     resize_policy: protocol::ResizePolicy::Fixed,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
-                status: attach_status_summary("pane-1", 2),
+                status: attach_status_summary("pane-1", 7),
                 surface: Some(snapshot),
                 scrollback: Some(ScrollbackChunkSummary {
                     pane_id: "pane-1".to_owned(),

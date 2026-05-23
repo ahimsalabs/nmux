@@ -253,6 +253,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut rendered = client_state.render_attach(snapshot)?;
     if rendered.surface_text.is_none() {
         rendered.surface_text = client_state.cached_surface_text(&attached_pane_id);
+        if let Some(surface) = client_state.cached_surface_summary(&attached_pane_id) {
+            rendered.surface_kind = surface.surface_kind;
+            rendered.cursor = surface.cursor;
+            rendered.modes = surface.modes;
+        }
         rendered.surface_metadata = client_state
             .cached_surface_metadata(&attached_pane_id)
             .unwrap_or_default();
@@ -1513,7 +1518,7 @@ fn format_rendered_attach_json(rendered: &local::RenderedAttach) -> String {
         "{{\"workspace\":{},\"attach_status\":{},\"terminal\":{},\"surface_text\":{surface_text},\"scrollback\":{scrollback}}}",
         format_workspace_json(&rendered.workspace),
         format_attach_status_json(&rendered.status),
-        format_terminal_metadata_json(&rendered.surface_metadata),
+        format_rendered_terminal_json(rendered),
     )
 }
 
@@ -1549,7 +1554,7 @@ fn format_live_surface_update_json(
     format!(
         "{{\"event\":\"surface\",\"workspace\":{},\"terminal\":{},\"surface_text\":{},\"update\":{{\"pane_id\":{},\"kind\":{},\"version\":{},\"base_version\":{base_version},\"patch_kind\":{patch_kind}}}}}",
         format_workspace_json(workspace),
-        format_terminal_metadata_json(metadata),
+        format_surface_update_terminal_json(metadata, update),
         local::json_string(surface_text),
         local::json_string(&update.pane_id),
         local::json_string(surface_update_kind_name(update.kind)),
@@ -1610,11 +1615,61 @@ fn format_attach_status_json(status: &local::AttachStatusSummary) -> String {
     )
 }
 
-fn format_terminal_metadata_json(metadata: &local::TerminalMetadataSummary) -> String {
+fn format_rendered_terminal_json(rendered: &local::RenderedAttach) -> String {
     format!(
-        "{{\"title\":{},\"working_directory\":{}}}",
+        "{{\"title\":{},\"working_directory\":{},\"surface_kind\":{},\"cursor\":{},\"modes\":{}}}",
+        local::json_string(&rendered.surface_metadata.title),
+        local::json_string(&rendered.surface_metadata.working_directory),
+        local::json_string(surface_kind_name(rendered.surface_kind)),
+        format_cursor_json(rendered.cursor),
+        format_terminal_modes_json(rendered.modes)
+    )
+}
+
+fn format_surface_update_terminal_json(
+    metadata: &local::TerminalMetadataSummary,
+    update: &local::SurfaceUpdate,
+) -> String {
+    let surface_kind = update
+        .surface
+        .map(surface_kind_name)
+        .map(local::json_string)
+        .unwrap_or_else(|| "null".to_owned());
+    format!(
+        "{{\"title\":{},\"working_directory\":{},\"surface_kind\":{surface_kind},\"cursor\":{},\"modes\":{}}}",
         local::json_string(&metadata.title),
-        local::json_string(&metadata.working_directory)
+        local::json_string(&metadata.working_directory),
+        format_cursor_json(update.cursor),
+        format_terminal_modes_json(update.modes)
+    )
+}
+
+fn format_cursor_json(cursor: Option<local::CursorSummary>) -> String {
+    let Some(cursor) = cursor else {
+        return "null".to_owned();
+    };
+    format!(
+        "{{\"row\":{},\"col\":{},\"visible\":{},\"shape\":{},\"blinking\":{}}}",
+        cursor.row,
+        cursor.col,
+        cursor.visible,
+        local::json_string(cursor_shape_name(cursor.shape)),
+        cursor.blinking
+    )
+}
+
+fn format_terminal_modes_json(modes: local::TerminalModeSummary) -> String {
+    format!(
+        "{{\"bracketed_paste\":{},\"mouse_tracking\":{},\"focus_reporting\":{},\"application_keypad\":{},\"application_cursor\":{},\"origin\":{},\"wraparound\":{},\"mouse_tracking_mode\":{},\"mouse_format\":{}}}",
+        modes.bracketed_paste,
+        modes.mouse_tracking,
+        modes.focus_reporting,
+        modes.application_keypad,
+        modes.application_cursor,
+        modes.origin,
+        modes.wraparound,
+        local::json_string(mouse_tracking_mode_name(modes.mouse_tracking_mode)),
+        local::json_string(mouse_format_name(modes.mouse_format))
     )
 }
 
@@ -1672,6 +1727,45 @@ fn attach_surface_state_name(state: protocol::AttachSurfaceState) -> &'static st
         protocol::AttachSurfaceState::Current => "current",
         protocol::AttachSurfaceState::Snapshot => "snapshot",
         protocol::AttachSurfaceState::Patch => "patch",
+        _ => "unknown",
+    }
+}
+
+fn surface_kind_name(kind: protocol::SurfaceKind) -> &'static str {
+    match kind {
+        protocol::SurfaceKind::Main => "main",
+        protocol::SurfaceKind::Alternate => "alternate",
+        _ => "unknown",
+    }
+}
+
+fn cursor_shape_name(shape: protocol::CursorShape) -> &'static str {
+    match shape {
+        protocol::CursorShape::Block => "block",
+        protocol::CursorShape::Beam => "beam",
+        protocol::CursorShape::Underline => "underline",
+        _ => "unknown",
+    }
+}
+
+fn mouse_tracking_mode_name(mode: protocol::MouseTrackingMode) -> &'static str {
+    match mode {
+        protocol::MouseTrackingMode::None => "none",
+        protocol::MouseTrackingMode::X10 => "x10",
+        protocol::MouseTrackingMode::Normal => "normal",
+        protocol::MouseTrackingMode::Button => "button",
+        protocol::MouseTrackingMode::Any => "any",
+        _ => "unknown",
+    }
+}
+
+fn mouse_format_name(format: protocol::MouseFormat) -> &'static str {
+    match format {
+        protocol::MouseFormat::X10 => "x10",
+        protocol::MouseFormat::Utf8 => "utf8",
+        protocol::MouseFormat::Sgr => "sgr",
+        protocol::MouseFormat::Urxvt => "urxvt",
+        protocol::MouseFormat::SgrPixels => "sgr-pixels",
         _ => "unknown",
     }
 }
@@ -2346,6 +2440,25 @@ mod tests {
                 title: "build\nshell".to_owned(),
                 working_directory: "/tmp/nmux".to_owned(),
             },
+            surface_kind: protocol::SurfaceKind::Alternate,
+            cursor: Some(local::CursorSummary {
+                row: 3,
+                col: 4,
+                visible: true,
+                shape: protocol::CursorShape::Beam,
+                blinking: false,
+            }),
+            modes: local::TerminalModeSummary {
+                bracketed_paste: true,
+                mouse_tracking: true,
+                focus_reporting: true,
+                application_keypad: false,
+                application_cursor: true,
+                origin: false,
+                wraparound: true,
+                mouse_tracking_mode: protocol::MouseTrackingMode::Any,
+                mouse_format: protocol::MouseFormat::SgrPixels,
+            },
             surface_text: Some("hello\nworld".to_owned()),
             scrollback: Some(local::ScrollbackChunkSummary {
                 pane_id: "pane-1".to_owned(),
@@ -2374,6 +2487,11 @@ mod tests {
         assert!(json.contains("\"surface_state\":\"snapshot\""));
         assert!(json.contains("\"resize_policy\":\"active-client\""));
         assert!(json.contains("\"title\":\"build\\nshell\""));
+        assert!(json.contains("\"surface_kind\":\"alternate\""));
+        assert!(json.contains("\"cursor\":{\"row\":3,\"col\":4,\"visible\":true,\"shape\":\"beam\",\"blinking\":false}"));
+        assert!(json.contains("\"bracketed_paste\":true"));
+        assert!(json.contains("\"mouse_tracking_mode\":\"any\""));
+        assert!(json.contains("\"mouse_format\":\"sgr-pixels\""));
         assert!(json.contains("\"surface_text\":\"hello\\nworld\""));
         assert!(json.contains("\"scrollback_version\":9"));
         assert!(json.contains("{\"line\":1,\"text\":\"older row\"}"));
@@ -2397,6 +2515,9 @@ mod tests {
                 surface_state: protocol::AttachSurfaceState::Current,
             },
             surface_metadata: local::TerminalMetadataSummary::default(),
+            surface_kind: protocol::SurfaceKind::Main,
+            cursor: None,
+            modes: local::TerminalModeSummary::default(),
             surface_text: Some("initial".to_owned()),
             scrollback: None,
         };
