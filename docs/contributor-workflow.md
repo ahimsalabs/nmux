@@ -68,9 +68,12 @@ engine by itself.
 `make promotion-sample` prints `make toolchain-info` output and then times
 `make check-all` with `time -p`. Outside the Nix shell, run the same target for
 non-Nix setup attempts. The Makefile checks for `flatc` 25.12.19, `cargo`, and
-optional native-VT Zig 0.15.x before running the full gate. Record missing-tool
-or wrong-version failures too; they are setup evidence for the non-Nix
-checklist, not passing promotion evidence.
+optional native-VT Zig 0.15.x before running the full gate. If
+`GHOSTTY_SOURCE_DIR` is set, it must point at an existing readable source
+directory; otherwise the evidence sample records the pinned-fetch source mode.
+Record missing-tool, wrong-version, or invalid-source-directory failures too;
+they are setup evidence for the non-Nix checklist, not passing promotion
+evidence.
 
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty

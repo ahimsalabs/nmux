@@ -3,7 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema promotion-sample require-cargo require-flatc require-zig rust-test toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -21,7 +21,7 @@ check-schema: require-flatc
 
 check-toolchain: require-flatc require-cargo
 
-check-vt-toolchain: check-toolchain require-zig
+check-vt-toolchain: check-toolchain require-zig require-ghostty-source
 
 generate-schema: require-flatc
 	rm -rf $(GEN_DIR)
@@ -47,6 +47,12 @@ require-zig:
 		*) echo "unsupported zig $$version; expected $(ZIG_VERSION_PREFIX)x. Use 'nix develop . -c make check-ghostty-vt' or install Zig 0.15" >&2; exit 1 ;; \
 	esac
 
+require-ghostty-source:
+	@if [ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && [ ! -d "$${GHOSTTY_SOURCE_DIR}" ]; then \
+		echo "invalid GHOSTTY_SOURCE_DIR=$${GHOSTTY_SOURCE_DIR}; expected a readable Ghostty source directory or unset it to use the pinned libghostty-vt-sys fetch" >&2; \
+		exit 1; \
+	fi
+
 rust-test: require-cargo
 	cargo test --workspace
 
@@ -56,4 +62,6 @@ toolchain-info:
 	@printf 'flatc=%s\n' "$$(command -v flatc >/dev/null 2>&1 && flatc --version || printf 'missing')"
 	@printf 'zig=%s\n' "$$(command -v zig >/dev/null 2>&1 && zig version || printf 'missing')"
 	@printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"
+	@printf 'ghostty_source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"
+	@printf 'ghostty_source_dir_status=%s\n' "$$([ -z "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'unset' || { [ -d "$${GHOSTTY_SOURCE_DIR}" ] && printf 'present' || printf 'missing'; })"
 	@printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"

@@ -89,7 +89,9 @@ Git URL rewrite rules from changing the HTTPS source fetch used by
 that source policy before using the result as promotion evidence.
 Use `make promotion-sample` for non-Nix setup attempts or promotion samples so
 the exact tool versions, source-fetch environment, and `check-all` timing are
-visible together.
+visible together. When `GHOSTTY_SOURCE_DIR` is set, the optional VT preflight
+requires it to point at an existing readable directory. When it is unset, the
+source mode is recorded as the pinned `libghostty-vt-sys` fetch path.
 See [source-fetch-policy.md](source-fetch-policy.md) for the current opt-in
 policy and the remaining source-fetch decisions for packaged/default builds.
 See [packaging.md](packaging.md) for binary distribution questions that remain

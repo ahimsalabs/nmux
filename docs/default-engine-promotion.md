@@ -68,6 +68,9 @@ engine or a regular CI requirement.
   samples.
 - `make promotion-sample` prints that toolchain information and then times
   `make check-all` with `time -p` for a single local evidence command.
+- The optional VT preflight rejects an invalid `GHOSTTY_SOURCE_DIR` before the
+  native build starts, while unset `GHOSTTY_SOURCE_DIR` is recorded as the
+  pinned-fetch source mode.
 - `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
   suites with `--features libghostty-vt` and sets `GIT_CONFIG_GLOBAL=/dev/null`
   to avoid local Git URL rewrite interference.
@@ -89,7 +92,7 @@ evidence or measurements from every supported platform.
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout | `/usr/bin/time -p nix --extra-experimental-features 'nix-command flakes' develop . -c make check-all` | Passed; `real 17.01`, `user 2.83`, `sys 2.98` |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; opt-in source fetch path already available locally; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `/usr/bin/time -p nix --extra-experimental-features 'nix-command flakes' develop . -c make check-all` | Passed; `real 30.89`, `user 8.78`, `sys 9.51` |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout after local usability/info-flag changes; existing Nix/Cargo/native build caches; opt-in source fetch path already available locally; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `/usr/bin/time -p nix --extra-experimental-features 'nix-command flakes' develop . -c make check-all` | Passed; `real 34.42`, `user 10.95`, `sys 11.09` |
-| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout after promotion-sample target addition; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, `GIT_CONFIG_GLOBAL=unset`; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-sample` | Passed; timed inner `make check-all`: `real 16.13`, `user 2.64`, `sys 3.20` |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout after promotion-sample target addition; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset`; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-sample` | Passed; timed inner `make check-all`: `real 16.13`, `user 2.64`, `sys 3.20` |
 
 ## Non-Nix Local Attempts
 
