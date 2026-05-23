@@ -139,9 +139,10 @@ nix develop . -c make packaging-archive-runtime-smoke
 `check-all` runs the regular default-engine gate plus the opt-in
 `libghostty-vt` gate without changing what `make check` means.
 `local-smoke` runs a real default-engine local daemon/client live smoke over a
-temporary socket and persisted client state file; use it for quick user-level
-workflow checks. The default GitHub Actions job runs both `make check` and
-`make local-smoke`.
+temporary socket and persisted client state file, verifies persisted read-only
+reattach, and verifies same-path socket recreation does not render stale cached
+state. Use it for quick user-level workflow checks. The default GitHub Actions
+job runs both `make check` and `make local-smoke`.
 `promotion-sample` prints `toolchain-info` and times `check-all` for evidence
 rows in `docs/default-engine-promotion.md`.
 `promotion-cold-target-sample` clears `target/promotion-cold` and times
@@ -157,22 +158,24 @@ without rerunning the isolated dependency/source-fetch sample.
 `packaging-archive-runtime-smoke` for one local evidence pass.
 `promotion-evidence-bundle` runs `promotion-local-sample` and gathers the log,
 toolchain output, bundle start/completion timestamps plus elapsed duration,
-extracted `make check-all` timing, `local_smoke` result, source-fetch report,
-package provenance, cargo tree, package archive, archive checksum, observed
-cache-state report, offline probe report, VCS status report, open-work
-snapshot, and bundle artifact manifest under `target/promotion-evidence`.
+extracted `make check-all` timing, `local_smoke`,
+`local_smoke_reattach`, and `local_smoke_socket_recreation` results,
+source-fetch report, package provenance, cargo tree, package archive, archive
+checksum, observed cache-state report, offline probe report, VCS status report,
+open-work snapshot, and bundle artifact manifest under
+`target/promotion-evidence`.
 The bundled `ARCHIVE.sha256` must name `PACKAGE_ARCHIVE.tar.gz`, not the
 original build-tree archive path, so downloaded evidence stays self-contained.
 `promotion-evidence-verify` checks an existing bundle for required summary,
-bundle timing, `make check-all` timing, artifact files, cache-state report,
-artifact manifest hashes, source/provenance records, VCS status report,
-summary/VCS git revision agreement, package archive bytes, archive hash, exact
-open-work snapshot lines, package provenance verification, archive
-verification, and packaged runtime smoke output; CI-generated bundles must also
-carry concrete GitHub run/ref/SHA/runner fields with `github_sha` matching the
-bundled revision. It runs the no-rebuild package provenance manifest verifier
-against bundled `PACKAGE_PROVENANCE.txt` evidence. The bundle target runs it
-before printing the artifact list.
+bundle timing, `make check-all` timing, local-smoke result fields, artifact
+files, cache-state report, artifact manifest hashes, source/provenance records,
+VCS status report, summary/VCS git revision agreement, package archive bytes,
+archive hash, exact open-work snapshot lines, package provenance verification,
+archive verification, and packaged runtime smoke output; CI-generated bundles
+must also carry concrete GitHub run/ref/SHA/runner fields with `github_sha`
+matching the bundled revision. It runs the no-rebuild package provenance
+manifest verifier against bundled `PACKAGE_PROVENANCE.txt` evidence. The bundle
+target runs it before printing the artifact list.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `source-fetch-provenance-verify` checks an existing source-fetch provenance
