@@ -1623,6 +1623,11 @@ pub fn workspace_summary_from_frame(
         .body_as_workspace_tree_snapshot()
         .ok_or("missing workspace tree body")?;
     let tabs = snapshot.tabs().ok_or("workspace tree has no tabs")?;
+    for index in 0..tabs.len() {
+        let tab = tabs.get(index);
+        let root = tab.root().ok_or("workspace tab has no root pane")?;
+        validate_pane_node(root)?;
+    }
     let tab = tabs.get(0);
     let pane = tab.root().ok_or("workspace tab has no root pane")?;
 
@@ -2621,6 +2626,36 @@ fn validate_resize_policy(
         return Err(format!("unknown resize policy {}", policy.0).into());
     }
     Ok(policy)
+}
+
+fn validate_pane_kind(
+    kind: protocol::PaneKind,
+) -> Result<protocol::PaneKind, Box<dyn std::error::Error>> {
+    if kind.variant_name().is_none() {
+        return Err(format!("unknown pane kind {}", kind.0).into());
+    }
+    Ok(kind)
+}
+
+fn validate_split_axis(
+    axis: protocol::SplitAxis,
+) -> Result<protocol::SplitAxis, Box<dyn std::error::Error>> {
+    if axis.variant_name().is_none() {
+        return Err(format!("unknown split axis {}", axis.0).into());
+    }
+    Ok(axis)
+}
+
+fn validate_pane_node(pane: protocol::PaneNode<'_>) -> Result<(), Box<dyn std::error::Error>> {
+    validate_pane_kind(pane.kind())?;
+    validate_split_axis(pane.split_axis())?;
+    validate_resize_policy(pane.resize_policy())?;
+    if let Some(children) = pane.children() {
+        for index in 0..children.len() {
+            validate_pane_node(children.get(index))?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_resize_reason(
@@ -5030,19 +5065,54 @@ mod tests {
     }
 
     fn workspace_tree_frame_with_resize_policy(policy: protocol::ResizePolicy) -> Vec<u8> {
+        workspace_tree_frame_with_pane_enums(
+            protocol::PaneKind::Pty,
+            protocol::SplitAxis::None,
+            policy,
+            None,
+        )
+    }
+
+    fn workspace_tree_frame_with_pane_enums(
+        kind: protocol::PaneKind,
+        split_axis: protocol::SplitAxis,
+        resize_policy: protocol::ResizePolicy,
+        child: Option<(
+            protocol::PaneKind,
+            protocol::SplitAxis,
+            protocol::ResizePolicy,
+        )>,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
+        let children = child.map(|(child_kind, child_split_axis, child_resize_policy)| {
+            let child_pane_id = builder.create_string("pane-2");
+            let child_pane = protocol::PaneNode::create(
+                &mut builder,
+                &protocol::PaneNodeArgs {
+                    pane_id: Some(child_pane_id),
+                    kind: child_kind,
+                    split_axis: child_split_axis,
+                    children: None,
+                    surface_version: 1,
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: child_resize_policy,
+                },
+            );
+            builder.create_vector(&[child_pane])
+        });
         let pane_id = builder.create_string("pane-1");
         let pane = protocol::PaneNode::create(
             &mut builder,
             &protocol::PaneNodeArgs {
                 pane_id: Some(pane_id),
-                kind: protocol::PaneKind::Pty,
-                split_axis: protocol::SplitAxis::None,
-                children: None,
+                kind,
+                split_axis,
+                children,
                 surface_version: 1,
                 cols: 80,
                 rows: 24,
-                resize_policy: policy,
+                resize_policy,
             },
         );
         let tab_id = builder.create_string("tab-1");
@@ -10470,6 +10540,37 @@ mod tests {
         ))
         .expect_err("workspace with unknown resize policy should be rejected");
         assert!(workspace_err.to_string().contains("unknown resize policy"));
+
+        let pane_kind_err = workspace_summary_from_frame(&workspace_tree_frame_with_pane_enums(
+            protocol::PaneKind(99),
+            protocol::SplitAxis::None,
+            protocol::ResizePolicy::Fixed,
+            None,
+        ))
+        .expect_err("workspace with unknown pane kind should be rejected");
+        assert!(pane_kind_err.to_string().contains("unknown pane kind"));
+
+        let split_axis_err = workspace_summary_from_frame(&workspace_tree_frame_with_pane_enums(
+            protocol::PaneKind::Pty,
+            protocol::SplitAxis(99),
+            protocol::ResizePolicy::Fixed,
+            None,
+        ))
+        .expect_err("workspace with unknown split axis should be rejected");
+        assert!(split_axis_err.to_string().contains("unknown split axis"));
+
+        let child_err = workspace_summary_from_frame(&workspace_tree_frame_with_pane_enums(
+            protocol::PaneKind::Pty,
+            protocol::SplitAxis::Horizontal,
+            protocol::ResizePolicy::Fixed,
+            Some((
+                protocol::PaneKind(99),
+                protocol::SplitAxis::None,
+                protocol::ResizePolicy::Fixed,
+            )),
+        ))
+        .expect_err("workspace with unknown child pane kind should be rejected");
+        assert!(child_err.to_string().contains("unknown pane kind"));
 
         let resize_err =
             resize_intent_from_frame(&resize_intent_frame_with_reason(protocol::ResizeReason(99)))
