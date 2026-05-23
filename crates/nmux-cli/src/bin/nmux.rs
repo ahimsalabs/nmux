@@ -163,13 +163,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.start {
-        return run_managed_live(args);
+        return run_managed(args);
     }
 
     if args.live {
         return run_live(&args);
     }
 
+    run_attach_loop(&args)
+}
+
+fn run_attach_loop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut client_state = match load_client_state(args.state_path.as_deref()) {
         Ok(state) => state,
         Err(err) => {
@@ -574,10 +578,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     finish_live(args, &client_state, detach_reason)
 }
 
-fn run_managed_live(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    if !args.live {
-        return Err("--start requires --live".into());
-    }
+fn run_managed(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let workspace = ManagedWorkspacePaths::new()?;
     if args.socket_source != local::SocketPathSource::Explicit {
         args.socket_path = workspace.socket_path.clone();
@@ -595,8 +596,27 @@ fn run_managed_live(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| std::env::var("SHELL").ok())
         .filter(|command| !command.trim().is_empty())
         .unwrap_or_else(|| "sh".to_owned());
-    let daemon = ManagedDaemon::start(&args.socket_path, &command)?;
-    run_live(&args)?;
+    let daemon_mode = if args.live {
+        ManagedDaemonMode::LiveForever
+    } else {
+        ManagedDaemonMode::OneShot
+    };
+    let daemon = match ManagedDaemon::start(&args.socket_path, daemon_mode, &command) {
+        Ok(daemon) => daemon,
+        Err(err) => {
+            if args.live {
+                report_live_setup_error(&args, err.as_ref())?;
+            } else {
+                report_cli_error(&args, err.as_ref())?;
+            }
+            return Err(err);
+        }
+    };
+    if args.live {
+        run_live(&args)?;
+    } else {
+        run_attach_loop(&args)?;
+    }
     drop(daemon);
     Ok(())
 }
@@ -636,8 +656,27 @@ struct ManagedDaemon {
     child: Child,
 }
 
+#[derive(Clone, Copy)]
+enum ManagedDaemonMode {
+    OneShot,
+    LiveForever,
+}
+
+impl ManagedDaemonMode {
+    fn flag(self) -> &'static str {
+        match self {
+            Self::OneShot => "--one-shot",
+            Self::LiveForever => "--live-forever",
+        }
+    }
+}
+
 impl ManagedDaemon {
-    fn start(socket_path: &Path, command: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    fn start(
+        socket_path: &Path,
+        mode: ManagedDaemonMode,
+        command: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let nmuxd = nmuxd_binary_path()?;
         let mut child = Command::new(nmuxd)
             .args([
@@ -646,7 +685,7 @@ impl ManagedDaemon {
                     .to_str()
                     .ok_or("managed socket path is not UTF-8")?,
                 "--ready-json",
-                "--live-forever",
+                mode.flag(),
                 "--command",
                 command,
             ])
@@ -2631,8 +2670,8 @@ fn validate_mode_args(
     start: bool,
     start_command_set: bool,
 ) -> Result<(), &'static str> {
-    if start && !live {
-        return Err("--start requires --live");
+    if start && follow {
+        return Err("--start cannot be combined with --follow");
     }
     if start_command_set && !start {
         return Err("--command requires --start");
@@ -2729,7 +2768,7 @@ Options:
   --state PATH               Persist client-side pane surface cache
   --follow                   Reconnect in a polling loop
   --live                     Keep one attach connection open
-  --start                    Start a private local nmuxd before live attach
+  --start                    Start a private local nmuxd before attaching
   --command SHELL            Managed nmuxd pane command for --start
   --stdin                    Stream newline-delimited stdin in live mode
   --stdin-bytes              Stream raw stdin chunks in live mode
@@ -2750,7 +2789,7 @@ Notes:
   --print-socket-json prints the resolved socket path and source as JSON.
   --state-info and --state-info-json require --state PATH and do not connect.
   --json emits one object for one-shot attach, or newline-delimited live events.
-  --start requires --live, waits for nmuxd --ready-json, and cleans up on exit.
+  --start waits for nmuxd --ready-json and cleans up the private daemon on exit.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
   Without an explicit input or resize flag, nmux attaches read-only.
@@ -2763,6 +2802,7 @@ Examples:
   nmux --live --cols 100 --rows 30
   nmux --live --no-input
   nmux --live --stdin-bytes --redraw
+  nmux --start --command \"printf 'hello from pty\\n'; cat >/dev/null\"
   nmux --start --live --stdin-bytes --redraw --command '$SHELL'
 "
 }
@@ -3040,9 +3080,9 @@ mod tests {
 
     #[test]
     fn start_args_accept_managed_command() {
-        let args = args_from_iter(["--start", "--live", "--command", "printf hi"]).expect("args");
+        let args = args_from_iter(["--start", "--command", "printf hi"]).expect("args");
         assert!(args.start);
-        assert!(args.live);
+        assert!(!args.live);
         assert_eq!(args.start_command.as_deref(), Some("printf hi"));
     }
 
@@ -3802,10 +3842,10 @@ mod tests {
         );
         assert_eq!(
             super_validate_mode_args(
-                false, false, false, false, false, false, None, None, false, false, false, false,
+                false, true, false, false, false, false, None, None, false, false, false, false,
                 false, false, false, false, false, true, false
             ),
-            Err("--start requires --live")
+            Err("--start cannot be combined with --follow")
         );
         assert_eq!(
             super_validate_mode_args(
@@ -4317,7 +4357,7 @@ mod tests {
         assert!(usage.contains("--mouse-pixels X:Y"));
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));
-        assert!(usage.contains("--start requires --live"));
+        assert!(usage.contains("--start waits for nmuxd --ready-json"));
         assert!(usage.contains("interim text surface"));
     }
 

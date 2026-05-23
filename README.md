@@ -100,6 +100,7 @@ For a single-command private local workspace, let `nmux` start and clean up a
 managed daemon:
 
 ```sh
+nix develop . -c cargo run --bin nmux -- --start --command "printf 'hello from pty\n'; cat >/dev/null"
 nix develop . -c cargo run --bin nmux -- --start --live --stdin-bytes --redraw --command '$SHELL'
 ```
 
@@ -231,11 +232,13 @@ Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that
 survives repeated live client detach and reattach until you stop it with Ctrl-C
 in the daemon shell.
-Use `nmux --start --live` when you want one private local workspace in a single
-client command. The client starts `nmuxd --live-forever --ready-json` on a short
-temporary socket path, waits for readiness, attaches, and stops the managed
-daemon when the live client exits. Pass `--command SHELL` to choose the pane
-command; otherwise the client uses `$SHELL` and falls back to `sh`.
+Use `nmux --start` when you want one private local workspace in a single client
+command. Without `--live`, the client starts `nmuxd --one-shot --ready-json`;
+with `--live`, it starts `nmuxd --live-forever --ready-json`. Both forms use a
+short temporary socket path by default, wait for readiness, attach through the
+normal nmux protocol, and stop the managed daemon when the client exits. Pass
+`--command SHELL` to choose the pane command; otherwise the client uses `$SHELL`
+and falls back to `sh`.
 Add `--ready-json` to have `nmuxd` print a single readiness object after bind
 and pane startup; the object includes the socket path/source, daemon mode,
 terminal engine, and resize policy. If bind or pane startup fails first, the

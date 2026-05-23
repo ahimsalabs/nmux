@@ -801,6 +801,61 @@ fn managed_start_live_cli_runs_private_daemon() {
 }
 
 #[test]
+fn managed_start_one_shot_cli_runs_private_daemon() {
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--start",
+            "--command",
+            "printf 'managed-one-ready\n'; cat >/dev/null",
+        ])
+        .output()
+        .expect("run nmux --start");
+
+    assert!(
+        client.status.success(),
+        "nmux --start failed: {}\n{}",
+        String::from_utf8_lossy(&client.stderr),
+        String::from_utf8_lossy(&client.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("managed-one-ready"),
+        "missing managed one-shot daemon output:\n{stdout}"
+    );
+}
+
+#[test]
+fn managed_start_one_shot_cli_can_print_attach_json() {
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--start",
+            "--json",
+            "--command",
+            "printf 'managed-json-ready\n'; cat >/dev/null",
+        ])
+        .output()
+        .expect("run nmux --start --json");
+
+    assert!(
+        client.status.success(),
+        "nmux --start --json failed: {}\n{}",
+        String::from_utf8_lossy(&client.stderr),
+        String::from_utf8_lossy(&client.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.starts_with("{\"workspace\":{"),
+        "not JSON attach output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("managed-json-ready"),
+        "missing managed one-shot JSON output:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_cli_can_stream_json_events() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

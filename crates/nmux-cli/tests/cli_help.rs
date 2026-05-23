@@ -44,7 +44,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--redraw"));
     assert!(stdout.contains("--start"));
     assert!(stdout.contains("--command SHELL"));
-    assert!(stdout.contains("--start requires --live"));
+    assert!(stdout.contains("--start waits for nmuxd --ready-json"));
     assert!(stdout.contains("Without an explicit input or resize flag"));
     assert!(stdout.contains("interim text surface"));
     assert!(
@@ -725,7 +725,6 @@ fn nmux_rejects_live_only_flags_outside_live_mode() {
     assert_nmux_rejects(&["--stdin"], "nmux: --stdin requires --live");
     assert_nmux_rejects(&["--stdin-bytes"], "nmux: --stdin-bytes requires --live");
     assert_nmux_rejects(&["--redraw"], "nmux: --redraw requires --live");
-    assert_nmux_rejects(&["--start"], "nmux: --start requires --live");
     assert_nmux_rejects(
         &["--command", "printf hi"],
         "nmux: --command requires --start",
@@ -741,6 +740,10 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--live", "--follow"],
         "nmux: --follow cannot be combined with --live",
+    );
+    assert_nmux_rejects(
+        &["--start", "--follow"],
+        "nmux: --start cannot be combined with --follow",
     );
     assert_nmux_rejects(
         &["--follow", "--key", "ping"],

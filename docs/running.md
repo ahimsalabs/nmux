@@ -47,13 +47,15 @@ path unless `--socket` or `NMUX_SOCKET` selects a different local workspace.
 For a private local workspace owned by one client command, use `--start`:
 
 ```sh
+nix develop . -c cargo run --bin nmux -- --start --command "printf 'hello from pty\n'; cat >/dev/null"
 nix develop . -c cargo run --bin nmux -- --start --live --stdin-bytes --redraw --command '$SHELL'
 ```
 
-`--start` requires `--live`. The client starts a managed
-`nmuxd --live-forever --ready-json` on a short temporary socket path, waits for
-the daemon readiness event internally, attaches with live mode, and stops the
-managed daemon when the live client exits. If `--command SHELL` is omitted, the
+Without `--live`, `--start` runs a managed `nmuxd --one-shot --ready-json`.
+With `--live`, it runs a managed `nmuxd --live-forever --ready-json`. Both
+forms use a short temporary socket path by default, wait for the daemon
+readiness event internally, attach through the normal nmux protocol, and stop
+the managed daemon when the client exits. If `--command SHELL` is omitted, the
 managed daemon runs `$SHELL` and falls back to `sh`.
 
 Each attach starts with an `AttachRequest` carrying actor identity, attach mode,
@@ -244,9 +246,10 @@ Explicit input modes such as `--key`, `--key-name`, `--paste`, `--focus`,
 Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and
 `--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes
 fail before the client tries to connect.
-`nmux --start --live` is the single-command form for a private managed daemon;
-it uses an isolated temporary socket and state path unless `--socket` or
-`--state` is supplied explicitly.
+`nmux --start` is the single-command form for a private managed daemon; it uses
+an isolated temporary socket and state path unless `--socket` or `--state` is
+supplied explicitly. Add `--live` when the managed daemon should remain
+attached after the initial one-shot response.
 
 By default, `nmuxd` and `nmux` use the same local socket path. The precedence
 is explicit `--socket`, then a valid absolute `NMUX_SOCKET`, then
