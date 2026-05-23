@@ -123,8 +123,8 @@ Done:
   workspace, authoritative attach status, terminal metadata, structured current
   surface rows/styles/hyperlinks, rendered surface text, and structured
   scrollback rows; `nmux --live --json` streams newline-delimited attach,
-  workspace, and surface update events with structured row payloads for
-  scripts.
+  workspace, surface update, and final detach events with structured row
+  payloads and lifecycle reasons for scripts.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
   tooling without changing the current local socket protocol; nested local

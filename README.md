@@ -164,7 +164,7 @@ nix develop . -c cargo run --bin nmuxd -- --live-cycles 2 --command "printf 'rea
 nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' --scrollback-start 1 --scrollback-count 4 --interval-ms 500
 # Or ask for the most recent retained lines without knowing the total:
 nix develop . -c cargo run --bin nmux -- --live --no-input --iterations 1 --scrollback-tail 20
-# For scripts, use newline-delimited JSON live events:
+# For scripts, use newline-delimited JSON live events, ending with a detach reason:
 nix develop . -c cargo run --bin nmux -- --live --json --iterations 2 --key $'ping\n' --interval-ms 500
 ```
 
@@ -206,8 +206,9 @@ workspace summary, authoritative attach status, terminal metadata, structured
 current-surface rows/styles/hyperlinks, rendered surface text, and requested
 scrollback rows with their structured metadata. In live mode, `nmux --live
 --json` prints newline-delimited attach/workspace/surface events, including
-structured surface update row payloads. `--json` is mutually exclusive with
-`--follow` and `--redraw`.
+structured surface update row payloads plus a final detach event with a reason
+such as `iteration-limit`, `stdin-eof`, `local-detach`, or `server-closed`.
+`--json` is mutually exclusive with `--follow` and `--redraw`.
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache, including cached terminal metadata, when the daemon has no newer surface update to send. One-shot, follow, and live attach paths all reuse that scoped cached surface instead of replaying PTY bytes. Follow mode is observation-only and rejects input flags instead of silently dropping them.
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that
 survives repeated live client detach and reattach until you stop it with Ctrl-C

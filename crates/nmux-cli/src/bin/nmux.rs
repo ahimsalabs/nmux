@@ -293,9 +293,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             .then_some(1)
     });
     let mut cycles = 0;
-    loop {
+    let detach_reason = loop {
         if cycle_limit.is_some_and(|iterations| cycles >= iterations) {
-            break;
+            break LiveDetachReason::IterationLimit;
         }
 
         if options.request.mode == AttachMode::ReadWrite {
@@ -470,26 +470,26 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::LiveSurfaceRead::NoFrame => break,
                 local::LiveSurfaceRead::Closed => {
                     eprintln!("nmux: live server closed connection");
-                    return save_live_state(args, &client_state);
+                    return finish_live(args, &client_state, LiveDetachReason::ServerClosed);
                 }
             }
         }
         if detach_requested {
             eprintln!("nmux: detached by local Ctrl-]");
-            break;
+            break LiveDetachReason::LocalDetach;
         }
         if stdin_closed && args.iterations.is_none() {
             eprintln!("nmux: stdin EOF; detached");
-            break;
+            break LiveDetachReason::StdinEof;
         }
         if stdin_bytes_closed && args.iterations.is_none() {
             eprintln!("nmux: stdin EOF; detached");
-            break;
+            break LiveDetachReason::StdinEof;
         }
         cycles += 1;
-    }
+    };
 
-    save_live_state(args, &client_state)
+    finish_live(args, &client_state, detach_reason)
 }
 
 fn flush_stdout() -> io::Result<()> {
@@ -517,6 +517,27 @@ fn save_live_state(
     client_state: &local::ClientAttachState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     save_client_state(args.state_path.as_deref(), client_state)
+}
+
+fn finish_live(
+    args: &Args,
+    client_state: &local::ClientAttachState,
+    reason: LiveDetachReason,
+) -> Result<(), Box<dyn std::error::Error>> {
+    save_live_state(args, client_state)?;
+    if args.output_json {
+        println!("{}", format_live_detach_json(reason));
+        flush_stdout()?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LiveDetachReason {
+    IterationLimit,
+    StdinEof,
+    LocalDetach,
+    ServerClosed,
 }
 
 fn load_client_state(
@@ -1588,6 +1609,13 @@ fn format_live_error_json(error: &local::ErrorSummary) -> String {
     )
 }
 
+fn format_live_detach_json(reason: LiveDetachReason) -> String {
+    format!(
+        "{{\"event\":\"detach\",\"reason\":{}}}",
+        local::json_string(live_detach_reason_name(reason))
+    )
+}
+
 fn format_cli_error_json(error: &(dyn std::error::Error + 'static)) -> String {
     if let Some(error) = error.downcast_ref::<local::ServerError>() {
         return format!("{{\"error\":{}}}", format_error_summary_json(&error.error));
@@ -1866,6 +1894,15 @@ fn patch_kind_name(kind: protocol::PatchKind) -> &'static str {
         protocol::PatchKind::ModeOnly => "mode-only",
         protocol::PatchKind::ColorOnly => "color-only",
         _ => "unknown",
+    }
+}
+
+fn live_detach_reason_name(reason: LiveDetachReason) -> &'static str {
+    match reason {
+        LiveDetachReason::IterationLimit => "iteration-limit",
+        LiveDetachReason::StdinEof => "stdin-eof",
+        LiveDetachReason::LocalDetach => "local-detach",
+        LiveDetachReason::ServerClosed => "server-closed",
     }
 }
 
@@ -2442,15 +2479,16 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FocusEvent, KEY_NAME_ALIASES, LiveUpdatePrintKind, LocalEcho, MouseEvent,
+        FocusEvent, KEY_NAME_ALIASES, LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent,
         SUPPORTED_KEY_NAMES, args_from_iter, format_cli_error_json, format_context_json,
         format_input_choices_json, format_key_names_json, format_live_attach_json,
-        format_live_error_json, format_live_surface_update_json, format_live_workspace_json,
-        format_rendered_attach_json, format_scrollback, interim_surface_fidelity_warning_needed,
-        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        format_live_detach_json, format_live_error_json, format_live_surface_update_json,
+        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
+        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -2862,6 +2900,22 @@ mod tests {
         assert_eq!(
             error_json,
             "{\"event\":\"error\",\"error\":{\"code\":\"permission-denied\",\"message\":\"input rejected\",\"retryable\":false,\"pane_id\":\"pane-1\",\"input_seq\":3}}"
+        );
+        assert_eq!(
+            format_live_detach_json(LiveDetachReason::IterationLimit),
+            "{\"event\":\"detach\",\"reason\":\"iteration-limit\"}"
+        );
+        assert_eq!(
+            format_live_detach_json(LiveDetachReason::StdinEof),
+            "{\"event\":\"detach\",\"reason\":\"stdin-eof\"}"
+        );
+        assert_eq!(
+            format_live_detach_json(LiveDetachReason::LocalDetach),
+            "{\"event\":\"detach\",\"reason\":\"local-detach\"}"
+        );
+        assert_eq!(
+            format_live_detach_json(LiveDetachReason::ServerClosed),
+            "{\"event\":\"detach\",\"reason\":\"server-closed\"}"
         );
         let server_error = local::ServerError {
             error: local::ErrorSummary {

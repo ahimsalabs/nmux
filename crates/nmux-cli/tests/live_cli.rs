@@ -519,6 +519,128 @@ fn live_cli_can_stream_json_events() {
         stdout.contains("json:ping"),
         "missing streamed output:\n{stdout}"
     );
+    assert!(
+        stdout
+            .lines()
+            .last()
+            .is_some_and(|line| line == "{\"event\":\"detach\",\"reason\":\"iteration-limit\"}"),
+        "missing final detach event:\n{stdout}"
+    );
+}
+
+#[test]
+fn live_json_reports_server_closed_detach() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'closing-soon\n'; sleep 0.05",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--json",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux --live --json");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux --live --json failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout
+            .lines()
+            .last()
+            .is_some_and(|line| line == "{\"event\":\"detach\",\"reason\":\"server-closed\"}"),
+        "missing server-closed detach event:\n{stdout}"
+    );
+}
+
+#[test]
+fn live_json_reports_stdin_eof_detach() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'json-stdin-ready\n'; while IFS= read -r line; do printf 'json-stdin:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--json",
+            "--stdin",
+            "--interval-ms",
+            "1000",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux --live --json --stdin");
+
+    let mut stdin = client.stdin.take().expect("client stdin");
+    stdin.write_all(b"ping\n").expect("write stdin");
+    drop(stdin);
+
+    let client = client.wait_with_output().expect("wait for nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux --live --json --stdin failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("json-stdin:ping"),
+        "missing stdin echo:\n{stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .last()
+            .is_some_and(|line| line == "{\"event\":\"detach\",\"reason\":\"stdin-eof\"}"),
+        "missing stdin-eof detach event:\n{stdout}"
+    );
 }
 
 #[test]
