@@ -298,6 +298,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
         scrollback_tail_count: args.scrollback_tail_count,
+        fetch_scrollback: !args.no_scrollback,
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
@@ -853,6 +854,9 @@ fn initial_live_scrollback(
     client_state: &local::ClientAttachState,
     socket_scope: Option<local::SocketIdentity>,
 ) -> Result<Option<local::ScrollbackChunkSummary>, Box<dyn std::error::Error>> {
+    if args.no_scrollback {
+        return Ok(None);
+    }
     Ok(Some(local::fetch_scrollback_chunk_with_selection(
         stream,
         sequence,
@@ -1153,6 +1157,7 @@ fn attach_once(
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
         scrollback_tail_count: args.scrollback_tail_count,
+        fetch_scrollback: !args.no_scrollback,
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
@@ -1381,6 +1386,7 @@ struct Args {
     scrollback_start_line: u64,
     scrollback_line_count: u32,
     scrollback_tail_count: Option<u32>,
+    no_scrollback: bool,
     state_path: Option<PathBuf>,
     follow: bool,
     live: bool,
@@ -1476,6 +1482,8 @@ struct RawArgs {
     scrollback_count: Option<String>,
     #[arg(long = "scrollback-tail", value_name = "COUNT")]
     scrollback_tail: Option<String>,
+    #[arg(long = "no-scrollback", action = ArgAction::SetTrue)]
+    no_scrollback: bool,
     #[arg(long = "state", value_name = "PATH")]
     state_path: Option<PathBuf>,
     #[arg(long = "follow", action = ArgAction::SetTrue)]
@@ -1682,6 +1690,7 @@ where
             connect_timeout_ms,
         )?;
         validate_scrollback_selection_args(
+            raw.no_scrollback,
             scrollback_tail_set,
             scrollback_start_set,
             scrollback_count_set,
@@ -1755,6 +1764,7 @@ where
         scrollback_start_line,
         scrollback_line_count,
         scrollback_tail_count,
+        no_scrollback: raw.no_scrollback,
         state_path: raw.state_path,
         follow: raw.follow,
         live,
@@ -2573,10 +2583,20 @@ fn validate_positive_numeric_args(
 }
 
 fn validate_scrollback_selection_args(
+    no_scrollback_set: bool,
     scrollback_tail_set: bool,
     scrollback_start_set: bool,
     scrollback_count_set: bool,
 ) -> Result<(), &'static str> {
+    if no_scrollback_set && scrollback_tail_set {
+        return Err("--no-scrollback cannot be combined with --scrollback-tail");
+    }
+    if no_scrollback_set && scrollback_start_set {
+        return Err("--no-scrollback cannot be combined with --scrollback-start");
+    }
+    if no_scrollback_set && scrollback_count_set {
+        return Err("--no-scrollback cannot be combined with --scrollback-count");
+    }
     if scrollback_tail_set && scrollback_start_set {
         return Err("--scrollback-tail cannot be combined with --scrollback-start");
     }
@@ -2810,6 +2830,7 @@ Options:
   --scrollback-start LINE    First scrollback line to request
   --scrollback-count COUNT   Number of scrollback lines to request
   --scrollback-tail COUNT    Request the last COUNT scrollback lines
+  --no-scrollback            Skip the post-attach scrollback fetch
   --state PATH               Persist client-side pane surface cache
   --follow                   Reconnect in a polling loop
   --live                     Keep one attach connection open
@@ -4403,15 +4424,28 @@ mod tests {
     #[test]
     fn scrollback_selection_validation_rejects_ambiguous_tail_args() {
         assert_eq!(
-            validate_scrollback_selection_args(true, true, false),
+            validate_scrollback_selection_args(false, true, true, false),
             Err("--scrollback-tail cannot be combined with --scrollback-start")
         );
         assert_eq!(
-            validate_scrollback_selection_args(true, false, true),
+            validate_scrollback_selection_args(false, true, false, true),
             Err("--scrollback-tail cannot be combined with --scrollback-count")
         );
-        assert!(validate_scrollback_selection_args(true, false, false).is_ok());
-        assert!(validate_scrollback_selection_args(false, true, true).is_ok());
+        assert_eq!(
+            validate_scrollback_selection_args(true, true, false, false),
+            Err("--no-scrollback cannot be combined with --scrollback-tail")
+        );
+        assert_eq!(
+            validate_scrollback_selection_args(true, false, true, false),
+            Err("--no-scrollback cannot be combined with --scrollback-start")
+        );
+        assert_eq!(
+            validate_scrollback_selection_args(true, false, false, true),
+            Err("--no-scrollback cannot be combined with --scrollback-count")
+        );
+        assert!(validate_scrollback_selection_args(false, true, false, false).is_ok());
+        assert!(validate_scrollback_selection_args(false, false, true, true).is_ok());
+        assert!(validate_scrollback_selection_args(true, false, false, false).is_ok());
     }
 
     #[test]
@@ -4420,6 +4454,12 @@ mod tests {
         assert_eq!(args.scrollback_tail_count, Some(5));
         assert_eq!(args.scrollback_start_line, 1);
         assert_eq!(args.scrollback_line_count, 2);
+    }
+
+    #[test]
+    fn no_scrollback_arg_skips_scrollback_fetch() {
+        let args = args_from_iter(["--no-scrollback"]).expect("parse no-scrollback args");
+        assert!(args.no_scrollback);
     }
 
     #[test]

@@ -38,6 +38,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("daemon rejects if reporting is off"));
     assert!(stdout.contains("--stdin-bytes"));
     assert!(stdout.contains("--local-echo off|tty"));
+    assert!(stdout.contains("--no-scrollback"));
     assert!(stdout.contains("--cols COUNT"));
     assert!(stdout.contains("Live ResizeIntent columns; both dimensions required"));
     assert!(stdout.contains("--mouse-modifiers MODS"));
@@ -798,6 +799,10 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--scrollback-count", "0", "--no-input"],
         "nmux: --scrollback-count must be greater than 0",
+    );
+    assert_nmux_rejects(
+        &["--no-scrollback", "--scrollback-tail", "5"],
+        "nmux: --no-scrollback cannot be combined with --scrollback-tail",
     );
     assert_nmux_rejects(
         &["--live", "--cols", "0", "--rows", "24"],

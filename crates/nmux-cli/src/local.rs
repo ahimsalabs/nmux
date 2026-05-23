@@ -1229,6 +1229,7 @@ pub struct AttachOptions {
     pub scrollback_start_line: u64,
     pub scrollback_line_count: u32,
     pub scrollback_tail_count: Option<u32>,
+    pub fetch_scrollback: bool,
     pub known_scrollback_version: u64,
     pub known_scrollback_versions: Vec<KnownScrollbackVersion>,
     pub connect_timeout: Option<Duration>,
@@ -1274,6 +1275,7 @@ impl Default for AttachOptions {
             scrollback_start_line: 1,
             scrollback_line_count: 2,
             scrollback_tail_count: None,
+            fetch_scrollback: true,
             known_scrollback_version: 0,
             known_scrollback_versions: Vec::new(),
             connect_timeout: None,
@@ -1360,19 +1362,23 @@ pub fn attach_with_client_options(
             read_optional_server_error_from_stream(&mut stream)?;
         }
     }
-    let scrollback = fetch_scrollback_chunk_with_selection(
-        &mut stream,
-        &mut sequence,
-        &attached_pane_id,
-        options.scrollback_start_line,
-        options.scrollback_line_count,
-        options.scrollback_tail_count,
-        |start_line, line_count| {
-            options.known_scrollback_version_for(&attached_pane_id, start_line, line_count)
-        },
-    )?;
+    let scrollback = if options.fetch_scrollback {
+        Some(fetch_scrollback_chunk_with_selection(
+            &mut stream,
+            &mut sequence,
+            &attached_pane_id,
+            options.scrollback_start_line,
+            options.scrollback_line_count,
+            options.scrollback_tail_count,
+            |start_line, line_count| {
+                options.known_scrollback_version_for(&attached_pane_id, start_line, line_count)
+            },
+        )?)
+    } else {
+        None
+    };
     Ok(AttachSnapshot {
-        scrollback: Some(scrollback),
+        scrollback,
         ..snapshot
     })
 }
@@ -6980,6 +6986,7 @@ mod tests {
             scrollback_start_line: 1,
             scrollback_line_count: 2,
             scrollback_tail_count: None,
+            fetch_scrollback: true,
             known_scrollback_version: 0,
             known_scrollback_versions: Vec::new(),
             connect_timeout: None,
@@ -12322,6 +12329,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 scrollback_tail_count: None,
+                fetch_scrollback: true,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12378,6 +12386,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 scrollback_tail_count: None,
+                fetch_scrollback: true,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12433,6 +12442,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 scrollback_tail_count: None,
+                fetch_scrollback: true,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12488,6 +12498,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 scrollback_tail_count: None,
+                fetch_scrollback: true,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12549,6 +12560,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 scrollback_tail_count: None,
+                fetch_scrollback: true,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12604,6 +12616,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 scrollback_tail_count: None,
+                fetch_scrollback: true,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12678,6 +12691,7 @@ mod tests {
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
                 scrollback_tail_count: None,
+                fetch_scrollback: true,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12752,6 +12766,8 @@ mod tests {
                 }),
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
+                scrollback_tail_count: None,
+                fetch_scrollback: true,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,

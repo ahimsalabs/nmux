@@ -243,6 +243,55 @@ fn one_shot_cli_can_request_scrollback_tail() {
 }
 
 #[test]
+fn one_shot_cli_can_skip_scrollback_fetch() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = "printf 'current-only\nhistory-one\nhistory-two\n'; cat >/dev/null";
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            command,
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--no-scrollback",
+        ])
+        .output()
+        .expect("run nmux --no-scrollback");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux --no-scrollback failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("current-only"),
+        "missing visible surface output:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("scrollback "),
+        "unexpected scrollback block:\n{stdout}"
+    );
+}
+
+#[test]
 fn state_info_reports_persisted_cache_without_connecting() {
     let socket_path = test_socket_path();
     let state_path = test_state_path();
@@ -1759,6 +1808,61 @@ fn live_cli_renders_initial_scrollback_range() {
     assert!(
         stdout.contains("two"),
         "missing live scrollback command output:\n{stdout}"
+    );
+}
+
+#[test]
+fn live_cli_can_skip_initial_scrollback_fetch() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'visible-live\nhistory-live\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--no-scrollback",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux live --no-scrollback");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux live --no-scrollback failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("visible-live"),
+        "missing live visible output:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("scrollback "),
+        "unexpected live scrollback block:\n{stdout}"
     );
 }
 

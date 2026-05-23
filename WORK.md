@@ -498,7 +498,7 @@ M12: live workspace usability [done]
   nmuxd --live-forever serves sequential live clients until the daemon is stopped
   nmuxd refuses to replace an existing socket path and reports the path
   nmuxd removes its socket path on normal bounded exits
-  nmux scrollback range flags fail fast on zero start/count/tail values, and --scrollback-tail COUNT resolves the latest retained rows for one-shot and live attach without changing the explicit range protocol
+  nmux scrollback range flags fail fast on zero start/count/tail values, --scrollback-tail COUNT resolves the latest retained rows for one-shot and live attach without changing the explicit range protocol, and --no-scrollback skips the post-attach fetch when a user or script wants only the current surface
   default socket selection falls back when XDG_RUNTIME_DIR is empty or relative
   nmuxd normal-exit cleanup only removes the original socket file if unchanged
   existing socket path errors include a recovery hint
