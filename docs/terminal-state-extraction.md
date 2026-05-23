@@ -22,8 +22,8 @@ gate for related changes.
   metadata, terminal modes, terminal colors, style table, and rendered row runs.
 - `PaneSurfacePatch`: base/version pair, replacement row runs, cursor, terminal
   metadata, terminal modes, terminal colors, and patch kind.
-- `ScrollbackChunk`: scrollback row runs, terminal colors, and the style table
-  for the requested range.
+- `ScrollbackChunk`: scrollback row runs, terminal colors, and the style and
+  hyperlink tables for the requested range.
 
 The current terminal engine boundary owns:
 

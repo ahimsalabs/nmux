@@ -548,7 +548,7 @@ M13: backend libghostty-vt extraction [done for opt-in correctness milestone]
   style-table changes force a full surface snapshot, while row-run-only changes can still use PaneSurfacePatch
   live attach clients with a known surface version receive a PaneSurfaceSnapshot, not a PaneSurfacePatch, when the daemon marks the latest surface update FullRefreshRequired
   feature-gated live CLI coverage proves libghostty-vt reattach recovers from style-table FullRefreshRequired updates without raw ANSI leakage
-  ScrollbackChunk carries the pane style table so scrollback row runs do not reference missing style IDs
+  ScrollbackChunk carries the pane style and hyperlink tables so scrollback row runs do not reference missing style or hyperlink IDs
   nmux --state preserves cached title, OSC 7 working directory, terminal modes including mouse tracking mode/format, row runs, style tables, terminal color state, OSC 133 row/run semantic metadata, row dirty flags, row state hashes, Kitty placeholder row metadata, and distinct last-seen scrollback range metadata for patchable reconnects, validates cached terminal enum values and row run style references on load, and scopes caches to the daemon socket identity so recreated socket paths force a fresh snapshot
   current-version reattach sends explicit paste input before scrollback fetch and keeps bracketed-paste delimiter selection daemon-owned
   current-version live reattach sends explicit focus input to the daemon even when no surface frame arrives, and CLI integration coverage proves focus-reporting-disabled cases produce daemon-owned Error frames
