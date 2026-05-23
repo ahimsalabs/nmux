@@ -581,6 +581,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   the first local packaging-sample evidence run built both default and opt-in release binaries and proved the opt-in libghostty-vt binaries run on Darwin when the produced ghostty-install/lib directory is supplied as the runtime library path; packaged binaries still need an explicit runtime-library distribution strategy
   opt-in VT preflight rejects invalid GHOSTTY_SOURCE_DIR paths before the native build starts, while unset GHOSTTY_SOURCE_DIR is recorded as the pinned-fetch source mode
   GitHub Actions now runs the default-engine make check gate on pull requests and main pushes, with make promotion-local-sample available only as a manual workflow_dispatch job for CI promotion evidence
+  ADR 0026 defines acceptance criteria for any future native-VT CI promotion decision, including runner matrix, cache/fetch behavior, runtime evidence, packaging claims, and failure-triage expectations
   make check-all is the explicit combined default-plus-libghostty-vt validation gate for release-style checks and promotion evidence without changing regular make check
   keep frontend Ghostty renderer hydration separate from backend terminal-state extraction until upstream can render externally supplied nmux state without client-side PTY replay
   split future protocol expansion into explicit tracks before schema changes: wired hyperlink IDs, image placement/pixel data, richer damage objects, semantic command lifecycle metadata, and physical-key/text-event forwarding

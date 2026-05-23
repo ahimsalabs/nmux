@@ -33,6 +33,12 @@ passing or failing results into
 source-fetch, packaging, and flake context before using them as promotion
 evidence.
 
+Before this manual job can become a required or regular native-VT CI gate, a
+later ADR must satisfy
+[ADR 0026](adr/0026-native-vt-ci-promotion-criteria.md), including runner
+matrix, cache behavior, source-fetch behavior, packaging claims, runtime, and
+failure-triage expectations.
+
 ## Nix Setup
 
 CI installs Nix with `cachix/install-nix-action@v31`, which the action README

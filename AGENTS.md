@@ -30,6 +30,8 @@ nmux is a portable Ghostty-style terminal workspace. The current direction is do
   regular CI requirement.
 - [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions gate
   and manual promotion-local-sample workflow.
+- [docs/adr/0026-native-vt-ci-promotion-criteria.md](docs/adr/0026-native-vt-ci-promotion-criteria.md)
+  for criteria a future native-VT CI promotion decision must satisfy.
 - [docs/adr](docs/adr) for durable architecture decisions.
 - [docs/upstream](docs/upstream) for upstream/API gaps that block otherwise
   desirable local work.

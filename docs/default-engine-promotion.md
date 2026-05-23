@@ -65,6 +65,8 @@ engine or a regular CI requirement.
   combined promotion-evidence gate.
 - [CI notes](ci.md) document the required GitHub Actions default-engine gate and
   the manual promotion-local-sample job.
+- [ADR 0026](adr/0026-native-vt-ci-promotion-criteria.md) defines the criteria
+  a later decision must satisfy before native VT becomes regular or required CI.
 - The Makefile performs local tool preflight checks for `cargo`, `flatc`
   25.12.19, and the optional native-VT Zig 0.15.x requirement so non-Nix
   validation attempts fail with setup guidance instead of an opaque

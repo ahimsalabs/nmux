@@ -31,3 +31,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0023: Post-M13 Default Engine And Product Split](0023-post-m13-default-engine-and-product-split.md)
 - [0024: Native VT Source Policy Criteria](0024-native-vt-source-policy-criteria.md)
 - [0025: Native VT Packaging Criteria](0025-native-vt-packaging-criteria.md)
+- [0026: Native VT CI Promotion Criteria](0026-native-vt-ci-promotion-criteria.md)
