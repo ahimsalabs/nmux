@@ -61,6 +61,18 @@ pub struct MouseInputSpec {
     pub modifiers: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrollbackRange {
+    pub start_line: u64,
+    pub line_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrollbackFetchSpec {
+    pub range: ScrollbackRange,
+    pub known_scrollback_version: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tab {
     pub id: String,
@@ -1005,38 +1017,33 @@ impl Session {
 
     pub fn scrollback_fetch_frame(
         &self,
-        connection_id: &str,
-        seq: u64,
-        actor_id: &str,
-        pane_id: &str,
-        start_line: u64,
-        line_count: u32,
-        known_scrollback_version: u64,
+        context: InputFrameContext<'_>,
+        fetch_spec: ScrollbackFetchSpec,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
 
-        let pane_id = builder.create_string(pane_id);
-        let actor_id = builder.create_string(actor_id);
+        let pane_id = builder.create_string(context.pane_id);
+        let actor_id = builder.create_string(context.actor_id);
         let fetch = protocol::ScrollbackFetch::create(
             &mut builder,
             &protocol::ScrollbackFetchArgs {
                 pane_id: Some(pane_id),
                 actor_id: Some(actor_id),
-                start_line,
-                line_count,
-                known_scrollback_version,
+                start_line: fetch_spec.range.start_line,
+                line_count: fetch_spec.range.line_count,
+                known_scrollback_version: fetch_spec.known_scrollback_version,
             },
         );
 
         let envelope_session_id = builder.create_string(&self.id);
-        let connection_id = builder.create_string(connection_id);
+        let connection_id = builder.create_string(context.connection_id);
         let envelope = protocol::Envelope::create(
             &mut builder,
             &protocol::EnvelopeArgs {
                 protocol_version: PROTOCOL_VERSION,
                 session_id: Some(envelope_session_id),
                 connection_id: Some(connection_id),
-                seq,
+                seq: context.seq,
                 ack: 0,
                 sent_at_mono_ms: 0,
                 body_type: protocol::EnvelopeBody::ScrollbackFetch,
@@ -2021,7 +2028,10 @@ mod tests {
 
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
-    use super::{AttachMode, Cursor, InputFrameContext, MouseInputSpec, Session};
+    use super::{
+        AttachMode, Cursor, InputFrameContext, MouseInputSpec, ScrollbackFetchSpec,
+        ScrollbackRange, Session,
+    };
 
     fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
         env.iter()
@@ -2886,8 +2896,22 @@ mod tests {
 
     #[test]
     fn scrollback_fetch_frame_decodes_requested_range() {
-        let frame =
-            Session::initial().scrollback_fetch_frame("conn-1", 12, "actor-1", "pane-1", 1, 2, 1);
+        let frame = Session::initial().scrollback_fetch_frame(
+            InputFrameContext {
+                connection_id: "conn-1",
+                seq: 12,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 0,
+            },
+            ScrollbackFetchSpec {
+                range: ScrollbackRange {
+                    start_line: 1,
+                    line_count: 2,
+                },
+                known_scrollback_version: 1,
+            },
+        );
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
 
         assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);

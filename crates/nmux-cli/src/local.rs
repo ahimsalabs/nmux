@@ -12,7 +12,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
-use nmux_core::session::{Actor, AttachMode, InputFrameContext, MouseInputSpec, Session};
+use nmux_core::session::{
+    Actor, AttachMode, InputFrameContext, MouseInputSpec, ScrollbackFetchSpec, ScrollbackRange,
+    Session,
+};
 use nmux_core::terminal::{
     KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines,
     TerminalEngineKind, named_key_bytes,
@@ -1690,39 +1693,44 @@ pub fn send_resize_intent_with_reason_and_sequence(
 pub fn send_scrollback_fetch(
     stream: &mut UnixStream,
     pane_id: &str,
-    start_line: u64,
-    line_count: u32,
+    range: ScrollbackRange,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut sequence = ClientFrameSequence::default();
-    send_scrollback_fetch_with_sequence(stream, &mut sequence, pane_id, start_line, line_count)
+    send_scrollback_fetch_with_sequence(stream, &mut sequence, pane_id, range)
 }
 
 pub fn send_scrollback_fetch_with_sequence(
     stream: &mut UnixStream,
     sequence: &mut ClientFrameSequence,
     pane_id: &str,
-    start_line: u64,
-    line_count: u32,
+    range: ScrollbackRange,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    send_scrollback_fetch_with_known_version(stream, sequence, pane_id, start_line, line_count, 0)
+    send_scrollback_fetch_with_known_version(
+        stream,
+        sequence,
+        pane_id,
+        ScrollbackFetchSpec {
+            range,
+            known_scrollback_version: 0,
+        },
+    )
 }
 
 pub fn send_scrollback_fetch_with_known_version(
     stream: &mut UnixStream,
     sequence: &mut ClientFrameSequence,
     pane_id: &str,
-    start_line: u64,
-    line_count: u32,
-    known_scrollback_version: u64,
+    fetch_spec: ScrollbackFetchSpec,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().scrollback_fetch_frame(
-        "local-client",
-        sequence.next_envelope_seq(),
-        "local-actor",
-        pane_id,
-        start_line,
-        line_count,
-        known_scrollback_version,
+        InputFrameContext {
+            connection_id: "local-client",
+            seq: sequence.next_envelope_seq(),
+            actor_id: "local-actor",
+            pane_id,
+            input_seq: 0,
+        },
+        fetch_spec,
     );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
@@ -2219,7 +2227,16 @@ pub fn read_scrollback_chunk_with_stale_retry(
         ScrollbackRead::Chunk(chunk) => Ok(chunk),
         ScrollbackRead::Error(error) if error.code == protocol::ErrorCode::StaleVersion => {
             send_scrollback_fetch_with_known_version(
-                stream, sequence, pane_id, start_line, line_count, 0,
+                stream,
+                sequence,
+                pane_id,
+                ScrollbackFetchSpec {
+                    range: ScrollbackRange {
+                        start_line,
+                        line_count,
+                    },
+                    known_scrollback_version: 0,
+                },
             )?;
             match read_scrollback_response_from_stream(stream)? {
                 ScrollbackRead::Chunk(chunk) => Ok(chunk),
@@ -2240,7 +2257,18 @@ pub fn fetch_scrollback_chunk_with_selection(
     known_version_for: impl Fn(u64, u32) -> u64,
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
     let (start_line, line_count) = if let Some(tail_count) = tail_count {
-        send_scrollback_fetch_with_known_version(stream, sequence, pane_id, 1, 1, 0)?;
+        send_scrollback_fetch_with_known_version(
+            stream,
+            sequence,
+            pane_id,
+            ScrollbackFetchSpec {
+                range: ScrollbackRange {
+                    start_line: 1,
+                    line_count: 1,
+                },
+                known_scrollback_version: 0,
+            },
+        )?;
         let probe = read_scrollback_chunk_with_stale_retry(stream, sequence, pane_id, 1, 1)?;
         let tail_count_u64 = u64::from(tail_count);
         let start_line = if probe.total_lines > tail_count_u64 {
@@ -2256,9 +2284,13 @@ pub fn fetch_scrollback_chunk_with_selection(
         stream,
         sequence,
         pane_id,
-        start_line,
-        line_count,
-        known_version_for(start_line, line_count),
+        ScrollbackFetchSpec {
+            range: ScrollbackRange {
+                start_line,
+                line_count,
+            },
+            known_scrollback_version: known_version_for(start_line, line_count),
+        },
     )?;
     read_scrollback_chunk_with_stale_retry(stream, sequence, pane_id, start_line, line_count)
 }
@@ -5416,6 +5448,24 @@ mod tests {
 
     fn test_socket_identity(dev: u64, ino: u64) -> SocketIdentity {
         test_socket_identity_with_ctime(dev, ino, 100, 200)
+    }
+
+    fn scrollback_range(start_line: u64, line_count: u32) -> ScrollbackRange {
+        ScrollbackRange {
+            start_line,
+            line_count,
+        }
+    }
+
+    fn scrollback_fetch_spec(
+        start_line: u64,
+        line_count: u32,
+        known_scrollback_version: u64,
+    ) -> ScrollbackFetchSpec {
+        ScrollbackFetchSpec {
+            range: scrollback_range(start_line, line_count),
+            known_scrollback_version,
+        }
     }
 
     fn test_socket_identity_with_ctime(
@@ -9452,7 +9502,15 @@ mod tests {
             Some("pane-2")
         );
 
-        send_scrollback_fetch(&mut stream, "pane-2", 1, 1).expect("send scrollback fetch");
+        send_scrollback_fetch(
+            &mut stream,
+            "pane-2",
+            ScrollbackRange {
+                start_line: 1,
+                line_count: 1,
+            },
+        )
+        .expect("send scrollback fetch");
         let chunk = read_scrollback_chunk_from_stream(&mut stream).expect("read scrollback");
         assert_eq!(chunk.pane_id, "pane-2");
 
@@ -9585,7 +9643,15 @@ mod tests {
         .expect("write attach request");
         let snapshot = attach_from_stream(&mut stream).expect("attach snapshot");
         send_key_input(&mut stream, "pane-1", "z").expect("send key input");
-        send_scrollback_fetch(&mut stream, "pane-1", 4, 1).expect("send scrollback fetch");
+        send_scrollback_fetch(
+            &mut stream,
+            "pane-1",
+            ScrollbackRange {
+                start_line: 4,
+                line_count: 1,
+            },
+        )
+        .expect("send scrollback fetch");
         let scrollback = read_scrollback_chunk_from_stream(&mut stream).expect("scrollback chunk");
         server.join().expect("server thread");
 
@@ -10059,8 +10125,15 @@ mod tests {
         let initial = attach_from_stream(&mut stream).expect("initial attach");
         assert_eq!(initial.presence.mode, AttachMode::ReadOnly);
 
-        send_scrollback_fetch(&mut stream, "missing-pane", 1, 2)
-            .expect("send missing scrollback fetch");
+        send_scrollback_fetch(
+            &mut stream,
+            "missing-pane",
+            ScrollbackRange {
+                start_line: 1,
+                line_count: 2,
+            },
+        )
+        .expect("send missing scrollback fetch");
         let frame = wire::read_default_frame(&mut stream).expect("read error frame");
         let error = error_summary_from_frame(&frame).expect("decode error");
         assert_eq!(
@@ -10102,8 +10175,19 @@ mod tests {
         assert_eq!(initial.presence.mode, AttachMode::ReadOnly);
 
         let mut sequence = ClientFrameSequence::default();
-        send_scrollback_fetch_with_known_version(&mut stream, &mut sequence, "pane-1", 1, 2, 999)
-            .expect("send stale scrollback fetch");
+        send_scrollback_fetch_with_known_version(
+            &mut stream,
+            &mut sequence,
+            "pane-1",
+            ScrollbackFetchSpec {
+                range: ScrollbackRange {
+                    start_line: 1,
+                    line_count: 2,
+                },
+                known_scrollback_version: 999,
+            },
+        )
+        .expect("send stale scrollback fetch");
         let frame = wire::read_default_frame(&mut stream).expect("read error frame");
         let error = error_summary_from_frame(&frame).expect("decode error");
         assert_eq!(
@@ -10116,8 +10200,19 @@ mod tests {
                 input_seq: 0,
             }
         );
-        send_scrollback_fetch_with_known_version(&mut stream, &mut sequence, "pane-1", 1, 1, 0)
-            .expect("retry scrollback fetch without precondition");
+        send_scrollback_fetch_with_known_version(
+            &mut stream,
+            &mut sequence,
+            "pane-1",
+            ScrollbackFetchSpec {
+                range: ScrollbackRange {
+                    start_line: 1,
+                    line_count: 1,
+                },
+                known_scrollback_version: 0,
+            },
+        )
+        .expect("retry scrollback fetch without precondition");
         let scrollback = read_scrollback_chunk_from_stream(&mut stream).expect("scrollback chunk");
         assert_eq!(scrollback.scrollback_version, 1);
         assert_eq!(
@@ -10153,8 +10248,19 @@ mod tests {
         assert_eq!(initial.presence.mode, AttachMode::ReadOnly);
 
         let mut sequence = ClientFrameSequence::default();
-        send_scrollback_fetch_with_known_version(&mut stream, &mut sequence, "pane-1", 1, 1, 1)
-            .expect("send current scrollback fetch");
+        send_scrollback_fetch_with_known_version(
+            &mut stream,
+            &mut sequence,
+            "pane-1",
+            ScrollbackFetchSpec {
+                range: ScrollbackRange {
+                    start_line: 1,
+                    line_count: 1,
+                },
+                known_scrollback_version: 1,
+            },
+        )
+        .expect("send current scrollback fetch");
         let scrollback = read_scrollback_chunk_from_stream(&mut stream).expect("scrollback chunk");
         assert_eq!(scrollback.scrollback_version, 1);
         assert_eq!(
@@ -10559,7 +10665,7 @@ mod tests {
         let initial = attach_from_stream(&mut stream).expect("initial attach");
         assert!(initial.surface.is_some());
 
-        send_scrollback_fetch(&mut stream, "missing-pane", 1, 2)
+        send_scrollback_fetch(&mut stream, "missing-pane", scrollback_range(1, 2))
             .expect("send missing scrollback fetch");
         let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
         assert_eq!(
@@ -10596,8 +10702,13 @@ mod tests {
         assert!(initial.surface.is_some());
 
         let mut sequence = ClientFrameSequence::default();
-        send_scrollback_fetch_with_known_version(&mut stream, &mut sequence, "pane-1", 1, 2, 999)
-            .expect("send stale scrollback fetch");
+        send_scrollback_fetch_with_known_version(
+            &mut stream,
+            &mut sequence,
+            "pane-1",
+            scrollback_fetch_spec(1, 2, 999),
+        )
+        .expect("send stale scrollback fetch");
         let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
         assert_eq!(
             error,
@@ -10609,8 +10720,13 @@ mod tests {
                 input_seq: 0,
             })
         );
-        send_scrollback_fetch_with_known_version(&mut stream, &mut sequence, "pane-1", 1, 1, 0)
-            .expect("retry live scrollback fetch without precondition");
+        send_scrollback_fetch_with_known_version(
+            &mut stream,
+            &mut sequence,
+            "pane-1",
+            scrollback_fetch_spec(1, 1, 0),
+        )
+        .expect("retry live scrollback fetch without precondition");
         let scrollback =
             read_scrollback_chunk_from_stream(&mut stream).expect("live scrollback chunk");
         assert_eq!(scrollback.scrollback_version, 1);
@@ -12003,7 +12119,8 @@ mod tests {
 
         let initial = attach_from_stream(&mut stream).expect("initial attach");
         assert_eq!(initial.presence.mode, AttachMode::ReadOnly);
-        send_scrollback_fetch(&mut stream, "pane-1", 1, 2).expect("send scrollback fetch");
+        send_scrollback_fetch(&mut stream, "pane-1", scrollback_range(1, 2))
+            .expect("send scrollback fetch");
         let scrollback = read_scrollback_chunk_from_stream(&mut stream).expect("scrollback chunk");
 
         assert_eq!(
@@ -13331,8 +13448,13 @@ mod tests {
 
         send_key_input_with_sequence(&mut client, &mut sequence, "pane-1", "first")
             .expect("send first key");
-        send_scrollback_fetch_with_sequence(&mut client, &mut sequence, "pane-1", 1, 8)
-            .expect("send scrollback fetch");
+        send_scrollback_fetch_with_sequence(
+            &mut client,
+            &mut sequence,
+            "pane-1",
+            scrollback_range(1, 8),
+        )
+        .expect("send scrollback fetch");
         send_resize_intent_with_sequence(&mut client, &mut sequence, "pane-1", 120, 50)
             .expect("send resize");
         send_paste_input_with_sequence(&mut client, &mut sequence, "pane-1", "second")
@@ -14366,13 +14488,14 @@ mod tests {
     #[test]
     fn decodes_scrollback_fetch_from_client_frame() {
         let frame = Session::initial().scrollback_fetch_frame(
-            "local-client",
-            4,
-            "actor-1",
-            "pane-1",
-            1,
-            2,
-            1,
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 4,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 0,
+            },
+            scrollback_fetch_spec(1, 2, 1),
         );
         let fetch = scrollback_fetch_from_frame(&frame).expect("scrollback fetch");
 
@@ -14446,7 +14569,8 @@ mod tests {
     fn default_scrollback_fetch_uses_no_version_precondition() {
         let (mut client, mut server) = UnixStream::pair().expect("socket pair");
 
-        send_scrollback_fetch(&mut client, "pane-1", 1, 2).expect("send scrollback fetch");
+        send_scrollback_fetch(&mut client, "pane-1", scrollback_range(1, 2))
+            .expect("send scrollback fetch");
         let frame = wire::read_default_frame(&mut server).expect("read scrollback fetch");
         let fetch = scrollback_fetch_from_frame(&frame).expect("scrollback fetch");
 
