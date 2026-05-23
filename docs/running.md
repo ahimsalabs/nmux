@@ -142,7 +142,9 @@ On normal bounded exits, `nmuxd` removes the socket path it created if that path
 Commands started in the local PTY receive `NMUX=1`, `NMUX_SESSION_ID`,
 `NMUX_PANE_ID`, `NMUX_SOCKET`, and `NMUX_ORIGIN` in their environment. These
 are local pane identity hints for nested nmux tooling and do not make the
-frontend replay raw PTY bytes. Inside a pane, `nmux --print-context` prints
+frontend replay raw PTY bytes. If `nmuxd` is launched from inside an nmux pane,
+it appends the inherited origin to the child pane origin with `>` so nested
+tools can see the local hop chain. Inside a pane, `nmux --print-context` prints
 the inherited `NMUX_*` key/value lines without connecting; outside a complete
 nmux pane context, it fails before socket or state work.
 

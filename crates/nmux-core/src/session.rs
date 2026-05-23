@@ -337,13 +337,14 @@ impl Session {
         &mut self,
         pane_id: &str,
         socket_endpoint: impl Into<String>,
+        parent_origin_chain: Option<&str>,
     ) -> bool {
         let session_id = self.id.clone();
         let Some(pane) = self.pane_mut(pane_id) else {
             return false;
         };
         let socket_endpoint = socket_endpoint.into();
-        let origin = pane.host.id.clone();
+        let origin = pane_origin_chain(parent_origin_chain, &pane.host.id);
         pane.host.command.env.retain(|(key, _)| {
             !matches!(
                 key.as_str(),
@@ -1602,6 +1603,16 @@ impl Session {
     }
 }
 
+fn pane_origin_chain(parent_origin_chain: Option<&str>, origin: &str) -> String {
+    match parent_origin_chain
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(parent_origin_chain) => format!("{parent_origin_chain}>{origin}"),
+        None => origin.to_owned(),
+    }
+}
+
 impl From<&Cursor> for TerminalCursor {
     fn from(cursor: &Cursor) -> Self {
         Self {
@@ -2157,7 +2168,7 @@ mod tests {
             ("NMUX_EXTRA", "keep"),
         ]);
 
-        assert!(session.set_pane_nmux_environment("pane-1", "/tmp/nmux.sock"));
+        assert!(session.set_pane_nmux_environment("pane-1", "/tmp/nmux.sock", None));
         let env = &session.tabs[0].root.host.command.env;
 
         assert_eq!(env_value(env, "NMUX"), Some("1"));
@@ -2166,6 +2177,20 @@ mod tests {
         assert_eq!(env_value(env, "NMUX_SOCKET"), Some("/tmp/nmux.sock"));
         assert_eq!(env_value(env, "NMUX_ORIGIN"), Some("local"));
         assert_eq!(env_value(env, "NMUX_EXTRA"), Some("keep"));
+    }
+
+    #[test]
+    fn pane_nmux_environment_appends_parent_origin_chain() {
+        let mut session = Session::initial();
+
+        assert!(session.set_pane_nmux_environment(
+            "pane-1",
+            "/tmp/nmux.sock",
+            Some("outer>middle")
+        ));
+        let env = &session.tabs[0].root.host.command.env;
+
+        assert_eq!(env_value(env, "NMUX_ORIGIN"), Some("outer>middle>local"));
     }
 
     #[test]

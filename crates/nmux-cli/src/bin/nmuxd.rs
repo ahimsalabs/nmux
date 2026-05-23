@@ -46,7 +46,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     session.set_pane_resize_policy("pane-1", args.resize_policy);
     let pane_id = "pane-1";
-    session.set_pane_nmux_environment(pane_id, args.socket_path.display().to_string());
+    let inherited_origin = inherited_nmux_origin();
+    session.set_pane_nmux_environment(
+        pane_id,
+        args.socket_path.display().to_string(),
+        inherited_origin.as_deref(),
+    );
     let host_spec = session.tabs[0].root.host.clone();
     let mut pty_host = LocalPtyHost::default();
     pty_host.start_pane(pane_id, &host_spec)?;
@@ -97,6 +102,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &mut terminal_engines,
         )?;
     }
+}
+
+fn inherited_nmux_origin() -> Option<String> {
+    if std::env::var("NMUX").ok().as_deref() != Some("1") {
+        return None;
+    }
+
+    std::env::var("NMUX_ORIGIN")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 struct SocketCleanup {

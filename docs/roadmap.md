@@ -96,7 +96,8 @@ Done:
   socket/state/PTY work.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
-  tooling without changing the current local socket protocol.
+  tooling without changing the current local socket protocol; nested local
+  daemons append inherited `NMUX_ORIGIN` values as a local hop-chain hint.
 - `nmux --print-context` reports inherited `NMUX_*` pane identity without
   connecting, prints the exact inherited key/value names, fails clearly outside
   a complete nmux pane context, and has nested PTY smoke coverage.

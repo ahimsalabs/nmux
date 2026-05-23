@@ -57,6 +57,49 @@ fn one_shot_cli_receives_nmux_pane_environment() {
 }
 
 #[test]
+fn one_shot_cli_appends_inherited_nmux_origin() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = "printf 'origin:%s\\n' \"$NMUX_ORIGIN\"; cat >/dev/null";
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            command,
+        ])
+        .env("NMUX", "1")
+        .env("NMUX_ORIGIN", "outer")
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args(["--socket", socket_path.to_str().expect("socket path")])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("origin:outer>local"),
+        "missing chained origin:\n{stdout}"
+    );
+}
+
+#[test]
 fn one_shot_cli_can_print_nested_nmux_context() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
