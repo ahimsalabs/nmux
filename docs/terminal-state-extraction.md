@@ -8,9 +8,10 @@ cross-cutting pre-schema protocol tracks live in
 [Future Protocol Tracks](protocol-futures.md).
 
 `libghostty-vt` is now present as an optional Cargo feature and compiles through
-the vendored native Ghostty VT build. ADR 0018 keeps the default `nmuxd` engine
-as `interim` while requiring the full feature-enabled `make check-ghostty-vt`
-gate for related changes.
+the `libghostty-vt-sys` pinned-source native build path, or a
+`GHOSTTY_SOURCE_DIR` checkout when supplied. ADR 0018 keeps the default
+`nmuxd` engine as `interim` while requiring the full feature-enabled
+`make check-ghostty-vt` gate for related changes.
 
 ## Current nmux Surface
 
