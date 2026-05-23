@@ -990,6 +990,41 @@ fn nmux_reports_state_load_path_before_connecting() {
 }
 
 #[test]
+fn nmux_json_reports_state_load_setup_error() {
+    let state_path = test_state_path();
+    fs::write(&state_path, "not nmux state\n").expect("write bad state");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--json",
+            "--no-input",
+        ])
+        .output()
+        .expect("run nmux --json");
+    let _ = fs::remove_file(&state_path);
+
+    assert!(!output.status.success(), "nmux unexpectedly succeeded");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"error\""),
+        "missing JSON error object:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"message\":\"failed to load client state")
+            && stdout.contains(state_path.to_str().expect("state path"))
+            && stdout.contains("invalid nmux client state header"),
+        "missing state-load JSON error context:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nmux: failed to load client state"),
+        "missing stderr state-load context:\n{stderr}"
+    );
+}
+
+#[test]
 fn nmux_live_json_reports_state_load_setup_error() {
     let state_path = test_state_path();
     fs::write(&state_path, "not nmux state\n").expect("write bad state");

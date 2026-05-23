@@ -122,9 +122,11 @@ Done:
 - `nmux --json` prints one-shot attach output as a machine-readable object with
   workspace, authoritative attach status, terminal metadata, structured current
   surface rows/styles/hyperlinks, rendered surface text, and structured
-  scrollback rows; `nmux --live --json` streams newline-delimited attach,
-  workspace, surface update, setup/protocol error, and final detach events with
-  structured row payloads and lifecycle reasons for scripts.
+  scrollback rows, and emits structured setup/state-save/protocol error objects
+  when attach output cannot be produced; `nmux --live --json` streams
+  newline-delimited attach, workspace, surface update, setup/protocol error, and
+  final detach events with structured row payloads and lifecycle reasons for
+  scripts.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
   tooling without changing the current local socket protocol; nested local

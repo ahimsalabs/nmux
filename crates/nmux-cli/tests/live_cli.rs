@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -127,6 +128,69 @@ fn one_shot_cli_can_print_attach_json() {
     assert!(
         stdout.contains("\"runs\":["),
         "missing structured scrollback runs:\n{stdout}"
+    );
+}
+
+#[test]
+fn one_shot_json_reports_state_save_error() {
+    let socket_path = test_socket_path();
+    let blocking_parent = test_state_path();
+    let state_path = blocking_parent.join("client.state");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_dir_all(&blocking_parent);
+    fs::create_dir(&blocking_parent).expect("create read-only parent");
+    fs::set_permissions(&blocking_parent, fs::Permissions::from_mode(0o500))
+        .expect("make parent read-only");
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            "printf 'save-error\n'",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--json",
+        ])
+        .output()
+        .expect("run nmux --json");
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::set_permissions(&blocking_parent, fs::Permissions::from_mode(0o700));
+    let _ = fs::remove_dir_all(&blocking_parent);
+
+    assert!(
+        !client.status.success(),
+        "nmux unexpectedly succeeded:\n{}",
+        String::from_utf8_lossy(&client.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("\"error\""),
+        "missing JSON error object:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"message\":\"failed to save client state")
+            && stdout.contains(state_path.to_str().expect("state path")),
+        "missing state-save JSON error context:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains("nmux: failed to save client state"),
+        "missing stderr state-save context:\n{stderr}"
     );
 }
 

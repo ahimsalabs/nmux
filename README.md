@@ -205,7 +205,8 @@ Live attach renders the requested initial scrollback range before streaming upda
 Use `nmux --json` for machine-readable one-shot attach output, including the
 workspace summary, authoritative attach status, terminal metadata, structured
 current-surface rows/styles/hyperlinks, rendered surface text, and requested
-scrollback rows with their structured metadata. In live mode, `nmux --live
+scrollback rows with their structured metadata; setup, state-save, and protocol
+failures are emitted as structured JSON error objects. In live mode, `nmux --live
 --json` prints newline-delimited attach/workspace/surface events, including
 structured surface update row payloads plus a final detach event with a reason
 such as `iteration-limit`, `stdin-eof`, `local-detach`, or `server-closed`.

@@ -123,7 +123,8 @@ when you need deterministic smoke-test text.
 For scripts, add `--json` to a one-shot attach. The client prints one object
 with the workspace, authoritative attach status, terminal metadata, current
 surface text, structured current-surface rows/styles/hyperlinks, and requested
-scrollback rows with their structured metadata:
+scrollback rows with their structured metadata. Setup failures, state-save
+failures, and protocol errors are emitted as structured JSON error objects:
 
 ```sh
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --json

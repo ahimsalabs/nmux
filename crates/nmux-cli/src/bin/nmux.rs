@@ -158,7 +158,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return run_live(&args);
     }
 
-    let mut client_state = load_client_state(args.state_path.as_deref())?;
+    let mut client_state = match load_client_state(args.state_path.as_deref()) {
+        Ok(state) => state,
+        Err(err) => {
+            report_cli_error(&args, err.as_ref())?;
+            return Err(err);
+        }
+    };
 
     let iterations = if args.follow {
         args.iterations.unwrap_or(usize::MAX)
@@ -177,7 +183,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Err(err);
             }
         };
-        save_client_state(args.state_path.as_deref(), &client_state)?;
+        if let Err(err) = save_client_state(args.state_path.as_deref(), &client_state) {
+            report_cli_error(&args, err.as_ref())?;
+            return Err(err);
+        }
         if args.output_json {
             println!("{}", format_rendered_attach_json(&rendered));
         } else {
@@ -599,6 +608,17 @@ fn report_live_setup_error(
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.output_json {
         println!("{}", format_live_cli_error_json(error));
+        flush_stdout()?;
+    }
+    Ok(())
+}
+
+fn report_cli_error(
+    args: &Args,
+    error: &(dyn std::error::Error + 'static),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if args.output_json {
+        println!("{}", format_cli_error_json(error));
         flush_stdout()?;
     }
     Ok(())
