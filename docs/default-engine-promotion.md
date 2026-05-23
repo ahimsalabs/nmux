@@ -38,7 +38,8 @@ engine or a regular CI requirement.
 ## Current Evidence
 
 - The Nix development shell pins the required toolchain components for the repo,
-  including `flatbuffers`; on 2026-05-23, `nix develop . -c flatc --version`
+  including `flatbuffers`; on 2026-05-23,
+  `nix --extra-experimental-features 'nix-command flakes' develop . -c flatc --version`
   resolved FlatBuffers 25.12.19.
 - [Toolchain notes](toolchain.md) document the supported Nix path and the
   minimum non-Nix equivalents for Rust, FlatBuffers, make, Zig 0.15, and
@@ -87,6 +88,15 @@ engine or a regular CI requirement.
 - ADR 0018 and ADR 0023 keep the native build out of the default development
   loop until the remaining evidence in this tracker is gathered.
 
+## Nix Toolchain Checks
+
+These checks prove the supported Nix shell provisions required tools. They are
+setup evidence, not enough by themselves to promote `libghostty-vt`.
+
+| Date | Host | Command | Result |
+| --- | --- | --- | --- |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM | `nix --extra-experimental-features 'nix-command flakes' develop . -c flatc --version` | Passed; `flatc version 25.12.19` |
+
 ## Local Timing Samples
 
 These samples are useful for trend tracking, but they do not replace CI
@@ -119,7 +129,8 @@ be recorded.
 - Validate the non-Nix toolchain checklist with platform-specific setup
   commands, `make promotion-sample` output, and timings; the current local
   non-Nix attempt failed before tests because `flatc` was absent from the host
-  PATH.
+  PATH outside the Nix shell, while the supported Nix shell has already
+  provisioned the required `flatc`.
 - Choose a source policy for packaged/default builds: pinned network fetch with
   CI/cache controls, vendored or mirrored source, `GHOSTTY_SOURCE_DIR`
   prefetching, or a native-library package/artifact cache.

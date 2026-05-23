@@ -179,10 +179,10 @@ Done:
 - The tracker includes multiple warm local Darwin arm64 `make check-all`
   samples, including a post-info-flag run, confirms the Nix shell provides
   `flatc`, and records a local non-Nix `make check-all` attempt that failed
-  during tool preflight because `flatc` was absent from the host PATH; remaining
-  promotion evidence still needs more local platforms, cold-cache or
-  cold-checkout behavior, CI behavior, a complete non-Nix workflow,
-  source-fetch policy, and packaging decisions.
+  during tool preflight because `flatc` was absent from the host PATH outside
+  the Nix shell; remaining promotion evidence still needs more local platforms,
+  cold-cache or cold-checkout behavior, CI behavior, a complete non-Nix
+  workflow, source-fetch policy, and packaging decisions.
 - [Future protocol tracks](protocol-futures.md) split hyperlink identity, images,
   richer damage, command lifecycle metadata, and physical-key/text-event input
   into explicit pre-schema work.

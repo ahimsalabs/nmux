@@ -48,12 +48,12 @@ regular CI requirement, it still needs platform-specific setup commands,
 timings, cache behavior, and packaging decisions recorded in
 [the default-engine promotion tracker](default-engine-promotion.md).
 
-Current validation status: no non-Nix `make check-ghostty-vt` or
-`make check-all` run has passed as promotion evidence. A local non-Nix
-`make check-all` attempt on 2026-05-23 failed during Makefile tool preflight
-because `flatc` was not on the host PATH. Until a complete run is recorded, the
-Nix shell is the only validated local workflow for the optional native Ghostty
-VT path.
+Current validation status: the Nix shell provisions `flatc` 25.12.19 and is the
+validated local workflow for optional native Ghostty VT checks. No non-Nix
+`make check-ghostty-vt` or `make check-all` run has passed as promotion
+evidence. A local non-Nix `make check-all` attempt on 2026-05-23 failed during
+Makefile tool preflight because `flatc` was not on the host PATH outside the
+Nix shell. That is a non-Nix setup gap, not a Nix-shell blocker.
 
 A non-Nix environment must provide:
 
