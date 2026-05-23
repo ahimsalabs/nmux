@@ -8,14 +8,17 @@ The repository has a GitHub Actions workflow at
 Pull requests and pushes to `main` run the default-engine gate:
 
 ```sh
+nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).source-audit" --no-link --print-out-paths
 nix develop . -c make toolchain-info
 nix develop . -c make check
 nix develop . -c make local-smoke
 ```
 
-This keeps regular CI on the default `interim` engine. A green required CI run
-does not claim `libghostty-vt` correctness and does not change the default
-engine decision. `make local-smoke` adds a real default-engine daemon/client
+The source audit checks that the flake source excludes build output and VCS
+metadata before CI enters the development shell. The remaining steps keep
+regular CI on the default `interim` engine. A green required CI run does not
+claim `libghostty-vt` correctness and does not change the default engine
+decision. `make local-smoke` adds a real default-engine daemon/client
 workflow check: it starts `nmuxd`, sends live stdin through `nmux`, persists
 client state, verifies a sequential read-only reattach sees the output, verifies
 nested `nmux --print-context` sees the pane identity environment, then reuses

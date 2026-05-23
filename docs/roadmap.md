@@ -237,12 +237,13 @@ Done:
   platform-specific validation, repeated CI evidence with cache classification,
   source-fetch policy, and packaging decisions.
 - [CI notes](ci.md) document the GitHub Actions default-engine gate, including
-  `make check` and `make local-smoke`, and the manual promotion evidence bundle
-  job, with `make promotion-evidence-verify` checking bundle timing fields and
-  artifacts before upload or transcription. The first manual Ubuntu promotion
-  evidence run is recorded, but promotion still needs repeat CI samples, cache
-  classification, native-VT flake tracking, and GitHub Actions maintenance
-  follow-up before the opt-in native VT gate can become required.
+  the flake source audit, `make check`, and `make local-smoke`, and the manual
+  promotion evidence bundle job, with `make promotion-evidence-verify` checking
+  bundle timing fields and artifacts before upload or transcription. The first
+  manual Ubuntu promotion evidence run is recorded, but promotion still needs
+  repeat CI samples, cache classification, native-VT flake tracking, and GitHub
+  Actions maintenance follow-up before the opt-in native VT gate can become
+  required.
 - [Source fetch policy](source-fetch-policy.md) records the current opt-in
   `libghostty-vt-sys` fetch behavior, the reusable local cache-present Cargo
   offline probe, and the remaining packaged/default-build policy choices.

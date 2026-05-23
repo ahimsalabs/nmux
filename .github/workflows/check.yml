@@ -22,6 +22,11 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+      - name: Source audit
+        run: |
+          system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+          out="$(nix build ".#checks.${system}.source-audit" --no-link --print-out-paths)"
+          cat "$out/source-audit.txt"
       - name: Toolchain info
         run: nix develop . -c make toolchain-info
       - name: Check
