@@ -257,10 +257,18 @@ struct RawArgs {
     live: bool,
     #[arg(long = "live-forever", action = ArgAction::SetTrue)]
     live_forever: bool,
-    #[arg(long = "live-cycles", value_name = "COUNT")]
-    live_cycles: Option<String>,
-    #[arg(long = "live-clients", value_name = "COUNT")]
-    live_clients: Option<String>,
+    #[arg(
+        long = "live-cycles",
+        value_name = "COUNT",
+        value_parser = parse_live_cycles_arg
+    )]
+    live_cycles: Option<usize>,
+    #[arg(
+        long = "live-clients",
+        value_name = "COUNT",
+        value_parser = parse_live_clients_arg
+    )]
+    live_clients: Option<usize>,
     #[arg(long = "command", value_name = "SHELL", allow_hyphen_values = true)]
     command: Option<String>,
     #[arg(long = "cwd", value_name = "DIR", allow_hyphen_values = true)]
@@ -274,11 +282,16 @@ struct RawArgs {
     env: Vec<(String, String)>,
     #[arg(
         long = "resize-policy",
-        value_name = "fixed|leader|active-client|manual"
+        value_name = "fixed|leader|active-client|manual",
+        value_parser = parse_resize_policy_for_clap
     )]
-    resize_policy: Option<String>,
-    #[arg(long = "terminal-engine", value_name = "interim|libghostty-vt")]
-    terminal_engine_kind: Option<String>,
+    resize_policy: Option<protocol::ResizePolicy>,
+    #[arg(
+        long = "terminal-engine",
+        value_name = "interim|libghostty-vt",
+        value_parser = parse_terminal_engine_kind_for_clap
+    )]
+    terminal_engine_kind: Option<TerminalEngineKind>,
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
@@ -295,33 +308,17 @@ where
         Some(path) => (path, local::SocketPathSource::Explicit),
         None => local::default_socket_path_and_source(),
     };
-    let live_cycles = raw
-        .live_cycles
-        .map(|value| parse_numeric_arg("--live-cycles", value))
-        .transpose()?;
-    let live_clients = raw
-        .live_clients
-        .map(|value| parse_numeric_arg("--live-clients", value))
-        .transpose()?;
+    let live_cycles = raw.live_cycles;
+    let live_clients = raw.live_clients;
     let working_dir = match raw.working_dir {
         Some(value) if value.is_empty() => {
             return Err("--cwd requires a non-empty directory path".into());
         }
         value => value,
     };
-    let resize_policy = raw
-        .resize_policy
-        .as_deref()
-        .map(parse_resize_policy)
-        .transpose()
-        .map_err(|err| format!("--resize-policy {err}"))?
-        .unwrap_or(protocol::ResizePolicy::Fixed);
+    let resize_policy = raw.resize_policy.unwrap_or(protocol::ResizePolicy::Fixed);
     let terminal_engine_kind = raw
         .terminal_engine_kind
-        .as_deref()
-        .map(parse_terminal_engine_kind)
-        .transpose()
-        .map_err(|err| format!("--terminal-engine {err}"))?
         .unwrap_or(TerminalEngineKind::InterimText);
 
     if !(raw.help
@@ -475,14 +472,26 @@ where
         .map_err(|err| format!("{flag} requires a valid number: {err}"))
 }
 
+fn parse_live_cycles_arg(value: &str) -> Result<usize, String> {
+    parse_numeric_arg("--live-cycles", value.to_owned())
+}
+
+fn parse_live_clients_arg(value: &str) -> Result<usize, String> {
+    parse_numeric_arg("--live-clients", value.to_owned())
+}
+
 fn clap_error_message(error: clap::Error) -> String {
     let first_line = error.to_string();
-    first_line
+    let first_line = first_line
         .lines()
         .next()
         .unwrap_or("invalid command line")
         .trim_start_matches("error: ")
-        .to_owned()
+        .to_owned();
+    if let Some(index) = first_line.find(": --") {
+        return first_line[index + 2..].to_owned();
+    }
+    first_line
 }
 
 fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
@@ -601,6 +610,10 @@ fn parse_resize_policy(value: &str) -> Result<protocol::ResizePolicy, &'static s
     }
 }
 
+fn parse_resize_policy_for_clap(value: &str) -> Result<protocol::ResizePolicy, String> {
+    parse_resize_policy(value).map_err(|err| format!("--resize-policy {err}"))
+}
+
 fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'static str> {
     match value {
         "interim" => Ok(TerminalEngineKind::InterimText),
@@ -610,6 +623,10 @@ fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'stati
         "libghostty-vt" => Err("libghostty-vt requires the libghostty-vt feature"),
         _ => Err("requires interim or libghostty-vt"),
     }
+}
+
+fn parse_terminal_engine_kind_for_clap(value: &str) -> Result<TerminalEngineKind, String> {
+    parse_terminal_engine_kind(value).map_err(|err| format!("--terminal-engine {err}"))
 }
 
 #[cfg(test)]

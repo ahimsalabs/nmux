@@ -128,7 +128,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.list_key_names || args.list_key_names_json {
-        print_key_names(args.list_key_names_json);
+        print_key_names(output_format(args.list_key_names_json));
         return Ok(());
     }
 
@@ -138,7 +138,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.print_context || args.print_context_json {
-        if let Err(err) = print_context(args.print_context_json) {
+        if let Err(err) = print_context(output_format(args.print_context_json)) {
             report_cli_error(&args, err.as_ref())?;
             return Err(err);
         }
@@ -222,16 +222,23 @@ fn run_attach_loop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    let _raw_terminal = match RawTerminalGuard::enable_if_needed(args.stdin_bytes, args.local_echo)
-    {
+    let _raw_terminal = match RawTerminalGuard::enable_if_needed(
+        RawTerminalModeContext {
+            stdin_bytes: args.stdin_bytes,
+            stdin_is_tty: stdin_is_tty(),
+        },
+        args.local_echo,
+    ) {
         Ok(guard) => guard,
         Err(err) => {
             report_live_setup_error(args, &err)?;
             return Err(err.into());
         }
     };
-    let _redraw_terminal = match RedrawTerminalGuard::enable_if_needed(args.redraw, stdout_is_tty())
-    {
+    let _redraw_terminal = match RedrawTerminalGuard::enable_if_needed(RedrawTerminalContext {
+        redraw: args.redraw,
+        stdout_is_tty: stdout_is_tty(),
+    }) {
         Ok(guard) => guard,
         Err(err) => {
             report_live_setup_error(args, &err)?;
@@ -239,14 +246,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     warn_if_interim_surface_fidelity_is_visible(args.stdin_bytes);
-    let mut sigwinch_resize =
-        match SigwinchResize::enable_if_needed(args.stdin_bytes, args.live_resize.is_some()) {
-            Ok(resize) => resize,
-            Err(err) => {
-                report_live_setup_error(args, &err)?;
-                return Err(err.into());
-            }
-        };
+    let mut sigwinch_resize = match SigwinchResize::enable_if_needed(SigwinchResizeContext {
+        stdin_bytes: args.stdin_bytes,
+        explicit_resize: args.live_resize.is_some(),
+        stdin_is_tty: stdin_is_tty(),
+    }) {
+        Ok(resize) => resize,
+        Err(err) => {
+            report_live_setup_error(args, &err)?;
+            return Err(err.into());
+        }
+    };
     let mut client_state = match load_client_state(args.state_path.as_deref()) {
         Ok(state) => state,
         Err(err) => {
@@ -1035,8 +1045,11 @@ struct RawTerminalGuard {
 }
 
 impl RawTerminalGuard {
-    fn enable_if_needed(stdin_bytes: bool, local_echo: LocalEcho) -> io::Result<Option<Self>> {
-        if !raw_terminal_mode_needed(stdin_bytes, stdin_is_tty()) {
+    fn enable_if_needed(
+        context: RawTerminalModeContext,
+        local_echo: LocalEcho,
+    ) -> io::Result<Option<Self>> {
+        if !raw_terminal_mode_needed(context) {
             return Ok(None);
         }
 
@@ -1069,15 +1082,21 @@ impl Drop for RawTerminalGuard {
     }
 }
 
-fn raw_terminal_mode_needed(stdin_bytes: bool, stdin_is_tty: bool) -> bool {
-    stdin_bytes && stdin_is_tty
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct RawTerminalModeContext {
+    stdin_bytes: bool,
+    stdin_is_tty: bool,
+}
+
+fn raw_terminal_mode_needed(context: RawTerminalModeContext) -> bool {
+    context.stdin_bytes && context.stdin_is_tty
 }
 
 struct RedrawTerminalGuard;
 
 impl RedrawTerminalGuard {
-    fn enable_if_needed(redraw: bool, stdout_is_tty: bool) -> io::Result<Option<Self>> {
-        if !redraw_terminal_guard_needed(redraw, stdout_is_tty) {
+    fn enable_if_needed(context: RedrawTerminalContext) -> io::Result<Option<Self>> {
+        if !redraw_terminal_guard_needed(context) {
             return Ok(None);
         }
 
@@ -1094,8 +1113,14 @@ impl Drop for RedrawTerminalGuard {
     }
 }
 
-fn redraw_terminal_guard_needed(redraw: bool, stdout_is_tty: bool) -> bool {
-    redraw && stdout_is_tty
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct RedrawTerminalContext {
+    redraw: bool,
+    stdout_is_tty: bool,
+}
+
+fn redraw_terminal_guard_needed(context: RedrawTerminalContext) -> bool {
+    context.redraw && context.stdout_is_tty
 }
 
 struct SigwinchResize {
@@ -1104,12 +1129,8 @@ struct SigwinchResize {
 }
 
 impl SigwinchResize {
-    fn enable_if_needed(stdin_bytes: bool, explicit_resize: bool) -> io::Result<Self> {
-        if !sigwinch_resize_needed(SigwinchResizeContext {
-            stdin_bytes,
-            explicit_resize,
-            stdin_is_tty: stdin_is_tty(),
-        }) {
+    fn enable_if_needed(context: SigwinchResizeContext) -> io::Result<Self> {
+        if !sigwinch_resize_needed(context) {
             return Ok(Self {
                 _guard: None,
                 last_size: None,
@@ -1877,7 +1898,21 @@ where
     })
 }
 
-fn print_context(json: bool) -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutputFormat {
+    Text,
+    Json,
+}
+
+fn output_format(json: bool) -> OutputFormat {
+    if json {
+        OutputFormat::Json
+    } else {
+        OutputFormat::Text
+    }
+}
+
+fn print_context(format: OutputFormat) -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("NMUX").ok().as_deref() != Some("1") {
         return Err("not running inside an nmux pane (NMUX=1 is not set)".into());
     }
@@ -1887,7 +1922,7 @@ fn print_context(json: bool) -> Result<(), Box<dyn std::error::Error>> {
     let socket = required_context_env("NMUX_SOCKET")?;
     let origin = required_context_env("NMUX_ORIGIN")?;
 
-    if json {
+    if format == OutputFormat::Json {
         println!(
             "{}",
             format_context_json(&session_id, &pane_id, &socket, &origin)
@@ -1941,15 +1976,16 @@ struct StateInfoSocketSummary<'a> {
     scope_matches_socket: Option<bool>,
 }
 
-fn print_key_names(json: bool) {
-    if json {
-        println!("{}", format_key_names_json());
-    } else {
-        for key_name in SUPPORTED_KEY_NAMES {
-            println!("{key_name}");
-        }
-        for (alias, canonical) in KEY_NAME_ALIASES {
-            println!("{alias} -> {canonical}");
+fn print_key_names(format: OutputFormat) {
+    match format {
+        OutputFormat::Json => println!("{}", format_key_names_json()),
+        OutputFormat::Text => {
+            for key_name in SUPPORTED_KEY_NAMES {
+                println!("{key_name}");
+            }
+            for (alias, canonical) in KEY_NAME_ALIASES {
+                println!("{alias} -> {canonical}");
+            }
         }
     }
 }
@@ -3248,18 +3284,18 @@ mod tests {
         ClientModeArgs, DetachKey, ExplicitInputModeArgs, FocusEvent,
         InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
         LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
-        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScrollbackSelectionArgFlags,
-        SigwinchResizeContext, StateInfoSocketSummary, args_from_iter, format_cli_error_json,
-        format_context_json, format_input_choices_json, format_key_names_json,
-        format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
-        format_live_error_json, format_live_surface_update_json, format_live_workspace_json,
-        format_rendered_attach_json, format_scrollback, format_state_info_json,
-        format_state_info_text, interim_surface_fidelity_warning_needed, live_update_print_kind,
-        managed_ready_error_message, parse_detach_key, parse_env_assignment, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        RawTerminalModeContext, RedrawTerminalContext, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES,
+        ScrollbackSelectionArgFlags, SigwinchResizeContext, StateInfoSocketSummary, args_from_iter,
+        format_cli_error_json, format_context_json, format_input_choices_json,
+        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
+        format_live_detach_json, format_live_error_json, format_live_surface_update_json,
+        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
+        format_state_info_json, format_state_info_text, interim_surface_fidelity_warning_needed,
+        live_update_print_kind, managed_ready_error_message, parse_detach_key,
+        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -3963,18 +3999,38 @@ mod tests {
 
     #[test]
     fn raw_terminal_mode_is_only_needed_for_stdin_bytes_on_tty() {
-        assert!(raw_terminal_mode_needed(true, true));
-        assert!(!raw_terminal_mode_needed(true, false));
-        assert!(!raw_terminal_mode_needed(false, true));
-        assert!(!raw_terminal_mode_needed(false, false));
+        let interactive_byte_mode = RawTerminalModeContext {
+            stdin_bytes: true,
+            stdin_is_tty: true,
+        };
+
+        assert!(raw_terminal_mode_needed(interactive_byte_mode));
+        assert!(!raw_terminal_mode_needed(RawTerminalModeContext {
+            stdin_is_tty: false,
+            ..interactive_byte_mode
+        }));
+        assert!(!raw_terminal_mode_needed(RawTerminalModeContext {
+            stdin_bytes: false,
+            ..interactive_byte_mode
+        }));
     }
 
     #[test]
     fn redraw_terminal_guard_is_only_needed_for_redraw_on_tty() {
-        assert!(redraw_terminal_guard_needed(true, true));
-        assert!(!redraw_terminal_guard_needed(true, false));
-        assert!(!redraw_terminal_guard_needed(false, true));
-        assert!(!redraw_terminal_guard_needed(false, false));
+        let redraw_to_tty = RedrawTerminalContext {
+            redraw: true,
+            stdout_is_tty: true,
+        };
+
+        assert!(redraw_terminal_guard_needed(redraw_to_tty));
+        assert!(!redraw_terminal_guard_needed(RedrawTerminalContext {
+            stdout_is_tty: false,
+            ..redraw_to_tty
+        }));
+        assert!(!redraw_terminal_guard_needed(RedrawTerminalContext {
+            redraw: false,
+            ..redraw_to_tty
+        }));
     }
 
     #[test]
