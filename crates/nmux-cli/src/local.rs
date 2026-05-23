@@ -72,6 +72,14 @@ pub fn socket_path_json(path: &Path, source: SocketPathSource) -> String {
     )
 }
 
+pub fn version_json(binary: &str, version: &str) -> String {
+    format!(
+        "{{\"binary\":{},\"version\":{}}}",
+        json_string(binary),
+        json_string(version)
+    )
+}
+
 pub fn json_string(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len() + 2);
     escaped.push('"');
@@ -5222,6 +5230,14 @@ mod tests {
         assert_eq!(
             socket_path_json(Path::new("/tmp/nmux.sock"), SocketPathSource::Explicit),
             "{\"NMUX_SOCKET\":\"/tmp/nmux.sock\",\"source\":\"--socket\"}"
+        );
+    }
+
+    #[test]
+    fn version_json_escapes_values() {
+        assert_eq!(
+            version_json("nmux\"cli", "1.2.3\n"),
+            "{\"binary\":\"nmux\\\"cli\",\"version\":\"1.2.3\\n\"}"
         );
     }
 

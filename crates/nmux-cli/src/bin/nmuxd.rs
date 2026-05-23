@@ -26,8 +26,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if args.version {
-        println!("nmuxd {VERSION}");
+    if args.version || args.version_json {
+        if args.version_json {
+            println!("{}", local::version_json("nmuxd", VERSION));
+        } else {
+            println!("nmuxd {VERSION}");
+        }
         return Ok(());
     }
 
@@ -161,6 +165,7 @@ fn wait_for_pane_output(
 struct Args {
     help: bool,
     version: bool,
+    version_json: bool,
     print_socket: bool,
     print_socket_json: bool,
     socket_path: PathBuf,
@@ -178,6 +183,7 @@ struct Args {
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut help = false;
     let mut version = false;
+    let mut version_json = false;
     let mut print_socket = false;
     let mut print_socket_json = false;
     let (mut socket_path, mut socket_source) = local::default_socket_path_and_source();
@@ -198,6 +204,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             }
             "--version" | "-V" => {
                 version = true;
+            }
+            "--version-json" => {
+                version_json = true;
             }
             "--print-socket" => {
                 print_socket = true;
@@ -248,13 +257,14 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
-    if !(help || version || print_socket || print_socket_json) {
+    if !(help || version || version_json || print_socket || print_socket_json) {
         validate_mode_args(one_shot, live, live_forever, live_cycles, live_clients)?;
     }
 
     Ok(Args {
         help,
         version,
+        version_json,
         print_socket,
         print_socket_json,
         socket_path,
@@ -328,6 +338,7 @@ Options:
                                          Publish and enforce pane resize policy
   --terminal-engine interim|libghostty-vt
                                          Backend terminal engine implementation
+  --version-json                         Show version as JSON
   -V, --version                         Show version
   -h, --help                            Show this help
 
@@ -434,6 +445,7 @@ mod tests {
         assert!(usage.contains("--live"));
         assert!(usage.contains("--print-socket"));
         assert!(usage.contains("--print-socket-json"));
+        assert!(usage.contains("--version-json"));
         assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--live-forever"));
         assert!(usage.contains("--live-cycles COUNT"));

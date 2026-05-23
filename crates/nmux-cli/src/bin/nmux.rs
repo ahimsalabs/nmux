@@ -31,8 +31,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if args.version {
-        println!("nmux {VERSION}");
+    if args.version || args.version_json {
+        if args.version_json {
+            println!("{}", local::version_json("nmux", VERSION));
+        } else {
+            println!("nmux {VERSION}");
+        }
         return Ok(());
     }
 
@@ -895,6 +899,7 @@ fn format_scrollback(scrollback: &local::ScrollbackChunkSummary) -> String {
 struct Args {
     help: bool,
     version: bool,
+    version_json: bool,
     print_context: bool,
     print_context_json: bool,
     print_socket: bool,
@@ -934,6 +939,7 @@ where
 {
     let mut help = false;
     let mut version = false;
+    let mut version_json = false;
     let mut print_context = false;
     let mut print_context_json = false;
     let mut print_socket = false;
@@ -980,6 +986,9 @@ where
             }
             "--version" | "-V" => {
                 version = true;
+            }
+            "--version-json" => {
+                version_json = true;
             }
             "--print-context" => {
                 print_context = true;
@@ -1132,8 +1141,13 @@ where
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
-    let exits_before_attach =
-        help || version || print_context || print_context_json || print_socket || print_socket_json;
+    let exits_before_attach = help
+        || version
+        || version_json
+        || print_context
+        || print_context_json
+        || print_socket
+        || print_socket_json;
     let live_resize = if exits_before_attach {
         match (live_cols, live_rows) {
             (Some(cols), Some(rows)) => Some((cols, rows)),
@@ -1198,6 +1212,7 @@ where
     Ok(Args {
         help,
         version,
+        version_json,
         print_context,
         print_context_json,
         print_socket,
@@ -1517,6 +1532,7 @@ Options:
   --rows COUNT               Live ResizeIntent rows; both dimensions required
   --interval-ms MS           Poll/read timeout in milliseconds
   --iterations COUNT         Bounded follow/live cycle count
+  --version-json             Show version as JSON
   -V, --version              Show version
   -h, --help                 Show this help
 
@@ -1821,6 +1837,7 @@ mod tests {
         assert!(!args.no_input);
         assert!(!args.live);
         assert!(!args.version);
+        assert!(!args.version_json);
         assert!(!args.print_context);
         assert!(!args.print_context_json);
         assert!(!args.print_socket);
@@ -1831,6 +1848,12 @@ mod tests {
     fn print_context_json_arg_exits_before_mode_validation() {
         let args = args_from_iter(["--print-context-json", "--cols", "80"]).expect("args");
         assert!(args.print_context_json);
+    }
+
+    #[test]
+    fn version_json_arg_exits_before_mode_validation() {
+        let args = args_from_iter(["--version-json", "--cols", "80"]).expect("args");
+        assert!(args.version_json);
     }
 
     #[test]
@@ -2531,6 +2554,7 @@ mod tests {
         assert!(usage.contains("--print-context-json"));
         assert!(usage.contains("--print-socket"));
         assert!(usage.contains("--print-socket-json"));
+        assert!(usage.contains("--version-json"));
         assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--connect-timeout-ms MS"));
         assert!(usage.contains("--local-echo off|tty"));
