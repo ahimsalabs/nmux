@@ -3182,9 +3182,6 @@ impl ClientPaneSurface {
             )
             .into());
         }
-        if update.patch_kind == Some(protocol::PatchKind::FullRefreshRequired) {
-            return Err("surface patch requires full refresh".into());
-        }
         if let Some(patch_kind) = update.patch_kind {
             validate_patch_kind(patch_kind)?;
         }
@@ -3195,6 +3192,9 @@ impl ClientPaneSurface {
         }
         if let Some(patch_kind) = update.patch_kind {
             validate_no_row_patch_payload(patch_kind, &update.row_updates)?;
+        }
+        if update.patch_kind == Some(protocol::PatchKind::FullRefreshRequired) {
+            return Err("surface patch requires full refresh".into());
         }
         if update.patch_kind == Some(protocol::PatchKind::CursorOnly) {
             if let Some(colors) = update.colors.as_ref()
@@ -3336,6 +3336,7 @@ fn validate_no_row_patch_payload(
             protocol::PatchKind::CursorOnly
                 | protocol::PatchKind::ModeOnly
                 | protocol::PatchKind::ColorOnly
+                | protocol::PatchKind::FullRefreshRequired
         )
     {
         return Err(format!("{patch_kind:?} patch cannot carry row updates").into());
@@ -6532,11 +6533,18 @@ mod tests {
 
     #[test]
     fn rejects_no_row_surface_patch_with_row_updates_from_frame() {
-        let frame = pane_surface_patch_with_row_frame(protocol::PatchKind::CursorOnly);
-        let err = surface_update_from_frame(&frame)
-            .expect_err("cursor-only patch with row updates should be rejected");
+        for kind in [
+            protocol::PatchKind::CursorOnly,
+            protocol::PatchKind::ModeOnly,
+            protocol::PatchKind::ColorOnly,
+            protocol::PatchKind::FullRefreshRequired,
+        ] {
+            let frame = pane_surface_patch_with_row_frame(kind);
+            let err = surface_update_from_frame(&frame)
+                .expect_err("no-row patch with row updates should be rejected");
 
-        assert!(err.to_string().contains("cannot carry row updates"));
+            assert!(err.to_string().contains("cannot carry row updates"));
+        }
     }
 
     #[test]
@@ -6797,6 +6805,7 @@ mod tests {
             protocol::PatchKind::CursorOnly,
             protocol::PatchKind::ModeOnly,
             protocol::PatchKind::ColorOnly,
+            protocol::PatchKind::FullRefreshRequired,
         ] {
             let mut snapshot = surface_update(
                 SurfaceUpdateKind::Snapshot,
