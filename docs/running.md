@@ -228,8 +228,8 @@ Current coverage includes:
   working-directory metadata, terminal color state, render-state default
   colors/palette, palette overrides, and explicit cursor color;
 - style-separated visible rows, styled scrollback rows, style-bearing trailing
-  blanks, cell widths, combining marks, emoji ZWJ clusters, basic SGR style
-  flags, underline color, palette-indexed colors, row-level dirty state, row
+  blanks, cell widths, combining marks, emoji ZWJ clusters, SGR style
+  flags, underline variants, underline color, palette-indexed colors, row-level dirty state, row
   state hashes, hyperlink presence, and Kitty graphics placeholder metadata;
 - alternate-screen entry/restoration with alternate scrollback omission,
   resize/reflow, committed live resize metadata, metadata-only `CursorOnly`

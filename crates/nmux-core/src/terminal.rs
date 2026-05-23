@@ -2311,7 +2311,7 @@ mod tests {
         let update = engine
             .apply_output(
                 terminal_input(2, &empty, &empty),
-                b"\x1b[1;3;4;9mflags\x1b[0m plain",
+                b"\x1b[1;2;3;4;5;7;8;9;53mflags\x1b[0m plain",
             )
             .expect("terminal update");
 
@@ -2329,7 +2329,12 @@ mod tests {
         assert_ne!(flags_run.style_id, 0);
         assert_ne!(style.flags & (1 << 0), 0, "bold flag missing");
         assert_ne!(style.flags & (1 << 1), 0, "italic flag missing");
+        assert_ne!(style.flags & (1 << 2), 0, "faint flag missing");
+        assert_ne!(style.flags & (1 << 3), 0, "blink flag missing");
+        assert_ne!(style.flags & (1 << 4), 0, "inverse flag missing");
+        assert_ne!(style.flags & (1 << 5), 0, "invisible flag missing");
         assert_ne!(style.flags & (1 << 6), 0, "strikethrough flag missing");
+        assert_ne!(style.flags & (1 << 7), 0, "overline flag missing");
         assert_ne!(style.flags & (1 << 8), 0, "underline flag missing");
 
         let plain_run = update
@@ -2339,6 +2344,46 @@ mod tests {
             .find(|run| run.text.contains(" plain"))
             .expect("plain run");
         assert_eq!(plain_run.style_id, 0);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_extracts_underline_variants() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let update = engine
+            .apply_output(
+                terminal_input(2, &empty, &empty),
+                b"\x1b[4msingle\x1b[0m \x1b[4:2mdouble\x1b[0m \x1b[4:3mcurly\x1b[0m \x1b[4:4mdotted\x1b[0m \x1b[4:5mdashed\x1b[0m",
+            )
+            .expect("terminal update");
+
+        for (text, flag) in [
+            ("single", 1 << 8),
+            ("double", 1 << 9),
+            ("curly", 1 << 10),
+            ("dotted", 1 << 11),
+            ("dashed", 1 << 12),
+        ] {
+            let run = update
+                .surface_row_runs
+                .iter()
+                .flat_map(|row| row.iter())
+                .find(|run| run.text.contains(text))
+                .unwrap_or_else(|| panic!("{text} underline run missing"));
+            let style = update
+                .styles
+                .get(run.style_id as usize)
+                .unwrap_or_else(|| panic!("{text} underline style missing"));
+
+            assert_ne!(run.style_id, 0, "{text} underline style ID missing");
+            assert_ne!(
+                style.flags & flag,
+                0,
+                "{text} underline flag {flag:#x} missing"
+            );
+        }
     }
 
     #[cfg(feature = "libghostty-vt")]

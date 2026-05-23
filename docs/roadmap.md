@@ -108,7 +108,7 @@ Done:
 - Live attach now has coverage that a known surface version receives a full `PaneSurfaceSnapshot` when the daemon marks the latest update `FullRefreshRequired`.
 - `ScrollbackChunk` now carries the pane style table, so scrollback row runs no longer reference style IDs without an accompanying table.
 - The optional `libghostty-vt` engine extracts visible and scrollback rows as style-separated cell runs with cell-width metadata, while keeping plain rendered text available for current clients. Style-bearing trailing blank cells are preserved so background-colored row regions survive, while default trailing blanks stay trimmed.
-- Basic SGR style flags now have `libghostty-vt` extraction coverage for bold, italic, underline, and strikethrough style-table bits.
+- SGR style flags now have `libghostty-vt` extraction coverage for bold, italic, faint, blink, inverse, invisible, strikethrough, overline, and single/double/curly/dotted/dashed underline style-table bits.
 - Underline color now has `libghostty-vt` extraction coverage proving it resolves into an RGBA style-table entry.
 - Cursor-only `libghostty-vt` patches now cover cursor movement, visibility changes, and DECSCUSR visual shape changes; feature-gated local and live CLI coverage proves cursor-only patches stream after attach, avoid row repaint, update cached client cursor metadata, and survive persisted state encode/decode plus real `--state` reattach.
 - `libghostty-vt` terminal-generated PTY writes are drained from the terminal engine and routed back through host-backed output polling; feature-gated local and live CLI coverage proves a DECRQM wrap-mode query reply reaches the pane process.

@@ -78,7 +78,7 @@ Do not freeze these into ad hoc string fields. Add protocol fields or objects
 only after the backend extraction proves the exact shape needed.
 
 - Cell style runs: `libghostty-vt` now supplies foreground/background colors,
-  underline color, basic SGR flags, style identity, and cell widths for visible
+  underline color, SGR flags, underline variants, style identity, and cell widths for visible
   and scrollback rows. Surface snapshots and scrollback chunks carry a pane
   style table. The extractor preserves style-bearing trailing blank cells so
   background-colored terminal regions do not disappear from row runs, while
@@ -190,7 +190,7 @@ keep tests proving:
 ## Current libghostty-vt Default/CI Promotion Gate
 
 The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
-extraction, style-separated cell runs, basic SGR style flags, underline color,
+extraction, style-separated cell runs, SGR style flags, underline variants, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
 render-state default colors/palette, palette overrides, explicit cursor color,
 palette-indexed style refreshes after palette overrides, terminal color state and color-only patches, alternate-screen entry/restoration with alternate

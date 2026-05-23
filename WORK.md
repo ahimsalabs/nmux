@@ -243,10 +243,12 @@ Style
   bold
   italic
   faint
+  blink
+  inverse
+  invisible
+  overline
   underline_kind
   strikethrough
-  reverse
-  blink
 ```
 
 That lets snapshots be compact and patches be row/range-based.
@@ -499,7 +501,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   optional libghostty-vt feature feeds PTY bytes into daemon-owned VT state, not clients
   optional libghostty-vt engine maps cursor, surface kind, terminal modes, visible rows, styled scrollback rows, row runs, style IDs, cell widths, resize/reflow, and backend-owned scrollback into nmux objects
   libghostty-vt extraction preserves style-bearing trailing blank cells while still trimming default trailing blanks
-  optional libghostty-vt coverage includes cursor visibility/shape/blink state, alternate-screen entry/restoration with alternate scrollback omission and structured main scrollback preservation, combining marks, emoji ZWJ clusters, basic SGR style flags, underline color, palette-indexed SGR color resolution, terminal color state, render-state default colors/palette, palette overrides, explicit cursor color, title metadata, OSC 7 working-directory metadata extraction, OSC 133 row semantic prompt state, OSC 133 per-run semantic content, row-level dirty state, Kitty graphics placeholder metadata, hyperlink presence on row runs, bracketed paste, paste safety validation, local PasteInput forwarding with daemon-owned delimiter selection, detailed mouse tracking mode/format state and pane-bounds/mode-gated MouseInput forwarding with validated low-four-bit modifiers, focus reporting and daemon-gated FocusInput forwarding with disabled-mode Error frames, common named-key forwarding, application keypad tracking and mode-aware keypad Enter/digit forwarding, application cursor tracking and mode-aware arrow-key forwarding, public named-key modifier syntax, engine-backed named-key encoding with modifier preservation, explicit encoder output, origin, and wraparound modes, and mode-aware key encoding
+  optional libghostty-vt coverage includes cursor visibility/shape/blink state, alternate-screen entry/restoration with alternate scrollback omission and structured main scrollback preservation, combining marks, emoji ZWJ clusters, SGR style flags and underline variants, underline color, palette-indexed SGR color resolution, terminal color state, render-state default colors/palette, palette overrides, explicit cursor color, title metadata, OSC 7 working-directory metadata extraction, OSC 133 row semantic prompt state, OSC 133 per-run semantic content, row-level dirty state, Kitty graphics placeholder metadata, hyperlink presence on row runs, bracketed paste, paste safety validation, local PasteInput forwarding with daemon-owned delimiter selection, detailed mouse tracking mode/format state and pane-bounds/mode-gated MouseInput forwarding with validated low-four-bit modifiers, focus reporting and daemon-gated FocusInput forwarding with disabled-mode Error frames, common named-key forwarding, application keypad tracking and mode-aware keypad Enter/digit forwarding, application cursor tracking and mode-aware arrow-key forwarding, public named-key modifier syntax, engine-backed named-key encoding with modifier preservation, explicit encoder output, origin, and wraparound modes, and mode-aware key encoding
   MouseInput carries optional pixel coordinates for SgrPixels mouse mode while keeping zero-based cell coordinates for pane-bounds gating and fallback encoding
   OSC 8 hyperlink text and backend row/cell hyperlink presence are preserved through CellRun flags, feature-gated local and live CLI coverage proves libghostty-vt OSC 8 run flags survive ReplaceRows cache updates, state encode/decode, and real --state reattach, and hyperlink IDs remain unset until backend URI identity is wired into nmux's hyperlink table
   current libghostty-vt bindings expose hyperlink presence but not structured per-cell identity plus URI/id/params lookup, so docs/upstream/libghostty-vt-hyperlink-identity.md tracks the upstream/API gap instead of duplicating OSC 8 terminal state in nmux
