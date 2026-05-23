@@ -176,8 +176,10 @@ the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped client to
 prove the relocated package layout can serve a real pane.
 GitHub Actions runs `make check` on pull requests and pushes to `main`; the
 promotion-evidence-bundle job is manual and does not make `libghostty-vt` a
-required CI gate. Use the field template in `docs/ci.md` when recording manual
-CI promotion evidence.
+required CI gate. That manual path uploads `nmux-promotion-evidence` and then a
+dependent job downloads the artifact and runs `make promotion-evidence-verify`
+against the downloaded copy. Use the field template in `docs/ci.md` when
+recording manual CI promotion evidence.
 
 If `nix develop` itself is unavailable, do not rewrite the flake or check in
 machine-local store paths. Either use an already entered dev shell, or record the

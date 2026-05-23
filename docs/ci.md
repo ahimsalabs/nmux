@@ -30,11 +30,14 @@ default gate plus the opt-in `libghostty-vt` gate, times the inner
 `make check-all` run, and produces a verifiable native-VT package archive. The
 bundle target gathers the same local promotion evidence under
 `target/promotion-evidence` and runs `make promotion-evidence-verify` before
-upload; the workflow uploads that directory as the `nmux-promotion-evidence`
-artifact. Copy passing or failing results into
+upload. The workflow uploads that directory as the `nmux-promotion-evidence`
+artifact, then a dependent job downloads the uploaded artifact into
+`target/downloaded-promotion-evidence` and runs
+`make PROMOTION_EVIDENCE_DIR=target/downloaded-promotion-evidence promotion-evidence-verify`.
+Copy passing or failing results into
 [default-engine-promotion.md](default-engine-promotion.md) with runner, cache,
-source-fetch, packaging, and flake context before using them as promotion
-evidence.
+source-fetch, packaging, artifact round-trip, and flake context before using
+them as promotion evidence.
 
 Record each manual run with these fields:
 
@@ -50,6 +53,7 @@ Record each manual run with these fields:
 | Timings | `check_all_real_seconds`, `check_all_user_seconds`, `check_all_sys_seconds`, `bundle_elapsed_seconds`, and total GitHub job duration. |
 | Provenance | `nmux-promotion-evidence` artifact, `SOURCE_FETCH.txt`, `Cargo.lock` hash, and locked `libghostty-vt`/`libghostty-vt-sys` records. |
 | Packaging | Archive name, SHA-256, package metadata, `packaging-archive-verify` result, `packaging-provenance-verify` result, relocated install root, clean library-path environment, and packaged runtime smoke result. |
+| Artifact round-trip | Whether the dependent artifact-verify job downloaded `nmux-promotion-evidence` and passed `make promotion-evidence-verify` against the downloaded copy. |
 | Outcome | Passed, failed, or canceled, including failed command and error summary. |
 | Follow-up | Any flake, cache miss, source-fetch, packaging, or platform issue created from the run. |
 

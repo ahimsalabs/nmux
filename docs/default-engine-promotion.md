@@ -64,9 +64,9 @@ engine or a regular CI requirement.
   should use the default gate, the opt-in terminal-correctness gate, and the
   combined promotion-evidence gate.
 - [CI notes](ci.md) document the required GitHub Actions default-engine gate,
-  the manual promotion evidence bundle job, the uploaded
-  `nmux-promotion-evidence` artifact, and the fields required when recording CI
-  promotion evidence here.
+  the manual promotion evidence bundle job, the uploaded and downloaded
+  `nmux-promotion-evidence` artifact verification path, and the fields required
+  when recording CI promotion evidence here.
 - [ADR 0026](adr/0026-native-vt-ci-promotion-criteria.md) defines the criteria
   a later decision must satisfy before native VT becomes regular or required CI.
 - The Makefile performs local tool preflight checks for `cargo`, `flatc`
@@ -139,8 +139,10 @@ engine or a regular CI requirement.
   directory and is not full cold-checkout evidence.
 - A GitHub Actions workflow now runs `make check` for pull requests and pushes
   to `main`; the `make promotion-evidence-bundle` job is manual, uploads the
-  `nmux-promotion-evidence` artifact, and must be run before any CI promotion
-  evidence is recorded here.
+  `nmux-promotion-evidence` artifact, and a dependent job downloads that
+  artifact and runs `make promotion-evidence-verify` against the downloaded
+  copy. The manual workflow must be run before any CI promotion evidence is
+  recorded here.
 - `target/promotion-evidence/SUMMARY.txt` records GitHub Actions run, ref, SHA,
   and runner fields when present, so CI rows can be copied from the uploaded
   artifact instead of inferred from the web UI.
@@ -232,8 +234,8 @@ multi-platform evidence.
 No manual GitHub Actions promotion evidence bundle run has been recorded yet. When
 one is run, record it here with the field set in [CI notes](ci.md): workflow
 run, git revision, runner, toolchain, source mode, cache state, timings,
-source-fetch provenance, uploaded artifact, packaging/archive SHA-256, runtime
-smoke result, outcome, and follow-up.
+source-fetch provenance, uploaded artifact, downloaded-artifact verifier result,
+packaging/archive SHA-256, runtime smoke result, outcome, and follow-up.
 
 | Date | Workflow Run | Runner | Command | Result |
 | --- | --- | --- | --- | --- |
@@ -243,8 +245,8 @@ smoke result, outcome, and follow-up.
 - Measure and record `make check-all` timing on more supported local systems,
   including a full cold-checkout or dependency-fetch run. Current cold-target
   evidence clears only `target/promotion-cold`.
-- Exercise the manual promotion evidence bundle job in CI before making the opt-in VT
-  gate required.
+- Exercise the manual promotion evidence bundle and downloaded-artifact verifier
+  jobs in CI before making the opt-in VT gate required.
 - Validate the non-Nix toolchain checklist with platform-specific setup
   commands, `make promotion-sample` output, and timings; the current local
   non-Nix attempt failed before tests because `flatc` was absent from the host

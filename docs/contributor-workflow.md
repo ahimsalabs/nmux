@@ -25,7 +25,9 @@ This validates the schema with `flatc` and runs `cargo test --workspace`
 against the default engine. Keep interim renderer limitations explicit in
 user-facing docs; green default-engine tests are not a claim of VT correctness.
 GitHub Actions runs this default gate on pull requests and pushes to `main`;
-see [ci.md](ci.md) for the workflow shape.
+the manual promotion workflow also uploads `nmux-promotion-evidence` and
+verifies the downloaded artifact in a dependent job. See [ci.md](ci.md) for the
+workflow shape.
 
 ## Terminal-Correctness Work
 
@@ -121,7 +123,8 @@ Run `make promotion-evidence-verify` directly when reviewing an existing bundle
 without regenerating the native build and packaging sample; it validates the
 bundled archive bytes through `make packaging-archive-verify`. Use
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify` when
-checking a downloaded artifact outside `target/promotion-evidence`.
+checking a downloaded artifact outside `target/promotion-evidence`. The manual
+CI workflow performs the same downloaded-artifact verification after upload.
 
 `make source-fetch-provenance-sample` writes the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source. Use it

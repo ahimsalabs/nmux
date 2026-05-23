@@ -47,4 +47,25 @@ jobs:
         with:
           name: nmux-promotion-evidence
           path: target/promotion-evidence
-          if-no-files-found: warn
+          if-no-files-found: error
+
+  promotion-evidence-artifact-verify:
+    name: promotion evidence artifact verify
+    if: github.event_name == 'workflow_dispatch'
+    needs: promotion-evidence-bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Download promotion evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: nmux-promotion-evidence
+          path: target/downloaded-promotion-evidence
+      - name: Verify downloaded promotion evidence
+        run: nix develop . -c make PROMOTION_EVIDENCE_DIR=target/downloaded-promotion-evidence promotion-evidence-verify
