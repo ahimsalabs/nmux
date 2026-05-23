@@ -608,7 +608,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   docs/adr/README.md now shows ADR status in the index so accepted decisions and older proposed records are visible without opening every file
   README and docs/running.md show the local-smoke success signature so first-run users can recognize a completed default workflow through noisy build output
   README and docs/running.md label manual daemon/client examples by shell so first-run users do not mistake the long-running nmuxd side for a stuck single-shell command
-  docs/toolchain.md now documents the supported Nix path, opens with the normal check/local-smoke path plus a quick target chooser, and keeps the non-Nix requirements checklist from counting as default-engine promotion evidence
+  docs/toolchain.md now documents the supported Nix path, opens with the normal check/local-smoke path plus a quick target chooser, splits promotion-cold-deps, promotion-local-sample, and promotion-evidence-bundle by evidence question, and keeps the non-Nix requirements checklist from counting as default-engine promotion evidence
   docs/toolchain.md now includes a required field template for future non-Nix promotion attempts, covering setup commands, exact tool versions, source mode, cache state, timing, packaging follow-up, and gaps
   docs/source-fetch-policy.md now records current opt-in libghostty-vt-sys fetch behavior, gives question-to-command guidance for provenance and cache-present offline evidence targets, and keeps packaged/default-build source policy as explicit promotion work
   docs/default-engine-promotion.md now presents remaining promotion blockers as evidence requirements with explicit recording locations
