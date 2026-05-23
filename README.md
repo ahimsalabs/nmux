@@ -41,8 +41,10 @@ persisted client render state, daemon-owned scrollback fetches, nested
 
 What is not default-ready: the default engine is still the interim text surface,
 not a full VT-correct renderer; `libghostty-vt` is still opt-in because native
-build cost, repeated CI evidence, non-Nix setup, source-fetch policy, packaging,
-and frontend Ghostty renderer hydration are not accepted yet.
+build cost, repeated CI evidence, non-Nix setup, source-fetch policy, and
+packaging are not accepted yet. Frontend Ghostty renderer hydration is a
+separate post-M14 track; it is not part of the backend default-engine promotion
+evidence tracked in [docs/default-engine-promotion.md](docs/default-engine-promotion.md).
 
 ## First Run
 
