@@ -316,42 +316,16 @@ packaging/archive SHA-256, runtime smoke result, outcome, and follow-up.
 
 ## Open Work
 
-- Measure and record `make check-all` timing on more supported local systems,
-  including a full cold-checkout or cold-machine run. Current cold-target
-  evidence clears only `target/promotion-cold`, and current cold-deps evidence
-  isolates Cargo home and target dirs but not the Nix store, checkout, or
-  network state.
-- Record more manual promotion evidence bundle and downloaded-artifact verifier
-  samples in CI before making the opt-in VT gate required. The first passing
-  2026-05-23 sample proves the heap-stabilized callback registration path, the
-  serialized `RUST_TEST_THREADS=1` native-VT gate, and the downloaded-artifact
-  verifier on one Ubuntu GitHub Actions runner. For each repeat sample, record
-  runner identity, cache classification, retry status, and any native-VT flake.
-  Also resolve or explicitly accept the GitHub Node 20 action deprecation
-  warning before treating the workflow path as stable promotion evidence.
-- Validate the non-Nix toolchain checklist with platform-specific setup
-  commands, `make promotion-sample` output, and timings; the current local
-  non-Nix attempt failed before tests because `flatc` was absent from the host
-  PATH outside the Nix shell, while the supported Nix shell has already
-  provisioned the required `flatc`.
-- Choose a source policy for packaged/default builds: pinned network fetch with
-  CI/cache controls, vendored or mirrored source, `GHOSTTY_SOURCE_DIR`
-  prefetching, or a native-library package/artifact cache.
-- Define packaging expectations for binaries that include the native Ghostty VT
-  dependency, including supported targets, static/dynamic linkage, artifact
-  provenance, signing/notarization where relevant, release checks, and recorded
-  `make packaging-sample`, `make packaging-layout-sample`,
-  `make packaging-layout-verify`, `make packaging-provenance-sample`,
-  `make packaging-provenance-verify`,
-  `make packaging-provenance-manifest-verify`,
-  `make packaging-archive-sample`, `make packaging-archive-verify`, and
-  `make packaging-archive-runtime-smoke`
-  results. The current Darwin packaging samples show the opt-in release
-  binaries can run with an explicit runtime library path and staged wrapper
-  layout, and the staged layout now has a no-rebuild verifier, but packaged
-  binaries still need signing and platform distribution strategy.
-- Keep contributor workflow guidance current as default-engine, opt-in
-  terminal-correctness, and promotion-evidence responsibilities change.
+Resolve each blocker with evidence, not intent:
+
+| Blocker | Proof needed | Record it in |
+| --- | --- | --- |
+| Local native-VT cost on supported systems | `make check-all` timing on more supported local systems, including a full cold-checkout or cold-machine run. Current cold-target evidence clears only `target/promotion-cold`, and current cold-deps evidence isolates Cargo home and target dirs but not the Nix store, checkout, or network state. | Local timing samples |
+| Repeat CI promotion confidence | More manual `make promotion-evidence-bundle` plus downloaded-artifact verifier samples before making the opt-in VT gate required. The first passing 2026-05-23 sample proves the heap-stabilized callback registration path, the serialized `RUST_TEST_THREADS=1` native-VT gate, and the downloaded-artifact verifier on one Ubuntu GitHub Actions runner. Each repeat sample needs runner identity, cache classification, retry status, and any native-VT flake. Resolve or explicitly accept the GitHub Node 20 action deprecation warning before treating the workflow path as stable promotion evidence. | CI promotion samples |
+| Non-Nix setup | Platform-specific setup commands, exact tool versions, `make promotion-sample` output, and timings. The current local non-Nix attempt failed before tests because `flatc` was absent from the host PATH outside the Nix shell, while the supported Nix shell has already provisioned the required `flatc`. | Non-Nix local attempts |
+| Packaged/default source policy | A decision for pinned network fetch with CI/cache controls, vendored or mirrored source, `GHOSTTY_SOURCE_DIR` prefetching, or a native-library package/artifact cache. | [Source fetch policy](source-fetch-policy.md) and a follow-up ADR |
+| Native-VT package distribution | Supported targets, static/dynamic linkage, artifact provenance, signing/notarization where relevant, release checks, and recorded packaging target results. The current Darwin packaging samples show the opt-in release binaries can run with an explicit runtime library path and staged wrapper layout, and the staged layout now has no-rebuild verifiers, but packaged binaries still need signing and platform distribution strategy. | [Packaging notes](packaging.md) and a follow-up ADR |
+| Contributor workflow drift | Updated guidance whenever default-engine, opt-in terminal-correctness, or promotion-evidence responsibilities change. | [Contributor workflow](contributor-workflow.md), README, and AGENTS |
 
 ## Promotion Rule
 
