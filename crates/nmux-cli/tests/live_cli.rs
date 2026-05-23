@@ -2684,6 +2684,12 @@ fn live_cli_reports_focus_reporting_rejections() {
         stderr.contains("nmux: live server error: input rejected: focus reporting is disabled"),
         "missing focus reporting error:\n{stderr}"
     );
+    assert!(
+        stderr.contains("code=PermissionDenied")
+            && stderr.contains("pane_id=pane-1")
+            && stderr.contains("input_seq=1"),
+        "missing structured server error attribution:\n{stderr}"
+    );
 }
 
 #[test]

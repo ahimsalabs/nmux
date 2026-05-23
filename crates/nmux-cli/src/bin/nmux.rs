@@ -319,7 +319,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::Error(error) => {
-                    return Err(format!("live server error: {}", error.message).into());
+                    return Err(format!("live server error: {error}").into());
                 }
                 local::LiveSurfaceRead::NoFrame => break,
                 local::LiveSurfaceRead::Closed => {

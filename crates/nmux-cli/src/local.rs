@@ -1,5 +1,6 @@
 use std::env;
 use std::ffi::OsString;
+use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::MetadataExt;
@@ -1330,7 +1331,7 @@ pub fn attach_from_stream(
         == protocol::EnvelopeBody::Error
     {
         let error = error_summary_from_frame(&workspace_frame)?;
-        return Err(format!("server error: {}", error.message).into());
+        return Err(format!("server error: {error}").into());
     }
     let workspace = workspace_summary_from_frame(&workspace_frame)?;
 
@@ -2094,7 +2095,7 @@ pub fn read_scrollback_chunk_from_stream(
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
     match read_scrollback_response_from_stream(stream)? {
         ScrollbackRead::Chunk(chunk) => Ok(chunk),
-        ScrollbackRead::Error(error) => Err(format!("server error: {}", error.message).into()),
+        ScrollbackRead::Error(error) => Err(format!("server error: {error}").into()),
     }
 }
 
@@ -2113,12 +2114,10 @@ pub fn read_scrollback_chunk_with_stale_retry(
             )?;
             match read_scrollback_response_from_stream(stream)? {
                 ScrollbackRead::Chunk(chunk) => Ok(chunk),
-                ScrollbackRead::Error(error) => {
-                    Err(format!("server error: {}", error.message).into())
-                }
+                ScrollbackRead::Error(error) => Err(format!("server error: {error}").into()),
             }
         }
-        ScrollbackRead::Error(error) => Err(format!("server error: {}", error.message).into()),
+        ScrollbackRead::Error(error) => Err(format!("server error: {error}").into()),
     }
 }
 
@@ -2189,7 +2188,7 @@ fn read_optional_server_error_from_stream(
             match envelope.body_type() {
                 protocol::EnvelopeBody::Error => {
                     let error = error_summary_from_frame(&frame)?;
-                    Err(format!("server error: {}", error.message).into())
+                    Err(format!("server error: {error}").into())
                 }
                 other => Err(
                     format!("unexpected server frame before scrollback fetch: {other:?}").into(),
@@ -3021,6 +3020,22 @@ pub struct ErrorSummary {
     pub retryable: bool,
     pub pane_id: Option<String>,
     pub input_seq: u64,
+}
+
+impl fmt::Display for ErrorSummary {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} (code={:?}", self.message, self.code)?;
+        if let Some(pane_id) = &self.pane_id {
+            write!(formatter, ", pane_id={pane_id}")?;
+        }
+        if self.input_seq != 0 {
+            write!(formatter, ", input_seq={}", self.input_seq)?;
+        }
+        if self.retryable {
+            write!(formatter, ", retryable=true")?;
+        }
+        write!(formatter, ")")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12065,6 +12080,12 @@ mod tests {
             err.to_string()
                 .contains("server error: input rejected: focus reporting is disabled"),
             "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("code=PermissionDenied")
+                && err.to_string().contains("pane_id=pane-1")
+                && err.to_string().contains("input_seq=1"),
+            "missing structured server error attribution: {err}"
         );
         assert!(
             !host

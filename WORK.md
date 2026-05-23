@@ -522,6 +522,7 @@ M13: backend libghostty-vt extraction [done for opt-in correctness milestone]
   feature-gated local and live CLI coverage proves libghostty-vt CursorOnly patches stream after attach, avoid row repaint, update ClientAttachState cursor metadata, and survive state encode/decode plus real --state reattach
   libghostty-vt terminal-generated PTY writes are exposed through the terminal engine and host-backed output polling writes DECRQM query replies back to the pane process instead of dropping emulator responses; feature-gated live CLI coverage proves a real PTY command can read the reply
   structured-input encoding failures return protocol Error frames instead of opaque daemon exits, and local one-shot clients surface the server-provided reason before scrollback fetches
+  CLI server-error output includes structured protocol attribution such as error code, pane ID, retryable flag, and input sequence when present
   one-shot and live host write failures return protocol Error frames instead of tearing down nmuxd with opaque I/O failures
   live host resize failures return protocol Error frames instead of tearing down nmuxd with opaque I/O failures
   initial and post-attach host output polling failures return protocol Error frames instead of tearing down nmuxd with opaque I/O failures

@@ -250,10 +250,10 @@ For explicit input events, `--paste TEXT`, `--focus gained|lost`, `--key-name NA
 If an input event is valid protocol but cannot be encoded by the active terminal
 engine, if the host refuses the forwarded bytes, or if a live resize cannot be
 applied by the host, the daemon returns an `Error` frame and the CLI prints the
-server-provided reason instead of reporting an ambiguous closed connection.
-For pane-scoped failures, the frame also carries `Error.pane_id`; for input
-failures, it carries the originating `InputEvent.input_seq` so clients can
-correlate the failure without parsing the reason text.
+server-provided reason instead of reporting an ambiguous closed connection. The
+CLI also includes structured protocol attribution such as error code, pane ID,
+retryable flag, and originating `InputEvent.input_seq` when those fields are
+present.
 One-shot clients also check for an input or output-polling error before
 requesting scrollback, so unsafe paste, encoding failures, host input failures,
 and host output polling failures are reported directly.
