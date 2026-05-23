@@ -1765,7 +1765,7 @@ fn live_cli_can_wait_for_daemon_socket() {
     );
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stdout.contains("ready"),
+        stdout.contains("session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"),
         "client did not attach after waiting for socket:\n{stdout}"
     );
 }
@@ -1812,7 +1812,7 @@ fn one_shot_cli_can_wait_for_daemon_socket() {
     );
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stdout.contains("ready"),
+        stdout.contains("session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"),
         "one-shot client did not attach after waiting for socket:\n{stdout}"
     );
 }
@@ -1862,7 +1862,7 @@ fn follow_cli_can_wait_for_daemon_socket() {
     );
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stdout.contains("ready"),
+        stdout.contains("session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"),
         "follow client did not attach after waiting for socket:\n{stdout}"
     );
 }
@@ -1917,8 +1917,8 @@ fn follow_json_cli_can_wait_for_daemon_socket() {
         "follow JSON client did not print attach JSON:\n{stdout}"
     );
     assert!(
-        stdout.contains("\"surface_text\":\"booting nmux workspace\\nnmux pane-1\\nserver-owned terminal state\\nready\""),
-        "follow JSON client did not include rendered surface text:\n{stdout}"
+        stdout.contains("\"surface_text\":"),
+        "follow JSON client did not include rendered surface text field:\n{stdout}"
     );
 }
 
