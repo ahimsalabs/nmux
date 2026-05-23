@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
@@ -1007,16 +1008,16 @@ where
                 input_text = None;
             }
             "--scrollback-start" => {
-                scrollback_start_line = args
-                    .next()
-                    .ok_or("--scrollback-start requires a line")?
-                    .parse()?;
+                scrollback_start_line = parse_numeric_arg(
+                    "--scrollback-start",
+                    args.next().ok_or("--scrollback-start requires a line")?,
+                )?;
             }
             "--scrollback-count" => {
-                scrollback_line_count = args
-                    .next()
-                    .ok_or("--scrollback-count requires a count")?
-                    .parse()?;
+                scrollback_line_count = parse_numeric_arg(
+                    "--scrollback-count",
+                    args.next().ok_or("--scrollback-count requires a count")?,
+                )?;
             }
             "--state" => {
                 state_path = Some(
@@ -1048,30 +1049,35 @@ where
                 redraw = true;
             }
             "--cols" => {
-                live_cols = Some(args.next().ok_or("--cols requires a count")?.parse()?);
+                live_cols = Some(parse_numeric_arg(
+                    "--cols",
+                    args.next().ok_or("--cols requires a count")?,
+                )?);
             }
             "--rows" => {
-                live_rows = Some(args.next().ok_or("--rows requires a count")?.parse()?);
+                live_rows = Some(parse_numeric_arg(
+                    "--rows",
+                    args.next().ok_or("--rows requires a count")?,
+                )?);
             }
             "--interval-ms" => {
-                interval_ms = args
-                    .next()
-                    .ok_or("--interval-ms requires milliseconds")?
-                    .parse()?;
+                interval_ms = parse_numeric_arg(
+                    "--interval-ms",
+                    args.next().ok_or("--interval-ms requires milliseconds")?,
+                )?;
             }
             "--connect-timeout-ms" => {
-                connect_timeout_ms = Some(
+                connect_timeout_ms = Some(parse_numeric_arg(
+                    "--connect-timeout-ms",
                     args.next()
-                        .ok_or("--connect-timeout-ms requires milliseconds")?
-                        .parse()?,
-                );
+                        .ok_or("--connect-timeout-ms requires milliseconds")?,
+                )?);
             }
             "--iterations" => {
-                iterations = Some(
-                    args.next()
-                        .ok_or("--iterations requires a count")?
-                        .parse()?,
-                );
+                iterations = Some(parse_numeric_arg(
+                    "--iterations",
+                    args.next().ok_or("--iterations requires a count")?,
+                )?);
             }
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
@@ -1152,6 +1158,16 @@ where
         connect_timeout_ms,
         iterations,
     })
+}
+
+fn parse_numeric_arg<T>(flag: &str, value: String) -> Result<T, String>
+where
+    T: FromStr,
+    T::Err: std::fmt::Display,
+{
+    value
+        .parse()
+        .map_err(|err| format!("{flag} requires a valid number: {err}"))
 }
 
 fn validate_no_input_resize_args(
@@ -1603,7 +1619,7 @@ mod tests {
         FocusEvent, LiveUpdatePrintKind, LocalEcho, MouseEvent, args_from_iter,
         interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
         parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, raw_terminal_lflag, raw_terminal_mode_needed,
+        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
         redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
         terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
@@ -2331,6 +2347,25 @@ mod tests {
             validate_positive_numeric_args(1, 0, None, 1000, None),
             Err("--scrollback-count must be greater than 0")
         );
+    }
+
+    #[test]
+    fn numeric_args_report_flag_names_on_parse_errors() {
+        let err = parse_numeric_arg::<u64>("--interval-ms", "slow".to_owned())
+            .expect_err("invalid interval should include flag name");
+        assert!(err.contains("--interval-ms requires a valid number"));
+
+        let err = match args_from_iter(["--live", "--cols", "wide", "--rows", "24"]) {
+            Ok(_) => panic!("invalid cols should include flag name"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("--cols requires a valid number"));
+
+        let err = match args_from_iter(["--live", "--iterations", "many"]) {
+            Ok(_) => panic!("invalid iterations should include flag name"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("--iterations requires a valid number"));
     }
 
     #[test]

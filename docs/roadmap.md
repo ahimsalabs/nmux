@@ -92,6 +92,7 @@ Done:
 - `nmuxd` rejects ambiguous live server mode combinations and zero live counts instead of silently choosing one mode.
 - `nmuxd` and `nmux` share a stable default socket path for local workflows without `--socket`.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
+- Numeric `nmux` flags report the failing flag name for invalid-number errors before connecting.
 - ADR 0012 documents the backend terminal engine boundary.
 - `nmux-core` routes pane output and cursor ownership through a terminal engine trait, with the interim text engine as the current implementation.
 - Local daemon serving paths keep terminal engine instances alive per pane across output polls, resize handling, and sequential live clients.
