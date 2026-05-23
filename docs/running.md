@@ -21,6 +21,8 @@ Record promotion evidence in
 any change to the default engine or regular CI requirements.
 See [docs/toolchain.md](toolchain.md) for the supported Nix development path
 and the non-Nix requirements checklist.
+See [docs/source-fetch-policy.md](source-fetch-policy.md) for the opt-in
+`libghostty-vt-sys` fetch policy.
 
 Start a one-shot daemon with the default local shell:
 
@@ -287,6 +289,9 @@ setting is not logically required by nmux; it avoids a local Git configuration
 that rewrites GitHub HTTPS URLs to SSH. The
 `libghostty-vt-sys` build script fetches Ghostty from an HTTPS URL unless
 `GHOSTTY_SOURCE_DIR` points at an existing Ghostty checkout.
+This source-fetch path is acceptable for opt-in local validation, but packaged
+or default-engine builds still need the policy decision tracked in
+[docs/source-fetch-policy.md](source-fetch-policy.md).
 
 ## Presence And Attach Modes
 

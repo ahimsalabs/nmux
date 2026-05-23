@@ -173,6 +173,9 @@ Done:
 - [Toolchain notes](toolchain.md) document the supported Nix path and non-Nix
   requirements checklist; promotion still needs platform-specific validation,
   CI behavior, source-fetch policy, and packaging decisions.
+- [Source fetch policy](source-fetch-policy.md) records the current opt-in
+  `libghostty-vt-sys` fetch behavior and the remaining packaged/default-build
+  policy choices.
 
 Next:
 

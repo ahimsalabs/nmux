@@ -17,6 +17,7 @@ The current implementation is a Rust workspace with:
 - toolchain notes in [docs/toolchain.md](docs/toolchain.md);
 - runnable notes in [docs/running.md](docs/running.md);
 - default-engine promotion evidence in [docs/default-engine-promotion.md](docs/default-engine-promotion.md);
+- opt-in native source-fetch policy in [docs/source-fetch-policy.md](docs/source-fetch-policy.md);
 - the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on post-M14 default-engine promotion evidence, frontend hydration tracking, future protocol-object decisions, and local usability.
 
 ## Check
@@ -36,6 +37,9 @@ release-style or default-engine-promotion work.
 See [docs/toolchain.md](docs/toolchain.md) for the supported Nix path and the
 non-Nix requirements checklist that still needs validation before default-engine
 promotion.
+See [docs/source-fetch-policy.md](docs/source-fetch-policy.md) for the current
+opt-in `libghostty-vt-sys` source-fetch posture and remaining packaging
+blockers.
 
 ## Quick Smoke
 

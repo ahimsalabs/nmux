@@ -57,3 +57,5 @@ Git URL rewrite rules from changing the HTTPS source fetch used by
 `libghostty-vt-sys`. If an environment uses a pre-fetched Ghostty checkout, set
 `GHOSTTY_SOURCE_DIR` according to the `libghostty-vt-sys` build path and record
 that source policy before using the result as promotion evidence.
+See [source-fetch-policy.md](source-fetch-policy.md) for the current opt-in
+policy and the remaining source-fetch decisions for packaged/default builds.

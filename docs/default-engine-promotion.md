@@ -44,6 +44,10 @@ engine or a regular CI requirement.
   minimum non-Nix equivalents for Rust, FlatBuffers, make, Zig 0.15, and
   `libghostty-vt-sys` source-fetch policy. That checklist is setup guidance,
   not promotion evidence by itself.
+- [Source fetch policy](source-fetch-policy.md) documents the current opt-in
+  `libghostty-vt-sys` fetch behavior and the remaining policy choices for
+  packaged/default builds. It allows local correctness work, but does not close
+  the promotion blocker by itself.
 - `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
   suites with `--features libghostty-vt` and sets `GIT_CONFIG_GLOBAL=/dev/null`
   to avoid local Git URL rewrite interference.
@@ -69,8 +73,9 @@ evidence or measurements from every supported platform.
 - Validate the non-Nix toolchain checklist with platform-specific setup
   commands and timings, or explicitly decide that Nix remains the only
   supported native-build workflow for now.
-- Decide whether `libghostty-vt-sys` source fetches are acceptable for packaged
-  builds or whether a vendoring/cache policy is needed.
+- Choose a source policy for packaged/default builds: pinned network fetch with
+  CI/cache controls, vendored or mirrored source, `GHOSTTY_SOURCE_DIR`
+  prefetching, or a native-library package/artifact cache.
 - Define packaging expectations for binaries that include the native Ghostty VT
   dependency.
 
