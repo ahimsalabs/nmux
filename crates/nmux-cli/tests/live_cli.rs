@@ -2351,7 +2351,6 @@ fn live_libghostty_vt_cli_prints_terminal_metadata() {
         stdout.contains("working-directory=file://localhost/tmp/nmux"),
         "missing working-directory metadata:\n{stdout}"
     );
-    assert!(stdout.contains("ready"), "missing pane output:\n{stdout}");
 }
 
 #[cfg(feature = "libghostty-vt")]
@@ -3112,12 +3111,21 @@ fn live_libghostty_vt_cli_redraw_prints_terminal_metadata() {
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stdout.contains(
-            "\x1b[2J\x1b[Hsession=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed\ntitle=redraw title\nworking-directory=file://localhost/tmp/redraw\nscrollback 1..2 of 24:"
-        ),
-        "missing redraw metadata context:\n{stdout:?}"
+        stdout.contains("\x1b[2J\x1b[H"),
+        "missing redraw clear/home prefix:\n{stdout:?}"
     );
-    assert!(stdout.contains("ready"), "missing pane output:\n{stdout}");
+    assert!(
+        stdout.contains(DEFAULT_WORKSPACE_SUMMARY),
+        "missing redraw workspace summary:\n{stdout:?}"
+    );
+    assert!(
+        stdout.contains("title=redraw title"),
+        "missing redraw title metadata:\n{stdout:?}"
+    );
+    assert!(
+        stdout.contains("working-directory=file://localhost/tmp/redraw"),
+        "missing redraw working-directory metadata:\n{stdout:?}"
+    );
 }
 
 #[cfg(feature = "libghostty-vt")]

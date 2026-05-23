@@ -12863,6 +12863,7 @@ mod tests {
                 },
                 input_text: None,
                 key_name: None,
+                key_names: Vec::new(),
                 key_modifiers: 0,
                 paste_text: None,
                 focus: None,
