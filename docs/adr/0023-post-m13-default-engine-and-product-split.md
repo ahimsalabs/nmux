@@ -21,8 +21,9 @@ gating, and reconnect/cache behavior through full feature-enabled tests.
 
 That does not mean `libghostty-vt` should silently become the default engine.
 ADR 0018 deliberately kept the native Ghostty/Zig build out of regular
-development and `make check` until build time, CI provisioning, packaging, and
-source-fetch policy are intentionally accepted.
+development and `make check` until native build cost, regular CI,
+non-Nix/toolchain provisioning, source-fetch policy, packaging, and developer
+workflow costs are intentionally accepted.
 
 M13 also identified several real terminal-state domains that should not be
 folded into the extraction milestone by inertia: wired hyperlink identities,
@@ -36,9 +37,10 @@ Treat M13 as complete for the opt-in backend extraction milestone, not as a
 default-engine promotion.
 
 Keep the default daemon engine `interim` and keep `libghostty-vt` opt-in until a
-future decision accepts the native build, CI, packaging, and developer-workflow
-costs. `make check-ghostty-vt` remains the required gate for changes that touch
-the opt-in engine, feature-sensitive attach/reconnect behavior, cached state, or
+future decision accepts the native build cost, regular CI, non-Nix/toolchain
+provisioning, source-fetch policy, packaging, and developer-workflow costs.
+`make check-ghostty-vt` remains the required gate for changes that touch the
+opt-in engine, feature-sensitive attach/reconnect behavior, cached state, or
 daemon-owned structured input.
 
 Split post-M13 work into explicit tracks:
