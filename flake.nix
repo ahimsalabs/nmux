@@ -15,9 +15,23 @@
 
       forEachSystem = nixpkgs.lib.genAttrs systems;
 
+      cleanSrc =
+        pkgs:
+        pkgs.lib.cleanSourceWith {
+          src = self;
+          filter =
+            path: type:
+            !(builtins.elem (builtins.baseNameOf path) [
+              "target"
+              ".git"
+              ".jj"
+            ])
+            && pkgs.lib.cleanSourceFilter path type;
+        };
+
       sourceAuditFor =
         pkgs:
-        pkgs.runCommand "nmux-source-audit" { src = self; } ''
+        pkgs.runCommand "nmux-source-audit" { src = cleanSrc pkgs; } ''
           if [ -e "$src/target" ]; then
             echo "flake source unexpectedly contains target/" >&2
             exit 1
