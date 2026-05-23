@@ -98,6 +98,9 @@ temporary socket and persisted state file. `make check-ghostty-vt` runs the
 full feature-enabled `nmux-core` and `nmux-cli` suites with
 `RUST_TEST_THREADS=1` and `GIT_CONFIG_GLOBAL=/dev/null`; keep it opt-in unless
 a later ADR promotes the native Ghostty/Zig build path.
+Nix examples assume `nix-command` and `flakes` are enabled; if not, run the
+same commands as
+`nix --extra-experimental-features 'nix-command flakes' develop . -c ...`.
 
 Print active tool versions and source-fetch settings with:
 
