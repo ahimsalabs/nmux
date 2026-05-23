@@ -2210,6 +2210,8 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         ),
         protocol::InputKind::Mouse => {
             let mouse = input.mouse().ok_or("missing mouse input")?;
+            let button = mouse_button_from_protocol(mouse.button())?;
+            let action = mouse_action_from_protocol(mouse.action())?;
             (
                 Vec::new(),
                 None,
@@ -2220,8 +2222,8 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                     col: mouse.col(),
                     pixel_x: mouse.has_pixels().then_some(mouse.pixel_x()),
                     pixel_y: mouse.has_pixels().then_some(mouse.pixel_y()),
-                    button: mouse_button_from_protocol(mouse.button()),
-                    action: mouse_action_from_protocol(mouse.action()),
+                    button,
+                    action,
                     modifiers: mouse.modifiers(),
                 }),
                 false,
@@ -2245,25 +2247,35 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
     })
 }
 
-fn mouse_action_from_protocol(action: protocol::MouseAction) -> MouseAction {
-    match action {
+fn mouse_action_from_protocol(
+    action: protocol::MouseAction,
+) -> Result<MouseAction, Box<dyn std::error::Error>> {
+    if action.variant_name().is_none() {
+        return Err(format!("unknown mouse action {}", action.0).into());
+    }
+    Ok(match action {
         protocol::MouseAction::Press => MouseAction::Press,
         protocol::MouseAction::Release => MouseAction::Release,
         protocol::MouseAction::Motion => MouseAction::Motion,
-        _ => MouseAction::Press,
-    }
+        _ => unreachable!("validated mouse action enum"),
+    })
 }
 
-fn mouse_button_from_protocol(button: protocol::MouseButton) -> MouseButton {
-    match button {
+fn mouse_button_from_protocol(
+    button: protocol::MouseButton,
+) -> Result<MouseButton, Box<dyn std::error::Error>> {
+    if button.variant_name().is_none() {
+        return Err(format!("unknown mouse button {}", button.0).into());
+    }
+    Ok(match button {
         protocol::MouseButton::None => MouseButton::None,
         protocol::MouseButton::Left => MouseButton::Left,
         protocol::MouseButton::Middle => MouseButton::Middle,
         protocol::MouseButton::Right => MouseButton::Right,
         protocol::MouseButton::WheelUp => MouseButton::WheelUp,
         protocol::MouseButton::WheelDown => MouseButton::WheelDown,
-        _ => MouseButton::None,
-    }
+        _ => unreachable!("validated mouse button enum"),
+    })
 }
 
 fn paste_input_bytes(text: &str, bracketed: bool) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -10905,6 +10917,41 @@ mod tests {
                 modifiers: 3,
             })
         );
+    }
+
+    #[test]
+    fn rejects_mouse_input_with_unknown_button_or_action() {
+        let button_frame = Session::initial().mouse_input_frame(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            4,
+            5,
+            protocol::MouseButton(99),
+            protocol::MouseAction::Press,
+            0,
+        );
+        let err = input_summary_from_frame(&button_frame)
+            .expect_err("unknown mouse button should be rejected");
+        assert!(err.to_string().contains("unknown mouse button"));
+
+        let action_frame = Session::initial().mouse_input_frame(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            4,
+            5,
+            protocol::MouseButton::Left,
+            protocol::MouseAction(99),
+            0,
+        );
+        let err = input_summary_from_frame(&action_frame)
+            .expect_err("unknown mouse action should be rejected");
+        assert!(err.to_string().contains("unknown mouse action"));
     }
 
     #[test]
