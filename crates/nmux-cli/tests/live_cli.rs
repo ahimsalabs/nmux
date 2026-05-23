@@ -2619,7 +2619,6 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
 
     let server_status = server.wait().expect("wait for nmuxd");
     let _ = fs::remove_file(&socket_path);
-    let _ = fs::remove_file(&state_path);
 
     assert!(
         second_client.status.success(),
@@ -2632,6 +2631,17 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
     assert!(
         stdout.contains("echo:reattach"),
         "reattached client did not render cached current live surface:\n{stdout}"
+    );
+
+    let state = fs::read_to_string(&state_path).unwrap_or_default();
+    let _ = fs::remove_file(&state_path);
+    assert!(
+        !state.lines().any(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            fields.first() == Some(&"scrollback")
+                && (fields.get(3) == Some(&"999") || fields.get(4) == Some(&"0"))
+        }),
+        "out-of-range empty scrollback chunk should not persist a range:\n{state}"
     );
 }
 

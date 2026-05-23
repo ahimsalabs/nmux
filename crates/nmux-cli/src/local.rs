@@ -3752,6 +3752,9 @@ impl ClientAttachState {
     }
 
     pub fn cache_scrollback_chunk(&mut self, chunk: &ScrollbackChunkSummary) {
+        if chunk.lines.is_empty() {
+            return;
+        }
         let line_count = u32::try_from(chunk.lines.len()).unwrap_or(u32::MAX);
         let cached = ClientPaneScrollback {
             pane_id: chunk.pane_id.clone(),
@@ -7771,6 +7774,26 @@ mod tests {
         assert_eq!(decoded.cached_scrollback_version("pane-1", 1, 2), Some(5));
         assert_eq!(decoded.cached_scrollback_version("pane-1", 3, 1), Some(4));
         assert_eq!(decoded.scrollbacks.len(), 2);
+    }
+
+    #[test]
+    fn client_attach_state_does_not_persist_empty_scrollback_chunks() {
+        let mut state = ClientAttachState::default();
+        state.cache_scrollback_chunk(&ScrollbackChunkSummary {
+            pane_id: "pane-1".to_owned(),
+            scrollback_version: 6,
+            start_line: 999,
+            total_lines: 3,
+            styles: default_style_summaries(),
+            hyperlinks: Vec::new(),
+            colors: TerminalColorSummary::default(),
+            lines: Vec::new(),
+        });
+
+        assert!(state.scrollbacks.is_empty());
+        assert!(!state.encode().contains("scrollback "));
+        let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
+        assert!(decoded.scrollbacks.is_empty());
     }
 
     #[test]

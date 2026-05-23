@@ -95,7 +95,7 @@ If the daemon is not running or the client points at the wrong socket, `nmux` re
 When a script starts `nmux` before `nmuxd` has finished binding, pass `--connect-timeout-ms MS` so the client waits for the socket instead of failing immediately.
 If `nmuxd` cannot bind the socket path, it reports that path. If a socket path already exists, `nmuxd` refuses to replace it and includes a recovery hint; remove a stale socket only after confirming no daemon is using it, or pass a different `--socket`.
 On normal bounded exits, `nmuxd` removes the socket path it created if that path still points at the same socket file.
-Scrollback ranges are 1-based from the oldest retained row, and the client rejects zero `--scrollback-start` or `--scrollback-count` values before connecting.
+Scrollback ranges are 1-based from the oldest retained row, and the client rejects zero `--scrollback-start` or `--scrollback-count` values before connecting. Out-of-range requests can return an empty scrollback section; `--state` does not persist those zero-row chunks as future version preconditions.
 
 Start a daemon that serves one live client for two input cycles:
 

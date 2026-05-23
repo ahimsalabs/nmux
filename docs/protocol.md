@@ -130,6 +130,10 @@ corresponding style and hyperlink tables for that chunk.
 retained row in the chunk's pane history. Clients and daemons reject zero
 scrollback start lines, zero fetch counts, and zero row line numbers instead of
 normalizing them to the oldest row.
+Out-of-range fetches may return a valid zero-row `ScrollbackChunk`; clients can
+render that empty result, but should not persist it as a cached range/version
+precondition because the original requested count is not represented in the
+chunk rows.
 `ScrollbackFetch.known_scrollback_version = 0` means the client is not asserting
 a cached scrollback version. Nonzero known versions must match the daemon's
 current pane scrollback version; mismatches return `ErrorCode::StaleVersion`
