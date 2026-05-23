@@ -30,6 +30,10 @@ state-sync envelope bodies:
 Permissions, sandbox hosts, adapters, and image-specific payloads remain outside
 the current envelope. They should be added as new envelope bodies when their
 object model is clear.
+Future hyperlink identity, image, richer damage, command lifecycle, and
+physical-key/text-event work is tracked in
+[Future Protocol Tracks](protocol-futures.md); those tracks need ADRs and
+compatibility plans before schema fields are added.
 
 ## State Ownership
 

@@ -18,6 +18,7 @@ The current implementation is a Rust workspace with:
 - toolchain notes in [docs/toolchain.md](docs/toolchain.md);
 - runnable notes in [docs/running.md](docs/running.md);
 - default-engine promotion evidence in [docs/default-engine-promotion.md](docs/default-engine-promotion.md);
+- future protocol-object tracks in [docs/protocol-futures.md](docs/protocol-futures.md);
 - opt-in native source-fetch policy in [docs/source-fetch-policy.md](docs/source-fetch-policy.md);
 - packaging notes in [docs/packaging.md](docs/packaging.md);
 - the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on post-M14 default-engine promotion evidence, frontend hydration tracking, future protocol-object decisions, and local usability.

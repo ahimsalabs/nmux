@@ -3,7 +3,9 @@
 M13 proves the opt-in path from the interim text engine toward daemon-owned
 backend `libghostty-vt` state extraction. This file records the mapping work
 already proven by the opt-in backend and the remaining terminal-state protocol
-decisions that must stay separate from default-engine promotion evidence.
+decisions that must stay separate from default-engine promotion evidence. The
+cross-cutting pre-schema protocol tracks live in
+[Future Protocol Tracks](protocol-futures.md).
 
 `libghostty-vt` is now present as an optional Cargo feature and compiles through
 the vendored native Ghostty VT build. ADR 0018 keeps the default `nmuxd` engine

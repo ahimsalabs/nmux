@@ -177,6 +177,9 @@ Done:
 - ADR 0023 closes M13 as the opt-in backend extraction milestone, keeps `libghostty-vt` out of the default path, and splits post-M13 work into default-engine promotion readiness, frontend hydration, future protocol objects, and local usability tracks.
 - [The default-engine promotion evidence tracker](default-engine-promotion.md) records the native build, CI, toolchain, source-fetch, packaging, workflow, and state-sync evidence required before promotion.
 - The tracker includes multiple warm local Darwin arm64 `make check-all` samples, including a post-info-flag run, and confirms the Nix shell provides `flatc`; remaining promotion evidence still needs more local platforms, cold-cache or cold-checkout behavior, CI behavior, non-Nix workflow, source-fetch policy, and packaging decisions.
+- [Future protocol tracks](protocol-futures.md) split hyperlink identity, images,
+  richer damage, command lifecycle metadata, and physical-key/text-event input
+  into explicit pre-schema work.
 - README, running docs, and the terminal extraction checklist use post-M14 language for roadmap focus, implemented `libghostty-vt` mapping, attached-pane authority during reconnect, and explicit scrollback range semantics.
 - [Toolchain notes](toolchain.md) document the supported Nix path and non-Nix
   requirements checklist; promotion still needs platform-specific validation,
@@ -195,6 +198,9 @@ Next:
 - Use [the terminal state extraction checklist](terminal-state-extraction.md) and focused ADRs as the gate for expanding terminal-state protocol fields.
 - Keep client attach, reconnect, live streaming, and scrollback fetch semantics on nmux state objects.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
+- Keep [future protocol tracks](protocol-futures.md) current before accepting
+  schema fields for hyperlink identity, images, richer damage, command
+  lifecycle metadata, or physical-key/text-event input.
 
 ## Milestones
 
