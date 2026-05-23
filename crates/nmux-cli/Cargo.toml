@@ -22,3 +22,6 @@ flatbuffers = "=25.12.19"
 libc = "0.2"
 nmux-core = { path = "../nmux-core" }
 nmux-proto = { path = "../nmux-proto" }
+
+[dev-dependencies]
+serde_json = "1"
