@@ -1619,17 +1619,17 @@ fn parse_focus_event(value: &str) -> Result<FocusEvent, &'static str> {
 
 fn parse_key_name(value: &str) -> Result<String, &'static str> {
     match value {
-        "keypad-enter" => Ok("numpad-enter".to_owned()),
-        "keypad-0" => Ok("numpad-0".to_owned()),
-        "keypad-1" => Ok("numpad-1".to_owned()),
-        "keypad-2" => Ok("numpad-2".to_owned()),
-        "keypad-3" => Ok("numpad-3".to_owned()),
-        "keypad-4" => Ok("numpad-4".to_owned()),
-        "keypad-5" => Ok("numpad-5".to_owned()),
-        "keypad-6" => Ok("numpad-6".to_owned()),
-        "keypad-7" => Ok("numpad-7".to_owned()),
-        "keypad-8" => Ok("numpad-8".to_owned()),
-        "keypad-9" => Ok("numpad-9".to_owned()),
+        "keypad-enter" | "numpad-enter" => Ok("numpad-enter".to_owned()),
+        "keypad-0" | "numpad-0" => Ok("numpad-0".to_owned()),
+        "keypad-1" | "numpad-1" => Ok("numpad-1".to_owned()),
+        "keypad-2" | "numpad-2" => Ok("numpad-2".to_owned()),
+        "keypad-3" | "numpad-3" => Ok("numpad-3".to_owned()),
+        "keypad-4" | "numpad-4" => Ok("numpad-4".to_owned()),
+        "keypad-5" | "numpad-5" => Ok("numpad-5".to_owned()),
+        "keypad-6" | "numpad-6" => Ok("numpad-6".to_owned()),
+        "keypad-7" | "numpad-7" => Ok("numpad-7".to_owned()),
+        "keypad-8" | "numpad-8" => Ok("numpad-8".to_owned()),
+        "keypad-9" | "numpad-9" => Ok("numpad-9".to_owned()),
         "arrow-up" => Ok("arrow-up".to_owned()),
         "arrow-down" => Ok("arrow-down".to_owned()),
         "arrow-right" => Ok("arrow-right".to_owned()),
@@ -2099,8 +2099,14 @@ mod tests {
             parse_key_name("keypad-enter"),
             Ok("numpad-enter".to_owned())
         );
+        assert_eq!(
+            parse_key_name("numpad-enter"),
+            Ok("numpad-enter".to_owned())
+        );
         assert_eq!(parse_key_name("keypad-0"), Ok("numpad-0".to_owned()));
+        assert_eq!(parse_key_name("numpad-0"), Ok("numpad-0".to_owned()));
         assert_eq!(parse_key_name("keypad-9"), Ok("numpad-9".to_owned()));
+        assert_eq!(parse_key_name("numpad-9"), Ok("numpad-9".to_owned()));
         assert_eq!(parse_key_name("arrow-up"), Ok("arrow-up".to_owned()));
         assert_eq!(parse_key_name("arrow-left"), Ok("arrow-left".to_owned()));
         assert_eq!(parse_key_name("enter"), Ok("enter".to_owned()));
