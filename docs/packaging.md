@@ -129,11 +129,13 @@ sentinel from the packaged daemon. This proves the relocated package layout can
 serve a real opt-in native-VT pane locally through its own wrappers; it is still
 not a multi-platform or installed-package guarantee.
 
-Current local Darwin evidence shows the default release binaries run directly
-and the opt-in `libghostty-vt` release binaries run when the produced
-`ghostty-install/lib` directory is supplied as a runtime library path. A real
-package still needs an explicit runtime-library strategy, such as rpath,
-bundling, platform package dependency, or another artifact layout, before
+Current local Darwin evidence shows the default release binaries run directly,
+the opt-in `libghostty-vt` binaries can run with the build-produced runtime
+library path, and the staged wrapper/archive layout bundles `libghostty-vt`
+runtime libraries and passes the relocated archive runtime smoke locally. That
+is package-layout evidence, not a published distribution decision: supported
+target triples, signing/notarization, installer/update shape, and final
+static/dynamic/runtime-library policy still need a later packaging ADR before
 native-VT binaries are treated as shippable.
 
 ## Default-Engine Promotion Packaging Criteria
