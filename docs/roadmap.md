@@ -4,7 +4,10 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-M13 is the current target: replace the interim backend text surface with a daemon-owned terminal engine path, starting with the terminal engine boundary and then moving toward backend `libghostty-vt` extraction.
+M13 is the current target: prove the opt-in replacement path from the interim
+backend text surface to daemon-owned `libghostty-vt` terminal-state extraction.
+The default engine remains `interim` until the project deliberately accepts the
+native Ghostty/Zig build in regular development and CI.
 
 Done:
 
@@ -320,7 +323,8 @@ Initial slice: `nmuxd --live-clients COUNT` keeps one daemon-owned local workspa
 
 ### M13: Backend libghostty-vt Extraction
 
-Goal: replace the interim byte-to-text surface with daemon-owned `libghostty-vt` terminal-state extraction while preserving nmux state sync.
+Goal: prove daemon-owned `libghostty-vt` terminal-state extraction can replace
+the interim byte-to-text surface while preserving nmux state sync.
 
 Non-goal: frontend Ghostty renderer hydration. That remains tracked separately because it depends on an API that can render externally supplied nmux state without client-side PTY replay.
 
