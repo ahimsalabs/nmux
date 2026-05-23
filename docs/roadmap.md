@@ -12,6 +12,22 @@ remains `interim` until a later decision deliberately accepts the native
 Ghostty/Zig build in regular development, CI, and packaging; promotion evidence
 is tracked in [docs/default-engine-promotion.md](default-engine-promotion.md).
 
+Current post-M14 state:
+
+- Usable today: the default `interim` engine supports local one-shot attach,
+  live attach, read-only reattach, cached state, daemon-owned scrollback
+  fetches, structured input/control intents, default socket workflows, and
+  `make local-smoke`.
+- Opt-in correctness path: `libghostty-vt` is imported and feature-tested for
+  backend-owned terminal-state extraction, but remains outside the normal
+  default engine, regular CI gate, and release baseline.
+- Next evidence work: choose a row from
+  [contributor-workflow.md](contributor-workflow.md#promotion-evidence-work)
+  and record the result in
+  [default-engine-promotion.md](default-engine-promotion.md); default-engine
+  push samples, manual promotion bundle samples, frontend hydration, and future
+  protocol objects stay separate tracks.
+
 Done:
 
 - Initial architecture notes in [WORK.md](../WORK.md).
