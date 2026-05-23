@@ -36,6 +36,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if args.print_context {
+        print_context()?;
+        return Ok(());
+    }
+
     if args.print_socket {
         println!("{}", args.socket_path.display());
         return Ok(());
@@ -883,6 +888,7 @@ fn format_scrollback(scrollback: &local::ScrollbackChunkSummary) -> String {
 struct Args {
     help: bool,
     version: bool,
+    print_context: bool,
     print_socket: bool,
     socket_path: PathBuf,
     input_text: Option<String>,
@@ -918,6 +924,7 @@ where
 {
     let mut help = false;
     let mut version = false;
+    let mut print_context = false;
     let mut print_socket = false;
     let mut socket_path = local::default_socket_path();
     let mut input_text = None;
@@ -961,6 +968,9 @@ where
             }
             "--version" | "-V" => {
                 version = true;
+            }
+            "--print-context" => {
+                print_context = true;
             }
             "--print-socket" => {
                 print_socket = true;
@@ -1158,6 +1168,7 @@ where
     Ok(Args {
         help,
         version,
+        print_context,
         print_socket,
         socket_path,
         input_text,
@@ -1181,6 +1192,33 @@ where
         connect_timeout_ms,
         iterations,
     })
+}
+
+fn print_context() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::var("NMUX").ok().as_deref() != Some("1") {
+        return Err("not running inside an nmux pane (NMUX=1 is not set)".into());
+    }
+
+    let session_id = required_context_env("NMUX_SESSION_ID")?;
+    let pane_id = required_context_env("NMUX_PANE_ID")?;
+    let socket = required_context_env("NMUX_SOCKET")?;
+    let origin = required_context_env("NMUX_ORIGIN")?;
+
+    println!("nmux=1");
+    println!("session={session_id}");
+    println!("pane={pane_id}");
+    println!("socket={socket}");
+    println!("origin={origin}");
+    Ok(())
+}
+
+fn required_context_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    match std::env::var(name) {
+        Ok(value) if !value.is_empty() => Ok(value),
+        _ => Err(
+            format!("not running inside a complete nmux pane context ({name} is not set)").into(),
+        ),
+    }
 }
 
 fn parse_numeric_arg<T>(flag: &str, value: String) -> Result<T, String>
@@ -1402,6 +1440,7 @@ Usage:
 
 Options:
   --socket PATH              Unix socket path
+  --print-context            Print inherited nmux pane context and exit
   --print-socket             Print the resolved socket path and exit
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send; opts into read-write attach
@@ -1431,6 +1470,7 @@ Options:
 
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+  --print-context reads inherited NMUX_* pane identity without connecting.
   Without an explicit input or resize flag, nmux attaches read-only.
   The current renderer uses an interim text surface, not a VT-correct terminal emulator.
 
@@ -1725,6 +1765,7 @@ mod tests {
         assert!(!args.no_input);
         assert!(!args.live);
         assert!(!args.version);
+        assert!(!args.print_context);
         assert!(!args.print_socket);
     }
 
@@ -2399,6 +2440,7 @@ mod tests {
     fn usage_mentions_live_interactive_flags() {
         let usage = usage();
         assert!(usage.contains("--stdin-bytes"));
+        assert!(usage.contains("--print-context"));
         assert!(usage.contains("--print-socket"));
         assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--connect-timeout-ms MS"));

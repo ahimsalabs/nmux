@@ -20,6 +20,7 @@ fn nmux_help_lists_live_client_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
+    assert!(stdout.contains("--print-context"));
     assert!(stdout.contains("--print-socket"));
     assert!(stdout.contains("-V, --version"));
     assert!(stdout.contains("--key-name NAME"));
@@ -119,6 +120,56 @@ fn version_flags_report_binary_versions_without_side_effects() {
     assert!(
         !daemon_socket_path.exists(),
         "nmuxd --version should not bind a socket path"
+    );
+}
+
+#[test]
+fn print_context_reports_inherited_nmux_context_without_connecting() {
+    let socket_path = test_socket_path();
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .arg("--print-context")
+        .env("NMUX", "1")
+        .env("NMUX_SESSION_ID", "session-7")
+        .env("NMUX_PANE_ID", "pane-3")
+        .env("NMUX_SOCKET", &socket_path)
+        .env("NMUX_ORIGIN", "local")
+        .output()
+        .expect("run nmux --print-context");
+
+    assert!(
+        output.status.success(),
+        "nmux --print-context failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("nmux=1"));
+    assert!(stdout.contains("session=session-7"));
+    assert!(stdout.contains("pane=pane-3"));
+    assert!(stdout.contains(&format!("socket={}", socket_path.display())));
+    assert!(stdout.contains("origin=local"));
+    assert!(
+        !socket_path.exists(),
+        "nmux --print-context should not connect or create a socket path"
+    );
+}
+
+#[test]
+fn print_context_rejects_missing_nmux_context() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .arg("--print-context")
+        .env_remove("NMUX")
+        .env_remove("NMUX_SESSION_ID")
+        .env_remove("NMUX_PANE_ID")
+        .env_remove("NMUX_SOCKET")
+        .env_remove("NMUX_ORIGIN")
+        .output()
+        .expect("run nmux --print-context");
+
+    assert!(!output.status.success(), "nmux unexpectedly succeeded");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nmux: not running inside an nmux pane"),
+        "missing context error:\n{stderr}"
     );
 }
 

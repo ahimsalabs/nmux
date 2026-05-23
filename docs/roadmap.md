@@ -95,6 +95,8 @@ Done:
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
   tooling without changing the current local socket protocol.
+- `nmux --print-context` reports inherited `NMUX_*` pane identity without
+  connecting and fails clearly outside a complete nmux pane context.
 - Numeric `nmux` flags report the failing flag name for invalid-number errors before connecting.
 - ADR 0012 documents the backend terminal engine boundary.
 - `nmux-core` routes pane output and cursor ownership through a terminal engine trait, with the interim text engine as the current implementation.

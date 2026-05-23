@@ -138,7 +138,9 @@ On normal bounded exits, `nmuxd` removes the socket path it created if that path
 Commands started in the local PTY receive `NMUX=1`, `NMUX_SESSION_ID`,
 `NMUX_PANE_ID`, `NMUX_SOCKET`, and `NMUX_ORIGIN` in their environment. These
 are local pane identity hints for nested nmux tooling and do not make the
-frontend replay raw PTY bytes.
+frontend replay raw PTY bytes. Inside a pane, `nmux --print-context` prints
+that inherited identity without connecting; outside a complete nmux pane
+context, it fails before socket or state work.
 Scrollback ranges are 1-based from the oldest retained row, and the client rejects zero `--scrollback-start` or `--scrollback-count` values before connecting. Out-of-range requests can return an empty scrollback section; `--state` does not persist those zero-row chunks as future version preconditions.
 
 Start a daemon that serves one live client for two input cycles:
