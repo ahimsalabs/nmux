@@ -9,6 +9,8 @@ nmux is a portable Ghostty-style terminal workspace. The current direction is do
 - [README.md](README.md) for the seed idea.
 - [docs/roadmap.md](docs/roadmap.md) for current milestone status and next steps.
 - [WORK.md](WORK.md) for background product and architecture garden notes.
+- [docs/toolchain.md](docs/toolchain.md) for supported Nix tooling and the
+  non-Nix requirements checklist.
 - [docs/running.md](docs/running.md) for runnable local smoke tests.
 - [docs/protocol.md](docs/protocol.md) for the FlatBuffers state-sync contract.
 - [docs/default-engine-promotion.md](docs/default-engine-promotion.md) for the
@@ -95,6 +97,8 @@ If `nix develop` itself is unavailable, do not rewrite the flake or check in
 machine-local store paths. Either use an already entered dev shell, or record the
 environmental failure and keep changes scoped to work that can still be
 validated honestly.
+Use [docs/toolchain.md](docs/toolchain.md) when documenting non-Nix equivalents;
+do not treat an unvalidated local setup as default-engine promotion evidence.
 
 ## Licensing Rules
 

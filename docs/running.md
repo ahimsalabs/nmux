@@ -19,6 +19,8 @@ nix develop . -c make check-all
 Record promotion evidence in
 [docs/default-engine-promotion.md](default-engine-promotion.md) before proposing
 any change to the default engine or regular CI requirements.
+See [docs/toolchain.md](toolchain.md) for the supported Nix development path
+and the non-Nix requirements checklist.
 
 Start a one-shot daemon with the default local shell:
 

@@ -14,6 +14,7 @@ The current implementation is a Rust workspace with:
 - `nmux`: a local client that attaches, renders server-owned pane state, sends explicit input and resize/control intents, persists client render state, and can run a live attach loop;
 - `nmux-proto`, `nmux-core`, and `nmux-cli` crates;
 - ADRs under [docs/adr](docs/adr);
+- toolchain notes in [docs/toolchain.md](docs/toolchain.md);
 - runnable notes in [docs/running.md](docs/running.md);
 - default-engine promotion evidence in [docs/default-engine-promotion.md](docs/default-engine-promotion.md);
 - the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on post-M14 default-engine promotion evidence, frontend hydration tracking, future protocol-object decisions, and local usability.
@@ -32,6 +33,9 @@ FlatBuffers install is needed for the schema check. `make check` is the regular
 default-engine gate. `make check-ghostty-vt` is the opt-in full feature gate for
 backend `libghostty-vt` changes. `make check-all` runs both when validating
 release-style or default-engine-promotion work.
+See [docs/toolchain.md](docs/toolchain.md) for the supported Nix path and the
+non-Nix requirements checklist that still needs validation before default-engine
+promotion.
 
 ## Quick Smoke
 

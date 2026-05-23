@@ -170,6 +170,9 @@ Done:
 - [The default-engine promotion evidence tracker](default-engine-promotion.md) records the native build, CI, toolchain, source-fetch, packaging, workflow, and state-sync evidence required before promotion.
 - The tracker includes a first warm local Darwin arm64 `make check-all` sample and confirms the Nix shell provides `flatc`; remaining promotion evidence still needs more local platforms, CI behavior, non-Nix workflow, source-fetch policy, and packaging decisions.
 - README, running docs, and the terminal extraction checklist use post-M14 language for roadmap focus, implemented `libghostty-vt` mapping, attached-pane authority during reconnect, and explicit scrollback range semantics.
+- [Toolchain notes](toolchain.md) document the supported Nix path and non-Nix
+  requirements checklist; promotion still needs platform-specific validation,
+  CI behavior, source-fetch policy, and packaging decisions.
 
 Next:
 

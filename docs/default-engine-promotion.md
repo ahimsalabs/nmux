@@ -40,6 +40,10 @@ engine or a regular CI requirement.
 - The Nix development shell pins the required toolchain components for the repo,
   including `flatbuffers`; on 2026-05-23, `nix develop . -c flatc --version`
   resolved FlatBuffers 25.12.19.
+- [Toolchain notes](toolchain.md) document the supported Nix path and the
+  minimum non-Nix equivalents for Rust, FlatBuffers, make, Zig 0.15, and
+  `libghostty-vt-sys` source-fetch policy. That checklist is setup guidance,
+  not promotion evidence by itself.
 - `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
   suites with `--features libghostty-vt` and sets `GIT_CONFIG_GLOBAL=/dev/null`
   to avoid local Git URL rewrite interference.
@@ -62,8 +66,9 @@ evidence or measurements from every supported platform.
 - Measure and record `make check-all` timing on more supported local systems,
   including at least one cold-checkout or cold-cache run.
 - Exercise the same gate in CI before making it a required check.
-- Write non-Nix toolchain setup notes, or explicitly decide that Nix remains the
-  only supported native-build workflow for now.
+- Validate the non-Nix toolchain checklist with platform-specific setup
+  commands and timings, or explicitly decide that Nix remains the only
+  supported native-build workflow for now.
 - Decide whether `libghostty-vt-sys` source fetches are acceptable for packaged
   builds or whether a vendoring/cache policy is needed.
 - Define packaging expectations for binaries that include the native Ghostty VT
