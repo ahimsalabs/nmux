@@ -110,6 +110,12 @@ shell-scoped local workspace, or pass `--socket` on both sides when you want an
 isolated smoke-test socket.
 Use `nmux --print-socket` or `nmuxd --print-socket` to print the resolved socket
 path without connecting or binding.
+
+```sh
+NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --print-socket
+NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket
+```
+
 If the daemon is not running or the client points at the wrong socket, `nmux` reports the socket path in the connection error.
 When a script starts `nmux` before `nmuxd` has finished binding, pass `--connect-timeout-ms MS` so the client waits for the socket instead of failing immediately.
 If `nmuxd` cannot bind the socket path, it reports that path. If a socket path already exists, `nmuxd` refuses to replace it and includes a recovery hint; remove a stale socket only after confirming no daemon is using it, or pass a different `--socket`.

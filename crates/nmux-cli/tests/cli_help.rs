@@ -80,13 +80,56 @@ fn nmuxd_help_lists_live_server_flags() {
 
 #[test]
 fn print_socket_reports_resolved_socket_without_side_effects() {
+    let env_socket_path = test_socket_path();
+    let client_env_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .arg("--print-socket")
+        .env("NMUX_SOCKET", &env_socket_path)
+        .output()
+        .expect("run nmux --print-socket with NMUX_SOCKET");
+
+    assert!(
+        client_env_output.status.success(),
+        "nmux --print-socket with NMUX_SOCKET failed: {}",
+        String::from_utf8_lossy(&client_env_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&client_env_output.stdout).trim(),
+        env_socket_path.to_str().expect("socket path")
+    );
+    assert!(
+        !env_socket_path.exists(),
+        "nmux --print-socket should not create an NMUX_SOCKET path"
+    );
+
+    let daemon_env_output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .arg("--print-socket")
+        .env("NMUX_SOCKET", &env_socket_path)
+        .output()
+        .expect("run nmuxd --print-socket with NMUX_SOCKET");
+
+    assert!(
+        daemon_env_output.status.success(),
+        "nmuxd --print-socket with NMUX_SOCKET failed: {}",
+        String::from_utf8_lossy(&daemon_env_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&daemon_env_output.stdout).trim(),
+        env_socket_path.to_str().expect("socket path")
+    );
+    assert!(
+        !env_socket_path.exists(),
+        "nmuxd --print-socket should not bind an NMUX_SOCKET path"
+    );
+
     let client_socket_path = test_socket_path();
+    let client_env_override_path = test_socket_path();
     let client_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
             "--socket",
             client_socket_path.to_str().expect("socket path"),
             "--print-socket",
         ])
+        .env("NMUX_SOCKET", &client_env_override_path)
         .output()
         .expect("run nmux --print-socket");
 
@@ -103,14 +146,20 @@ fn print_socket_reports_resolved_socket_without_side_effects() {
         !client_socket_path.exists(),
         "nmux --print-socket should not create a socket path"
     );
+    assert!(
+        !client_env_override_path.exists(),
+        "explicit --socket should win without touching NMUX_SOCKET"
+    );
 
     let daemon_socket_path = test_socket_path();
+    let daemon_env_override_path = test_socket_path();
     let daemon_output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
         .args([
             "--socket",
             daemon_socket_path.to_str().expect("socket path"),
             "--print-socket",
         ])
+        .env("NMUX_SOCKET", &daemon_env_override_path)
         .output()
         .expect("run nmuxd --print-socket");
 
@@ -126,6 +175,10 @@ fn print_socket_reports_resolved_socket_without_side_effects() {
     assert!(
         !daemon_socket_path.exists(),
         "nmuxd --print-socket should not bind a socket path"
+    );
+    assert!(
+        !daemon_env_override_path.exists(),
+        "explicit --socket should win without touching NMUX_SOCKET"
     );
 }
 

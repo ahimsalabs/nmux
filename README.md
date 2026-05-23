@@ -21,14 +21,17 @@ The current implementation is a Rust workspace with:
 ## Check
 
 ```sh
+nix develop . -c flatc --version
 nix develop . -c make check
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
 ```
 
-`make check` is the regular default-engine gate. `make check-ghostty-vt` is the
-opt-in full feature gate for backend `libghostty-vt` changes. `make check-all`
-runs both when validating release-style or default-engine-promotion work.
+The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
+FlatBuffers install is needed for the schema check. `make check` is the regular
+default-engine gate. `make check-ghostty-vt` is the opt-in full feature gate for
+backend `libghostty-vt` changes. `make check-all` runs both when validating
+release-style or default-engine-promotion work.
 
 ## Quick Smoke
 
@@ -58,6 +61,12 @@ nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' -
 
 Both binaries share a stable default socket path for the current user. Explicit `--socket` wins; otherwise a valid absolute `NMUX_SOCKET` value wins, then `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Use `NMUX_SOCKET` for a shell-scoped local workspace, or pass `--socket` on both sides when you want an isolated smoke-test socket.
 Use `nmux --print-socket` or `nmuxd --print-socket` to print the resolved socket path without connecting or binding.
+
+```sh
+NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --print-socket
+NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket
+```
+
 Connection failures include the socket path, which helps distinguish a missing daemon from an isolated test socket.
 Use `nmux --connect-timeout-ms MS` when a script may start the client before `nmuxd` has finished binding the socket.
 `nmuxd` refuses to replace an existing socket path, so remove stale sockets deliberately or choose a different `--socket`.
