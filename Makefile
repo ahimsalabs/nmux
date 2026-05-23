@@ -4,6 +4,8 @@ FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 PROMOTION_EVIDENCE_DIR ?= target/promotion-evidence
 SOURCE_FETCH_REPORT ?= target/source-fetch-provenance/SOURCE_FETCH.txt
+SOURCE_FETCH_OFFLINE_PROBE_REPORT ?= target/source-fetch-offline/OFFLINE_PROBE.txt
+SOURCE_FETCH_OFFLINE_PROBE_LOG ?=
 PACKAGING_LAYOUT ?= target/packaging-libghostty-vt/package
 PACKAGING_ARCHIVE ?= target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz
 PACKAGING_ARCHIVE_SHA256 ?= $(PACKAGING_ARCHIVE).sha256
@@ -553,6 +555,7 @@ promotion-evidence-verify:
 	require_exact "$$run_log" 'verifying source-fetch offline probe report' 'offline probe verifier ran'; \
 	require_exact "$$run_log" 'source_fetch_offline_probe_verified=target/source-fetch-offline/OFFLINE_PROBE.txt' 'offline probe verifier result'; \
 	require_exact "$$run_log" 'source_fetch_offline_probe=target/source-fetch-offline/OFFLINE_PROBE.txt' 'offline probe artifact path'; \
+	$(MAKE) --no-print-directory SOURCE_FETCH_OFFLINE_PROBE_REPORT="$$offline_probe" SOURCE_FETCH_OFFLINE_PROBE_LOG="$$run_log" source-fetch-offline-probe-verify; \
 	require_line "$$package_provenance" '^\[staged_files\]$$' 'packaging staged file hashes'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux wrapper hash'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmuxd bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmuxd wrapper hash'; \
@@ -800,7 +803,8 @@ source-fetch-offline-probe: check-vt-toolchain
 
 source-fetch-offline-probe-verify:
 	@echo "verifying source-fetch offline probe report"
-	@report="target/source-fetch-offline/OFFLINE_PROBE.txt"; \
+	@report="$(SOURCE_FETCH_OFFLINE_PROBE_REPORT)"; \
+	override_log="$(SOURCE_FETCH_OFFLINE_PROBE_LOG)"; \
 	require_file() { \
 		path="$$1"; \
 		if [ ! -s "$$path" ]; then \
@@ -827,7 +831,11 @@ source-fetch-offline-probe-verify:
 		fi; \
 	}; \
 	require_file "$$report"; \
-	log="$$(awk -F= '/^log=/{print $$2; exit}' "$$report")"; \
+	if [ -n "$$override_log" ]; then \
+		log="$$override_log"; \
+	else \
+		log="$$(awk -F= '/^log=/{print $$2; exit}' "$$report")"; \
+	fi; \
 	require_file "$$log"; \
 	require_exact "$$report" 'nmux source-fetch offline probe' 'report title'; \
 	require_line "$$report" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'generation timestamp'; \

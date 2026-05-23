@@ -65,6 +65,9 @@ Cargo/Ghostty caches. It is useful evidence that the current pinned-fetch path
 can reuse cache state after a normal opt-in build has populated it, but it does
 not prove cold-checkout behavior, CI cache-miss behavior, network-failure
 behavior, or a packaged/default source policy.
+Run `make SOURCE_FETCH_OFFLINE_PROBE_REPORT=/path/to/OFFLINE_PROBE.txt
+SOURCE_FETCH_OFFLINE_PROBE_LOG=/path/to/RUN.log source-fetch-offline-probe-verify`
+when checking copied or bundled probe evidence.
 
 ## Promotion Blockers
 

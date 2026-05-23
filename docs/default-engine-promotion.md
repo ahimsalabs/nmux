@@ -130,6 +130,8 @@ engine or a regular CI requirement.
 - `make source-fetch-offline-probe-verify` validates an existing offline probe
   report and log for the expected offline mode, target dir, command, passing
   result, and generated `nmux-core` test binary without rerunning the probe.
+  Override `SOURCE_FETCH_OFFLINE_PROBE_REPORT` and
+  `SOURCE_FETCH_OFFLINE_PROBE_LOG` when checking copied or bundled evidence.
 - `make packaging-sample` prints that toolchain information, builds default and
   opt-in `libghostty-vt` release binaries in separate target directories, and
   reports artifact sizes plus binary versions for packaging evidence.

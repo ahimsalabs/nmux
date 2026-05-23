@@ -166,7 +166,8 @@ cold-checkout, CI cache-miss, or source-policy evidence.
 `make source-fetch-offline-probe-verify` checks the existing `OFFLINE_PROBE.txt`
 and `OFFLINE_PROBE.log` for the expected offline mode, target dir, command,
 passing result, and generated `nmux-core` test binary without rerunning the
-probe.
+probe. Override `SOURCE_FETCH_OFFLINE_PROBE_REPORT` and
+`SOURCE_FETCH_OFFLINE_PROBE_LOG` when checking copied or bundled evidence.
 
 `make packaging-sample` prints the same toolchain context, builds default and
 opt-in release binaries in separate target directories, and reports artifact

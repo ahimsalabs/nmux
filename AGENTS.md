@@ -174,7 +174,9 @@ report against the current `Cargo.lock` without regenerating it; override
 whether `nmux-core --features libghostty-vt` can compile from current caches
 with `CARGO_NET_OFFLINE=true`; treat it as cache-present evidence only.
 `source-fetch-offline-probe-verify` checks the existing offline probe report and
-log without rerunning the cache-present probe.
+log without rerunning the cache-present probe; override
+`SOURCE_FETCH_OFFLINE_PROBE_REPORT` and `SOURCE_FETCH_OFFLINE_PROBE_LOG` when
+checking copied or bundled evidence.
 `packaging-sample` builds default and opt-in release binaries in separate target
 directories and prints artifact sizes plus binary versions for packaging
 evidence rows.

@@ -104,7 +104,8 @@ checks whether the opt-in `nmux-core --features libghostty-vt` build can compile
 from the current Cargo/Ghostty caches with `CARGO_NET_OFFLINE=true`; it is
 cache-present evidence only, not cold-checkout or source-policy evidence.
 `make source-fetch-offline-probe-verify` checks an existing offline probe report
-and log without rerunning the probe.
+and log without rerunning the probe; set `SOURCE_FETCH_OFFLINE_PROBE_REPORT`
+and `SOURCE_FETCH_OFFLINE_PROBE_LOG` when checking copied or bundled evidence.
 `make packaging-sample` builds default and opt-in release binaries in separate
 target directories and prints artifact sizes plus binary versions.
 `make packaging-layout-sample` stages a local opt-in package layout with
