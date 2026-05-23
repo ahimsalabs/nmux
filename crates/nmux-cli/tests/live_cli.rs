@@ -57,6 +57,57 @@ fn one_shot_cli_receives_nmux_pane_environment() {
 }
 
 #[test]
+fn one_shot_cli_can_print_nested_nmux_context() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = format!(
+        "{} --print-context; cat >/dev/null",
+        shell_quote(env!("CARGO_BIN_EXE_nmux"))
+    );
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            &command,
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args(["--socket", socket_path.to_str().expect("socket path")])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(stdout.contains("nmux=1"), "missing nmux flag:\n{stdout}");
+    assert!(
+        stdout.contains("session=local"),
+        "missing session id:\n{stdout}"
+    );
+    assert!(stdout.contains("pane=pane-1"), "missing pane id:\n{stdout}");
+    assert!(
+        stdout.contains(&format!("socket={}", socket_path.display())),
+        "missing socket path:\n{stdout}"
+    );
+    assert!(stdout.contains("origin=local"), "missing origin:\n{stdout}");
+}
+
+#[test]
 fn live_cli_streams_command_output_and_committed_resize() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
@@ -4276,6 +4327,10 @@ fn test_socket_path() -> PathBuf {
         "/tmp/nmux-live-cli-{}-{nanos}-{id}.sock",
         std::process::id()
     ))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn test_state_path() -> PathBuf {
