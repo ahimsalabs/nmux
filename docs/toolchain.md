@@ -25,6 +25,12 @@ state, daemon-owned structured input, or default-engine promotion evidence.
 See [contributor-workflow.md](contributor-workflow.md) for choosing between
 those gates.
 
+For setup and evidence records, print the active tools with:
+
+```sh
+nix develop . -c make toolchain-info
+```
+
 ## Non-Nix Equivalents
 
 The non-Nix path is documented as a requirements checklist, not as promotion
@@ -43,9 +49,10 @@ VT path.
 A non-Nix environment must provide:
 
 - a Rust toolchain new enough for Cargo workspace resolver 3 and edition 2024;
-- `flatc` compatible with the pinned Rust `flatbuffers = "=25.12.19"` crate;
+- `flatc` 25.12.19, matching the pinned Rust `flatbuffers = "=25.12.19"`
+  crate;
 - `make`;
-- Zig 0.15 when building or testing `--features libghostty-vt`;
+- Zig 0.15.x when building or testing `--features libghostty-vt`;
 - network or local-source policy for the `libghostty-vt-sys` Ghostty source
   fetch.
 
@@ -57,7 +64,8 @@ make check
 
 The Makefile checks for required tools before running schema or Rust tests. A
 missing `flatc`, `cargo`, or optional native-VT `zig` reports the missing tool
-and the matching Nix command to use.
+and the matching Nix command to use. `flatc` must report version 25.12.19, and
+the optional native-VT `zig` must be in the 0.15.x line.
 
 For the opt-in VT engine, the command shape is:
 
@@ -70,6 +78,8 @@ Git URL rewrite rules from changing the HTTPS source fetch used by
 `libghostty-vt-sys`. If an environment uses a pre-fetched Ghostty checkout, set
 `GHOSTTY_SOURCE_DIR` according to the `libghostty-vt-sys` build path and record
 that source policy before using the result as promotion evidence.
+Record `make toolchain-info` output with any non-Nix setup attempt or promotion
+sample so the exact tool versions and source-fetch environment are visible.
 See [source-fetch-policy.md](source-fetch-policy.md) for the current opt-in
 policy and the remaining source-fetch decisions for packaged/default builds.
 See [packaging.md](packaging.md) for binary distribution questions that remain

@@ -16,6 +16,7 @@ gate when doing release-style validation or gathering default-engine-promotion
 evidence:
 
 ```sh
+nix develop . -c make toolchain-info
 nix develop . -c make check-all
 ```
 

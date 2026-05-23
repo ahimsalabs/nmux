@@ -56,6 +56,7 @@ engine, a regular CI requirement, or a packaging baseline.
 Run:
 
 ```sh
+nix develop . -c make toolchain-info
 nix develop . -c make check-all
 ```
 
@@ -65,8 +66,9 @@ any CI or packaging context in
 `make check-all` sample is useful evidence, but it does not change the default
 engine by itself.
 
-Outside the Nix shell, the Makefile checks for `flatc`, `cargo`, and the
-optional native-VT `zig` before running the full gate. Record missing-tool
+Outside the Nix shell, run `make toolchain-info` before the attempted gate. The
+Makefile checks for `flatc` 25.12.19, `cargo`, and optional native-VT Zig
+0.15.x before running the full gate. Record missing-tool or wrong-version
 failures too; they are setup evidence for the non-Nix checklist, not passing
 promotion evidence.
 

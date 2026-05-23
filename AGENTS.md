@@ -67,6 +67,7 @@ Use the Nix development shell for repo checks:
 
 ```sh
 nix develop . -c flatc --version
+nix develop . -c make toolchain-info
 nix develop . -c make check
 ```
 
@@ -76,6 +77,8 @@ development path. `make check` runs FlatBuffers schema validation and
 `cargo test --workspace`. For narrower iteration, prefer targeted `cargo test`
 commands inside the same `nix develop . -c ...` wrapper, then run full
 `make check` before committing implementation changes.
+`make toolchain-info` prints the active cargo, rustc, flatc, Zig, and
+source-fetch environment values used for promotion-evidence records.
 
 If `schema/nmux.fbs` changes, regenerate bindings with:
 

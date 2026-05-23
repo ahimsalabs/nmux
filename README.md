@@ -27,6 +27,7 @@ The current implementation is a Rust workspace with:
 
 ```sh
 nix develop . -c flatc --version
+nix develop . -c make toolchain-info
 nix develop . -c make check
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
@@ -41,8 +42,10 @@ See [docs/contributor-workflow.md](docs/contributor-workflow.md) for when to use
 the default gate, the opt-in VT gate, or the combined promotion-evidence gate.
 See [docs/toolchain.md](docs/toolchain.md) for the supported Nix path and the
 non-Nix requirements checklist that still needs validation before default-engine
-promotion. The Makefile fails fast with setup guidance when required non-Nix
-tools such as `flatc`, `cargo`, or optional native-VT `zig` are missing.
+promotion. `make toolchain-info` prints the active tool versions for evidence
+records. The Makefile fails fast with setup guidance when required non-Nix tools
+such as `flatc`, `cargo`, or optional native-VT `zig` are missing or have an
+unsupported version.
 See [docs/source-fetch-policy.md](docs/source-fetch-policy.md) for the current
 opt-in `libghostty-vt-sys` source-fetch posture and remaining packaging
 blockers.

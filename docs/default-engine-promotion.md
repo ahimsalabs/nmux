@@ -59,9 +59,13 @@ engine or a regular CI requirement.
 - [Contributor workflow](contributor-workflow.md) documents when contributors
   should use the default gate, the opt-in terminal-correctness gate, and the
   combined promotion-evidence gate.
-- The Makefile performs local tool preflight checks for `cargo`, `flatc`, and
-  the optional native-VT `zig` requirement so non-Nix validation attempts fail
-  with setup guidance instead of an opaque missing-command error.
+- The Makefile performs local tool preflight checks for `cargo`, `flatc`
+  25.12.19, and the optional native-VT Zig 0.15.x requirement so non-Nix
+  validation attempts fail with setup guidance instead of an opaque
+  missing-command or wrong-version error.
+- `make toolchain-info` prints the active Rust, FlatBuffers, Zig, and
+  source-fetch environment fields that should accompany promotion-evidence
+  samples.
 - `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
   suites with `--features libghostty-vt` and sets `GIT_CONFIG_GLOBAL=/dev/null`
   to avoid local Git URL rewrite interference.
@@ -101,8 +105,9 @@ be recorded.
   including at least one cold-checkout or cold-cache run.
 - Exercise the same gate in CI before making it a required check.
 - Validate the non-Nix toolchain checklist with platform-specific setup
-  commands and timings; the current local non-Nix attempt failed before tests
-  because `flatc` was absent from the host PATH.
+  commands, `make toolchain-info` output, and timings; the current local
+  non-Nix attempt failed before tests because `flatc` was absent from the host
+  PATH.
 - Choose a source policy for packaged/default builds: pinned network fetch with
   CI/cache controls, vendored or mirrored source, `GHOSTTY_SOURCE_DIR`
   prefetching, or a native-library package/artifact cache.
