@@ -2365,6 +2365,7 @@ pub fn scrollback_chunk_from_frame(
     for index in 0..rows.len() {
         let row = rows.get(index);
         let runs = row.runs().map(decoded_cell_runs).unwrap_or_default();
+        validate_cell_run_style_ids(&runs, &styles)?;
         validate_cell_run_hyperlink_ids(&runs, &hyperlinks)?;
         lines.push(ScrollbackLine {
             line: row.line(),
@@ -2919,6 +2920,7 @@ impl ClientPaneSurface {
         surface.row_dirty.resize(row_count, false);
         surface.row_kitty_placeholders.resize(row_count, false);
         surface.row_state_hashes.resize(row_count, 0);
+        validate_row_update_style_ids(&update.row_updates, &surface.styles)?;
         validate_row_update_hyperlink_ids(&update.row_updates, &surface.hyperlinks)?;
         surface.apply_rows(&update.row_updates)?;
         Ok(surface)
@@ -3006,6 +3008,7 @@ impl ClientPaneSurface {
         {
             return Err("replace-rows patch changes terminal colors".into());
         }
+        validate_row_update_style_ids(&update.row_updates, &self.styles)?;
         validate_row_update_hyperlink_ids(&update.row_updates, &self.hyperlinks)?;
         self.apply_rows(&update.row_updates)?;
         self.cursor = update.cursor;
@@ -3087,6 +3090,31 @@ fn validate_row_update_hyperlink_ids(
     Ok(())
 }
 
+fn validate_row_update_style_ids(
+    rows: &[SurfaceRowUpdate],
+    styles: &[StyleSummary],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for row in rows {
+        validate_cell_run_style_ids(&row.runs, styles)?;
+    }
+    Ok(())
+}
+
+fn validate_cell_run_style_ids(
+    runs: &[CellRunSummary],
+    styles: &[StyleSummary],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let style_count = styles.len().max(1);
+    for run in runs {
+        let style_id = usize::try_from(run.style_id)
+            .map_err(|_| format!("cell run style_id {} is too large", run.style_id))?;
+        if style_id >= style_count {
+            return Err(format!("cell run references unknown style_id {}", run.style_id).into());
+        }
+    }
+    Ok(())
+}
+
 fn validate_cell_run_hyperlink_ids(
     runs: &[CellRunSummary],
     hyperlinks: &[HyperlinkSummary],
@@ -3133,6 +3161,16 @@ fn validate_cached_row_hyperlink_ids(
 ) -> Result<(), Box<dyn std::error::Error>> {
     for runs in row_runs {
         validate_cell_run_hyperlink_ids(runs, hyperlinks)?;
+    }
+    Ok(())
+}
+
+fn validate_cached_row_style_ids(
+    row_runs: &[Vec<CellRunSummary>],
+    styles: &[StyleSummary],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for runs in row_runs {
+        validate_cell_run_style_ids(runs, styles)?;
     }
     Ok(())
 }
@@ -3955,6 +3993,13 @@ impl ClientAttachState {
             validate_hyperlink_table(&hyperlinks)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
             let row_runs = row_runs_for_text(&row_text, row_runs);
+            let styles = if styles.is_empty() {
+                default_style_summaries()
+            } else {
+                styles
+            };
+            validate_cached_row_style_ids(&row_runs, &styles)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
             validate_cached_row_hyperlink_ids(&row_runs, &hyperlinks)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
 
@@ -3969,11 +4014,7 @@ impl ClientAttachState {
                 title,
                 working_directory,
                 colors,
-                styles: if styles.is_empty() {
-                    default_style_summaries()
-                } else {
-                    styles
-                },
+                styles,
                 hyperlinks,
                 row_runs,
                 row_semantic_prompts,
@@ -5051,7 +5092,7 @@ mod tests {
 
     #[test]
     fn client_surface_preserves_structured_row_runs_across_updates() {
-        let snapshot = surface_update(
+        let mut snapshot = surface_update(
             SurfaceUpdateKind::Snapshot,
             1,
             None,
@@ -5062,6 +5103,15 @@ mod tests {
                     styled_run("字", 2, vec![2]),
                 ],
             )],
+        );
+        snapshot.styles.resize(
+            5,
+            StyleSummary {
+                fg_rgba: 0,
+                bg_rgba: 0,
+                underline_rgba: 0,
+                flags: 0,
+            },
         );
         let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
 
@@ -5139,6 +5189,34 @@ mod tests {
             .expect_err("unknown hyperlink id should be rejected");
 
         assert!(err.to_string().contains("unknown hyperlink_id"));
+        assert_eq!(surface.version, 1);
+        assert_eq!(surface.render_text(), "top");
+    }
+
+    #[test]
+    fn client_surface_rejects_patch_with_unknown_style_id() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top")],
+        );
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let patch = surface_update(
+            SurfaceUpdateKind::Patch,
+            2,
+            Some(1),
+            vec![surface_row_with_runs(
+                0,
+                vec![styled_run("styled", 1, vec![1, 1, 1, 1, 1, 1])],
+            )],
+        );
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("unknown style id should be rejected");
+
+        assert!(err.to_string().contains("unknown style_id"));
         assert_eq!(surface.version, 1);
         assert_eq!(surface.render_text(), "top");
     }
@@ -5634,6 +5712,16 @@ mod tests {
         .expect_err("invalid cached cell semantic content should be rejected");
 
         assert!(err.to_string().contains("invalid cell semantic content"));
+    }
+
+    #[test]
+    fn client_attach_state_rejects_unknown_cached_style_id() {
+        let err = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 7\nsurface 70616e652d31 7 80 24 0\ncursor none\nrow 0 636163686564\nrun 0 636163686564 0101010101 1 0 0 0\nend\n",
+        )
+        .expect_err("unknown cached style id should be rejected");
+
+        assert!(err.to_string().contains("unknown style_id"));
     }
 
     #[test]
