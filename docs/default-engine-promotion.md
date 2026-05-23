@@ -323,9 +323,11 @@ result, outcome, and follow-up.
 - Exercise the manual promotion evidence bundle and downloaded-artifact verifier
   jobs in CI before making the opt-in VT gate required. A 2026-05-23
   workflow-dispatch attempt passed the default-engine job but failed during
-  `promotion-evidence-bundle` when the parallel native-VT test harness
-  segfaulted on Ubuntu; the next CI attempt should prove the serialized
-  `RUST_TEST_THREADS=1` native-VT gate and downloaded-artifact verifier.
+  `promotion-evidence-bundle` when the native-VT test process segfaulted on
+  Ubuntu while exercising terminal-generated PTY-write callbacks. The next CI
+  attempt should prove the heap-stabilized callback registration path, the
+  serialized `RUST_TEST_THREADS=1` native-VT gate, and the
+  downloaded-artifact verifier.
 - Validate the non-Nix toolchain checklist with platform-specific setup
   commands, `make promotion-sample` output, and timings; the current local
   non-Nix attempt failed before tests because `flatc` was absent from the host

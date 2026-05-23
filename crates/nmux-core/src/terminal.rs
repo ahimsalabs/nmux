@@ -501,7 +501,7 @@ mod ghostty_vt {
     const OSC_BUFFER_LIMIT: usize = 4096;
 
     struct GhosttyVtState {
-        terminal: Terminal<'static, 'static>,
+        terminal: Box<Terminal<'static, 'static>>,
         render_state: RenderState<'static>,
         row_iterator: RowIterator<'static>,
         cell_iterator: CellIterator<'static>,
@@ -640,12 +640,17 @@ mod ghostty_vt {
     impl GhosttyVtState {
         fn new(cols: u32, rows: u32) -> Option<Self> {
             let pty_writes = Rc::new(RefCell::new(Vec::new()));
-            let mut terminal = Terminal::new(TerminalOptions {
-                cols: u16::try_from(cols).ok()?,
-                rows: u16::try_from(rows).ok()?,
-                max_scrollback: 10000,
-            })
-            .ok()?;
+            let mut terminal = Box::new(
+                Terminal::new(TerminalOptions {
+                    cols: u16::try_from(cols).ok()?,
+                    rows: u16::try_from(rows).ok()?,
+                    max_scrollback: 10000,
+                })
+                .ok()?,
+            );
+            // libghostty-vt callback registration stores userdata pointing
+            // into the Terminal value, so register callbacks only after the
+            // terminal is in a stable heap allocation.
             terminal
                 .on_pty_write({
                     let pty_writes = Rc::clone(&pty_writes);

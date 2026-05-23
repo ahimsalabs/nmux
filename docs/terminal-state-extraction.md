@@ -259,3 +259,8 @@ development, CI, and packaging. `make check-all` is the explicit combined gate
 for release-style validation and default-engine-promotion evidence; it does not
 change the regular meaning of `make check`. Record that evidence in
 [the default-engine promotion tracker](default-engine-promotion.md).
+
+The `libghostty-vt` terminal is allocated in a stable heap location before
+PTY-write callback registration. The binding stores callback userdata inside
+the terminal value, so moving that value after registration can leave native
+callback dispatch with stale userdata.
