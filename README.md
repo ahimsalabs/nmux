@@ -49,6 +49,7 @@ nix develop . -c make promotion-evidence-verify
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make source-fetch-provenance-verify
 nix develop . -c make source-fetch-offline-probe
+nix develop . -c make source-fetch-offline-probe-verify
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -99,6 +100,8 @@ against the current `Cargo.lock` without regenerating it.
 checks whether the opt-in `nmux-core --features libghostty-vt` build can compile
 from the current Cargo/Ghostty caches with `CARGO_NET_OFFLINE=true`; it is
 cache-present evidence only, not cold-checkout or source-policy evidence.
+`make source-fetch-offline-probe-verify` checks an existing offline probe report
+and log without rerunning the probe.
 `make packaging-sample` builds default and opt-in release binaries in separate
 target directories and prints artifact sizes plus binary versions.
 `make packaging-layout-sample` stages a local opt-in package layout with

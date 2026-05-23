@@ -70,6 +70,7 @@ nix develop . -c make promotion-evidence-verify
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make source-fetch-provenance-verify
 nix develop . -c make source-fetch-offline-probe
+nix develop . -c make source-fetch-offline-probe-verify
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -160,6 +161,10 @@ policy note without regenerating the report.
 `nmux-core --features libghostty-vt` build can compile from current caches with
 `CARGO_NET_OFFLINE=true`. Treat this as cache-present evidence only, not
 cold-checkout, CI cache-miss, or source-policy evidence.
+`make source-fetch-offline-probe-verify` checks the existing `OFFLINE_PROBE.txt`
+and `OFFLINE_PROBE.log` for the expected offline mode, target dir, command,
+passing result, and generated `nmux-core` test binary without rerunning the
+probe.
 
 `make packaging-sample` prints the same toolchain context, builds default and
 opt-in release binaries in separate target directories, and reports artifact

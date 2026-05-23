@@ -6,7 +6,7 @@ PROMOTION_EVIDENCE_DIR ?= target/promotion-evidence
 PACKAGING_ARCHIVE ?= target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz
 PACKAGING_ARCHIVE_SHA256 ?= $(PACKAGING_ARCHIVE).sha256
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-offline-probe source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -780,7 +780,59 @@ source-fetch-offline-probe: check-vt-toolchain
 		echo "source-fetch offline probe failed; see $$report and $$log" >&2; \
 		exit "$$status"; \
 	fi; \
+	$(MAKE) --no-print-directory source-fetch-offline-probe-verify; \
 	printf 'source_fetch_offline_probe=%s\n' "$$report"
+
+source-fetch-offline-probe-verify:
+	@echo "verifying source-fetch offline probe report"
+	@report="target/source-fetch-offline/OFFLINE_PROBE.txt"; \
+	require_file() { \
+		path="$$1"; \
+		if [ ! -s "$$path" ]; then \
+			echo "missing or empty source-fetch offline probe artifact: $$path" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_line() { \
+		file="$$1"; \
+		pattern="$$2"; \
+		description="$$3"; \
+		if ! grep -Eq "$$pattern" "$$file"; then \
+			echo "missing source-fetch offline probe record in $$file: $$description" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_exact() { \
+		file="$$1"; \
+		line="$$2"; \
+		description="$$3"; \
+		if ! grep -Fxq "$$line" "$$file"; then \
+			echo "missing source-fetch offline probe record in $$file: $$description" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_file "$$report"; \
+	log="$$(awk -F= '/^log=/{print $$2; exit}' "$$report")"; \
+	require_file "$$log"; \
+	require_exact "$$report" 'nmux source-fetch offline probe' 'report title'; \
+	require_line "$$report" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'generation timestamp'; \
+	require_line "$$report" '^started_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'start timestamp'; \
+	require_line "$$report" '^completed_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'completion timestamp'; \
+	require_line "$$report" '^elapsed_seconds=[0-9]+$$' 'elapsed seconds'; \
+	require_exact "$$report" 'probe_scope=cache-present opt-in native VT build only; not cold checkout, CI cache miss, network-failure, or default/package source policy evidence' 'probe scope'; \
+	require_line "$$report" '^ghostty_source_mode=(pinned-fetch|local)$$' 'Ghostty source mode'; \
+	require_line "$$report" '^GHOSTTY_SOURCE_DIR=.+$$' 'GHOSTTY_SOURCE_DIR field'; \
+	require_exact "$$report" 'CARGO_NET_OFFLINE=true' 'Cargo offline mode'; \
+	require_exact "$$report" 'GIT_CONFIG_GLOBAL=/dev/null' 'Git config isolation'; \
+	require_exact "$$report" 'CARGO_TARGET_DIR=target/source-fetch-offline' 'target dir'; \
+	require_exact "$$report" 'package=nmux-core' 'package'; \
+	require_exact "$$report" 'features=libghostty-vt' 'features'; \
+	require_exact "$$report" 'command=cargo test -p nmux-core --features libghostty-vt --no-run' 'command'; \
+	require_exact "$$report" 'log=target/source-fetch-offline/OFFLINE_PROBE.log' 'log path'; \
+	require_exact "$$report" 'source_fetch_offline_probe=passed' 'probe result'; \
+	require_line "$$log" '^   Compiling libghostty-vt-sys v0\.1\.1$$|^    Checking libghostty-vt-sys v0\.1\.1$$|^    Finished `test` profile ' 'opt-in native VT build activity'; \
+	require_line "$$log" '^  Executable unittests src/lib\.rs \(target/source-fetch-offline/debug/deps/nmux_core-.+\)$$' 'nmux-core test binary'; \
+	printf 'source_fetch_offline_probe_verified=%s\n' "$$report"
 
 packaging-sample: toolchain-info check-vt-toolchain
 	@echo "building default release binaries"
