@@ -66,6 +66,7 @@ nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
 nix develop . -c make promotion-evidence-verify
 nix develop . -c make source-fetch-provenance-sample
+nix develop . -c make source-fetch-offline-probe
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -97,16 +98,17 @@ cold-target evidence, and record that it does not clear Cargo registry, Git
 source, or Nix store caches.
 
 `make promotion-local-sample` runs `make source-fetch-provenance-sample`,
-`make promotion-sample`, and then `make packaging-archive-runtime-smoke` with
-clear section headers. Use it for a local evidence pass before updating the
-promotion tracker with source-provenance, validation, and packaging/archive
-runtime results.
+`make promotion-sample`, `make source-fetch-offline-probe`, and then
+`make packaging-archive-runtime-smoke` with clear section headers. Use it for a
+local evidence pass before updating the promotion tracker with
+source-provenance, cache-present offline probe, validation, and
+packaging/archive runtime results.
 `make promotion-evidence-bundle` runs the local sample and gathers
-`RUN.log`, `TOOLCHAIN.txt`, `SOURCE_FETCH.txt`, `PACKAGE_PROVENANCE.txt`,
-`CARGO_TREE.txt`, `PACKAGE_ARCHIVE.tar.gz`, `ARCHIVE.sha256`,
-`CACHE_STATE.txt`, `SUMMARY.txt`, and `BUNDLE_MANIFEST.txt` under
-`target/promotion-evidence` for easier transcription into the promotion tracker
-or manual CI evidence records.
+`RUN.log`, `TOOLCHAIN.txt`, `SOURCE_FETCH.txt`, `OFFLINE_PROBE.txt`,
+`PACKAGE_PROVENANCE.txt`, `CARGO_TREE.txt`, `PACKAGE_ARCHIVE.tar.gz`,
+`ARCHIVE.sha256`, `CACHE_STATE.txt`, `SUMMARY.txt`, and
+`BUNDLE_MANIFEST.txt` under `target/promotion-evidence` for easier
+transcription into the promotion tracker or manual CI evidence records.
 `SUMMARY.txt` includes the extracted `time -p make check-all` values as
 `check_all_real_seconds`, `check_all_user_seconds`, and
 `check_all_sys_seconds`, plus `started_at_utc`, `completed_at_utc`, and
@@ -130,6 +132,10 @@ CI workflow performs the same downloaded-artifact verification after upload.
 `libghostty-vt` Cargo package records without inspecting Ghostty source. Use it
 when updating source-fetch evidence or comparing pinned-fetch versus local
 `GHOSTTY_SOURCE_DIR` samples.
+`make source-fetch-offline-probe` checks whether the opt-in
+`nmux-core --features libghostty-vt` build can compile from current caches with
+`CARGO_NET_OFFLINE=true`. Treat this as cache-present evidence only, not
+cold-checkout, CI cache-miss, or source-policy evidence.
 
 `make packaging-sample` prints the same toolchain context, builds default and
 opt-in release binaries in separate target directories, and reports artifact

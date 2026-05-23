@@ -12,6 +12,7 @@ nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
 nix develop . -c make promotion-evidence-verify
 nix develop . -c make source-fetch-provenance-sample
+nix develop . -c make source-fetch-offline-probe
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -71,12 +72,13 @@ nix develop . -c make promotion-evidence-verify
 ```
 
 The local sample target runs `make source-fetch-provenance-sample`,
-`make promotion-sample`, and then `make packaging-archive-runtime-smoke`. The
-bundle target runs the same local sample and gathers the run log, toolchain
-output, bundle start/completion timestamps plus elapsed duration, extracted
-`time -p make check-all` values, source-fetch report, package provenance, cargo
-tree, package archive, archive checksum, observed cache-state report, and
-bundle artifact manifest under `target/promotion-evidence`, then runs
+`make promotion-sample`, `make source-fetch-offline-probe`, and then
+`make packaging-archive-runtime-smoke`. The bundle target runs the same local
+sample and gathers the run log, toolchain output, bundle start/completion
+timestamps plus elapsed duration, extracted `time -p make check-all` values,
+source-fetch report, offline probe report, package provenance, cargo tree,
+package archive, archive checksum, observed cache-state report, and bundle
+artifact manifest under `target/promotion-evidence`, then runs
 `make promotion-evidence-verify`. Run the verifier directly to check an
 existing bundle without rebuilding the native VT package; it validates the
 bundled archive bytes through `make packaging-archive-verify`. Pass
@@ -86,12 +88,18 @@ For source-fetch provenance evidence, use:
 
 ```sh
 nix develop . -c make source-fetch-provenance-sample
+nix develop . -c make source-fetch-offline-probe
 ```
 
 That target writes `target/source-fetch-provenance/SOURCE_FETCH.txt` with the
 active source mode, `GHOSTTY_SOURCE_DIR`, `GIT_CONFIG_GLOBAL`, `Cargo.lock`
 SHA-256, toolchain info, and locked `Cargo.lock` records for `libghostty-vt`
 and `libghostty-vt-sys`.
+The offline probe writes `target/source-fetch-offline/OFFLINE_PROBE.txt` and
+checks whether `nmux-core --features libghostty-vt` can compile from current
+caches with `CARGO_NET_OFFLINE=true` and `GIT_CONFIG_GLOBAL=/dev/null`. It is
+cache-present evidence only, not cold-checkout, CI cache-miss, or source-policy
+evidence.
 For local release-binary evidence, use:
 
 ```sh

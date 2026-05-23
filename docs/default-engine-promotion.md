@@ -82,24 +82,28 @@ engine or a regular CI requirement.
   `make check-all` with that fresh Rust target directory. It does not clear
   Cargo registry, Git source, or Nix store caches.
 - `make promotion-local-sample` runs source-fetch provenance, the timed
-  validation sample, and package archive runtime smoke in one local evidence
-  pass.
+  validation sample, the cache-present offline source-fetch probe, and package
+  archive runtime smoke in one local evidence pass.
 - `make promotion-evidence-bundle` runs the local sample and gathers its log,
   toolchain output, bundle start/completion timestamps plus elapsed duration,
-  extracted `make check-all` timing, source-fetch report, package provenance,
-  cargo tree, package archive, archive checksum, observed cache-state report,
-  and bundle artifact manifest under `target/promotion-evidence`.
+  extracted `make check-all` timing, source-fetch report, offline probe report,
+  package provenance, cargo tree, package archive, archive checksum, observed
+  cache-state report, and bundle artifact manifest under
+  `target/promotion-evidence`.
 - `make promotion-evidence-verify` checks an existing bundle for required
   summary identity fields, bundle timing fields, `make check-all` timing
   fields, artifact files, bundle-relative summary artifact names, cache-state
   artifact, relocation-safe `BUNDLE_MANIFEST.txt` hashes,
-  source/provenance records, package archive bytes, archive hash,
-  `packaging-archive-verify` output, `packaging-provenance-verify` output, and
-  packaged runtime smoke result. The bundle target runs it before printing the
-  artifact list.
+  source/provenance records, cache-present offline probe result, package
+  archive bytes, archive hash, `packaging-archive-verify` output,
+  `packaging-provenance-verify` output, and packaged runtime smoke result. The
+  bundle target runs it before printing the artifact list.
 - `make source-fetch-provenance-sample` writes the active source mode and
   locked `libghostty-vt` Cargo package records without inspecting Ghostty
   source.
+- `make source-fetch-offline-probe` checks whether the opt-in
+  `nmux-core --features libghostty-vt` build can compile from current caches
+  with `CARGO_NET_OFFLINE=true`; this is cache-present evidence only.
 - `make packaging-sample` prints that toolchain information, builds default and
   opt-in `libghostty-vt` release binaries in separate target directories, and
   reports artifact sizes plus binary versions for packaging evidence.
@@ -193,6 +197,7 @@ policy for default or packaged builds.
 | --- | --- | --- | --- |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make source-fetch-provenance-sample` | Passed. Wrote `target/source-fetch-provenance/SOURCE_FETCH.txt` with `Cargo.lock` SHA-256 `2e28c9036cf76971ebefb3f43a39bf3f3c122aeac89981cbf666105eb20d88c4`, `libghostty-vt` 0.1.1 checksum `d8afe5cc9ae303133220e530b28b7addbbf591160bb1564b88f7ee61387fee74`, and `libghostty-vt-sys` 0.1.1 checksum `aee97068da1692162c4523d54843bdcb43fecf086a9ee412a3375817e433faca`. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, existing Cargo registry/Nix/native source caches; separate Rust target directory `target/source-fetch-offline`; `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=/dev/null`, `CARGO_NET_OFFLINE=true` | `nix --extra-experimental-features 'nix-command flakes' develop . -c env CARGO_NET_OFFLINE=true GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/source-fetch-offline cargo test -p nmux-core --features libghostty-vt --no-run` | Passed. Compiled `nmux-core --features libghostty-vt` test binary from existing local caches with Cargo offline mode in `18.47s`. This is cache-present offline evidence only; it does not prove a cold checkout, CI cache miss, network-failure behavior, or a default/package source policy. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, existing Cargo registry/Nix/native source caches; separate Rust target directory `target/source-fetch-offline`; `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=/dev/null`, `CARGO_NET_OFFLINE=true`; working copy included the reusable offline probe target | `nix --extra-experimental-features 'nix-command flakes' develop . -c make source-fetch-offline-probe` | Passed. Wrote `target/source-fetch-offline/OFFLINE_PROBE.txt` and `OFFLINE_PROBE.log`; cleared the probe target directory, compiled `nmux-core --features libghostty-vt --no-run` from existing local caches in `18s`, and recorded `source_fetch_offline_probe=passed`. This remains cache-present evidence only; it does not prove cold checkout, CI cache miss, network-failure behavior, or a default/package source policy. |
 
 ## Packaging Samples
 
@@ -228,6 +233,7 @@ multi-platform evidence.
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, observed cache context in `CACHE_STATE.txt`: Nix store present, Cargo home/registry present, Cargo Git missing, default target dir present, promotion-cold target dir present, packaging default target dir present, packaging libghostty-vt target dir present; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-evidence-bundle` | Passed. `make promotion-evidence-verify` checked exact bundle manifest hashes including `CACHE_STATE.txt` and accepted the generated bundle. `SUMMARY.txt` recorded `started_at_utc=2026-05-23T10:40:40Z`, `completed_at_utc=2026-05-23T10:41:01Z`, `bundle_elapsed_seconds=21`, `check_all_real_seconds=16.42`, `check_all_user_seconds=2.64`, and `check_all_sys_seconds=3.11`; package archive SHA-256 `2b7c956e76b4b492d86144be51d0c48cabcc5448baf9b5e9e1e342eece7238ab`; packaged runtime smoke passed with sentinel `packaged-runtime-smoke`. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, observed cache context in `CACHE_STATE.txt`: Nix store present, Cargo home/registry present, Cargo Git missing, default target dir present, promotion-cold target dir present, packaging default target dir present, packaging libghostty-vt target dir present; working copy included package metadata plus relocated clean-env runtime smoke checks; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-evidence-bundle` | Passed. `make promotion-evidence-verify` accepted the generated bundle and checked `RUN.log` for relocated package install root plus `packaged_runtime_smoke_library_env=unset`. `SUMMARY.txt` recorded `started_at_utc=2026-05-23T10:52:03Z`, `completed_at_utc=2026-05-23T10:52:25Z`, `bundle_elapsed_seconds=22`, `check_all_real_seconds=16.27`, `check_all_user_seconds=2.63`, and `check_all_sys_seconds=3.20`; package archive SHA-256 `9b9d04776901e9a99ea92e1415815eaff52dc0d4d56a694281596794b667b506`; packaged runtime smoke passed from `/tmp/nmuxpkg.U3JXnl/install` with sentinel `packaged-runtime-smoke`. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, observed cache context in `CACHE_STATE.txt`: Nix store present, Cargo home/registry present, Cargo Git missing, default target dir present, promotion-cold target dir present, packaging default target dir present, packaging libghostty-vt target dir present; working copy included bundled package archive bytes plus no-rebuild archive verification; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-evidence-bundle` | Passed. Bundle included `PACKAGE_ARCHIVE.tar.gz` and `ARCHIVE.sha256`; `make promotion-evidence-verify` invoked `make packaging-archive-verify` against the bundled archive bytes. `SUMMARY.txt` recorded `started_at_utc=2026-05-23T11:02:36Z`, `completed_at_utc=2026-05-23T11:03:00Z`, `bundle_elapsed_seconds=24`, `check_all_real_seconds=16.29`, `check_all_user_seconds=2.63`, and `check_all_sys_seconds=3.20`; package archive SHA-256 `3311324fb31461098e8382e11b84aa40c28f2b68ba15e99ffd35b09b9a313719`; packaged runtime smoke passed from `/tmp/nmuxpkg.uXsdko/install` with sentinel `packaged-runtime-smoke`. A copied bundle at `/tmp/nmux-promotion-evidence-copy` also passed `make PROMOTION_EVIDENCE_DIR=/tmp/nmux-promotion-evidence-copy promotion-evidence-verify`, validating the relocation/download path. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, observed cache context in `CACHE_STATE.txt`: Nix store present, Cargo home/registry present, Cargo Git missing, default target dir present, promotion-cold target dir present, packaging default target dir present, packaging libghostty-vt target dir present, source-fetch offline probe present; working copy included `OFFLINE_PROBE.txt` in the evidence bundle; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-evidence-bundle` | Passed. Bundle included `OFFLINE_PROBE.txt`, `PACKAGE_ARCHIVE.tar.gz`, and `ARCHIVE.sha256`; `make promotion-evidence-verify` checked the offline probe result and archive bytes. `SUMMARY.txt` recorded `started_at_utc=2026-05-23T11:16:36Z`, `completed_at_utc=2026-05-23T11:17:17Z`, `bundle_elapsed_seconds=41`, `check_all_real_seconds=16.44`, `check_all_user_seconds=2.64`, and `check_all_sys_seconds=3.19`; `OFFLINE_PROBE.txt` recorded `source_fetch_offline_probe=passed` with `elapsed_seconds=17`; package archive SHA-256 `a7aac433d5f3ac0249d7de8cddac7b93397940952eb451d0c4a8c9985bdc350e`; packaged runtime smoke passed from `/tmp/nmuxpkg.yX0GCE/install` with sentinel `packaged-runtime-smoke`. A copied bundle at `target/downloaded-promotion-evidence` also passed `make PROMOTION_EVIDENCE_DIR=target/downloaded-promotion-evidence promotion-evidence-verify`. |
 
 ## CI Promotion Samples
 

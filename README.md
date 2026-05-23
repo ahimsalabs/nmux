@@ -45,6 +45,7 @@ nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
 nix develop . -c make promotion-evidence-verify
 nix develop . -c make source-fetch-provenance-sample
+nix develop . -c make source-fetch-offline-probe
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -63,19 +64,24 @@ toolchain evidence and times `make check-all` in the same run.
 `make promotion-cold-target-sample` clears `target/promotion-cold` and times
 `make check-all` with that fresh Rust target directory.
 `make promotion-local-sample` runs source-fetch provenance, the timed validation
-sample, and the package archive runtime smoke for one local evidence pass.
+sample, a cache-present offline source-fetch probe, and the package archive
+runtime smoke for one local evidence pass.
 `make promotion-evidence-bundle` runs that local sample and gathers the log,
 toolchain output, bundle start/completion timestamps plus elapsed duration,
-extracted `make check-all` timing, source-fetch report, package provenance,
-cargo tree, package archive, archive checksum, observed cache-state report, and
-bundle artifact manifest under `target/promotion-evidence`, then runs the
-verifier.
+extracted `make check-all` timing, source-fetch report, offline probe report,
+package provenance, cargo tree, package archive, archive checksum, observed
+cache-state report, and bundle artifact manifest under
+`target/promotion-evidence`, then runs the verifier.
 `make promotion-evidence-verify` checks an existing bundle for the required
 summary fields, bundle timing fields, `make check-all` timing fields, artifact
 files, cache-state report, artifact manifest hashes, source/provenance records,
 package archive bytes, archive hash, and packaged runtime smoke result.
 `make source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
+`make source-fetch-offline-probe` clears `target/source-fetch-offline` and
+checks whether the opt-in `nmux-core --features libghostty-vt` build can compile
+from the current Cargo/Ghostty caches with `CARGO_NET_OFFLINE=true`; it is
+cache-present evidence only, not cold-checkout or source-policy evidence.
 `make packaging-sample` builds default and opt-in release binaries in separate
 target directories and prints artifact sizes plus binary versions.
 `make packaging-layout-sample` stages a local opt-in package layout with
