@@ -6,7 +6,7 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
@@ -3699,7 +3699,15 @@ impl ClientAttachState {
                 fs::create_dir_all(parent)?;
             }
         }
-        fs::write(path, self.encode())
+        let tmp_path = state_save_tmp_path(path);
+        fs::write(&tmp_path, self.encode())?;
+        match fs::rename(&tmp_path, path) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                let _ = fs::remove_file(&tmp_path);
+                Err(err)
+            }
+        }
     }
 
     pub fn known_surfaces(&self) -> Vec<KnownSurfaceVersion> {
@@ -4577,6 +4585,16 @@ impl ClientAttachState {
             scrollbacks,
         })
     }
+}
+
+fn state_save_tmp_path(path: &Path) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(format!(".tmp-{}-{nanos}", std::process::id()));
+    PathBuf::from(tmp)
 }
 
 fn parse_state_u64(value: &str) -> io::Result<u64> {
@@ -8240,6 +8258,29 @@ mod tests {
             decoded.surfaces[0].row_runs[0][0].semantic_content,
             protocol::CellSemanticContent::Prompt
         );
+    }
+
+    #[test]
+    fn client_attach_state_save_creates_parent_and_removes_temp_file() {
+        let state_dir = test_socket_path().with_extension("state-dir");
+        let state_path = state_dir.join("client.state");
+        let _ = fs::remove_dir_all(&state_dir);
+
+        let mut state = ClientAttachState::default();
+        state.apply_scope(Some(SocketIdentity { dev: 42, ino: 77 }));
+        state.save(&state_path).expect("save state");
+
+        let loaded = ClientAttachState::load(&state_path).expect("load saved state");
+        assert_eq!(loaded.scope, Some(SocketIdentity { dev: 42, ino: 77 }));
+
+        let temp_files = fs::read_dir(&state_dir)
+            .expect("read state dir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+            .count();
+        assert_eq!(temp_files, 0, "state save left temporary files behind");
+
+        let _ = fs::remove_dir_all(state_dir);
     }
 
     #[test]

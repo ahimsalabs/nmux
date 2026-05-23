@@ -64,7 +64,8 @@ On normal bounded exits, `nmuxd` removes the socket path it created if that path
 Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled. Reconnects use `AttachStatus` as an explicit current-surface barrier and pane authority, so a client no longer waits on a timeout to learn that no surface frame follows, does not infer the attached pane from the workspace root, renders cached current surfaces only when the cached version matches `AttachStatus.surface_version`, and rejects responses whose `Snapshot`/`Patch` status disagrees with the following surface frame. When the backend reports terminal title or OSC 7 working-directory metadata, the local CLI prints those metadata lines with the current pane surface; metadata-only `CursorOnly` live updates carry no row changes and print just the changed metadata lines in non-redraw mode.
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache, including cached terminal metadata, when the daemon has no newer surface update to send. One-shot, follow, and live attach paths all reuse that scoped cached surface instead of replaying PTY bytes. Follow mode is observation-only and rejects input flags instead of silently dropping them.
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that survives repeated live client detach and reattach until the daemon is stopped.
-State load/save failures include the state path in the error.
+State load/save failures include the state path in the error, and state saves
+write a temporary file before renaming it into place.
 Bounded client loops require `--iterations` greater than zero.
 Bounded daemon live counts report the failing flag name when the count is not a
 valid number and must be greater than zero.
