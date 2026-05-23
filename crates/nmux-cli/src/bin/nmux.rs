@@ -193,6 +193,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
         key_name: args.key_name.clone(),
+        key_names: args.key_names.clone(),
         key_modifiers: args.key_modifiers,
         paste_text: args.paste_text.clone(),
         focus: args.focus_event.map(FocusEvent::focused),
@@ -213,7 +214,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     if args.stdin_input || args.stdin_bytes || (args.live_resize.is_some() && !args.no_input) {
         options.request.mode = AttachMode::ReadWrite;
     } else if options.input_text.is_none()
-        && args.key_name.is_none()
+        && args.key_names.is_empty()
         && options.paste_text.is_none()
         && args.focus_event.is_none()
         && args.mouse_event.is_none()
@@ -334,13 +335,20 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 options.input_text.as_deref().map(ToOwned::to_owned)
             };
             if let Some(key_name) = args.key_name.as_deref() {
-                local::send_named_key_input_with_modifiers_and_sequence(
-                    &mut stream,
-                    &mut client_sequence,
-                    &attached_pane_id,
-                    key_name,
-                    args.key_modifiers,
-                )?;
+                for key_name in args
+                    .key_names
+                    .iter()
+                    .map(String::as_str)
+                    .chain(args.key_names.is_empty().then_some(key_name).into_iter())
+                {
+                    local::send_named_key_input_with_modifiers_and_sequence(
+                        &mut stream,
+                        &mut client_sequence,
+                        &attached_pane_id,
+                        key_name,
+                        args.key_modifiers,
+                    )?;
+                }
             } else if let Some(mouse_event) = args.mouse_event {
                 local::send_mouse_input_with_sequence(
                     &mut stream,
@@ -781,6 +789,7 @@ fn attach_once(
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
         key_name: args.key_name.clone(),
+        key_names: args.key_names.clone(),
         key_modifiers: args.key_modifiers,
         paste_text: args.paste_text.clone(),
         focus: args.focus_event.map(FocusEvent::focused),
@@ -801,6 +810,7 @@ fn attach_once(
     if args.follow
         || (options.input_text.is_none()
             && options.key_name.is_none()
+            && options.key_names.is_empty()
             && options.paste_text.is_none()
             && options.focus.is_none()
             && options.mouse.is_none())
@@ -808,6 +818,7 @@ fn attach_once(
         options.request.mode = AttachMode::ReadOnly;
         options.input_text = None;
         options.key_name = None;
+        options.key_names.clear();
         options.key_modifiers = 0;
         options.paste_text = None;
         options.focus = None;
@@ -1007,6 +1018,7 @@ struct Args {
     socket_source: local::SocketPathSource,
     input_text: Option<String>,
     key_name: Option<String>,
+    key_names: Vec<String>,
     key_modifiers: u32,
     paste_text: Option<String>,
     focus_event: Option<FocusEvent>,
@@ -1047,6 +1059,7 @@ where
     let (mut socket_path, mut socket_source) = local::default_socket_path_and_source();
     let mut input_text = None;
     let mut key_name = None;
+    let mut key_names = Vec::new();
     let mut key_modifiers = 0;
     let mut paste_text = None;
     let mut focus_event = None;
@@ -1118,11 +1131,15 @@ where
             }
             "--key-name" => {
                 key_name_set = true;
-                key_name = Some(parse_key_name(
+                let parsed = parse_key_name(
                     &args
                         .next()
                         .ok_or("--key-name requires a supported key name")?,
-                )?);
+                )?;
+                if key_name.is_none() {
+                    key_name = Some(parsed.clone());
+                }
+                key_names.push(parsed);
                 input_text = None;
             }
             "--key-modifiers" => {
@@ -1326,6 +1343,7 @@ where
         socket_source,
         input_text,
         key_name,
+        key_names,
         key_modifiers,
         paste_text,
         focus_event,
@@ -1625,7 +1643,7 @@ Options:
   --print-socket-json        Print the resolved socket path as JSON and exit
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send; opts into read-write attach
-  --key-name NAME            Send a supported named key
+  --key-name NAME            Send a supported named key; repeat for a sequence
   --list-key-names           List supported --key-name values and aliases
   --key-modifiers MODS       Modifiers for --key-name: shift,ctrl,alt,super
   --paste TEXT               Paste UTF-8 text through PasteInput
@@ -1914,6 +1932,7 @@ mod tests {
         let args = args_from_iter(std::iter::empty::<&str>()).expect("args");
         assert_eq!(args.input_text, None);
         assert_eq!(args.key_name, None);
+        assert!(args.key_names.is_empty());
         assert_eq!(args.paste_text, None);
         assert!(!args.stdin_input);
         assert!(!args.stdin_bytes);
@@ -1980,6 +1999,7 @@ mod tests {
         let args =
             args_from_iter(["--key-name", "delete", "--key-modifiers", "ctrl"]).expect("args");
         assert_eq!(args.key_name.as_deref(), Some("delete"));
+        assert_eq!(args.key_names, vec!["delete"]);
         assert_eq!(args.key_modifiers, 2);
 
         let args = args_from_iter(["--focus", "gained"]).expect("args");
@@ -2014,6 +2034,13 @@ mod tests {
                 modifiers: 0,
             })
         );
+    }
+
+    #[test]
+    fn repeated_key_name_args_preserve_sequence() {
+        let args = args_from_iter(["--key-name", "esc", "--key-name", "return"]).expect("args");
+        assert_eq!(args.key_name.as_deref(), Some("escape"));
+        assert_eq!(args.key_names, vec!["escape", "enter"]);
     }
 
     #[test]

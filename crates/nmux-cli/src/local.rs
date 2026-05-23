@@ -824,29 +824,32 @@ fn serve_attached_client(
             seq += 1;
         }
     }
-    let mut pending_fetch = None;
-    match read_attached_client_frame_from_stream(stream)? {
-        AttachedClientFrame::Input(input) => {
-            if !Session::input_allowed(&actor) {
-                write_protocol_error(
-                    stream,
-                    session,
-                    &mut seq,
-                    protocol::ErrorCode::PermissionDenied,
-                    "input rejected: attach is read-only",
-                    Some(&input.pane_id),
-                    input.input_seq,
-                )?;
-                return Ok(());
-            }
-            if let Some(host) = host.as_deref_mut() {
-                if !process_one_shot_input(stream, session, engines, host, input)? {
+    let mut pending_fetch;
+    loop {
+        match read_attached_client_frame_from_stream(stream)? {
+            AttachedClientFrame::Input(input) => {
+                if !Session::input_allowed(&actor) {
+                    write_protocol_error(
+                        stream,
+                        session,
+                        &mut seq,
+                        protocol::ErrorCode::PermissionDenied,
+                        "input rejected: attach is read-only",
+                        Some(&input.pane_id),
+                        input.input_seq,
+                    )?;
                     return Ok(());
                 }
+                if let Some(host) = host.as_deref_mut() {
+                    if !process_one_shot_input(stream, session, engines, host, input)? {
+                        return Ok(());
+                    }
+                }
             }
-        }
-        AttachedClientFrame::Scrollback(fetch) => {
-            pending_fetch = Some(fetch);
+            AttachedClientFrame::Scrollback(fetch) => {
+                pending_fetch = Some(fetch);
+                break;
+            }
         }
     }
     for _ in 0..2 {
@@ -1209,6 +1212,7 @@ pub struct AttachOptions {
     pub request: AttachRequest,
     pub input_text: Option<String>,
     pub key_name: Option<String>,
+    pub key_names: Vec<String>,
     pub key_modifiers: u32,
     pub paste_text: Option<String>,
     pub focus: Option<bool>,
@@ -1252,6 +1256,7 @@ impl Default for AttachOptions {
             },
             input_text: Some("a".to_owned()),
             key_name: None,
+            key_names: Vec::new(),
             key_modifiers: 0,
             paste_text: None,
             focus: None,
@@ -1293,14 +1298,18 @@ pub fn attach_with_client_options(
     let attached_pane_id = snapshot.status.pane_id.clone();
     if mode == AttachMode::ReadWrite {
         let mut sent_input = false;
-        if let Some(key_name) = options.key_name.as_deref() {
-            send_named_key_input_with_modifiers_and_sequence(
-                &mut stream,
-                &mut sequence,
-                &attached_pane_id,
-                key_name,
-                options.key_modifiers,
-            )?;
+        let key_names = options.named_key_names();
+        if !key_names.is_empty() {
+            for key_name in key_names {
+                send_named_key_input_with_modifiers_and_sequence(
+                    &mut stream,
+                    &mut sequence,
+                    &attached_pane_id,
+                    key_name,
+                    options.key_modifiers,
+                )?;
+                read_optional_server_error_from_stream(&mut stream)?;
+            }
             sent_input = true;
         } else if let Some(mouse) = options.mouse {
             send_mouse_input_with_sequence(
@@ -1336,7 +1345,7 @@ pub fn attach_with_client_options(
             )?;
             sent_input = true;
         }
-        if sent_input {
+        if sent_input && options.named_key_names().is_empty() {
             read_optional_server_error_from_stream(&mut stream)?;
         }
     }
@@ -1379,6 +1388,14 @@ pub fn attach_render_once(
 }
 
 impl AttachOptions {
+    fn named_key_names(&self) -> Vec<&str> {
+        if self.key_names.is_empty() {
+            self.key_name.iter().map(String::as_str).collect()
+        } else {
+            self.key_names.iter().map(String::as_str).collect()
+        }
+    }
+
     fn known_scrollback_version_for(&self, pane_id: &str, start_line: u64, line_count: u32) -> u64 {
         self.known_scrollback_versions
             .iter()
@@ -6689,6 +6706,7 @@ mod tests {
             },
             input_text: None,
             key_name: None,
+            key_names: Vec::new(),
             key_modifiers: 0,
             paste_text: None,
             focus: None,
@@ -12029,6 +12047,7 @@ mod tests {
                 },
                 input_text: Some("current-input".to_owned()),
                 key_name: None,
+                key_names: Vec::new(),
                 key_modifiers: 0,
                 paste_text: None,
                 focus: None,
@@ -12083,6 +12102,7 @@ mod tests {
                 },
                 input_text: None,
                 key_name: None,
+                key_names: Vec::new(),
                 key_modifiers: 0,
                 paste_text: Some("current-paste".to_owned()),
                 focus: None,
@@ -12136,6 +12156,7 @@ mod tests {
                 },
                 input_text: None,
                 key_name: Some("delete".to_owned()),
+                key_names: Vec::new(),
                 key_modifiers: 0,
                 paste_text: None,
                 focus: None,
@@ -12156,6 +12177,65 @@ mod tests {
             pane_id: "pane-1".to_owned(),
             bytes: b"\x1b[3~".to_vec(),
         }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn current_surface_attach_forwards_named_key_sequence_before_scrollback() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            host
+        });
+        let snapshot = attach_with_client_options(
+            &socket_path,
+            AttachOptions {
+                request: AttachRequest {
+                    actor_id: "writer".to_owned(),
+                    user_id: "local-user".to_owned(),
+                    display_name: "local".to_owned(),
+                    mode: AttachMode::ReadWrite,
+                    focused_pane_id: Some("pane-1".to_owned()),
+                    known_surfaces: vec![KnownSurfaceVersion {
+                        pane_id: "pane-1".to_owned(),
+                        version: 2,
+                    }],
+                },
+                input_text: None,
+                key_name: None,
+                key_names: vec!["escape".to_owned(), "enter".to_owned()],
+                key_modifiers: 0,
+                paste_text: None,
+                focus: None,
+                mouse: None,
+                scrollback_start_line: 1,
+                scrollback_line_count: 2,
+                known_scrollback_version: 0,
+                known_scrollback_versions: Vec::new(),
+                connect_timeout: None,
+            },
+        )
+        .expect("attach snapshot");
+        let host = server.join().expect("server thread");
+        let input_bytes = host
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                HostEvent::Input { bytes, .. } => Some(bytes.as_slice()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(snapshot.surface, None);
+        assert!(snapshot.scrollback.is_some());
+        assert_eq!(input_bytes, vec![b"\x1b".as_slice(), b"\r".as_slice()]);
 
         let _ = fs::remove_file(socket_path);
     }
@@ -12190,6 +12270,7 @@ mod tests {
                 },
                 input_text: None,
                 key_name: None,
+                key_names: Vec::new(),
                 key_modifiers: 0,
                 paste_text: None,
                 focus: Some(true),
@@ -12243,6 +12324,7 @@ mod tests {
                 },
                 input_text: None,
                 key_name: None,
+                key_names: Vec::new(),
                 key_modifiers: 0,
                 paste_text: None,
                 focus: Some(true),
@@ -12307,6 +12389,7 @@ mod tests {
                 },
                 input_text: None,
                 key_name: None,
+                key_names: Vec::new(),
                 key_modifiers: 0,
                 paste_text: None,
                 focus: None,
