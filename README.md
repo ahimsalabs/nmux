@@ -80,6 +80,9 @@ nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --comma
 printf 'ping\npong\n' | nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin --interval-ms 500
 ```
 
+Line-streamed live clients keep polling daemon output while stdin is open and
+waiting for the next complete line.
+
 Byte-streamed live input:
 
 ```sh

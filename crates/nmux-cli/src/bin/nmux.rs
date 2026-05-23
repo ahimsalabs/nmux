@@ -65,9 +65,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut stream = connect_to_daemon(args)?;
     let socket_scope = local::socket_identity(&args.socket_path).ok();
     stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms)))?;
-    let stdin = io::stdin();
-    let mut stdin_lines = if args.stdin_input {
-        Some(stdin.lock().lines())
+    let stdin_lines = if args.stdin_input {
+        Some(spawn_stdin_line_reader())
     } else {
         None
     };
@@ -76,6 +75,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let mut stdin_closed = false;
     let mut stdin_bytes_closed = false;
     let mut detach_requested = false;
     let mut client_sequence = local::ClientFrameSequence::default();
@@ -207,14 +207,18 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else if args.stdin_input {
-                let stdin_line = next_stdin_line(stdin_lines.as_mut())?;
-                match stdin_line {
-                    Some(line) => Some(line),
-                    None if args.iterations.is_none() => {
-                        eprintln!("nmux: stdin EOF; detached");
-                        break;
+                match stdin_lines.as_ref().map(|receiver| receiver.try_recv()) {
+                    Some(Ok(StdinLineRead::Input(line))) => Some(line),
+                    Some(Ok(StdinLineRead::Closed)) => {
+                        stdin_closed = true;
+                        None
                     }
-                    None => None,
+                    Some(Ok(StdinLineRead::Error(err))) => return Err(err.into()),
+                    Some(Err(TryRecvError::Empty)) | None => None,
+                    Some(Err(TryRecvError::Disconnected)) => {
+                        stdin_closed = true;
+                        None
+                    }
                 }
             } else {
                 options.input_text.as_deref().map(ToOwned::to_owned)
@@ -311,6 +315,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("nmux: detached by local Ctrl-]");
             break;
         }
+        if stdin_closed && args.iterations.is_none() {
+            eprintln!("nmux: stdin EOF; detached");
+            break;
+        }
         if stdin_bytes_closed && args.iterations.is_none() {
             eprintln!("nmux: stdin EOF; detached");
             break;
@@ -394,18 +402,27 @@ fn initial_live_scrollback(
     )?))
 }
 
-fn next_stdin_line(
-    stdin_lines: Option<&mut io::Lines<io::StdinLock<'_>>>,
-) -> io::Result<Option<String>> {
-    let Some(stdin_lines) = stdin_lines else {
-        return Ok(None);
-    };
-    let Some(line) = stdin_lines.next() else {
-        return Ok(None);
-    };
-    let mut line = line?;
-    line.push('\n');
-    Ok(Some(line))
+fn spawn_stdin_line_reader() -> mpsc::Receiver<StdinLineRead> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            match line {
+                Ok(mut line) => {
+                    line.push('\n');
+                    if tx.send(StdinLineRead::Input(line)).is_err() {
+                        return;
+                    }
+                }
+                Err(err) => {
+                    let _ = tx.send(StdinLineRead::Error(err.to_string()));
+                    return;
+                }
+            }
+        }
+        let _ = tx.send(StdinLineRead::Closed);
+    });
+    rx
 }
 
 fn spawn_stdin_byte_reader() -> mpsc::Receiver<StdinByteRead> {
@@ -433,6 +450,12 @@ fn spawn_stdin_byte_reader() -> mpsc::Receiver<StdinByteRead> {
         }
     });
     rx
+}
+
+enum StdinLineRead {
+    Input(String),
+    Closed,
+    Error(String),
 }
 
 enum StdinByteRead {

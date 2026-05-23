@@ -434,7 +434,7 @@ M10: live local interactive attach [done]
   one attached local connection can stream repeated input/output cycles
   read-only live clients can observe output without forwarding input until daemon close
   read-only live resize intents return protocol PermissionDenied instead of being silently ignored
-  live CLI can stream stdin lines until EOF without default key fallback
+  live CLI can stream stdin lines until EOF without default key fallback, and live output polling continues while line-mode stdin is open without a complete line
   live CLI can send stdin byte chunks as InputKind.RawBytes without blocking output polling on full lines
   interactive --stdin-bytes temporarily uses noncanonical stdin with local echo defaulting off and `--local-echo tty` available
   interactive --stdin-bytes listens for SIGWINCH and sends TTY-size resize intents unless explicit --cols/--rows are set
