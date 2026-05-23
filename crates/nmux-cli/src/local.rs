@@ -3,6 +3,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -787,6 +788,12 @@ enum AttachedClientFrame {
     Input(InputSummary),
 }
 
+enum AttachedClientRead {
+    Frame(AttachedClientFrame),
+    NoFrame,
+    Closed,
+}
+
 fn serve_attached_client(
     stream: &mut UnixStream,
     request: AttachRequest,
@@ -824,10 +831,21 @@ fn serve_attached_client(
             seq += 1;
         }
     }
-    let mut pending_fetch;
+    let mut wait_for_more = true;
     loop {
-        match read_attached_client_frame_from_stream(stream)? {
+        let read = if wait_for_more {
+            read_attached_client_frame_from_stream(stream)?
+        } else {
+            read_optional_attached_client_frame_from_stream(stream, Duration::from_millis(250))?
+        };
+        let frame = match read {
+            AttachedClientRead::Frame(frame) => frame,
+            AttachedClientRead::NoFrame => return Ok(()),
+            AttachedClientRead::Closed => return Ok(()),
+        };
+        match frame {
             AttachedClientFrame::Input(input) => {
+                wait_for_more = true;
                 if !Session::input_allowed(&actor) {
                     write_protocol_error(
                         stream,
@@ -847,37 +865,28 @@ fn serve_attached_client(
                 }
             }
             AttachedClientFrame::Scrollback(fetch) => {
-                pending_fetch = Some(fetch);
-                break;
+                if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
+                    write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
+                    wait_for_more = true;
+                    continue;
+                }
+                if let Some(chunk) = session.scrollback_chunk_frame_for_pane(
+                    "local-client",
+                    seq,
+                    &fetch.pane_id,
+                    fetch.start_line,
+                    fetch.line_count,
+                ) {
+                    wire::write_default_frame(stream, &chunk)?;
+                    seq += 1;
+                    wait_for_more = false;
+                } else {
+                    write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
+                    return Ok(());
+                }
             }
         }
     }
-    for _ in 0..2 {
-        let fetch = match pending_fetch.take() {
-            Some(fetch) => fetch,
-            None => read_scrollback_fetch_from_stream(stream)?,
-        };
-        if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
-            write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
-            if error == protocol::ErrorCode::StaleVersion {
-                continue;
-            }
-            return Ok(());
-        }
-        if let Some(chunk) = session.scrollback_chunk_frame_for_pane(
-            "local-client",
-            seq,
-            &fetch.pane_id,
-            fetch.start_line,
-            fetch.line_count,
-        ) {
-            wire::write_default_frame(stream, &chunk)?;
-        } else {
-            write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
-        }
-        break;
-    }
-    Ok(())
 }
 
 fn active_pane_id(session: &Session) -> Option<&str> {
@@ -1219,6 +1228,7 @@ pub struct AttachOptions {
     pub mouse: Option<AttachMouseInput>,
     pub scrollback_start_line: u64,
     pub scrollback_line_count: u32,
+    pub scrollback_tail_count: Option<u32>,
     pub known_scrollback_version: u64,
     pub known_scrollback_versions: Vec<KnownScrollbackVersion>,
     pub connect_timeout: Option<Duration>,
@@ -1263,6 +1273,7 @@ impl Default for AttachOptions {
             mouse: None,
             scrollback_start_line: 1,
             scrollback_line_count: 2,
+            scrollback_tail_count: None,
             known_scrollback_version: 0,
             known_scrollback_versions: Vec::new(),
             connect_timeout: None,
@@ -1349,24 +1360,16 @@ pub fn attach_with_client_options(
             read_optional_server_error_from_stream(&mut stream)?;
         }
     }
-    send_scrollback_fetch_with_known_version(
+    let scrollback = fetch_scrollback_chunk_with_selection(
         &mut stream,
         &mut sequence,
         &attached_pane_id,
         options.scrollback_start_line,
         options.scrollback_line_count,
-        options.known_scrollback_version_for(
-            &attached_pane_id,
-            options.scrollback_start_line,
-            options.scrollback_line_count,
-        ),
-    )?;
-    let scrollback = read_scrollback_chunk_with_stale_retry(
-        &mut stream,
-        &mut sequence,
-        &attached_pane_id,
-        options.scrollback_start_line,
-        options.scrollback_line_count,
+        options.scrollback_tail_count,
+        |start_line, line_count| {
+            options.known_scrollback_version_for(&attached_pane_id, start_line, line_count)
+        },
     )?;
     Ok(AttachSnapshot {
         scrollback: Some(scrollback),
@@ -2152,17 +2155,54 @@ pub fn read_input_event_from_stream(
     input_summary_from_frame(&frame)
 }
 
+fn read_optional_attached_client_frame_from_stream(
+    stream: &mut UnixStream,
+    timeout: Duration,
+) -> Result<AttachedClientRead, Box<dyn std::error::Error>> {
+    if !stream_readable_within(stream, timeout)? {
+        return Ok(AttachedClientRead::NoFrame);
+    }
+    read_attached_client_frame_from_stream(stream)
+}
+
+fn stream_readable_within(stream: &UnixStream, timeout: Duration) -> io::Result<bool> {
+    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let mut pollfd = libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let result = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(result > 0)
+}
+
 fn read_attached_client_frame_from_stream(
     stream: &mut UnixStream,
-) -> Result<AttachedClientFrame, Box<dyn std::error::Error>> {
-    let frame = wire::read_default_frame(stream)?;
+) -> Result<AttachedClientRead, Box<dyn std::error::Error>> {
+    let frame = match wire::read_default_frame(stream) {
+        Ok(frame) => frame,
+        Err(wire::WireError::Io(err))
+            if matches!(
+                err.kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+            ) =>
+        {
+            return Ok(AttachedClientRead::Closed);
+        }
+        Err(err) => return Err(err.into()),
+    };
     let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
     match envelope.body_type() {
-        protocol::EnvelopeBody::InputEvent => Ok(AttachedClientFrame::Input(
-            input_summary_from_frame(&frame)?,
+        protocol::EnvelopeBody::InputEvent => Ok(AttachedClientRead::Frame(
+            AttachedClientFrame::Input(input_summary_from_frame(&frame)?),
         )),
-        protocol::EnvelopeBody::ScrollbackFetch => Ok(AttachedClientFrame::Scrollback(
-            scrollback_fetch_from_frame(&frame)?,
+        protocol::EnvelopeBody::ScrollbackFetch => Ok(AttachedClientRead::Frame(
+            AttachedClientFrame::Scrollback(scrollback_fetch_from_frame(&frame)?),
         )),
         other => Err(format!("unexpected attached client frame: {other:?}").into()),
     }
@@ -2204,6 +2244,39 @@ pub fn read_scrollback_chunk_with_stale_retry(
         }
         ScrollbackRead::Error(error) => Err(server_error(error)),
     }
+}
+
+pub fn fetch_scrollback_chunk_with_selection(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    start_line: u64,
+    line_count: u32,
+    tail_count: Option<u32>,
+    known_version_for: impl Fn(u64, u32) -> u64,
+) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
+    let (start_line, line_count) = if let Some(tail_count) = tail_count {
+        send_scrollback_fetch_with_known_version(stream, sequence, pane_id, 1, 1, 0)?;
+        let probe = read_scrollback_chunk_with_stale_retry(stream, sequence, pane_id, 1, 1)?;
+        let tail_count_u64 = u64::from(tail_count);
+        let start_line = if probe.total_lines > tail_count_u64 {
+            probe.total_lines - tail_count_u64 + 1
+        } else {
+            1
+        };
+        (start_line, tail_count)
+    } else {
+        (start_line, line_count)
+    };
+    send_scrollback_fetch_with_known_version(
+        stream,
+        sequence,
+        pane_id,
+        start_line,
+        line_count,
+        known_version_for(start_line, line_count),
+    )?;
+    read_scrollback_chunk_with_stale_retry(stream, sequence, pane_id, start_line, line_count)
 }
 
 fn read_scrollback_response_from_stream(
@@ -6845,6 +6918,7 @@ mod tests {
             mouse: None,
             scrollback_start_line: 1,
             scrollback_line_count: 2,
+            scrollback_tail_count: None,
             known_scrollback_version: 0,
             known_scrollback_versions: Vec::new(),
             connect_timeout: None,
@@ -12186,6 +12260,7 @@ mod tests {
                 mouse: None,
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
+                scrollback_tail_count: None,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12241,6 +12316,7 @@ mod tests {
                 mouse: None,
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
+                scrollback_tail_count: None,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12295,6 +12371,7 @@ mod tests {
                 mouse: None,
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
+                scrollback_tail_count: None,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12349,6 +12426,7 @@ mod tests {
                 mouse: None,
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
+                scrollback_tail_count: None,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12409,6 +12487,7 @@ mod tests {
                 mouse: None,
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
+                scrollback_tail_count: None,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12463,6 +12542,7 @@ mod tests {
                 mouse: None,
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
+                scrollback_tail_count: None,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,
@@ -12536,6 +12616,7 @@ mod tests {
                 }),
                 scrollback_start_line: 1,
                 scrollback_line_count: 2,
+                scrollback_tail_count: None,
                 known_scrollback_version: 0,
                 known_scrollback_versions: Vec::new(),
                 connect_timeout: None,

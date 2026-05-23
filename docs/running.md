@@ -255,7 +255,7 @@ nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux-context.sock --one-
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux-context.sock
 ```
 
-Scrollback ranges are 1-based from the oldest retained row, and the client rejects zero `--scrollback-start` or `--scrollback-count` values before connecting. Out-of-range requests can return an empty scrollback section; `--state` does not persist those zero-row chunks as future version preconditions.
+Scrollback ranges are 1-based from the oldest retained row, and the client rejects zero `--scrollback-start`, `--scrollback-count`, or `--scrollback-tail` values before connecting. Use `--scrollback-tail COUNT` when a client should resolve the most recent retained rows without knowing the current total first; it cannot be combined with an explicit start/count range. Out-of-range requests can return an empty scrollback section; `--state` does not persist those zero-row chunks as future version preconditions.
 
 Start a daemon that serves one live client for two input cycles:
 
@@ -303,7 +303,7 @@ surface events include structured terminal state, row payloads, style tables,
 and hyperlink tables for scripts that need more than rendered fallback text.
 `--json` is mutually exclusive with `--follow` and `--redraw`.
 
-Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start` and `--scrollback-count`; the printed header reports the actual returned row range and includes the total when the response is not the tail. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. State saves write a temporary file in the target directory and rename it into place. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
+Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start`/`--scrollback-count` or `--scrollback-tail`; the printed header reports the actual returned row range and includes the total when the response is not the tail. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. State saves write a temporary file in the target directory and rename it into place. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
 
 By default, live mode prints each rendered update as plain text. Add `--redraw` to clear the terminal and repaint the latest workspace summary plus the current client-side pane surface on each update. When stdout is a TTY, `--redraw` uses the alternate screen and hides the cursor for the live session, then restores both on exit. Captured or piped stdout stays as plain clear/home escape output:
 
@@ -541,7 +541,8 @@ This proves the reconnect decision and client-side patch rendering through the p
 
 The prototype keeps scrollback separate from the visible pane surface. Clients
 request explicit 1-based ranges with `--scrollback-start` and
-`--scrollback-count`, and the daemon replies with a `ScrollbackChunk` for the
+`--scrollback-count`, or ask the client to resolve the latest retained rows with
+`--scrollback-tail COUNT`. The daemon replies with a `ScrollbackChunk` for the
 attached pane. Persisted client state records last-seen scrollback range/version
 metadata, still fetches daemon-owned scrollback when the visible surface is
 current, and retries once without a version precondition if the daemon reports a

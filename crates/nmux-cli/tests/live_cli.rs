@@ -131,6 +131,54 @@ fn one_shot_cli_can_print_attach_json() {
 }
 
 #[test]
+fn one_shot_cli_can_request_scrollback_tail() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = "printf 'alpha\nbeta\ngamma\ndelta\n'; cat >/dev/null";
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            command,
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--scrollback-tail",
+            "2",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("scrollback 6..7:"),
+        "missing requested tail scrollback header:\n{stdout}"
+    );
+    assert!(stdout.contains("gamma"), "missing tail line:\n{stdout}");
+    assert!(stdout.contains("delta"), "missing tail line:\n{stdout}");
+}
+
+#[test]
 fn one_shot_daemon_can_set_command_cwd_and_env() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
@@ -1106,6 +1154,66 @@ fn live_cli_renders_initial_scrollback_range() {
     assert!(
         stdout.contains("two"),
         "missing live scrollback command output:\n{stdout}"
+    );
+}
+
+#[test]
+fn live_cli_renders_initial_scrollback_tail() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'one\ntwo\nthree\nfour\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--scrollback-tail",
+            "2",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("scrollback 6..7:"),
+        "missing requested live scrollback tail header:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("three"),
+        "missing live scrollback tail output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("four"),
+        "missing live scrollback tail output:\n{stdout}"
     );
 }
 

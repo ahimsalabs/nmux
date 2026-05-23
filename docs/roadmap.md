@@ -18,7 +18,7 @@ Current post-M14 state:
 
 - Usable today: the default `interim` engine supports local one-shot attach,
   live attach, read-only reattach, cached state, daemon-owned scrollback
-  fetches, structured input/control intents, script-facing JSON attach/live
+  range and tail fetches, structured input/control intents, script-facing JSON attach/live
   output with structured surface and scrollback payloads, daemon cwd/env
   command configuration, default socket workflows, and `make local-smoke`.
 - Opt-in correctness path: `libghostty-vt` is imported and feature-tested for
@@ -198,6 +198,7 @@ Done:
 - Public scrollback ranges now consistently use 1-based line numbers from `ScrollbackFetch` through `ScrollbackChunk` and decoded client summaries, rendered CLI headers report the actual returned row range instead of conflating it with total retained lines, and decoded non-empty chunks reject skipped row line numbers or row lines beyond `total_lines`.
 - Scrollback fetches now treat `known_scrollback_version = 0` as no precondition and return `ErrorCode::StaleVersion` when a nonzero client-known version does not match the daemon's pane scrollback version.
 - Local clients now fetch daemon-owned scrollback even when a reconnect has the current visible surface, preserve distinct scoped cached scrollback range/version entries as fetch preconditions for matching non-empty ranges, skip zero-row out-of-range chunks instead of persisting zero-count precondition keys, and retry once with `known_scrollback_version = 0` after `StaleVersion`.
+- `nmux --scrollback-tail COUNT` resolves the latest retained scrollback rows for one-shot and live attach without changing the explicit range protocol, and one-shot daemon attaches can answer multiple post-attach scrollback fetches before the client closes.
 - Explicit one-shot text, paste, named-key, focus, and mouse input is forwarded before scrollback fetch even when a reconnect has the current visible surface and no surface frame is sent.
 - One-shot and live post-attach input, resize, and scrollback control frames now use the attached active pane ID instead of assuming `pane-1`.
 - Attach now includes an explicit `AttachStatus` barrier with the attached pane ID and surface state, replacing timeout-based current-surface detection and letting one-shot/follow scrollback preconditions use the attached pane; clients reject missing, extra, wrong-kind, or wrong-pane surface frames around that barrier.

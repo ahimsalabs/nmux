@@ -162,6 +162,8 @@ Bounded live attach:
 nix develop . -c cargo run --bin nmuxd -- --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 # shell 2
 nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' --scrollback-start 1 --scrollback-count 4 --interval-ms 500
+# Or ask for the most recent retained lines without knowing the total:
+nix develop . -c cargo run --bin nmux -- --live --no-input --iterations 1 --scrollback-tail 20
 # For scripts, use newline-delimited JSON live events:
 nix develop . -c cargo run --bin nmux -- --live --json --iterations 2 --key $'ping\n' --interval-ms 500
 ```
@@ -217,7 +219,7 @@ Bounded daemon live counts report the failing flag name when the count is not a
 valid number and must be greater than zero.
 Without an explicit input or resize flag, `nmux` attaches read-only; use `--key`, `--key-name`, `--paste`, `--focus`, `--mouse`, `--stdin`, or `--stdin-bytes` to opt into sending input, or live `--cols`/`--rows` to send a resize control intent. `--key-modifiers` and `--mouse-modifiers` refine their matching named-key or mouse input flag rather than selecting a separate input mode.
 Explicit one-shot input is still sent when a persisted state file proves the visible surface is already current.
-Scrollback ranges are 1-based from the oldest retained row and require positive `--scrollback-start` and `--scrollback-count` values. Local clients label rendered scrollback with the actual returned row range, validate decoded scrollback chunks as contiguous public ranges, persist last-seen non-empty scrollback range metadata in `--state`, fetch scrollback even when the visible surface is already current, send matching cached versions as fetch preconditions, skip empty out-of-range chunks as cache keys, and retry once without a precondition if the daemon reports a stale scrollback version.
+Scrollback ranges are 1-based from the oldest retained row and require positive `--scrollback-start` and `--scrollback-count` values, or positive `--scrollback-tail COUNT` when the client should resolve the last retained rows first. Local clients label rendered scrollback with the actual returned row range, validate decoded scrollback chunks as contiguous public ranges, persist last-seen non-empty scrollback range metadata in `--state`, fetch scrollback even when the visible surface is already current, send matching cached versions as fetch preconditions, skip empty out-of-range chunks as cache keys, and retry once without a precondition if the daemon reports a stale scrollback version.
 Explicit input modes such as `--key`, `--key-name`, `--paste`, `--focus`, `--mouse`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.
 Live polling intervals must be greater than zero, and explicit resize dimensions must be between 1 and 65535.
 

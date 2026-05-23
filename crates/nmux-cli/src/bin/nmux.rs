@@ -231,6 +231,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }),
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
+        scrollback_tail_count: args.scrollback_tail_count,
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
@@ -268,20 +269,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .surface_text
         .clone()
         .unwrap_or_else(|| current_workspace.display_line());
-    let known_scrollback_version = client_state
-        .cached_scrollback_version_for_scope(
-            socket_scope,
-            &attached_pane_id,
-            args.scrollback_start_line,
-            args.scrollback_line_count,
-        )
-        .unwrap_or(0);
     let scrollback = initial_live_scrollback(
         args,
         &mut stream,
         &mut client_sequence,
         &attached_pane_id,
-        known_scrollback_version,
+        &client_state,
+        socket_scope,
     )?;
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
@@ -552,22 +546,21 @@ fn initial_live_scrollback(
     stream: &mut UnixStream,
     sequence: &mut local::ClientFrameSequence,
     pane_id: &str,
-    known_scrollback_version: u64,
+    client_state: &local::ClientAttachState,
+    socket_scope: Option<local::SocketIdentity>,
 ) -> Result<Option<local::ScrollbackChunkSummary>, Box<dyn std::error::Error>> {
-    local::send_scrollback_fetch_with_known_version(
+    Ok(Some(local::fetch_scrollback_chunk_with_selection(
         stream,
         sequence,
         pane_id,
         args.scrollback_start_line,
         args.scrollback_line_count,
-        known_scrollback_version,
-    )?;
-    Ok(Some(local::read_scrollback_chunk_with_stale_retry(
-        stream,
-        sequence,
-        pane_id,
-        args.scrollback_start_line,
-        args.scrollback_line_count,
+        args.scrollback_tail_count,
+        |start_line, line_count| {
+            client_state
+                .cached_scrollback_version_for_scope(socket_scope, pane_id, start_line, line_count)
+                .unwrap_or(0)
+        },
     )?))
 }
 
@@ -855,6 +848,7 @@ fn attach_once(
         }),
         scrollback_start_line: args.scrollback_start_line,
         scrollback_line_count: args.scrollback_line_count,
+        scrollback_tail_count: args.scrollback_tail_count,
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
@@ -1079,6 +1073,7 @@ struct Args {
     mouse_event: Option<MouseEvent>,
     scrollback_start_line: u64,
     scrollback_line_count: u32,
+    scrollback_tail_count: Option<u32>,
     state_path: Option<PathBuf>,
     follow: bool,
     live: bool,
@@ -1125,6 +1120,7 @@ where
     let mut mouse_pixels = None;
     let mut scrollback_start_line = 1;
     let mut scrollback_line_count = 2;
+    let mut scrollback_tail_count = None;
     let mut state_path = None;
     let mut follow = false;
     let mut live = false;
@@ -1148,6 +1144,9 @@ where
     let mut no_input_set = false;
     let mut args = args.into_iter().map(Into::into);
     let mut mouse_pixels_set = false;
+    let mut scrollback_start_set = false;
+    let mut scrollback_count_set = false;
+    let mut scrollback_tail_set = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -1253,16 +1252,25 @@ where
                 input_text = None;
             }
             "--scrollback-start" => {
+                scrollback_start_set = true;
                 scrollback_start_line = parse_numeric_arg(
                     "--scrollback-start",
                     args.next().ok_or("--scrollback-start requires a line")?,
                 )?;
             }
             "--scrollback-count" => {
+                scrollback_count_set = true;
                 scrollback_line_count = parse_numeric_arg(
                     "--scrollback-count",
                     args.next().ok_or("--scrollback-count requires a count")?,
                 )?;
+            }
+            "--scrollback-tail" => {
+                scrollback_tail_set = true;
+                scrollback_tail_count = Some(parse_numeric_arg(
+                    "--scrollback-tail",
+                    args.next().ok_or("--scrollback-tail requires a count")?,
+                )?);
             }
             "--state" => {
                 state_path = Some(
@@ -1356,9 +1364,15 @@ where
         validate_positive_numeric_args(
             scrollback_start_line,
             scrollback_line_count,
+            scrollback_tail_count,
             live_resize,
             interval_ms,
             connect_timeout_ms,
+        )?;
+        validate_scrollback_selection_args(
+            scrollback_tail_set,
+            scrollback_start_set,
+            scrollback_count_set,
         )?;
         validate_explicit_input_modes(
             key_set,
@@ -1422,6 +1436,7 @@ where
         mouse_event,
         scrollback_start_line,
         scrollback_line_count,
+        scrollback_tail_count,
         state_path,
         follow,
         live,
@@ -1985,6 +2000,7 @@ fn validate_no_input_resize_args(
 fn validate_positive_numeric_args(
     scrollback_start_line: u64,
     scrollback_line_count: u32,
+    scrollback_tail_count: Option<u32>,
     live_resize: Option<(u32, u32)>,
     interval_ms: u64,
     connect_timeout_ms: Option<u64>,
@@ -1994,6 +2010,9 @@ fn validate_positive_numeric_args(
     }
     if scrollback_line_count == 0 {
         return Err("--scrollback-count must be greater than 0");
+    }
+    if scrollback_tail_count == Some(0) {
+        return Err("--scrollback-tail must be greater than 0");
     }
     if interval_ms == 0 {
         return Err("--interval-ms must be greater than 0");
@@ -2005,6 +2024,20 @@ fn validate_positive_numeric_args(
         cols == 0 || rows == 0 || cols > u16::MAX as u32 || rows > u16::MAX as u32
     }) {
         return Err("--cols and --rows must be between 1 and 65535");
+    }
+    Ok(())
+}
+
+fn validate_scrollback_selection_args(
+    scrollback_tail_set: bool,
+    scrollback_start_set: bool,
+    scrollback_count_set: bool,
+) -> Result<(), &'static str> {
+    if scrollback_tail_set && scrollback_start_set {
+        return Err("--scrollback-tail cannot be combined with --scrollback-start");
+    }
+    if scrollback_tail_set && scrollback_count_set {
+        return Err("--scrollback-tail cannot be combined with --scrollback-count");
     }
     Ok(())
 }
@@ -2208,6 +2241,7 @@ Options:
   --no-input                 Attach read-only
   --scrollback-start LINE    First scrollback line to request
   --scrollback-count COUNT   Number of scrollback lines to request
+  --scrollback-tail COUNT    Request the last COUNT scrollback lines
   --state PATH               Persist client-side pane surface cache
   --follow                   Reconnect in a polling loop
   --live                     Keep one attach connection open
@@ -2419,7 +2453,7 @@ mod tests {
         sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
-        validate_positive_numeric_args,
+        validate_positive_numeric_args, validate_scrollback_selection_args,
     };
     use nmux_cli::local;
     use nmux_proto::protocol;
@@ -3533,43 +3567,92 @@ mod tests {
     #[test]
     fn numeric_validation_rejects_zero_live_loop_values() {
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, 0, None),
+            validate_positive_numeric_args(1, 2, None, None, 0, None),
             Err("--interval-ms must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, Some((0, 24)), 1000, None),
+            validate_positive_numeric_args(1, 2, None, Some((0, 24)), 1000, None),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, Some((80, 0)), 1000, None),
+            validate_positive_numeric_args(1, 2, None, Some((80, 0)), 1000, None),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, Some((65536, 24)), 1000, None),
+            validate_positive_numeric_args(1, 2, None, Some((65536, 24)), 1000, None),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, Some((80, 65536)), 1000, None),
+            validate_positive_numeric_args(1, 2, None, Some((80, 65536)), 1000, None),
             Err("--cols and --rows must be between 1 and 65535")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 2, None, 1000, Some(0)),
+            validate_positive_numeric_args(1, 2, None, None, 1000, Some(0)),
             Err("--connect-timeout-ms must be greater than 0")
         );
-        assert!(validate_positive_numeric_args(1, 2, None, 1000, Some(1)).is_ok());
-        assert!(validate_positive_numeric_args(1, 2, None, 1000, None).is_ok());
-        assert!(validate_positive_numeric_args(1, 2, Some((65535, 65535)), 1000, None).is_ok());
+        assert!(validate_positive_numeric_args(1, 2, None, None, 1000, Some(1)).is_ok());
+        assert!(validate_positive_numeric_args(1, 2, Some(1), None, 1000, None).is_ok());
+        assert!(validate_positive_numeric_args(1, 2, None, None, 1000, None).is_ok());
+        assert!(
+            validate_positive_numeric_args(1, 2, None, Some((65535, 65535)), 1000, None).is_ok()
+        );
     }
 
     #[test]
     fn numeric_validation_rejects_zero_scrollback_values() {
         assert_eq!(
-            validate_positive_numeric_args(0, 2, None, 1000, None),
+            validate_positive_numeric_args(0, 2, None, None, 1000, None),
             Err("--scrollback-start must be greater than 0")
         );
         assert_eq!(
-            validate_positive_numeric_args(1, 0, None, 1000, None),
+            validate_positive_numeric_args(1, 0, None, None, 1000, None),
             Err("--scrollback-count must be greater than 0")
+        );
+        assert_eq!(
+            validate_positive_numeric_args(1, 2, Some(0), None, 1000, None),
+            Err("--scrollback-tail must be greater than 0")
+        );
+    }
+
+    #[test]
+    fn scrollback_selection_validation_rejects_ambiguous_tail_args() {
+        assert_eq!(
+            validate_scrollback_selection_args(true, true, false),
+            Err("--scrollback-tail cannot be combined with --scrollback-start")
+        );
+        assert_eq!(
+            validate_scrollback_selection_args(true, false, true),
+            Err("--scrollback-tail cannot be combined with --scrollback-count")
+        );
+        assert!(validate_scrollback_selection_args(true, false, false).is_ok());
+        assert!(validate_scrollback_selection_args(false, true, true).is_ok());
+    }
+
+    #[test]
+    fn args_parse_scrollback_tail_count() {
+        let args = args_from_iter(["--scrollback-tail", "5"]).expect("parse tail args");
+        assert_eq!(args.scrollback_tail_count, Some(5));
+        assert_eq!(args.scrollback_start_line, 1);
+        assert_eq!(args.scrollback_line_count, 2);
+    }
+
+    #[test]
+    fn args_reject_scrollback_tail_with_explicit_range() {
+        let err = match args_from_iter(["--scrollback-tail", "5", "--scrollback-start", "3"]) {
+            Ok(_) => panic!("tail and start should conflict"),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(
+            err,
+            "--scrollback-tail cannot be combined with --scrollback-start"
+        );
+        let err = match args_from_iter(["--scrollback-tail", "5", "--scrollback-count", "3"]) {
+            Ok(_) => panic!("tail and count should conflict"),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(
+            err,
+            "--scrollback-tail cannot be combined with --scrollback-count"
         );
     }
 
