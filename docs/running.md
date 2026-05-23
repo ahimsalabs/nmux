@@ -28,6 +28,13 @@ See [docs/source-fetch-policy.md](source-fetch-policy.md) for the opt-in
 `libghostty-vt-sys` fetch policy.
 See [docs/packaging.md](packaging.md) for the current no-release-binary stance.
 
+Inspect the installed binary versions without connecting or binding a socket:
+
+```sh
+nix develop . -c cargo run --bin nmux -- --version
+nix develop . -c cargo run --bin nmuxd -- --version
+```
+
 Start a one-shot daemon with the default local shell:
 
 ```sh

@@ -54,6 +54,8 @@ Inspect the current CLI flags:
 ```sh
 nix develop . -c cargo run --bin nmux -- --help
 nix develop . -c cargo run --bin nmuxd -- --help
+nix develop . -c cargo run --bin nmux -- --version
+nix develop . -c cargo run --bin nmuxd -- --version
 ```
 
 `nmux --help` also calls out the current renderer limitation: the default prototype uses an interim text surface, not a VT-correct terminal emulator. That is a sequencing device while the local state-sync/live workflow stays fast. Backend `libghostty-vt` extraction is available behind an opt-in Cargo feature, separate from the later question of hydrating a frontend Ghostty renderer from nmux-owned state.

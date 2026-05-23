@@ -14,6 +14,7 @@ use nmux_proto::protocol;
 const STDIN_BYTES_DETACH: u8 = 0x1d;
 const REDRAW_TERMINAL_ENTER: &str = "\x1b[?1049h\x1b[?25l";
 const REDRAW_TERMINAL_EXIT: &str = "\x1b[?25h\x1b[?1049l";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
 
 fn main() {
@@ -27,6 +28,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = args()?;
     if args.help {
         print!("{}", usage());
+        return Ok(());
+    }
+
+    if args.version {
+        println!("nmux {VERSION}");
         return Ok(());
     }
 
@@ -876,6 +882,7 @@ fn format_scrollback(scrollback: &local::ScrollbackChunkSummary) -> String {
 
 struct Args {
     help: bool,
+    version: bool,
     print_socket: bool,
     socket_path: PathBuf,
     input_text: Option<String>,
@@ -910,6 +917,7 @@ where
     S: Into<String>,
 {
     let mut help = false;
+    let mut version = false;
     let mut print_socket = false;
     let mut socket_path = local::default_socket_path();
     let mut input_text = None;
@@ -950,6 +958,9 @@ where
         match arg.as_str() {
             "--help" | "-h" => {
                 help = true;
+            }
+            "--version" | "-V" => {
+                version = true;
             }
             "--print-socket" => {
                 print_socket = true;
@@ -1146,6 +1157,7 @@ where
 
     Ok(Args {
         help,
+        version,
         print_socket,
         socket_path,
         input_text,
@@ -1414,6 +1426,7 @@ Options:
   --rows COUNT               Live ResizeIntent rows; both dimensions required
   --interval-ms MS           Poll/read timeout in milliseconds
   --iterations COUNT         Bounded follow/live cycle count
+  -V, --version              Show version
   -h, --help                 Show this help
 
 Notes:
@@ -1711,6 +1724,7 @@ mod tests {
         assert!(!args.stdin_bytes);
         assert!(!args.no_input);
         assert!(!args.live);
+        assert!(!args.version);
         assert!(!args.print_socket);
     }
 
@@ -2386,6 +2400,7 @@ mod tests {
         let usage = usage();
         assert!(usage.contains("--stdin-bytes"));
         assert!(usage.contains("--print-socket"));
+        assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--connect-timeout-ms MS"));
         assert!(usage.contains("--local-echo off|tty"));
         assert!(usage.contains("--key-modifiers MODS"));

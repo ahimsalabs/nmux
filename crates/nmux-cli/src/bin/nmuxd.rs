@@ -10,6 +10,8 @@ use nmux_core::session::Session;
 use nmux_core::terminal::{PaneTerminalEngines, TerminalEngineKind};
 use nmux_proto::protocol;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("nmuxd: {err}");
@@ -21,6 +23,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = args()?;
     if args.help {
         print!("{}", usage());
+        return Ok(());
+    }
+
+    if args.version {
+        println!("nmuxd {VERSION}");
         return Ok(());
     }
 
@@ -129,6 +136,7 @@ fn wait_for_pane_output(
 
 struct Args {
     help: bool,
+    version: bool,
     print_socket: bool,
     socket_path: PathBuf,
     one_shot: bool,
@@ -143,6 +151,7 @@ struct Args {
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut help = false;
+    let mut version = false;
     let mut print_socket = false;
     let mut socket_path = local::default_socket_path();
     let mut one_shot = false;
@@ -159,6 +168,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         match arg.as_str() {
             "--help" | "-h" => {
                 help = true;
+            }
+            "--version" | "-V" => {
+                version = true;
             }
             "--print-socket" => {
                 print_socket = true;
@@ -209,6 +221,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
 
     Ok(Args {
         help,
+        version,
         print_socket,
         socket_path,
         one_shot,
@@ -279,6 +292,7 @@ Options:
                                          Publish and enforce pane resize policy
   --terminal-engine interim|libghostty-vt
                                          Backend terminal engine implementation
+  -V, --version                         Show version
   -h, --help                            Show this help
 
 Notes:
@@ -381,6 +395,7 @@ mod tests {
         let usage = usage();
         assert!(usage.contains("--live"));
         assert!(usage.contains("--print-socket"));
+        assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--live-forever"));
         assert!(usage.contains("--live-cycles COUNT"));
         assert!(usage.contains("--live-clients COUNT"));

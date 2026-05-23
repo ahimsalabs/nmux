@@ -21,6 +21,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
     assert!(stdout.contains("--print-socket"));
+    assert!(stdout.contains("-V, --version"));
     assert!(stdout.contains("--key-name NAME"));
     assert!(stdout.contains("Send a supported named key"));
     assert!(stdout.contains("--paste TEXT"));
@@ -61,6 +62,7 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--live-cycles COUNT"));
     assert!(stdout.contains("--print-socket"));
+    assert!(stdout.contains("-V, --version"));
     assert!(stdout.contains("--live-forever"));
     assert!(stdout.contains("--live-clients COUNT"));
     assert!(stdout.contains("--resize-policy fixed|leader|active-client|manual"));
@@ -76,6 +78,48 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("nmuxd --live"));
     assert!(stdout.contains("nmuxd --live-forever"));
     assert!(stdout.contains("nmuxd --live-clients 2"));
+}
+
+#[test]
+fn version_flags_report_binary_versions_without_side_effects() {
+    let client_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .arg("--version")
+        .output()
+        .expect("run nmux --version");
+
+    assert!(
+        client_output.status.success(),
+        "nmux --version failed: {}",
+        String::from_utf8_lossy(&client_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&client_output.stdout).trim(),
+        concat!("nmux ", env!("CARGO_PKG_VERSION"))
+    );
+
+    let daemon_socket_path = test_socket_path();
+    let daemon_output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            daemon_socket_path.to_str().expect("socket path"),
+            "--version",
+        ])
+        .output()
+        .expect("run nmuxd --version");
+
+    assert!(
+        daemon_output.status.success(),
+        "nmuxd --version failed: {}",
+        String::from_utf8_lossy(&daemon_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&daemon_output.stdout).trim(),
+        concat!("nmuxd ", env!("CARGO_PKG_VERSION"))
+    );
+    assert!(
+        !daemon_socket_path.exists(),
+        "nmuxd --version should not bind a socket path"
+    );
 }
 
 #[test]
