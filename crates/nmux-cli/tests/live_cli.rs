@@ -3118,6 +3118,93 @@ fn live_libghostty_vt_current_surface_reattach_forwards_sgr_mouse_press() {
     );
 }
 
+#[cfg(feature = "libghostty-vt")]
+#[test]
+fn live_libghostty_vt_current_surface_reattach_forwards_sgr_pixel_mouse_press() {
+    let socket_path = test_socket_path();
+    let state_path = socket_path.with_extension("state");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "2",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "stty -icanon -echo min 10 time 20; printf '\\033[?1000h\\033[?1006h\\033[?1016hready\n'; bytes=$(dd bs=10 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let first_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run first nmux");
+
+    assert!(
+        first_client.status.success(),
+        "first nmux failed: {}",
+        String::from_utf8_lossy(&first_client.stderr)
+    );
+
+    let second_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--live",
+            "--mouse",
+            "press:left:1:1",
+            "--mouse-pixels",
+            "9:17",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run second nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    assert!(
+        second_client.status.success(),
+        "second nmux failed: {}",
+        String::from_utf8_lossy(&second_client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&second_client.stdout);
+    assert!(
+        stdout.contains("mouse:1b5b3c303b393b31374d"),
+        "current-surface reattach did not forward SGR-pixels mouse press bytes:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("[?1000h") && !stdout.contains("[?1006h") && !stdout.contains("[?1016h"),
+        "mouse mode controls leaked through libghostty-vt output:\n{stdout}"
+    );
+}
+
 #[test]
 fn live_state_file_is_scoped_to_socket_identity() {
     let socket_path = test_socket_path();
