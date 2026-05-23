@@ -24,6 +24,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if args.print_socket {
+        println!("{}", args.socket_path.display());
+        return Ok(());
+    }
+
     let listener = local::bind_listener(&args.socket_path)?;
     let _socket_cleanup = SocketCleanup::new(args.socket_path.clone());
     eprintln!("nmuxd: listening on {}", args.socket_path.display());
@@ -124,6 +129,7 @@ fn wait_for_pane_output(
 
 struct Args {
     help: bool,
+    print_socket: bool,
     socket_path: PathBuf,
     one_shot: bool,
     live: bool,
@@ -137,6 +143,7 @@ struct Args {
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut help = false;
+    let mut print_socket = false;
     let mut socket_path = local::default_socket_path();
     let mut one_shot = false;
     let mut live = false;
@@ -152,6 +159,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         match arg.as_str() {
             "--help" | "-h" => {
                 help = true;
+            }
+            "--print-socket" => {
+                print_socket = true;
             }
             "--socket" => {
                 socket_path = args
@@ -199,6 +209,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
 
     Ok(Args {
         help,
+        print_socket,
         socket_path,
         one_shot,
         live,
@@ -257,6 +268,7 @@ Usage:
 
 Options:
   --socket PATH                         Unix socket path
+  --print-socket                        Print the resolved socket path and exit
   --one-shot                            Serve one attach client
   --live                                Serve one live client until detach
   --live-forever                        Serve sequential live clients until stopped
@@ -368,6 +380,7 @@ mod tests {
     fn usage_mentions_live_and_resize_policy_flags() {
         let usage = usage();
         assert!(usage.contains("--live"));
+        assert!(usage.contains("--print-socket"));
         assert!(usage.contains("--live-forever"));
         assert!(usage.contains("--live-cycles COUNT"));
         assert!(usage.contains("--live-clients COUNT"));

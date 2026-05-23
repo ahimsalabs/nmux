@@ -476,6 +476,7 @@ M12: live workspace usability [done]
   nmux live loop timing, explicit resize dimensions, scrollback ranges, connect timeouts, and iteration counts report flag-specific invalid-number, zero, or out-of-range errors before connecting
   nmux --state load/save failures include the state path before socket connection work, and state saves use a temporary file plus rename
   nmuxd and nmux share a stable default socket path for local workflows without --socket, with valid absolute NMUX_SOCKET values available for shell-scoped workspace selection
+  nmux and nmuxd --print-socket report the resolved socket path without connecting or binding
   help output and quick-start docs show default-socket live workflows first
   help output documents the shared default socket path
   nmux connection failures include the socket path

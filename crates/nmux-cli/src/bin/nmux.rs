@@ -30,6 +30,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if args.print_socket {
+        println!("{}", args.socket_path.display());
+        return Ok(());
+    }
+
     if args.live {
         return run_live(&args);
     }
@@ -871,6 +876,7 @@ fn format_scrollback(scrollback: &local::ScrollbackChunkSummary) -> String {
 
 struct Args {
     help: bool,
+    print_socket: bool,
     socket_path: PathBuf,
     input_text: Option<String>,
     key_name: Option<String>,
@@ -904,6 +910,7 @@ where
     S: Into<String>,
 {
     let mut help = false;
+    let mut print_socket = false;
     let mut socket_path = local::default_socket_path();
     let mut input_text = None;
     let mut key_name = None;
@@ -943,6 +950,9 @@ where
         match arg.as_str() {
             "--help" | "-h" => {
                 help = true;
+            }
+            "--print-socket" => {
+                print_socket = true;
             }
             "--socket" => {
                 socket_path = args
@@ -1136,6 +1146,7 @@ where
 
     Ok(Args {
         help,
+        print_socket,
         socket_path,
         input_text,
         key_name,
@@ -1379,6 +1390,7 @@ Usage:
 
 Options:
   --socket PATH              Unix socket path
+  --print-socket             Print the resolved socket path and exit
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send; opts into read-write attach
   --key-name NAME            Send a supported named key
@@ -1699,6 +1711,7 @@ mod tests {
         assert!(!args.stdin_bytes);
         assert!(!args.no_input);
         assert!(!args.live);
+        assert!(!args.print_socket);
     }
 
     #[test]
@@ -2372,6 +2385,7 @@ mod tests {
     fn usage_mentions_live_interactive_flags() {
         let usage = usage();
         assert!(usage.contains("--stdin-bytes"));
+        assert!(usage.contains("--print-socket"));
         assert!(usage.contains("--connect-timeout-ms MS"));
         assert!(usage.contains("--local-echo off|tty"));
         assert!(usage.contains("--key-modifiers MODS"));

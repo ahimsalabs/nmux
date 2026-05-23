@@ -91,6 +91,7 @@ Done:
 - `nmuxd --live-clients COUNT` keeps the same local workspace and PTY alive across bounded sequential live clients.
 - `nmuxd` rejects ambiguous live server mode combinations and flag-specific invalid-number or zero live counts instead of silently choosing one mode.
 - `nmuxd` and `nmux` share a stable default socket path for local workflows without `--socket`, and a valid absolute `NMUX_SOCKET` can select a shell-scoped local workspace.
+- `nmux --print-socket` and `nmuxd --print-socket` print the resolved socket path without connecting or binding.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - Numeric `nmux` flags report the failing flag name for invalid-number errors before connecting.
 - ADR 0012 documents the backend terminal engine boundary.

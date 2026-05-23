@@ -57,6 +57,7 @@ nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' -
 ```
 
 Both binaries share a stable default socket path for the current user. Explicit `--socket` wins; otherwise a valid absolute `NMUX_SOCKET` value wins, then `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Use `NMUX_SOCKET` for a shell-scoped local workspace, or pass `--socket` on both sides when you want an isolated smoke-test socket.
+Use `nmux --print-socket` or `nmuxd --print-socket` to print the resolved socket path without connecting or binding.
 Connection failures include the socket path, which helps distinguish a missing daemon from an isolated test socket.
 Use `nmux --connect-timeout-ms MS` when a script may start the client before `nmuxd` has finished binding the socket.
 `nmuxd` refuses to replace an existing socket path, so remove stale sockets deliberately or choose a different `--socket`.

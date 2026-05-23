@@ -20,6 +20,7 @@ fn nmux_help_lists_live_client_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
+    assert!(stdout.contains("--print-socket"));
     assert!(stdout.contains("--key-name NAME"));
     assert!(stdout.contains("Send a supported named key"));
     assert!(stdout.contains("--paste TEXT"));
@@ -59,6 +60,7 @@ fn nmuxd_help_lists_live_server_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--live-cycles COUNT"));
+    assert!(stdout.contains("--print-socket"));
     assert!(stdout.contains("--live-forever"));
     assert!(stdout.contains("--live-clients COUNT"));
     assert!(stdout.contains("--resize-policy fixed|leader|active-client|manual"));
@@ -74,6 +76,57 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("nmuxd --live"));
     assert!(stdout.contains("nmuxd --live-forever"));
     assert!(stdout.contains("nmuxd --live-clients 2"));
+}
+
+#[test]
+fn print_socket_reports_resolved_socket_without_side_effects() {
+    let client_socket_path = test_socket_path();
+    let client_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            client_socket_path.to_str().expect("socket path"),
+            "--print-socket",
+        ])
+        .output()
+        .expect("run nmux --print-socket");
+
+    assert!(
+        client_output.status.success(),
+        "nmux --print-socket failed: {}",
+        String::from_utf8_lossy(&client_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&client_output.stdout).trim(),
+        client_socket_path.to_str().expect("socket path")
+    );
+    assert!(
+        !client_socket_path.exists(),
+        "nmux --print-socket should not create a socket path"
+    );
+
+    let daemon_socket_path = test_socket_path();
+    let daemon_output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            daemon_socket_path.to_str().expect("socket path"),
+            "--print-socket",
+        ])
+        .output()
+        .expect("run nmuxd --print-socket");
+
+    assert!(
+        daemon_output.status.success(),
+        "nmuxd --print-socket failed: {}",
+        String::from_utf8_lossy(&daemon_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&daemon_output.stdout).trim(),
+        daemon_socket_path.to_str().expect("socket path")
+    );
+    assert!(
+        !daemon_socket_path.exists(),
+        "nmuxd --print-socket should not bind a socket path"
+    );
 }
 
 #[test]
