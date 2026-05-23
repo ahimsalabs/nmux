@@ -73,6 +73,7 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("Default socket: --socket, else valid absolute $NMUX_SOCKET"));
     assert!(stdout.contains("valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock"));
     assert!(stdout.contains("else /tmp/nmux-$UID/nmuxd.sock"));
+    assert!(stdout.contains("Informational flags exit before daemon-mode validation"));
     assert!(stdout.contains("Existing socket paths are not replaced automatically"));
     assert!(stdout.contains("libghostty-vt requires building nmux"));
     assert!(stdout.contains("Examples:"));
@@ -231,6 +232,63 @@ fn no_connect_client_flags_skip_attach_mode_validation() {
     assert!(
         !socket_path.exists(),
         "no-connect flags should not create a socket path"
+    );
+}
+
+#[test]
+fn no_bind_daemon_flags_skip_daemon_mode_validation() {
+    let socket_path = test_socket_path();
+    let socket_output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--print-socket",
+            "--one-shot",
+            "--live-forever",
+            "--live-clients",
+            "0",
+        ])
+        .output()
+        .expect("run nmuxd --print-socket with daemon flags");
+
+    assert!(
+        socket_output.status.success(),
+        "nmuxd --print-socket should exit before daemon-mode validation: {}",
+        String::from_utf8_lossy(&socket_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&socket_output.stdout).trim(),
+        socket_path.to_str().expect("socket path")
+    );
+    assert!(
+        !socket_path.exists(),
+        "nmuxd no-bind flags should not bind a socket path"
+    );
+
+    let version_socket_path = test_socket_path();
+    let version_output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            version_socket_path.to_str().expect("socket path"),
+            "--version",
+            "--one-shot",
+            "--live",
+        ])
+        .output()
+        .expect("run nmuxd --version with daemon flags");
+
+    assert!(
+        version_output.status.success(),
+        "nmuxd --version should exit before daemon-mode validation: {}",
+        String::from_utf8_lossy(&version_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&version_output.stdout).trim(),
+        concat!("nmuxd ", env!("CARGO_PKG_VERSION"))
+    );
+    assert!(
+        !version_socket_path.exists(),
+        "nmuxd --version should not bind a socket path"
     );
 }
 

@@ -218,7 +218,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
-    validate_mode_args(one_shot, live, live_forever, live_cycles, live_clients)?;
+    if !(help || version || print_socket) {
+        validate_mode_args(one_shot, live, live_forever, live_cycles, live_clients)?;
+    }
 
     Ok(Args {
         help,
@@ -298,6 +300,7 @@ Options:
 
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+  Informational flags exit before daemon-mode validation or socket/PTY work.
   Existing socket paths are not replaced automatically.
   libghostty-vt requires building nmux with the libghostty-vt feature.
 

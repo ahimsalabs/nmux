@@ -77,8 +77,8 @@ nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' -
 
 Both binaries share a stable default socket path for the current user. Explicit `--socket` wins; otherwise a valid absolute `NMUX_SOCKET` value wins, then `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Use `NMUX_SOCKET` for a shell-scoped local workspace, or pass `--socket` on both sides when you want an isolated smoke-test socket.
 Use `nmux --print-socket` or `nmuxd --print-socket` to print the resolved socket path without connecting or binding.
-Client informational flags such as `--version`, `--help`, `--print-socket`,
-and `--print-context` exit before attach-mode validation or socket/state work,
+Informational flags such as `--version`, `--help`, `--print-socket`, and
+client `--print-context` exit before mode validation or socket/state/PTY work,
 so scripts can combine them with broader command templates safely.
 
 ```sh
