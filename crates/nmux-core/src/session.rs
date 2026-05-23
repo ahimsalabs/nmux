@@ -41,6 +41,26 @@ impl AttachMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InputFrameContext<'a> {
+    pub connection_id: &'a str,
+    pub seq: u64,
+    pub actor_id: &'a str,
+    pub pane_id: &'a str,
+    pub input_seq: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseInputSpec {
+    pub row: u32,
+    pub col: u32,
+    pub pixel_x: Option<u32>,
+    pub pixel_y: Option<u32>,
+    pub button: protocol::MouseButton,
+    pub action: protocol::MouseAction,
+    pub modifiers: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tab {
     pub id: String,
@@ -1462,72 +1482,33 @@ impl Session {
 
     pub fn mouse_input_frame(
         &self,
-        connection_id: &str,
-        seq: u64,
-        actor_id: &str,
-        pane_id: &str,
-        input_seq: u64,
-        row: u32,
-        col: u32,
-        button: protocol::MouseButton,
-        action: protocol::MouseAction,
-        modifiers: u32,
-    ) -> Vec<u8> {
-        self.mouse_input_frame_with_pixels(
-            connection_id,
-            seq,
-            actor_id,
-            pane_id,
-            input_seq,
-            row,
-            col,
-            None,
-            None,
-            button,
-            action,
-            modifiers,
-        )
-    }
-
-    pub fn mouse_input_frame_with_pixels(
-        &self,
-        connection_id: &str,
-        seq: u64,
-        actor_id: &str,
-        pane_id: &str,
-        input_seq: u64,
-        row: u32,
-        col: u32,
-        pixel_x: Option<u32>,
-        pixel_y: Option<u32>,
-        button: protocol::MouseButton,
-        action: protocol::MouseAction,
-        modifiers: u32,
+        context: InputFrameContext<'_>,
+        mouse_input: MouseInputSpec,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let has_pixels = pixel_x.is_some() && pixel_y.is_some();
+        let has_pixels = mouse_input.pixel_x.is_some() && mouse_input.pixel_y.is_some();
 
         let mouse = protocol::MouseInput::create(
             &mut builder,
             &protocol::MouseInputArgs {
-                row,
-                col,
-                button,
-                modifiers,
-                action,
+                row: mouse_input.row,
+                col: mouse_input.col,
+                button: mouse_input.button,
+                modifiers: mouse_input.modifiers,
+                action: mouse_input.action,
                 has_pixels,
-                pixel_x: pixel_x.unwrap_or_default(),
-                pixel_y: pixel_y.unwrap_or_default(),
+                pixel_x: mouse_input.pixel_x.unwrap_or_default(),
+                pixel_y: mouse_input.pixel_y.unwrap_or_default(),
             },
         );
-        let pane_id = builder.create_string(pane_id);
-        let actor_id = builder.create_string(actor_id);
+        let pane_id = builder.create_string(context.pane_id);
+        let actor_id = builder.create_string(context.actor_id);
         let input = protocol::InputEvent::create(
             &mut builder,
             &protocol::InputEventArgs {
                 pane_id: Some(pane_id),
                 actor_id: Some(actor_id),
-                input_seq,
+                input_seq: context.input_seq,
                 kind: protocol::InputKind::Mouse,
                 key: None,
                 mouse: Some(mouse),
@@ -1538,14 +1519,14 @@ impl Session {
         );
 
         let envelope_session_id = builder.create_string(&self.id);
-        let connection_id = builder.create_string(connection_id);
+        let connection_id = builder.create_string(context.connection_id);
         let envelope = protocol::Envelope::create(
             &mut builder,
             &protocol::EnvelopeArgs {
                 protocol_version: PROTOCOL_VERSION,
                 session_id: Some(envelope_session_id),
                 connection_id: Some(connection_id),
-                seq,
+                seq: context.seq,
                 ack: 0,
                 sent_at_mono_ms: 0,
                 body_type: protocol::EnvelopeBody::InputEvent,
@@ -2040,7 +2021,7 @@ mod tests {
 
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
-    use super::{AttachMode, Cursor, Session};
+    use super::{AttachMode, Cursor, InputFrameContext, MouseInputSpec, Session};
 
     fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
         env.iter()
@@ -3115,16 +3096,22 @@ mod tests {
     #[test]
     fn mouse_input_frame_decodes_to_input_event() {
         let frame = Session::initial().mouse_input_frame(
-            "conn-1",
-            9,
-            "actor-1",
-            "pane-1",
-            3,
-            4,
-            5,
-            protocol::MouseButton::Left,
-            protocol::MouseAction::Press,
-            2,
+            InputFrameContext {
+                connection_id: "conn-1",
+                seq: 9,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 3,
+            },
+            MouseInputSpec {
+                row: 4,
+                col: 5,
+                pixel_x: None,
+                pixel_y: None,
+                button: protocol::MouseButton::Left,
+                action: protocol::MouseAction::Press,
+                modifiers: 2,
+            },
         );
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
 
@@ -3153,19 +3140,23 @@ mod tests {
 
     #[test]
     fn mouse_pixel_input_frame_decodes_to_input_event() {
-        let frame = Session::initial().mouse_input_frame_with_pixels(
-            "conn-1",
-            9,
-            "actor-1",
-            "pane-1",
-            3,
-            4,
-            5,
-            Some(33),
-            Some(65),
-            protocol::MouseButton::Left,
-            protocol::MouseAction::Press,
-            2,
+        let frame = Session::initial().mouse_input_frame(
+            InputFrameContext {
+                connection_id: "conn-1",
+                seq: 9,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 3,
+            },
+            MouseInputSpec {
+                row: 4,
+                col: 5,
+                pixel_x: Some(33),
+                pixel_y: Some(65),
+                button: protocol::MouseButton::Left,
+                action: protocol::MouseAction::Press,
+                modifiers: 2,
+            },
         );
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let input = envelope.body_as_input_event().expect("input event body");

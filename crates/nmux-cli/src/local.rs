@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
-use nmux_core::session::{Actor, AttachMode, Session};
+use nmux_core::session::{Actor, AttachMode, InputFrameContext, MouseInputSpec, Session};
 use nmux_core::terminal::{
     KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines,
     TerminalEngineKind, named_key_bytes,
@@ -1325,18 +1325,7 @@ pub fn attach_with_client_options(
             }
             sent_input = true;
         } else if let Some(mouse) = options.mouse {
-            send_mouse_input_with_sequence(
-                &mut stream,
-                &mut sequence,
-                &attached_pane_id,
-                mouse.row,
-                mouse.col,
-                mouse.pixel_x,
-                mouse.pixel_y,
-                mouse.button,
-                mouse.action,
-                mouse.modifiers,
-            )?;
+            send_mouse_input_with_sequence(&mut stream, &mut sequence, &attached_pane_id, mouse)?;
             sent_input = true;
         } else if let Some(focused) = options.focus {
             send_focus_input_with_sequence(&mut stream, &mut sequence, &attached_pane_id, focused)?;
@@ -1610,55 +1599,44 @@ pub fn send_focus_input_with_sequence(
 pub fn send_mouse_input(
     stream: &mut UnixStream,
     pane_id: &str,
-    row: u32,
-    col: u32,
-    button: protocol::MouseButton,
-    action: protocol::MouseAction,
-    modifiers: u32,
+    mouse: AttachMouseInput,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut sequence = ClientFrameSequence::default();
-    send_mouse_input_with_sequence(
-        stream,
-        &mut sequence,
-        pane_id,
-        row,
-        col,
-        None,
-        None,
-        button,
-        action,
-        modifiers,
-    )
+    send_mouse_input_with_sequence(stream, &mut sequence, pane_id, mouse)
 }
 
 pub fn send_mouse_input_with_sequence(
     stream: &mut UnixStream,
     sequence: &mut ClientFrameSequence,
     pane_id: &str,
-    row: u32,
-    col: u32,
-    pixel_x: Option<u32>,
-    pixel_y: Option<u32>,
-    button: protocol::MouseButton,
-    action: protocol::MouseAction,
-    modifiers: u32,
+    mouse: AttachMouseInput,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let frame = Session::initial().mouse_input_frame_with_pixels(
-        "local-client",
-        sequence.next_envelope_seq(),
-        "local-actor",
-        pane_id,
-        sequence.next_input_seq(),
-        row,
-        col,
-        pixel_x,
-        pixel_y,
-        button,
-        action,
-        modifiers,
+    let frame = Session::initial().mouse_input_frame(
+        InputFrameContext {
+            connection_id: "local-client",
+            seq: sequence.next_envelope_seq(),
+            actor_id: "local-actor",
+            pane_id,
+            input_seq: sequence.next_input_seq(),
+        },
+        MouseInputSpec::from(mouse),
     );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
+}
+
+impl From<AttachMouseInput> for MouseInputSpec {
+    fn from(mouse: AttachMouseInput) -> Self {
+        Self {
+            row: mouse.row,
+            col: mouse.col,
+            pixel_x: mouse.pixel_x,
+            pixel_y: mouse.pixel_y,
+            button: mouse.button,
+            action: mouse.action,
+            modifiers: mouse.modifiers,
+        }
+    }
 }
 
 pub fn send_resize_intent(
@@ -11278,11 +11256,15 @@ mod tests {
         send_mouse_input(
             &mut stream,
             "pane-1",
-            0,
-            0,
-            protocol::MouseButton::Left,
-            protocol::MouseAction::Press,
-            0,
+            AttachMouseInput {
+                row: 0,
+                col: 0,
+                pixel_x: None,
+                pixel_y: None,
+                button: protocol::MouseButton::Left,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            },
         )
         .expect("send mouse input");
         let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
@@ -11354,11 +11336,15 @@ mod tests {
         send_mouse_input(
             &mut stream,
             "pane-1",
-            0,
-            0,
-            protocol::MouseButton::Left,
-            protocol::MouseAction::Press,
-            0,
+            AttachMouseInput {
+                row: 0,
+                col: 0,
+                pixel_x: None,
+                pixel_y: None,
+                button: protocol::MouseButton::Left,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            },
         )
         .expect("send mouse input");
         let host = server.join().expect("server thread");
@@ -11907,11 +11893,15 @@ mod tests {
         send_mouse_input(
             &mut stream,
             "pane-1",
-            0,
-            80,
-            protocol::MouseButton::Left,
-            protocol::MouseAction::Press,
-            0,
+            AttachMouseInput {
+                row: 0,
+                col: 80,
+                pixel_x: None,
+                pixel_y: None,
+                button: protocol::MouseButton::Left,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            },
         )
         .expect("send mouse input");
         let error = read_live_surface_update_from_stream(&mut stream).expect("live error");
@@ -13299,13 +13289,15 @@ mod tests {
             &mut client,
             &mut sequence,
             "pane-1",
-            1,
-            2,
-            None,
-            None,
-            protocol::MouseButton::Left,
-            protocol::MouseAction::Press,
-            0,
+            AttachMouseInput {
+                row: 1,
+                col: 2,
+                pixel_x: None,
+                pixel_y: None,
+                button: protocol::MouseButton::Left,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            },
         )
         .expect("send mouse");
 
@@ -13614,16 +13606,22 @@ mod tests {
         );
 
         let mouse_frame = Session::initial().mouse_input_frame(
-            "local-client",
-            3,
-            "actor-1",
-            "pane-1",
-            2,
-            4,
-            5,
-            protocol::MouseButton::Left,
-            protocol::MouseAction::Press,
-            0x10,
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 3,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 2,
+            },
+            MouseInputSpec {
+                row: 4,
+                col: 5,
+                pixel_x: None,
+                pixel_y: None,
+                button: protocol::MouseButton::Left,
+                action: protocol::MouseAction::Press,
+                modifiers: 0x10,
+            },
         );
         let mouse_err = input_summary_from_frame(&mouse_frame)
             .expect_err("mouse modifier bits should be rejected");
@@ -14025,16 +14023,22 @@ mod tests {
     #[test]
     fn decodes_mouse_input_from_client_frame() {
         let frame = Session::initial().mouse_input_frame(
-            "local-client",
-            3,
-            "actor-1",
-            "pane-1",
-            2,
-            4,
-            5,
-            protocol::MouseButton::Left,
-            protocol::MouseAction::Press,
-            3,
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 3,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 2,
+            },
+            MouseInputSpec {
+                row: 4,
+                col: 5,
+                pixel_x: None,
+                pixel_y: None,
+                button: protocol::MouseButton::Left,
+                action: protocol::MouseAction::Press,
+                modifiers: 3,
+            },
         );
         let input = input_summary_from_frame(&frame).expect("mouse summary");
 
@@ -14055,19 +14059,23 @@ mod tests {
         );
         assert!(input.requires_mouse_tracking);
 
-        let frame = Session::initial().mouse_input_frame_with_pixels(
-            "conn-1",
-            9,
-            "actor-1",
-            "pane-1",
-            2,
-            4,
-            5,
-            Some(33),
-            Some(65),
-            protocol::MouseButton::Left,
-            protocol::MouseAction::Press,
-            3,
+        let frame = Session::initial().mouse_input_frame(
+            InputFrameContext {
+                connection_id: "conn-1",
+                seq: 9,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 2,
+            },
+            MouseInputSpec {
+                row: 4,
+                col: 5,
+                pixel_x: Some(33),
+                pixel_y: Some(65),
+                button: protocol::MouseButton::Left,
+                action: protocol::MouseAction::Press,
+                modifiers: 3,
+            },
         );
         let input = input_summary_from_frame(&frame).expect("mouse pixel summary");
         assert_eq!(
@@ -14087,32 +14095,44 @@ mod tests {
     #[test]
     fn rejects_mouse_input_with_unknown_button_or_action() {
         let button_frame = Session::initial().mouse_input_frame(
-            "local-client",
-            3,
-            "actor-1",
-            "pane-1",
-            2,
-            4,
-            5,
-            protocol::MouseButton(99),
-            protocol::MouseAction::Press,
-            0,
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 3,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 2,
+            },
+            MouseInputSpec {
+                row: 4,
+                col: 5,
+                pixel_x: None,
+                pixel_y: None,
+                button: protocol::MouseButton(99),
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            },
         );
         let err = input_summary_from_frame(&button_frame)
             .expect_err("unknown mouse button should be rejected");
         assert!(err.to_string().contains("unknown mouse button"));
 
         let action_frame = Session::initial().mouse_input_frame(
-            "local-client",
-            3,
-            "actor-1",
-            "pane-1",
-            2,
-            4,
-            5,
-            protocol::MouseButton::Left,
-            protocol::MouseAction(99),
-            0,
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 3,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 2,
+            },
+            MouseInputSpec {
+                row: 4,
+                col: 5,
+                pixel_x: None,
+                pixel_y: None,
+                button: protocol::MouseButton::Left,
+                action: protocol::MouseAction(99),
+                modifiers: 0,
+            },
         );
         let err = input_summary_from_frame(&action_frame)
             .expect_err("unknown mouse action should be rejected");

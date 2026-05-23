@@ -482,13 +482,15 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     &mut stream,
                     &mut client_sequence,
                     &attached_pane_id,
-                    mouse_event.row,
-                    mouse_event.col,
-                    mouse_event.pixel_x,
-                    mouse_event.pixel_y,
-                    mouse_event.button,
-                    mouse_event.action,
-                    mouse_event.modifiers,
+                    local::AttachMouseInput {
+                        row: mouse_event.row,
+                        col: mouse_event.col,
+                        pixel_x: mouse_event.pixel_x,
+                        pixel_y: mouse_event.pixel_y,
+                        button: mouse_event.button,
+                        action: mouse_event.action,
+                        modifiers: mouse_event.modifiers,
+                    },
                 )?;
             } else if let Some(focus_event) = args.focus_event {
                 local::send_focus_input_with_sequence(
