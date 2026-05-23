@@ -141,6 +141,18 @@ are local pane identity hints for nested nmux tooling and do not make the
 frontend replay raw PTY bytes. Inside a pane, `nmux --print-context` prints
 that inherited identity without connecting; outside a complete nmux pane
 context, it fails before socket or state work.
+
+To smoke the nested context path through a real daemon-owned PTY, start a
+one-shot daemon whose pane command invokes the client binary:
+
+```sh
+rm -f /tmp/nmux-context.sock
+# terminal 1
+nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux-context.sock --one-shot --command 'cargo run --bin nmux -- --print-context; cat >/dev/null'
+# terminal 2
+nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux-context.sock
+```
+
 Scrollback ranges are 1-based from the oldest retained row, and the client rejects zero `--scrollback-start` or `--scrollback-count` values before connecting. Out-of-range requests can return an empty scrollback section; `--state` does not persist those zero-row chunks as future version preconditions.
 
 Start a daemon that serves one live client for two input cycles:

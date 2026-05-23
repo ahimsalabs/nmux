@@ -92,6 +92,15 @@ Local PTY commands receive `NMUX=1`, `NMUX_SESSION_ID`, `NMUX_PANE_ID`,
 which nmux pane and socket they are running inside. Run `nmux --print-context`
 inside a pane to inspect that inherited identity without connecting; outside a
 complete nmux pane context, it fails clearly before socket or state work.
+
+```sh
+rm -f /tmp/nmux-context.sock
+# terminal 1
+nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux-context.sock --one-shot --command 'cargo run --bin nmux -- --print-context; cat >/dev/null'
+# terminal 2
+nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux-context.sock
+```
+
 Live attach renders the requested initial scrollback range before streaming updates, including when `--redraw` is enabled. Reconnects use `AttachStatus` as an explicit current-surface barrier and pane authority, so a client no longer waits on a timeout to learn that no surface frame follows, does not infer the attached pane from the workspace root, renders cached current surfaces only when the cached version matches `AttachStatus.surface_version`, and rejects responses whose `Snapshot`/`Patch` status disagrees with the following surface frame. When the backend reports terminal title or OSC 7 working-directory metadata, the local CLI prints those metadata lines with the current pane surface; metadata-only `CursorOnly` live updates carry no row changes and print just the changed metadata lines in non-redraw mode.
 Use `nmuxd --live-clients COUNT` to keep the same local workspace alive across a bounded number of sequential live clients. Pair it with `nmux --state PATH` to reattach from a persisted client-side surface cache, including cached terminal metadata, when the daemon has no newer surface update to send. One-shot, follow, and live attach paths all reuse that scoped cached surface instead of replaying PTY bytes. Follow mode is observation-only and rejects input flags instead of silently dropping them.
 Use `nmuxd --live-forever` for an unbounded sequential local workspace that survives repeated live client detach and reattach until the daemon is stopped.
