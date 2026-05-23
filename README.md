@@ -122,6 +122,8 @@ nix develop . -c cargo run --bin nmux -- --help
 nix develop . -c cargo run --bin nmuxd -- --help
 nix develop . -c cargo run --bin nmux -- --version
 nix develop . -c cargo run --bin nmuxd -- --version
+nix develop . -c cargo run --bin nmux -- --version-json
+nix develop . -c cargo run --bin nmuxd -- --version-json
 ```
 
 `nmux --help` also calls out the current renderer limitation: the default prototype uses an interim text surface, not a VT-correct terminal emulator. That is a sequencing device while the local state-sync/live workflow stays fast. Backend `libghostty-vt` extraction is available behind an opt-in Cargo feature, separate from the later question of hydrating a frontend Ghostty renderer from nmux-owned state.
@@ -150,14 +152,13 @@ nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' -
 ```
 
 Both binaries share a stable default socket path for the current user. Explicit `--socket` wins; otherwise a valid absolute `NMUX_SOCKET` value wins, then `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Use `NMUX_SOCKET` for a shell-scoped local workspace, or pass `--socket` on both sides when you want an isolated smoke-test socket.
-Use `nmux --print-socket` or `nmuxd --print-socket` to print the resolved socket path without connecting or binding.
-Informational flags such as `--version`, `--help`, `--print-socket`, and
-client `--print-context` exit before mode validation or socket/state/PTY work,
-so scripts can combine them with broader command templates safely.
+Use `nmux --print-socket` or `nmuxd --print-socket` to print the resolved socket path without connecting or binding; use `--print-socket-json` to include both the path and resolution source for scripts.
+Informational flags such as `--version`, `--version-json`, `--help`, `--print-socket`, `--print-socket-json`, client `--print-context`, and client `--print-context-json` exit before mode validation or socket/state/PTY work, so scripts can combine them with broader command templates safely.
 
 ```sh
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --print-socket
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket
+NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket-json
 ```
 
 Connection failures include the socket path, which helps distinguish a missing daemon from an isolated test socket.
@@ -168,7 +169,8 @@ Local PTY commands receive `NMUX=1`, `NMUX_SESSION_ID`, `NMUX_PANE_ID`,
 `NMUX_SOCKET`, and `NMUX_ORIGIN` in their environment so nested tools can tell
 which nmux pane and socket they are running inside. Run `nmux --print-context`
 inside a pane to print those inherited `NMUX_*` key/value lines without
-connecting. When `nmuxd` starts inside an nmux pane, it appends the inherited
+connecting, or `nmux --print-context-json` for a machine-readable object.
+When `nmuxd` starts inside an nmux pane, it appends the inherited
 origin to the child pane origin with `>` so nested tools can see the local hop
 chain. Outside a complete nmux pane context, `--print-context` fails clearly
 before socket or state work.

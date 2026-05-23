@@ -96,6 +96,8 @@ Inspect the installed binary versions without connecting or binding a socket:
 ```sh
 nix develop . -c cargo run --bin nmux -- --version
 nix develop . -c cargo run --bin nmuxd -- --version
+nix develop . -c cargo run --bin nmux -- --version-json
+nix develop . -c cargo run --bin nmuxd -- --version-json
 ```
 
 Start a one-shot daemon with the default local shell:
@@ -195,15 +197,18 @@ path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Use `NMUX_SOCKET` for a
 shell-scoped local workspace, or pass `--socket` on both sides when you want an
 isolated smoke-test socket.
 Use `nmux --print-socket` or `nmuxd --print-socket` to print the resolved socket
-path without connecting or binding.
-Informational flags such as `--version`, `--help`, `--print-socket`, and
-client `--print-context` exit before mode validation or socket/state/PTY work,
-so scripts can reuse broader command templates without accidentally opening a
+path without connecting or binding; use `--print-socket-json` to include both
+the path and resolution source for scripts.
+Informational flags such as `--version`, `--version-json`, `--help`,
+`--print-socket`, `--print-socket-json`, client `--print-context`, and client
+`--print-context-json` exit before mode validation or socket/state/PTY work, so
+scripts can reuse broader command templates without accidentally opening a
 connection or starting a pane process.
 
 ```sh
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --print-socket
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket
+NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket-json
 ```
 
 If the daemon is not running or the client points at the wrong socket, `nmux` reports the socket path in the connection error.
@@ -216,8 +221,9 @@ are local pane identity hints for nested nmux tooling and do not make the
 frontend replay raw PTY bytes. If `nmuxd` is launched from inside an nmux pane,
 it appends the inherited origin to the child pane origin with `>` so nested
 tools can see the local hop chain. Inside a pane, `nmux --print-context` prints
-the inherited `NMUX_*` key/value lines without connecting; outside a complete
-nmux pane context, it fails before socket or state work.
+the inherited `NMUX_*` key/value lines without connecting, and
+`nmux --print-context-json` prints the same context as a JSON object; outside a
+complete nmux pane context, both fail before socket or state work.
 
 To smoke the nested context path through a real daemon-owned PTY, start a
 one-shot daemon whose pane command invokes the client binary:
