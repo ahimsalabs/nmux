@@ -72,7 +72,8 @@ The current implementation is a Rust workspace:
 - Record upstream/API blockers under `docs/upstream/` when local implementation
   would otherwise require raw PTY replay, duplicated terminal-state tracking, or
   guessing missing `libghostty-vt` data.
-- When adding an ADR under `docs/adr/`, include status and date metadata and update `docs/adr/README.md` in the same commit.
+- When adding an ADR under `docs/adr/`, include status and date metadata and
+  update the status table in `docs/adr/README.md` in the same commit.
 - Update this file when repo workflow expectations change.
 - Use subagents only for bounded read-only review, research synthesis, or implementation advice. Do not use them for parallel file edits or competing implementation tracks.
 - Do not inspect or copy generated vendored Ghostty source under `target/`; treat it as build output for the `libghostty-vt` dependency, not as nmux source material.
@@ -148,3 +149,5 @@ ADRs should use this shape:
 - Licensing or compatibility notes when relevant.
 
 Do not rewrite old ADRs to hide history. Add a new ADR that supersedes a prior one when the decision changes.
+Keep `docs/adr/README.md` as a status index, not just a link list, so accepted
+decisions and older proposed records remain visible at a glance.
