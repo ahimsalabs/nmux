@@ -3008,8 +3008,21 @@ pub struct RenderedAttach {
     pub surface_kind: protocol::SurfaceKind,
     pub cursor: Option<CursorSummary>,
     pub modes: TerminalModeSummary,
+    pub surface: RenderedSurfaceSummary,
     pub surface_text: Option<String>,
     pub scrollback: Option<ScrollbackChunkSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedSurfaceSummary {
+    pub pane_id: String,
+    pub version: u64,
+    pub cols: u32,
+    pub rows: u32,
+    pub colors: TerminalColorSummary,
+    pub styles: Vec<StyleSummary>,
+    pub hyperlinks: Vec<HyperlinkSummary>,
+    pub row_updates: Vec<SurfaceRowUpdate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3306,6 +3319,7 @@ pub struct ClientPaneSurface {
     hyperlinks: Vec<HyperlinkSummary>,
     row_text: Vec<String>,
     row_runs: Vec<Vec<CellRunSummary>>,
+    row_dirty_hashes: Vec<u64>,
     row_semantic_prompts: Vec<protocol::RowSemanticPrompt>,
     row_dirty: Vec<bool>,
     row_kitty_placeholders: Vec<bool>,
@@ -3334,6 +3348,7 @@ impl ClientPaneSurface {
             hyperlinks: update.hyperlinks.clone(),
             row_text: Vec::new(),
             row_runs: Vec::new(),
+            row_dirty_hashes: Vec::new(),
             row_semantic_prompts: Vec::new(),
             row_dirty: Vec::new(),
             row_kitty_placeholders: Vec::new(),
@@ -3347,6 +3362,7 @@ impl ClientPaneSurface {
             usize::try_from(surface.rows).map_err(|_| "surface row count does not fit in usize")?;
         surface.row_text.resize(row_count, String::new());
         surface.row_runs.resize(row_count, Vec::new());
+        surface.row_dirty_hashes.resize(row_count, 0);
         surface
             .row_semantic_prompts
             .resize(row_count, protocol::RowSemanticPrompt::None);
@@ -3466,13 +3482,41 @@ impl ClientPaneSurface {
     }
 
     pub fn render_text(&self) -> String {
-        let visible_rows = self
-            .row_text
+        let visible_rows = self.visible_row_count();
+        self.row_text[..visible_rows].join("\n")
+    }
+
+    fn visible_row_count(&self) -> usize {
+        self.row_text
             .iter()
             .rposition(|row| !row.is_empty())
             .map(|index| index + 1)
-            .unwrap_or(0);
-        self.row_text[..visible_rows].join("\n")
+            .unwrap_or(0)
+    }
+
+    fn summary(&self) -> RenderedSurfaceSummary {
+        let row_updates = (0..self.visible_row_count())
+            .map(|index| SurfaceRowUpdate {
+                row: u32::try_from(index).expect("surface row index fits in u32"),
+                text: self.row_text[index].clone(),
+                runs: self.row_runs[index].clone(),
+                dirty_hash: self.row_dirty_hashes[index],
+                row_state_hash: self.row_state_hashes[index],
+                semantic_prompt: self.row_semantic_prompts[index],
+                dirty: self.row_dirty[index],
+                kitty_virtual_placeholder: self.row_kitty_placeholders[index],
+            })
+            .collect();
+        RenderedSurfaceSummary {
+            pane_id: self.pane_id.clone(),
+            version: self.version,
+            cols: self.cols,
+            rows: self.rows,
+            colors: self.colors.clone(),
+            styles: self.styles.clone(),
+            hyperlinks: self.hyperlinks.clone(),
+            row_updates,
+        }
     }
 
     fn apply_rows(&mut self, rows: &[SurfaceRowUpdate]) -> Result<(), Box<dyn std::error::Error>> {
@@ -3492,6 +3536,7 @@ impl ClientPaneSurface {
             } else {
                 row.runs.clone()
             };
+            self.row_dirty_hashes[index] = row.dirty_hash;
             self.row_semantic_prompts[index] = row.semantic_prompt;
             self.row_dirty[index] = row.dirty;
             self.row_kitty_placeholders[index] = row.kitty_virtual_placeholder;
@@ -3919,6 +3964,7 @@ impl ClientAttachState {
         let surface_kind = surface.surface;
         let cursor = surface.cursor;
         let modes = surface.modes;
+        let surface_summary = surface.summary();
 
         if let Some(scrollback) = snapshot.scrollback.as_ref() {
             self.cache_scrollback_chunk(scrollback);
@@ -3931,6 +3977,7 @@ impl ClientAttachState {
             surface_kind,
             cursor,
             modes,
+            surface: surface_summary,
             surface_text,
             scrollback: snapshot.scrollback,
         })
@@ -4226,6 +4273,8 @@ impl ClientAttachState {
                 });
                 encoded.push(' ');
                 encoded.push_str(&surface.row_state_hashes[index].to_string());
+                encoded.push(' ');
+                encoded.push_str(&surface.row_dirty_hashes[index].to_string());
                 encoded.push('\n');
                 for run in &surface.row_runs[index] {
                     encoded.push_str("run ");
@@ -4376,6 +4425,7 @@ impl ClientAttachState {
             let mut hyperlinks = Vec::new();
             let mut row_text = vec![String::new(); row_count];
             let mut row_runs = vec![Vec::new(); row_count];
+            let mut row_dirty_hashes = vec![0; row_count];
             let mut row_semantic_prompts = vec![protocol::RowSemanticPrompt::None; row_count];
             let mut row_dirty = vec![false; row_count];
             let mut row_kitty_placeholders = vec![false; row_count];
@@ -4623,6 +4673,52 @@ impl ClientAttachState {
                         *kitty_target = parse_state_bool(kitty_placeholder)?;
                         *hash_target = parse_state_u64(row_state_hash)?;
                     }
+                    [
+                        "rowmeta",
+                        row,
+                        semantic_prompt,
+                        dirty,
+                        kitty_placeholder,
+                        row_state_hash,
+                        dirty_hash,
+                    ] => {
+                        let row = parse_state_usize(row)?;
+                        let Some(semantic_target) = row_semantic_prompts.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        let Some(dirty_target) = row_dirty.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        let Some(kitty_target) = row_kitty_placeholders.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        let Some(hash_target) = row_state_hashes.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        let Some(dirty_hash_target) = row_dirty_hashes.get_mut(row) else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "client state row metadata index outside surface",
+                            ));
+                        };
+                        *semantic_target = parse_state_row_semantic_prompt(semantic_prompt)?;
+                        *dirty_target = parse_state_bool(dirty)?;
+                        *kitty_target = parse_state_bool(kitty_placeholder)?;
+                        *hash_target = parse_state_u64(row_state_hash)?;
+                        *dirty_hash_target = parse_state_u64(dirty_hash)?;
+                    }
                     ["run", row, text, cell_widths, style_id, flags] => {
                         let row = parse_state_usize(row)?;
                         let Some(target) = row_runs.get_mut(row) else {
@@ -4722,6 +4818,7 @@ impl ClientAttachState {
                 styles,
                 hyperlinks,
                 row_runs,
+                row_dirty_hashes,
                 row_semantic_prompts,
                 row_dirty,
                 row_kitty_placeholders,

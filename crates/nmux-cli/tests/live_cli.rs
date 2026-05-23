@@ -109,6 +109,14 @@ fn one_shot_cli_can_print_attach_json() {
     );
     assert!(stdout.contains("json-output"), "missing surface:\n{stdout}");
     assert!(
+        stdout.contains("\"surface\":{"),
+        "missing structured surface:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"row_updates\":["),
+        "missing structured surface rows:\n{stdout}"
+    );
+    assert!(
         stdout.contains("\"scrollback\":{"),
         "missing scrollback:\n{stdout}"
     );

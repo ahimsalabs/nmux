@@ -1515,10 +1515,11 @@ fn format_rendered_attach_json(rendered: &local::RenderedAttach) -> String {
         .map(format_scrollback_json)
         .unwrap_or_else(|| "null".to_owned());
     format!(
-        "{{\"workspace\":{},\"attach_status\":{},\"terminal\":{},\"surface_text\":{surface_text},\"scrollback\":{scrollback}}}",
+        "{{\"workspace\":{},\"attach_status\":{},\"terminal\":{},\"surface\":{},\"surface_text\":{surface_text},\"scrollback\":{scrollback}}}",
         format_workspace_json(&rendered.workspace),
         format_attach_status_json(&rendered.status),
         format_rendered_terminal_json(rendered),
+        format_rendered_surface_json(&rendered.surface),
     )
 }
 
@@ -1673,6 +1674,20 @@ fn format_terminal_modes_json(modes: local::TerminalModeSummary) -> String {
         modes.wraparound,
         local::json_string(mouse_tracking_mode_name(modes.mouse_tracking_mode)),
         local::json_string(mouse_format_name(modes.mouse_format))
+    )
+}
+
+fn format_rendered_surface_json(surface: &local::RenderedSurfaceSummary) -> String {
+    format!(
+        "{{\"pane_id\":{},\"version\":{},\"cols\":{},\"rows\":{},\"colors\":{},\"styles\":{},\"hyperlinks\":{},\"row_updates\":{}}}",
+        local::json_string(&surface.pane_id),
+        surface.version,
+        surface.cols,
+        surface.rows,
+        format_terminal_colors_json(&surface.colors),
+        format_styles_json(&surface.styles),
+        format_hyperlinks_json(&surface.hyperlinks),
+        format_surface_rows_json(&surface.row_updates)
     )
 }
 
@@ -2594,6 +2609,50 @@ mod tests {
                 mouse_tracking_mode: protocol::MouseTrackingMode::Any,
                 mouse_format: protocol::MouseFormat::SgrPixels,
             },
+            surface: local::RenderedSurfaceSummary {
+                pane_id: "pane-1".to_owned(),
+                version: 17,
+                cols: 80,
+                rows: 24,
+                colors: local::TerminalColorSummary {
+                    default_fg_rgba: 21,
+                    default_bg_rgba: 22,
+                    cursor_rgba: 23,
+                    cursor_rgba_set: true,
+                    palette_rgba: vec![24, 25],
+                    palette_diff_start: None,
+                    palette_diff_rgba: Vec::new(),
+                },
+                styles: vec![local::StyleSummary {
+                    fg_rgba: 31,
+                    bg_rgba: 32,
+                    underline_rgba: 33,
+                    flags: 34,
+                }],
+                hyperlinks: vec![local::HyperlinkSummary {
+                    id: 7,
+                    uri: "https://example.test/surface".to_owned(),
+                    osc8_id: "surface-id".to_owned(),
+                    params: "id=surface-id".to_owned(),
+                }],
+                row_updates: vec![local::SurfaceRowUpdate {
+                    row: 0,
+                    text: "hello".to_owned(),
+                    runs: vec![local::CellRunSummary {
+                        text: "hello".to_owned(),
+                        cell_widths: vec![1, 1, 1, 1, 1],
+                        style_id: 0,
+                        flags: 1,
+                        hyperlink_id: 7,
+                        semantic_content: protocol::CellSemanticContent::Prompt,
+                    }],
+                    dirty_hash: 41,
+                    row_state_hash: 42,
+                    semantic_prompt: protocol::RowSemanticPrompt::Prompt,
+                    dirty: true,
+                    kitty_virtual_placeholder: false,
+                }],
+            },
             surface_text: Some("hello\nworld".to_owned()),
             scrollback: Some(local::ScrollbackChunkSummary {
                 pane_id: "pane-1".to_owned(),
@@ -2652,6 +2711,10 @@ mod tests {
         assert!(json.contains("\"bracketed_paste\":true"));
         assert!(json.contains("\"mouse_tracking_mode\":\"any\""));
         assert!(json.contains("\"mouse_format\":\"sgr-pixels\""));
+        assert!(json.contains("\"surface\":{\"pane_id\":\"pane-1\",\"version\":17"));
+        assert!(json.contains("\"row_updates\":[{\"row\":0,\"text\":\"hello\""));
+        assert!(json.contains("\"dirty_hash\":41"));
+        assert!(json.contains("\"uri\":\"https://example.test/surface\""));
         assert!(json.contains("\"surface_text\":\"hello\\nworld\""));
         assert!(json.contains("\"scrollback_version\":9"));
         assert!(json.contains("\"palette_rgba\":[8,9]"));
@@ -2683,6 +2746,16 @@ mod tests {
             surface_kind: protocol::SurfaceKind::Main,
             cursor: None,
             modes: local::TerminalModeSummary::default(),
+            surface: local::RenderedSurfaceSummary {
+                pane_id: "pane-1".to_owned(),
+                version: 7,
+                cols: 80,
+                rows: 24,
+                colors: local::TerminalColorSummary::default(),
+                styles: Vec::new(),
+                hyperlinks: Vec::new(),
+                row_updates: Vec::new(),
+            },
             surface_text: Some("initial".to_owned()),
             scrollback: None,
         };
