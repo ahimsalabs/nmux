@@ -74,6 +74,7 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("--live-cycles COUNT"));
     assert!(stdout.contains("--print-socket"));
     assert!(stdout.contains("--print-socket-json"));
+    assert!(stdout.contains("--list-daemon-choices-json"));
     assert!(stdout.contains("-V, --version"));
     assert!(stdout.contains("--version-json"));
     assert!(stdout.contains("--live-forever"));
@@ -474,6 +475,34 @@ fn no_bind_daemon_flags_skip_daemon_mode_validation() {
     assert!(
         !json_socket_path.exists(),
         "nmuxd json no-bind flags should not bind a socket path"
+    );
+
+    let choices_socket_path = test_socket_path();
+    let choices_output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            choices_socket_path.to_str().expect("socket path"),
+            "--list-daemon-choices-json",
+            "--one-shot",
+            "--live-forever",
+            "--live-clients",
+            "0",
+        ])
+        .output()
+        .expect("run nmuxd --list-daemon-choices-json with daemon flags");
+
+    assert!(
+        choices_output.status.success(),
+        "nmuxd --list-daemon-choices-json should exit before daemon-mode validation: {}",
+        String::from_utf8_lossy(&choices_output.stderr)
+    );
+    let choices_stdout = String::from_utf8_lossy(&choices_output.stdout);
+    assert!(choices_stdout.contains("\"resize_policies\""));
+    assert!(choices_stdout.contains("\"terminal_engines\""));
+    assert!(choices_stdout.contains("{\"name\":\"interim\",\"available\":true}"));
+    assert!(
+        !choices_socket_path.exists(),
+        "nmuxd daemon-choice list flags should not bind a socket path"
     );
 
     let version_socket_path = test_socket_path();

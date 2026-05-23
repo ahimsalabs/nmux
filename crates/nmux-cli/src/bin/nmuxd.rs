@@ -11,6 +11,8 @@ use nmux_core::terminal::{PaneTerminalEngines, TerminalEngineKind};
 use nmux_proto::protocol;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const RESIZE_POLICY_NAMES: &[&str] = &["fixed", "leader", "active-client", "manual"];
+const TERMINAL_ENGINE_NAMES: &[&str] = &["interim", "libghostty-vt"];
 
 fn main() {
     if let Err(err) = run() {
@@ -32,6 +34,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             println!("nmuxd {VERSION}");
         }
+        return Ok(());
+    }
+
+    if args.list_daemon_choices_json {
+        println!("{}", format_daemon_choices_json());
         return Ok(());
     }
 
@@ -166,6 +173,7 @@ struct Args {
     help: bool,
     version: bool,
     version_json: bool,
+    list_daemon_choices_json: bool,
     print_socket: bool,
     print_socket_json: bool,
     socket_path: PathBuf,
@@ -184,6 +192,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut help = false;
     let mut version = false;
     let mut version_json = false;
+    let mut list_daemon_choices_json = false;
     let mut print_socket = false;
     let mut print_socket_json = false;
     let (mut socket_path, mut socket_source) = local::default_socket_path_and_source();
@@ -207,6 +216,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             }
             "--version-json" => {
                 version_json = true;
+            }
+            "--list-daemon-choices-json" => {
+                list_daemon_choices_json = true;
             }
             "--print-socket" => {
                 print_socket = true;
@@ -257,7 +269,13 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
-    if !(help || version || version_json || print_socket || print_socket_json) {
+    if !(help
+        || version
+        || version_json
+        || list_daemon_choices_json
+        || print_socket
+        || print_socket_json)
+    {
         validate_mode_args(one_shot, live, live_forever, live_cycles, live_clients)?;
     }
 
@@ -265,6 +283,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         help,
         version,
         version_json,
+        list_daemon_choices_json,
         print_socket,
         print_socket_json,
         socket_path,
@@ -278,6 +297,44 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         resize_policy,
         terminal_engine_kind,
     })
+}
+
+fn format_daemon_choices_json() -> String {
+    let resize_policies = format_json_string_array(RESIZE_POLICY_NAMES);
+    let terminal_engines = TERMINAL_ENGINE_NAMES
+        .iter()
+        .map(|name| {
+            format!(
+                "{{\"name\":{},\"available\":{}}}",
+                local::json_string(name),
+                terminal_engine_available(name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{\"resize_policies\":{resize_policies},\"terminal_engines\":[{terminal_engines}]}}")
+}
+
+fn terminal_engine_available(name: &str) -> bool {
+    match name {
+        "interim" => true,
+        #[cfg(feature = "libghostty-vt")]
+        "libghostty-vt" => true,
+        #[cfg(not(feature = "libghostty-vt"))]
+        "libghostty-vt" => false,
+        _ => false,
+    }
+}
+
+fn format_json_string_array(values: &[&str]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| local::json_string(value))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 fn parse_numeric_arg<T>(flag: &str, value: String) -> Result<T, String>
@@ -328,6 +385,7 @@ Options:
   --socket PATH                         Unix socket path
   --print-socket                        Print the resolved socket path and exit
   --print-socket-json                   Print the resolved socket path/source as JSON
+  --list-daemon-choices-json            List daemon configuration choices as JSON
   --one-shot                            Serve one attach client
   --live                                Serve one live client until detach
   --live-forever                        Serve sequential live clients until stopped
@@ -381,8 +439,8 @@ fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'stati
 #[cfg(test)]
 mod tests {
     use super::{
-        SocketCleanup, parse_numeric_arg, parse_resize_policy, parse_terminal_engine_kind, usage,
-        validate_mode_args,
+        SocketCleanup, format_daemon_choices_json, parse_numeric_arg, parse_resize_policy,
+        parse_terminal_engine_kind, usage, validate_mode_args,
     };
     use nmux_core::terminal::TerminalEngineKind;
     use nmux_proto::protocol;
@@ -440,11 +498,27 @@ mod tests {
     }
 
     #[test]
+    fn daemon_choices_json_lists_config_vocabularies() {
+        let json = format_daemon_choices_json();
+        assert!(
+            json.contains(
+                "\"resize_policies\":[\"fixed\",\"leader\",\"active-client\",\"manual\"]"
+            )
+        );
+        assert!(json.contains("{\"name\":\"interim\",\"available\":true}"));
+        #[cfg(feature = "libghostty-vt")]
+        assert!(json.contains("{\"name\":\"libghostty-vt\",\"available\":true}"));
+        #[cfg(not(feature = "libghostty-vt"))]
+        assert!(json.contains("{\"name\":\"libghostty-vt\",\"available\":false}"));
+    }
+
+    #[test]
     fn usage_mentions_live_and_resize_policy_flags() {
         let usage = usage();
         assert!(usage.contains("--live"));
         assert!(usage.contains("--print-socket"));
         assert!(usage.contains("--print-socket-json"));
+        assert!(usage.contains("--list-daemon-choices-json"));
         assert!(usage.contains("--version-json"));
         assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--live-forever"));
