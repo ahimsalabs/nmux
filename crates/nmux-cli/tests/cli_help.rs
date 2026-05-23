@@ -947,6 +947,20 @@ fn nmuxd_rejects_conflicting_server_modes() {
 }
 
 #[test]
+fn parse_errors_use_terse_project_prefixes() {
+    assert_nmux_rejects(&["--bogus"], "nmux: unexpected argument '--bogus' found");
+    assert_nmux_rejects(
+        &["--socket"],
+        "nmux: a value is required for '--socket <PATH>'",
+    );
+    assert_nmuxd_rejects(&["--bogus"], "nmuxd: unexpected argument '--bogus' found");
+    assert_nmuxd_rejects(
+        &["--socket"],
+        "nmuxd: a value is required for '--socket <PATH>'",
+    );
+}
+
+#[test]
 fn nmuxd_reports_existing_socket_path() {
     let socket_path = test_socket_path();
     fs::write(&socket_path, "not a socket").expect("write placeholder");

@@ -290,7 +290,7 @@ where
     I: IntoIterator<Item = S>,
     S: Into<std::ffi::OsString> + Clone,
 {
-    let raw = RawArgs::try_parse_from(args)?;
+    let raw = RawArgs::try_parse_from(args).map_err(clap_error_message)?;
     let (socket_path, socket_source) = match raw.socket_path {
         Some(path) => (path, local::SocketPathSource::Explicit),
         None => local::default_socket_path_and_source(),
@@ -472,6 +472,16 @@ where
     value
         .parse()
         .map_err(|err| format!("{flag} requires a valid number: {err}"))
+}
+
+fn clap_error_message(error: clap::Error) -> String {
+    let first_line = error.to_string();
+    first_line
+        .lines()
+        .next()
+        .unwrap_or("invalid command line")
+        .trim_start_matches("error: ")
+        .to_owned()
 }
 
 fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
