@@ -22,6 +22,11 @@ nested `nmux --print-context` sees the pane identity environment, then reuses
 the same socket path for a new daemon and verifies the old cached surface is
 not rendered.
 
+For ordinary implementation or documentation pushes, record the GitHub Actions
+run ID or URL after pushing and let the run complete asynchronously unless the
+task specifically requires CI completion as evidence. Only promotion evidence
+runs need the full transcription and artifact-verification treatment below.
+
 ## Manual Promotion Evidence
 
 The same workflow exposes a manual `workflow_dispatch` job for promotion
