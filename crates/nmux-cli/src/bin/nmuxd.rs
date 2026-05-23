@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use clap::{ArgAction, Parser};
 use nmux_cli::local;
 use nmux_core::host::{CommandSpec, LocalPtyHost, ProcessHost};
 use nmux_core::session::Session;
@@ -226,133 +227,134 @@ struct Args {
     terminal_engine_kind: TerminalEngineKind,
 }
 
-fn args() -> Result<Args, Box<dyn std::error::Error>> {
-    let mut help = false;
-    let mut version = false;
-    let mut version_json = false;
-    let mut list_daemon_choices_json = false;
-    let mut print_socket = false;
-    let mut print_socket_json = false;
-    let mut ready_json = false;
-    let (mut socket_path, mut socket_source) = local::default_socket_path_and_source();
-    let mut one_shot = false;
-    let mut live = false;
-    let mut live_forever = false;
-    let mut live_cycles = None;
-    let mut live_clients = None;
-    let mut command = None;
-    let mut working_dir = None;
-    let mut env = Vec::new();
-    let mut resize_policy = protocol::ResizePolicy::Fixed;
-    let mut terminal_engine_kind = TerminalEngineKind::InterimText;
-    let mut args = std::env::args().skip(1);
+#[derive(Debug, Parser)]
+#[command(
+    name = "nmuxd",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    args_override_self = true
+)]
+struct RawArgs {
+    #[arg(short = 'h', long = "help", action = ArgAction::SetTrue)]
+    help: bool,
+    #[arg(short = 'V', long = "version", action = ArgAction::SetTrue)]
+    version: bool,
+    #[arg(long = "version-json", action = ArgAction::SetTrue)]
+    version_json: bool,
+    #[arg(long = "list-daemon-choices-json", action = ArgAction::SetTrue)]
+    list_daemon_choices_json: bool,
+    #[arg(long = "print-socket", action = ArgAction::SetTrue)]
+    print_socket: bool,
+    #[arg(long = "print-socket-json", action = ArgAction::SetTrue)]
+    print_socket_json: bool,
+    #[arg(long = "ready-json", action = ArgAction::SetTrue)]
+    ready_json: bool,
+    #[arg(long = "socket", value_name = "PATH")]
+    socket_path: Option<PathBuf>,
+    #[arg(long = "one-shot", action = ArgAction::SetTrue)]
+    one_shot: bool,
+    #[arg(long = "live", action = ArgAction::SetTrue)]
+    live: bool,
+    #[arg(long = "live-forever", action = ArgAction::SetTrue)]
+    live_forever: bool,
+    #[arg(long = "live-cycles", value_name = "COUNT")]
+    live_cycles: Option<String>,
+    #[arg(long = "live-clients", value_name = "COUNT")]
+    live_clients: Option<String>,
+    #[arg(long = "command", value_name = "SHELL", allow_hyphen_values = true)]
+    command: Option<String>,
+    #[arg(long = "cwd", value_name = "DIR", allow_hyphen_values = true)]
+    working_dir: Option<String>,
+    #[arg(
+        long = "env",
+        value_name = "KEY=VALUE",
+        value_parser = parse_env_assignment,
+        allow_hyphen_values = true
+    )]
+    env: Vec<(String, String)>,
+    #[arg(long = "resize-policy", value_name = "fixed|leader|active-client|manual")]
+    resize_policy: Option<String>,
+    #[arg(long = "terminal-engine", value_name = "interim|libghostty-vt")]
+    terminal_engine_kind: Option<String>,
+}
 
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--help" | "-h" => {
-                help = true;
-            }
-            "--version" | "-V" => {
-                version = true;
-            }
-            "--version-json" => {
-                version_json = true;
-            }
-            "--list-daemon-choices-json" => {
-                list_daemon_choices_json = true;
-            }
-            "--print-socket" => {
-                print_socket = true;
-            }
-            "--print-socket-json" => {
-                print_socket_json = true;
-            }
-            "--ready-json" => {
-                ready_json = true;
-            }
-            "--socket" => {
-                socket_path = args
-                    .next()
-                    .map(PathBuf::from)
-                    .ok_or("--socket requires a path")?;
-                socket_source = local::SocketPathSource::Explicit;
-            }
-            "--one-shot" => one_shot = true,
-            "--live" => live = true,
-            "--live-forever" => live_forever = true,
-            "--live-cycles" => {
-                live_cycles = Some(parse_numeric_arg(
-                    "--live-cycles",
-                    args.next().ok_or("--live-cycles requires a count")?,
-                )?);
-            }
-            "--live-clients" => {
-                live_clients = Some(parse_numeric_arg(
-                    "--live-clients",
-                    args.next().ok_or("--live-clients requires a count")?,
-                )?);
-            }
-            "--command" => {
-                command = Some(args.next().ok_or("--command requires a shell command")?);
-            }
-            "--cwd" => {
-                let value = args.next().ok_or("--cwd requires a directory path")?;
-                if value.is_empty() {
-                    return Err("--cwd requires a non-empty directory path".into());
-                }
-                working_dir = Some(value);
-            }
-            "--env" => {
-                env.push(parse_env_assignment(
-                    &args.next().ok_or("--env requires KEY=VALUE")?,
-                )?);
-            }
-            "--resize-policy" => {
-                resize_policy =
-                    parse_resize_policy(&args.next().ok_or(
-                        "--resize-policy requires fixed, leader, active-client, or manual",
-                    )?)
-                    .map_err(|err| format!("--resize-policy {err}"))?;
-            }
-            "--terminal-engine" => {
-                terminal_engine_kind = parse_terminal_engine_kind(
-                    &args
-                        .next()
-                        .ok_or("--terminal-engine requires interim or libghostty-vt")?,
-                )
-                .map_err(|err| format!("--terminal-engine {err}"))?;
-            }
-            _ => return Err(format!("unknown argument: {arg}").into()),
+fn args() -> Result<Args, Box<dyn std::error::Error>> {
+    args_from_iter(std::env::args())
+}
+
+fn args_from_iter<I, S>(args: I) -> Result<Args, Box<dyn std::error::Error>>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<std::ffi::OsString> + Clone,
+{
+    let raw = RawArgs::try_parse_from(args)?;
+    let (socket_path, socket_source) = match raw.socket_path {
+        Some(path) => (path, local::SocketPathSource::Explicit),
+        None => local::default_socket_path_and_source(),
+    };
+    let live_cycles = raw
+        .live_cycles
+        .map(|value| parse_numeric_arg("--live-cycles", value))
+        .transpose()?;
+    let live_clients = raw
+        .live_clients
+        .map(|value| parse_numeric_arg("--live-clients", value))
+        .transpose()?;
+    let working_dir = match raw.working_dir {
+        Some(value) if value.is_empty() => {
+            return Err("--cwd requires a non-empty directory path".into());
         }
-    }
-    if !(help
-        || version
-        || version_json
-        || list_daemon_choices_json
-        || print_socket
-        || print_socket_json)
+        value => value,
+    };
+    let resize_policy = raw
+        .resize_policy
+        .as_deref()
+        .map(parse_resize_policy)
+        .transpose()
+        .map_err(|err| format!("--resize-policy {err}"))?
+        .unwrap_or(protocol::ResizePolicy::Fixed);
+    let terminal_engine_kind = raw
+        .terminal_engine_kind
+        .as_deref()
+        .map(parse_terminal_engine_kind)
+        .transpose()
+        .map_err(|err| format!("--terminal-engine {err}"))?
+        .unwrap_or(TerminalEngineKind::InterimText);
+
+    if !(raw.help
+        || raw.version
+        || raw.version_json
+        || raw.list_daemon_choices_json
+        || raw.print_socket
+        || raw.print_socket_json)
     {
-        validate_mode_args(one_shot, live, live_forever, live_cycles, live_clients)?;
+        validate_mode_args(DaemonModeArgs {
+            one_shot: raw.one_shot,
+            live: raw.live,
+            live_forever: raw.live_forever,
+            live_cycles,
+            live_clients,
+        })?;
     }
 
     Ok(Args {
-        help,
-        version,
-        version_json,
-        list_daemon_choices_json,
-        print_socket,
-        print_socket_json,
-        ready_json,
+        help: raw.help,
+        version: raw.version,
+        version_json: raw.version_json,
+        list_daemon_choices_json: raw.list_daemon_choices_json,
+        print_socket: raw.print_socket,
+        print_socket_json: raw.print_socket_json,
+        ready_json: raw.ready_json,
         socket_path,
         socket_source,
-        one_shot,
-        live,
-        live_forever,
+        one_shot: raw.one_shot,
+        live: raw.live,
+        live_forever: raw.live_forever,
         live_cycles,
         live_clients,
-        command,
+        command: raw.command,
         working_dir,
-        env,
+        env: raw.env,
         resize_policy,
         terminal_engine_kind,
     })
@@ -482,28 +484,38 @@ fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
     Ok((key.to_owned(), value.to_owned()))
 }
 
-fn validate_mode_args(
+#[derive(Clone, Copy, Debug, Default)]
+struct DaemonModeArgs {
     one_shot: bool,
     live: bool,
     live_forever: bool,
     live_cycles: Option<usize>,
     live_clients: Option<usize>,
-) -> Result<(), &'static str> {
-    if one_shot && (live || live_forever || live_cycles.is_some() || live_clients.is_some()) {
+}
+
+fn validate_mode_args(args: DaemonModeArgs) -> Result<(), &'static str> {
+    if args.one_shot
+        && (args.live
+            || args.live_forever
+            || args.live_cycles.is_some()
+            || args.live_clients.is_some())
+    {
         return Err("--one-shot cannot be combined with live daemon modes");
     }
-    if live && (live_forever || live_cycles.is_some() || live_clients.is_some()) {
+    if args.live
+        && (args.live_forever || args.live_cycles.is_some() || args.live_clients.is_some())
+    {
         return Err(
             "--live cannot be combined with --live-forever, --live-cycles, or --live-clients",
         );
     }
-    if live_forever && (live_cycles.is_some() || live_clients.is_some()) {
+    if args.live_forever && (args.live_cycles.is_some() || args.live_clients.is_some()) {
         return Err("--live-forever cannot be combined with --live-cycles or --live-clients");
     }
-    if live_cycles == Some(0) {
+    if args.live_cycles == Some(0) {
         return Err("--live-cycles must be greater than 0");
     }
-    if live_clients == Some(0) {
+    if args.live_clients == Some(0) {
         return Err("--live-clients must be greater than 0");
     }
     Ok(())
@@ -578,7 +590,8 @@ fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'stati
 #[cfg(test)]
 mod tests {
     use super::{
-        Args, SocketCleanup, format_daemon_choices_json, format_ready_error_json,
+        Args, DaemonModeArgs, SocketCleanup, args_from_iter, format_daemon_choices_json,
+        format_ready_error_json,
         format_ready_json, parse_env_assignment, parse_numeric_arg, parse_resize_policy,
         parse_terminal_engine_kind, usage, validate_mode_args,
     };
@@ -710,6 +723,36 @@ mod tests {
     }
 
     #[test]
+    fn args_accept_documented_launch_context() {
+        let args = args_from_iter([
+            "nmuxd",
+            "--one-shot",
+            "--socket",
+            "/tmp/nmuxd-test.sock",
+            "--command",
+            "printf hi",
+            "--cwd",
+            "/tmp",
+            "--env",
+            "NMUX_TEST=one=two",
+            "--resize-policy",
+            "active-client",
+        ])
+        .expect("args");
+
+        assert!(args.one_shot);
+        assert_eq!(args.socket_path, PathBuf::from("/tmp/nmuxd-test.sock"));
+        assert_eq!(args.socket_source, local::SocketPathSource::Explicit);
+        assert_eq!(args.command.as_deref(), Some("printf hi"));
+        assert_eq!(args.working_dir.as_deref(), Some("/tmp"));
+        assert_eq!(
+            args.env,
+            vec![("NMUX_TEST".to_owned(), "one=two".to_owned())]
+        );
+        assert_eq!(args.resize_policy, protocol::ResizePolicy::ActiveClient);
+    }
+
+    #[test]
     fn usage_mentions_live_and_resize_policy_flags() {
         let usage = usage();
         assert!(usage.contains("--live"));
@@ -734,31 +777,66 @@ mod tests {
     #[test]
     fn mode_validation_rejects_ambiguous_daemon_modes() {
         assert_eq!(
-            validate_mode_args(true, false, false, None, Some(2)),
+            validate_mode_args(DaemonModeArgs {
+                one_shot: true,
+                live_clients: Some(2),
+                ..DaemonModeArgs::default()
+            }),
             Err("--one-shot cannot be combined with live daemon modes")
         );
         assert_eq!(
-            validate_mode_args(false, true, true, None, None),
+            validate_mode_args(DaemonModeArgs {
+                live: true,
+                live_forever: true,
+                ..DaemonModeArgs::default()
+            }),
             Err("--live cannot be combined with --live-forever, --live-cycles, or --live-clients")
         );
         assert_eq!(
-            validate_mode_args(false, true, false, Some(1), None),
+            validate_mode_args(DaemonModeArgs {
+                live: true,
+                live_cycles: Some(1),
+                ..DaemonModeArgs::default()
+            }),
             Err("--live cannot be combined with --live-forever, --live-cycles, or --live-clients")
         );
         assert_eq!(
-            validate_mode_args(false, false, true, Some(1), None),
+            validate_mode_args(DaemonModeArgs {
+                live_forever: true,
+                live_cycles: Some(1),
+                ..DaemonModeArgs::default()
+            }),
             Err("--live-forever cannot be combined with --live-cycles or --live-clients")
         );
         assert_eq!(
-            validate_mode_args(false, false, false, Some(0), None),
+            validate_mode_args(DaemonModeArgs {
+                live_cycles: Some(0),
+                ..DaemonModeArgs::default()
+            }),
             Err("--live-cycles must be greater than 0")
         );
         assert_eq!(
-            validate_mode_args(false, false, false, None, Some(0)),
+            validate_mode_args(DaemonModeArgs {
+                live_clients: Some(0),
+                ..DaemonModeArgs::default()
+            }),
             Err("--live-clients must be greater than 0")
         );
-        assert!(validate_mode_args(false, false, false, Some(2), Some(3)).is_ok());
-        assert!(validate_mode_args(false, false, true, None, None).is_ok());
+        assert!(
+            validate_mode_args(DaemonModeArgs {
+                live_cycles: Some(2),
+                live_clients: Some(3),
+                ..DaemonModeArgs::default()
+            })
+            .is_ok()
+        );
+        assert!(
+            validate_mode_args(DaemonModeArgs {
+                live_forever: true,
+                ..DaemonModeArgs::default()
+            })
+            .is_ok()
+        );
     }
 
     #[test]
