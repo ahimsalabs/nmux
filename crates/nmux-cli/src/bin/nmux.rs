@@ -162,7 +162,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     for iteration in 0..iterations {
-        let rendered = attach_once(&args, &mut client_state)?;
+        let rendered = match attach_once(&args, &mut client_state) {
+            Ok(rendered) => rendered,
+            Err(err) => {
+                if args.output_json {
+                    println!("{}", format_cli_error_json(err.as_ref()));
+                    flush_stdout()?;
+                }
+                return Err(err);
+            }
+        };
         save_client_state(args.state_path.as_deref(), &client_state)?;
         if args.output_json {
             println!("{}", format_rendered_attach_json(&rendered));
@@ -1549,13 +1558,30 @@ fn format_live_surface_update_json(
 }
 
 fn format_live_error_json(error: &local::ErrorSummary) -> String {
+    format!(
+        "{{\"event\":\"error\",\"error\":{}}}",
+        format_error_summary_json(error)
+    )
+}
+
+fn format_cli_error_json(error: &(dyn std::error::Error + 'static)) -> String {
+    if let Some(error) = error.downcast_ref::<local::ServerError>() {
+        return format!("{{\"error\":{}}}", format_error_summary_json(&error.error));
+    }
+    format!(
+        "{{\"error\":{{\"message\":{}}}}}",
+        local::json_string(&error.to_string())
+    )
+}
+
+fn format_error_summary_json(error: &local::ErrorSummary) -> String {
     let pane_id = error
         .pane_id
         .as_ref()
         .map(|pane_id| local::json_string(pane_id))
         .unwrap_or_else(|| "null".to_owned());
     format!(
-        "{{\"event\":\"error\",\"error\":{{\"code\":{},\"message\":{},\"retryable\":{},\"pane_id\":{pane_id},\"input_seq\":{}}}}}",
+        "{{\"code\":{},\"message\":{},\"retryable\":{},\"pane_id\":{pane_id},\"input_seq\":{}}}",
         local::json_string(error_code_name(error.code)),
         local::json_string(&error.message),
         error.retryable,
@@ -2139,14 +2165,14 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 mod tests {
     use super::{
         FocusEvent, KEY_NAME_ALIASES, LiveUpdatePrintKind, LocalEcho, MouseEvent,
-        SUPPORTED_KEY_NAMES, args_from_iter, format_context_json, format_input_choices_json,
-        format_key_names_json, format_live_attach_json, format_live_error_json,
-        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
-        format_scrollback, interim_surface_fidelity_warning_needed, live_update_print_kind,
-        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
-        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag,
-        raw_terminal_mode_needed, redraw_terminal_guard_needed, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        SUPPORTED_KEY_NAMES, args_from_iter, format_cli_error_json, format_context_json,
+        format_input_choices_json, format_key_names_json, format_live_attach_json,
+        format_live_error_json, format_live_surface_update_json, format_live_workspace_json,
+        format_rendered_attach_json, format_scrollback, interim_surface_fidelity_warning_needed,
+        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args,
@@ -2406,6 +2432,19 @@ mod tests {
         assert_eq!(
             error_json,
             "{\"event\":\"error\",\"error\":{\"code\":\"permission-denied\",\"message\":\"input rejected\",\"retryable\":false,\"pane_id\":\"pane-1\",\"input_seq\":3}}"
+        );
+        let server_error = local::ServerError {
+            error: local::ErrorSummary {
+                code: protocol::ErrorCode::PaneNotFound,
+                message: "missing pane".to_owned(),
+                retryable: false,
+                pane_id: Some("pane-99".to_owned()),
+                input_seq: 0,
+            },
+        };
+        assert_eq!(
+            format_cli_error_json(&server_error),
+            "{\"error\":{\"code\":\"pane-not-found\",\"message\":\"missing pane\",\"retryable\":false,\"pane_id\":\"pane-99\",\"input_seq\":0}}"
         );
     }
 

@@ -1416,7 +1416,7 @@ pub fn attach_from_stream(
         == protocol::EnvelopeBody::Error
     {
         let error = error_summary_from_frame(&workspace_frame)?;
-        return Err(format!("server error: {error}").into());
+        return Err(server_error(error));
     }
     let workspace = workspace_summary_from_frame(&workspace_frame)?;
 
@@ -2180,7 +2180,7 @@ pub fn read_scrollback_chunk_from_stream(
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
     match read_scrollback_response_from_stream(stream)? {
         ScrollbackRead::Chunk(chunk) => Ok(chunk),
-        ScrollbackRead::Error(error) => Err(format!("server error: {error}").into()),
+        ScrollbackRead::Error(error) => Err(server_error(error)),
     }
 }
 
@@ -2199,10 +2199,10 @@ pub fn read_scrollback_chunk_with_stale_retry(
             )?;
             match read_scrollback_response_from_stream(stream)? {
                 ScrollbackRead::Chunk(chunk) => Ok(chunk),
-                ScrollbackRead::Error(error) => Err(format!("server error: {error}").into()),
+                ScrollbackRead::Error(error) => Err(server_error(error)),
             }
         }
-        ScrollbackRead::Error(error) => Err(format!("server error: {error}").into()),
+        ScrollbackRead::Error(error) => Err(server_error(error)),
     }
 }
 
@@ -2273,7 +2273,7 @@ fn read_optional_server_error_from_stream(
             match envelope.body_type() {
                 protocol::EnvelopeBody::Error => {
                     let error = error_summary_from_frame(&frame)?;
-                    Err(format!("server error: {error}").into())
+                    Err(server_error(error))
                 }
                 other => Err(
                     format!("unexpected server frame before scrollback fetch: {other:?}").into(),
@@ -3122,6 +3122,23 @@ impl fmt::Display for ErrorSummary {
         }
         write!(formatter, ")")
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerError {
+    pub error: ErrorSummary,
+}
+
+impl fmt::Display for ServerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "server error: {}", self.error)
+    }
+}
+
+impl std::error::Error for ServerError {}
+
+fn server_error(error: ErrorSummary) -> Box<dyn std::error::Error> {
+    Box::new(ServerError { error })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

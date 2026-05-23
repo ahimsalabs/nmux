@@ -115,6 +115,65 @@ fn one_shot_cli_can_print_attach_json() {
 }
 
 #[test]
+fn one_shot_json_cli_reports_protocol_error_object() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = "printf 'ready\\n'; cat >/dev/null";
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            command,
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "--focus",
+            "gained",
+        ])
+        .output()
+        .expect("run nmux --json --focus gained");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        !client.status.success(),
+        "nmux unexpectedly succeeded:\n{}",
+        String::from_utf8_lossy(&client.stdout)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.starts_with("{\"error\":{"),
+        "missing JSON error object:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"code\":\"permission-denied\"")
+            && stdout.contains("\"pane_id\":\"pane-1\"")
+            && stdout.contains("\"input_seq\":1"),
+        "missing structured JSON error attribution:\n{stdout}"
+    );
+
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains("nmux: server error: input rejected: focus reporting is disabled"),
+        "missing stderr error:\n{stderr}"
+    );
+}
+
+#[test]
 fn one_shot_cli_appends_inherited_nmux_origin() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
