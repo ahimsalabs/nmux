@@ -324,9 +324,10 @@ packaging/archive SHA-256, runtime smoke result, outcome, and follow-up.
   samples in CI before making the opt-in VT gate required. The first passing
   2026-05-23 sample proves the heap-stabilized callback registration path, the
   serialized `RUST_TEST_THREADS=1` native-VT gate, and the downloaded-artifact
-  verifier on one Ubuntu GitHub Actions runner. Keep watching native-VT CI flake
-  rate, runner/cache behavior, and the GitHub Node 20 action deprecation warning
-  before treating this as enough CI evidence for promotion.
+  verifier on one Ubuntu GitHub Actions runner. For each repeat sample, record
+  runner identity, cache classification, retry status, and any native-VT flake.
+  Also resolve or explicitly accept the GitHub Node 20 action deprecation
+  warning before treating the workflow path as stable promotion evidence.
 - Validate the non-Nix toolchain checklist with platform-specific setup
   commands, `make promotion-sample` output, and timings; the current local
   non-Nix attempt failed before tests because `flatc` was absent from the host

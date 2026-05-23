@@ -45,6 +45,13 @@ Copy passing or failing results into
 source-fetch, packaging, artifact round-trip, and flake context before using
 them as promotion evidence.
 
+After the first passing manual sample, keep later runs comparable instead of
+treating the initial pass as promotion by itself. Record whether each run used
+fresh, warm, restored, or unknown Nix/Cargo/native build caches; note any retry
+or native-VT flake; capture GitHub Actions warnings that could affect the
+evidence path; and add follow-up items for workflow maintenance such as hosted
+runner or action-runtime changes.
+
 Record each manual run with these fields:
 
 | Field | Required Content |
