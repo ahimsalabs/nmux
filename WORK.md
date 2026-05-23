@@ -524,7 +524,7 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   client-side scrollback decoding preserves ScrollbackRow dirty_hash and row_state_hash metadata instead of reducing scrollback rows to text and runs only
   SurfaceRow, RowUpdate, and ScrollbackRow carry Kitty virtual placeholder metadata; image placement and pixel-data protocol fields remain withheld
   PaneSurfaceSnapshot, PaneSurfacePatch, and ScrollbackChunk preserve row runs instead of collapsing state to text-only rows
-  client-side tests prove decoded surface patches and scrollback chunks preserve structured CellRun style IDs, cell widths, hyperlink-presence flags, and semantic content instead of collapsing to rendered fallback text
+  client-side tests prove decoded surface patches and scrollback chunks preserve structured CellRun style IDs, cell widths, hyperlink-presence flags, and semantic content instead of collapsing to rendered fallback text, and decoded snapshots/scrollback reject row runs that reference missing style or hyperlink table entries
   feature-gated live CLI coverage proves styled row runs, non-default style-table entries, and wide-cell width metadata survive real --state reattach
   feature-gated live CLI coverage proves libghostty-vt streams command output and committed user-command resize metadata through nmuxd without leaking raw ANSI controls
   feature-gated live CLI coverage proves restored libghostty-vt alternate-screen output stays out of requested scrollback

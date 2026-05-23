@@ -1671,6 +1671,8 @@ pub fn surface_update_from_frame(
                     row.kitty_virtual_placeholder(),
                 )
             });
+            validate_row_update_style_ids(&row_updates, &styles)?;
+            validate_row_update_hyperlink_ids(&row_updates, &hyperlinks)?;
             let text = render_decoded_rows(&row_updates);
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Snapshot,
@@ -4678,6 +4680,15 @@ mod tests {
     fn flatbuffer_linked_run<'a>(
         builder: &mut FlatBufferBuilder<'a>,
     ) -> flatbuffers::WIPOffset<protocol::CellRun<'a>> {
+        flatbuffer_run_with_refs(builder, 0, CELL_RUN_FLAG_HYPERLINK_PRESENT, 7)
+    }
+
+    fn flatbuffer_run_with_refs<'a>(
+        builder: &mut FlatBufferBuilder<'a>,
+        style_id: u32,
+        flags: u32,
+        hyperlink_id: u32,
+    ) -> flatbuffers::WIPOffset<protocol::CellRun<'a>> {
         let text = builder.create_string("linked");
         let widths = builder.create_vector(&[1u8, 1, 1, 1, 1, 1]);
         protocol::CellRun::create(
@@ -4685,9 +4696,9 @@ mod tests {
             &protocol::CellRunArgs {
                 text_utf8: Some(text),
                 cell_widths: Some(widths),
-                style_id: 0,
-                flags: CELL_RUN_FLAG_HYPERLINK_PRESENT,
-                hyperlink_id: 7,
+                style_id,
+                flags,
+                hyperlink_id,
                 semantic_content: protocol::CellSemanticContent::Output,
             },
         )
@@ -4718,8 +4729,16 @@ mod tests {
     }
 
     fn pane_surface_snapshot_with_hyperlink_frame() -> Vec<u8> {
+        pane_surface_snapshot_with_run_refs_frame(0, CELL_RUN_FLAG_HYPERLINK_PRESENT, 7)
+    }
+
+    fn pane_surface_snapshot_with_run_refs_frame(
+        style_id: u32,
+        flags: u32,
+        hyperlink_id: u32,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let run = flatbuffer_linked_run(&mut builder);
+        let run = flatbuffer_run_with_refs(&mut builder, style_id, flags, hyperlink_id);
         let runs = builder.create_vector(&[run]);
         let row = protocol::SurfaceRow::create(
             &mut builder,
@@ -5070,6 +5089,25 @@ mod tests {
         let surface = ClientPaneSurface::from_snapshot(&update).expect("client surface");
         assert_eq!(surface.row_runs[0][0].hyperlink_id, 7);
         assert_eq!(surface.render_text(), "linked");
+    }
+
+    #[test]
+    fn rejects_surface_snapshot_with_unknown_style_id() {
+        let frame = pane_surface_snapshot_with_run_refs_frame(1, 0, 0);
+        let err = surface_update_from_frame(&frame)
+            .expect_err("surface snapshot with unknown style id should be rejected");
+
+        assert!(err.to_string().contains("unknown style_id"));
+    }
+
+    #[test]
+    fn rejects_surface_snapshot_with_unknown_hyperlink_id() {
+        let frame =
+            pane_surface_snapshot_with_run_refs_frame(0, CELL_RUN_FLAG_HYPERLINK_PRESENT, 8);
+        let err = surface_update_from_frame(&frame)
+            .expect_err("surface snapshot with unknown hyperlink id should be rejected");
+
+        assert!(err.to_string().contains("unknown hyperlink_id"));
     }
 
     #[test]
