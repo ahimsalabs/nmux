@@ -188,7 +188,8 @@ Local PTY commands receive `NMUX=1`, `NMUX_SESSION_ID`, `NMUX_PANE_ID`,
 `NMUX_SOCKET`, and `NMUX_ORIGIN` in their environment so nested tools can tell
 which nmux pane and socket they are running inside. Run `nmux --print-context`
 inside a pane to print those inherited `NMUX_*` key/value lines without
-connecting, or `nmux --print-context-json` for a machine-readable object.
+connecting, or `nmux --print-context-json` for a machine-readable object and
+JSON setup errors outside an nmux pane.
 When `nmuxd` starts inside an nmux pane, it appends the inherited
 origin to the child pane origin with `>` so nested tools can see the local hop
 chain. Outside a complete nmux pane context, `--print-context` fails clearly

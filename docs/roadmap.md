@@ -136,7 +136,8 @@ Done:
   preserving daemon-injected `NMUX_*` pane identity.
 - `nmux --print-context` reports inherited `NMUX_*` pane identity without
   connecting, prints the exact inherited key/value names, fails clearly outside
-  a complete nmux pane context, and has nested PTY smoke coverage.
+  a complete nmux pane context, `--print-context-json` reports missing context
+  as a JSON error object, and the path has nested PTY smoke coverage.
 - `make local-smoke` runs a default-engine local daemon/client workflow through
   a temporary socket and persisted state file, verifies piped live stdin output,
   verifies a sequential read-only reattach sees that output, verifies nested

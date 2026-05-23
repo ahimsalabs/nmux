@@ -509,7 +509,7 @@ M12: live workspace usability [done]
   nmux --json and nmux --live --json expose structured surface, scrollback, style, hyperlink, terminal-state, lifecycle, setup-error, state-save-error, and protocol-error payloads for scripts instead of reducing backend-owned state to rendered text only
   nmux --state-info and nmux --state-info-json inspect persisted client cache shape without opening a socket, and --state-info-json reports setup failures as JSON error objects, so localdev scripts can diagnose scoped surfaces and scrollback metadata offline
   help output documents NMUX_ORIGIN local hop-chain behavior for nested clients and daemons
-  nmux --print-context reports inherited NMUX_* pane identity as exact key/value lines without connecting, fails clearly outside nmux, and has nested PTY smoke coverage
+  nmux --print-context reports inherited NMUX_* pane identity as exact key/value lines without connecting, --print-context-json reports missing context as a JSON error object outside nmux, and the path has nested PTY smoke coverage
   make local-smoke runs a default-engine local daemon/client live workflow through a temporary socket and persisted state file, verifies piped stdin input produces echoed output, verifies a sequential read-only reattach sees that output, verifies nested nmux --print-context output sees the pane identity environment, verifies JSON informational flags, then reuses the same socket path for a fresh daemon and verifies stale cached surfaces do not leak across socket recreation
   one-shot and live post-attach input, resize, and scrollback control frames use the attached active pane ID instead of assuming pane-1
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts

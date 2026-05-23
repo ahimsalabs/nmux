@@ -254,7 +254,8 @@ it appends the inherited origin to the child pane origin with `>` so nested
 tools can see the local hop chain. Inside a pane, `nmux --print-context` prints
 the inherited `NMUX_*` key/value lines without connecting, and
 `nmux --print-context-json` prints the same context as a JSON object; outside a
-complete nmux pane context, both fail before socket or state work.
+complete nmux pane context, both fail before socket or state work, and the JSON
+form reports that setup failure as a JSON error object.
 
 To smoke the nested context path through a real daemon-owned PTY, start a
 one-shot daemon whose pane command invokes the client binary:

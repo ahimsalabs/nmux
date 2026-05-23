@@ -273,6 +273,33 @@ fn print_context_rejects_missing_nmux_context() {
 }
 
 #[test]
+fn print_context_json_reports_missing_nmux_context_as_json() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .arg("--print-context-json")
+        .env_remove("NMUX")
+        .env_remove("NMUX_SESSION_ID")
+        .env_remove("NMUX_PANE_ID")
+        .env_remove("NMUX_SOCKET")
+        .env_remove("NMUX_ORIGIN")
+        .output()
+        .expect("run nmux --print-context-json");
+
+    assert!(!output.status.success(), "nmux unexpectedly succeeded");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"error\"")
+            && stdout.contains("not running inside an nmux pane")
+            && stdout.contains("NMUX=1 is not set"),
+        "missing JSON context error:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nmux: not running inside an nmux pane"),
+        "missing stderr context error:\n{stderr}"
+    );
+}
+
+#[test]
 fn no_connect_client_flags_skip_attach_mode_validation() {
     let socket_path = test_socket_path();
     let context_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
