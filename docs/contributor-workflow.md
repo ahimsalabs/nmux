@@ -71,7 +71,7 @@ Start with the narrow evidence path that matches the question:
 | Can isolated Cargo dependency/source fetches satisfy the opt-in path? | `nix develop . -c make promotion-cold-deps-sample` then `nix develop . -c make promotion-cold-deps-verify` |
 | Do source-fetch, validation, workflow smoke, offline probe, and package runtime smoke pass together? | `nix develop . -c make promotion-local-sample` |
 | Do we need a self-contained evidence artifact? | `nix develop . -c make promotion-evidence-bundle` then `nix develop . -c make promotion-evidence-verify` |
-| Are source-fetch or packaging details under review? | Use the focused `source-fetch-*` and `packaging-*` targets described below, or the full inventory in [toolchain.md](toolchain.md). |
+| Are source-fetch or packaging details under review? | Use the focused `source-fetch-*` and `packaging-*` targets described below, or the broader target inventory in [toolchain.md](toolchain.md). |
 
 Record the host, command, result, timing, cache state, source-fetch mode, and
 any CI or packaging context in
