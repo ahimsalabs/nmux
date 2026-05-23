@@ -7,6 +7,7 @@ nix develop . -c make check
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
+nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
@@ -46,6 +47,16 @@ nix develop . -c make promotion-sample
 ```
 
 That target prints `toolchain-info` and then runs `time -p make check-all`.
+For a local cold-target-dir validation sample, use:
+
+```sh
+nix develop . -c make promotion-cold-target-sample
+```
+
+That target clears `target/promotion-cold` and times `make check-all` with that
+fresh Rust target directory. It does not clear Cargo registry, Git source, or
+Nix store caches, so record it as cold-target evidence rather than full
+cold-checkout evidence.
 For a combined local source-provenance, validation, and packaging/archive
 evidence pass, use:
 

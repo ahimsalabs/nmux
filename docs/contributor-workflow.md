@@ -59,6 +59,7 @@ Run:
 
 ```sh
 nix develop . -c make promotion-sample
+nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
@@ -83,6 +84,11 @@ directory; otherwise the evidence sample records the pinned-fetch source mode.
 Record missing-tool, wrong-version, or invalid-source-directory failures too;
 they are setup evidence for the non-Nix checklist, not passing promotion
 evidence.
+
+`make promotion-cold-target-sample` clears `target/promotion-cold` and times
+`make check-all` with that fresh Rust target directory. Use it for local
+cold-target evidence, and record that it does not clear Cargo registry, Git
+source, or Nix store caches.
 
 `make promotion-local-sample` runs `make source-fetch-provenance-sample`,
 `make promotion-sample`, and then `make packaging-archive-runtime-smoke` with

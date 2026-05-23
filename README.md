@@ -34,6 +34,7 @@ nix develop . -c make check
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
+nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
@@ -49,6 +50,8 @@ default-engine gate. `make check-ghostty-vt` is the opt-in full feature gate for
 backend `libghostty-vt` changes. `make check-all` runs both when validating
 release-style or default-engine-promotion work. `make promotion-sample` prints
 toolchain evidence and times `make check-all` in the same run.
+`make promotion-cold-target-sample` clears `target/promotion-cold` and times
+`make check-all` with that fresh Rust target directory.
 `make promotion-local-sample` runs source-fetch provenance, the timed validation
 sample, and the package archive runtime smoke for one local evidence pass.
 `make source-fetch-provenance-sample` records the active source mode and locked

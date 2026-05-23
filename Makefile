@@ -3,7 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-sample promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-provenance-sample toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-sample promotion-cold-target-sample promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-provenance-sample toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -15,6 +15,11 @@ check-ghostty-vt: check-vt-toolchain
 
 promotion-sample: toolchain-info
 	time -p $(MAKE) check-all
+
+promotion-cold-target-sample: toolchain-info
+	@echo "clearing target/promotion-cold for cold target-dir validation"
+	rm -rf target/promotion-cold
+	time -p env CARGO_TARGET_DIR=target/promotion-cold $(MAKE) check-all
 
 promotion-local-sample:
 	@echo "== promotion local sample: source-fetch provenance =="

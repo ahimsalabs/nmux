@@ -180,7 +180,8 @@ Done:
   samples, including a post-info-flag run, confirms the Nix shell provides
   `flatc`, and records a local non-Nix `make check-all` attempt that failed
   during tool preflight because `flatc` was absent from the host PATH outside
-  the Nix shell; remaining promotion evidence still needs more local platforms,
+  the Nix shell; a cold-target-dir sample now clears only Rust build output;
+  remaining promotion evidence still needs more local platforms, full
   cold-cache or cold-checkout behavior, CI behavior, a complete non-Nix
   workflow, source-fetch policy, and packaging decisions.
 - [Future protocol tracks](protocol-futures.md) split hyperlink identity, images,

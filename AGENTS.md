@@ -108,6 +108,7 @@ default-engine-promotion evidence:
 ```sh
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
+nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
@@ -121,6 +122,9 @@ nix develop . -c make packaging-archive-runtime-smoke
 `libghostty-vt` gate without changing what `make check` means.
 `promotion-sample` prints `toolchain-info` and times `check-all` for evidence
 rows in `docs/default-engine-promotion.md`.
+`promotion-cold-target-sample` clears `target/promotion-cold` and times
+`check-all` with that fresh Rust target directory; it does not clear Cargo
+registry, Git source, or Nix store caches.
 `promotion-local-sample` runs `source-fetch-provenance-sample`,
 `promotion-sample`, and `packaging-archive-runtime-smoke` for one local evidence
 pass.

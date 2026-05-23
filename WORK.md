@@ -570,6 +570,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   a local non-Nix make check-all attempt is recorded as failing during tool preflight because flatc is not on the host PATH outside the Nix shell, and Makefile preflight now reports missing or unsupported cargo/flatc/zig requirements with Nix fallback guidance
   make toolchain-info prints cargo, rustc, flatc, Zig, GHOSTTY_SOURCE_DIR, explicit Ghostty source mode, and GIT_CONFIG_GLOBAL values for default-engine-promotion evidence records
   make promotion-sample prints toolchain-info and times make check-all for one-command local promotion evidence collection
+  make promotion-cold-target-sample clears target/promotion-cold and times make check-all with a fresh Rust target directory, without clearing Cargo registry, Git source, or Nix store caches
   make promotion-local-sample runs source-fetch provenance, the timed validation sample, and package archive runtime smoke for one local evidence pass
   make source-fetch-provenance-sample writes active source mode, Cargo.lock hash, and locked libghostty-vt/libghostty-vt-sys package records without inspecting Ghostty source
   make packaging-sample builds default and opt-in libghostty-vt release binaries in separate target directories and reports artifact sizes plus binary versions for packaging evidence
