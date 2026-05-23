@@ -604,9 +604,11 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   use docs/upstream trackers for upstream-blocked work instead of treating it as local implementation debt
   README, running docs, and the terminal extraction checklist now use post-M14 language instead of treating M13 extraction as the active roadmap target or assuming pane-1/fixed scrollback behavior
   README, docs/running.md, and AGENTS now keep first-reader check and quick-start guidance short, point exhaustive target inventories to docs/toolchain.md and docs/contributor-workflow.md, and separate backend default-engine blockers from the frontend Ghostty renderer hydration track
+  README and docs/running.md label manual daemon/client examples by shell so first-run users do not mistake the long-running nmuxd side for a stuck single-shell command
   docs/toolchain.md now documents the supported Nix path and non-Nix requirements checklist without counting that checklist as default-engine promotion evidence
   docs/toolchain.md now includes a required field template for future non-Nix promotion attempts, covering setup commands, exact tool versions, source mode, cache state, timing, packaging follow-up, and gaps
-  docs/source-fetch-policy.md now records current opt-in libghostty-vt-sys fetch behavior and keeps packaged/default-build source policy as explicit promotion work
+  docs/source-fetch-policy.md now records current opt-in libghostty-vt-sys fetch behavior, gives question-to-command guidance for provenance and cache-present offline evidence targets, and keeps packaged/default-build source policy as explicit promotion work
+  docs/default-engine-promotion.md now presents remaining promotion blockers as evidence requirements with explicit recording locations
   ADR 0024 defines acceptance criteria for any future native-VT source-policy promotion decision, including source-mode evidence, cache/offline behavior, provenance, and license-review scope
   docs/packaging.md now records the current no-release-binary stance and native-VT packaging questions required before default promotion
   ADR 0025 defines acceptance criteria for any future native-VT packaging promotion decision, including supported targets, runtime-library strategy, release checks, provenance, signing/update expectations, and runtime smoke coverage
