@@ -17,7 +17,9 @@ This keeps regular CI on the default `interim` engine. A green required CI run
 does not claim `libghostty-vt` correctness and does not change the default
 engine decision. `make local-smoke` adds a real default-engine daemon/client
 workflow check: it starts `nmuxd`, sends live stdin through `nmux`, persists
-client state, and verifies a sequential read-only reattach sees the output.
+client state, verifies a sequential read-only reattach sees the output, then
+reuses the same socket path for a new daemon and verifies the old cached
+surface is not rendered.
 
 ## Manual Promotion Evidence
 

@@ -92,10 +92,11 @@ any CI or packaging context in
 engine by itself.
 
 `make local-smoke` is a quick user-level workflow check for the default engine:
-it starts `nmuxd` and two sequential `nmux` live clients over a temporary
-socket, sends piped stdin input, verifies the echoed output survives read-only
-reattach through a persisted state file, and exits without leaving the socket
-behind.
+it starts `nmuxd` and sequential `nmux` live clients over a temporary socket,
+sends piped stdin input, verifies the echoed output survives read-only reattach
+through a persisted state file, then starts a new daemon on the same socket path
+and verifies the old cached surface does not leak across socket recreation. It
+exits without leaving the socket behind.
 
 `make promotion-sample` prints `make toolchain-info` output and then times
 `make check-all` with `time -p`. Outside the Nix shell, run the same target for

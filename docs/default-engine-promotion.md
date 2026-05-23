@@ -96,7 +96,8 @@ engine or a regular CI requirement.
   passing result, and default plus opt-in test commands without rerunning the
   isolated dependency/source-fetch sample.
 - `make promotion-local-sample` runs source-fetch provenance, the timed
-  validation sample, the default-engine local workflow smoke, the cache-present
+  validation sample, the default-engine local workflow smoke, including
+  persisted reattach plus same-path socket recreation, the cache-present
   offline source-fetch probe, and package archive runtime smoke in one local
   evidence pass.
 - `make promotion-evidence-bundle` runs the local sample and gathers its log,

@@ -28,6 +28,8 @@ local-smoke: check-toolchain
 	client1_err="$$tmp_dir/client1.err"; \
 	client2_out="$$tmp_dir/client2.out"; \
 	client2_err="$$tmp_dir/client2.err"; \
+	client3_out="$$tmp_dir/client3.out"; \
+	client3_err="$$tmp_dir/client3.err"; \
 	cleanup() { \
 		status="$$?"; \
 		if [ -n "$${daemon_pid:-}" ] && kill -0 "$$daemon_pid" >/dev/null 2>&1; then \
@@ -55,13 +57,40 @@ local-smoke: check-toolchain
 		exit 1; \
 	fi; \
 	daemon_pid=""; \
+	: >"$$daemon_out"; \
+	: >"$$daemon_err"; \
+	command_text="printf 'fresh daemon\n'; sleep 1"; \
+	cargo run --quiet --bin nmuxd -- --socket "$$socket" --live-clients 1 --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
+	daemon_pid="$$!"; \
+	if ! cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --state "$$state" --live --no-input --iterations 1 --scrollback-start 1 --scrollback-count 8 >"$$client3_out" 2>"$$client3_err"; then \
+		cat "$$daemon_err" "$$client3_err" >&2; \
+		exit 1; \
+	fi; \
+	if ! wait "$$daemon_pid"; then \
+		daemon_pid=""; \
+		cat "$$daemon_err" >&2; \
+		exit 1; \
+	fi; \
+	daemon_pid=""; \
 	require_output() { \
 		file="$$1"; \
 		text="$$2"; \
 		description="$$3"; \
 		if ! grep -Fq "$$text" "$$file"; then \
 			echo "missing local smoke output: $$description" >&2; \
-			cat "$$daemon_err" "$$client1_err" "$$client2_err" >&2; \
+			cat "$$daemon_err" "$$client1_err" "$$client2_err" "$$client3_err" >&2; \
+			echo "--- $$file ---" >&2; \
+			cat "$$file" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	reject_output() { \
+		file="$$1"; \
+		text="$$2"; \
+		description="$$3"; \
+		if grep -Fq "$$text" "$$file"; then \
+			echo "unexpected local smoke output: $$description" >&2; \
+			cat "$$daemon_err" "$$client1_err" "$$client2_err" "$$client3_err" >&2; \
 			echo "--- $$file ---" >&2; \
 			cat "$$file" >&2; \
 			exit 1; \
@@ -70,6 +99,8 @@ local-smoke: check-toolchain
 	require_output "$$client1_out" 'ready' 'initial daemon output'; \
 	require_output "$$client1_out" 'echo:ping' 'read-write live input response'; \
 	require_output "$$client2_out" 'echo:ping' 'sequential read-only reattach sees prior output'; \
+	require_output "$$client3_out" 'fresh daemon' 'recreated socket path forces fresh daemon surface'; \
+	reject_output "$$client3_out" 'echo:ping' 'stale cached surface after socket recreation'; \
 	test -s "$$state" || { echo "missing local smoke state file: $$state" >&2; exit 1; }; \
 	printf 'local_smoke=passed\n'
 

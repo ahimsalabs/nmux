@@ -65,7 +65,9 @@ nix develop . -c make packaging-archive-runtime-smoke
 The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
 FlatBuffers install is needed for the schema check. `make check` is the regular
 default-engine gate. `make local-smoke` runs a real local `nmuxd`/`nmux` live
-daemon/client smoke over a temporary socket and state file. `make
+daemon/client smoke over a temporary socket and state file, including persisted
+reattach and same-path socket recreation to prove stale cached surfaces are not
+reused across a new daemon. `make
 check-ghostty-vt` is the opt-in full feature gate for
 backend `libghostty-vt` changes. `make check-all` runs both when validating
 release-style or default-engine-promotion work. `make promotion-sample` prints
