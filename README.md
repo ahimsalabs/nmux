@@ -192,7 +192,9 @@ Line-streamed live input:
 
 ```sh
 rm -f /tmp/nmux.sock
+# shell 1
 nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+# shell 2
 printf 'ping\npong\n' | nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin --interval-ms 500
 ```
 
@@ -203,7 +205,9 @@ Byte-streamed live input:
 
 ```sh
 rm -f /tmp/nmux.sock
+# shell 1
 nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+# shell 2
 printf 'ping\npong\n' | nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin-bytes --interval-ms 500
 ```
 
