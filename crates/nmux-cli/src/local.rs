@@ -2403,12 +2403,16 @@ pub fn presence_from_frame(frame: &[u8]) -> Result<PresenceSummary, Box<dyn std:
         .body_as_presence_update()
         .ok_or("missing presence update body")?;
     validate_presence_kind(presence.kind())?;
+    let focused_pane_id = presence
+        .focused_pane_id()
+        .map(|pane_id| required_string(Some(pane_id), "presence focused_pane_id"))
+        .transpose()?;
     Ok(PresenceSummary {
-        actor_id: presence.actor_id().unwrap_or_default().to_owned(),
-        user_id: presence.user_id().unwrap_or_default().to_owned(),
-        display_name: presence.display_name().unwrap_or_default().to_owned(),
+        actor_id: required_string(presence.actor_id(), "presence actor_id")?,
+        user_id: required_string(presence.user_id(), "presence user_id")?,
+        display_name: required_string(presence.display_name(), "presence display_name")?,
         mode: attach_mode_from_protocol(presence.mode())?,
-        focused_pane_id: presence.focused_pane_id().map(ToOwned::to_owned),
+        focused_pane_id,
     })
 }
 
@@ -5110,20 +5114,39 @@ mod tests {
         mode: protocol::AttachMode,
         kind: protocol::PresenceKind,
     ) -> Vec<u8> {
+        presence_update_frame_with_fields(
+            Some("local-actor"),
+            Some("local-user"),
+            Some("local"),
+            mode,
+            kind,
+            Some("pane-1"),
+        )
+    }
+
+    fn presence_update_frame_with_fields(
+        actor_id: Option<&str>,
+        user_id: Option<&str>,
+        display_name: Option<&str>,
+        mode: protocol::AttachMode,
+        kind: protocol::PresenceKind,
+        focused_pane_id: Option<&str>,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let actor_id = builder.create_string("local-actor");
-        let user_id = builder.create_string("local-user");
-        let display_name = builder.create_string("local");
-        let focused_pane_id = builder.create_string("pane-1");
+        let actor_id = actor_id.map(|actor_id| builder.create_string(actor_id));
+        let user_id = user_id.map(|user_id| builder.create_string(user_id));
+        let display_name = display_name.map(|display_name| builder.create_string(display_name));
+        let focused_pane_id =
+            focused_pane_id.map(|focused_pane_id| builder.create_string(focused_pane_id));
         let presence = protocol::PresenceUpdate::create(
             &mut builder,
             &protocol::PresenceUpdateArgs {
-                actor_id: Some(actor_id),
-                user_id: Some(user_id),
-                display_name: Some(display_name),
+                actor_id,
+                user_id,
+                display_name,
                 mode,
                 kind,
-                focused_pane_id: Some(focused_pane_id),
+                focused_pane_id,
             },
         );
         envelope_frame(
@@ -11329,6 +11352,101 @@ mod tests {
             .expect_err("presence update with unknown attach mode should be rejected");
 
         assert!(err.to_string().contains("unknown attach mode"));
+    }
+
+    #[test]
+    fn rejects_presence_update_with_missing_or_empty_identity_fields() {
+        for (frame, expected) in [
+            (
+                presence_update_frame_with_fields(
+                    None,
+                    Some("local-user"),
+                    Some("local"),
+                    protocol::AttachMode::ReadOnly,
+                    protocol::PresenceKind::Joined,
+                    Some("pane-1"),
+                ),
+                "missing presence actor_id",
+            ),
+            (
+                presence_update_frame_with_fields(
+                    Some(""),
+                    Some("local-user"),
+                    Some("local"),
+                    protocol::AttachMode::ReadOnly,
+                    protocol::PresenceKind::Joined,
+                    Some("pane-1"),
+                ),
+                "empty presence actor_id",
+            ),
+            (
+                presence_update_frame_with_fields(
+                    Some("local-actor"),
+                    None,
+                    Some("local"),
+                    protocol::AttachMode::ReadOnly,
+                    protocol::PresenceKind::Joined,
+                    Some("pane-1"),
+                ),
+                "missing presence user_id",
+            ),
+            (
+                presence_update_frame_with_fields(
+                    Some("local-actor"),
+                    Some(""),
+                    Some("local"),
+                    protocol::AttachMode::ReadOnly,
+                    protocol::PresenceKind::Joined,
+                    Some("pane-1"),
+                ),
+                "empty presence user_id",
+            ),
+            (
+                presence_update_frame_with_fields(
+                    Some("local-actor"),
+                    Some("local-user"),
+                    None,
+                    protocol::AttachMode::ReadOnly,
+                    protocol::PresenceKind::Joined,
+                    Some("pane-1"),
+                ),
+                "missing presence display_name",
+            ),
+            (
+                presence_update_frame_with_fields(
+                    Some("local-actor"),
+                    Some("local-user"),
+                    Some(""),
+                    protocol::AttachMode::ReadOnly,
+                    protocol::PresenceKind::Joined,
+                    Some("pane-1"),
+                ),
+                "empty presence display_name",
+            ),
+        ] {
+            let err = presence_from_frame(&frame)
+                .expect_err("presence update identity fields should be required");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_presence_update_with_empty_focused_pane_id() {
+        let frame = presence_update_frame_with_fields(
+            Some("local-actor"),
+            Some("local-user"),
+            Some("local"),
+            protocol::AttachMode::ReadOnly,
+            protocol::PresenceKind::Joined,
+            Some(""),
+        );
+        let err = presence_from_frame(&frame)
+            .expect_err("empty focused pane ID should be rejected when present");
+
+        assert!(err.to_string().contains("empty presence focused_pane_id"));
     }
 
     #[test]

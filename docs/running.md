@@ -263,7 +263,7 @@ that rewrites GitHub HTTPS URLs to SSH. The
 
 ## Presence And Attach Modes
 
-The FlatBuffers `AttachRequest` carries actor ID, user metadata, focused pane, attach mode, and known pane surface versions. Decoded attach requests reject missing or empty identity strings, empty focused pane IDs, and missing or empty known-surface pane IDs. The daemon replies with `PresenceUpdate` and `AttachStatus`. `AttachStatus.surface_state = Current` is the explicit no-surface-update attach barrier; `Snapshot` and `Patch` mean the corresponding surface frame follows immediately.
+The FlatBuffers `AttachRequest` carries actor ID, user metadata, focused pane, attach mode, and known pane surface versions. Decoded attach requests and presence updates reject missing or empty identity strings, empty focused pane IDs when present, and missing or empty known-surface pane IDs. The daemon replies with `PresenceUpdate` and `AttachStatus`. `AttachStatus.surface_state = Current` is the explicit no-surface-update attach barrier; `Snapshot` and `Patch` mean the corresponding surface frame follows immediately.
 
 Current behavior:
 

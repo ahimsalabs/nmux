@@ -20,7 +20,8 @@ state-sync envelope bodies:
 - `InputEvent` for key, raw byte, paste, focus, and mouse input from an actor
   to a pane.
 - `ResizeIntent` for client-originated size requests.
-- `PresenceUpdate` for actor join/leave-style presence events.
+- `PresenceUpdate` for actor join/leave-style presence events. Decoders require
+  non-empty actor, user, display, and present focused-pane IDs.
 - `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time. Decoded attach requests reject missing or empty identity strings and known-surface pane IDs instead of substituting local defaults.
 - `AttachStatus` for the daemon-selected pane and whether a surface frame
   follows the attach response.
