@@ -10,11 +10,12 @@ Accepted.
 
 ## Context
 
-ADR 0023 keeps `libghostty-vt` opt-in after M13 until build, CI, packaging,
-workflow, and source-fetch consequences are deliberately accepted. The current
-opt-in path is useful for local correctness work: `libghostty-vt-sys` fetches
-the pinned Ghostty source unless `GHOSTTY_SOURCE_DIR` points at a local checkout,
-and nmux records the active mode in promotion evidence.
+ADR 0023 keeps `libghostty-vt` opt-in after M13 until native build cost,
+regular CI, non-Nix/toolchain provisioning, source-fetch policy, packaging, and
+workflow consequences are deliberately accepted. The current opt-in path is
+useful for local correctness work: `libghostty-vt-sys` fetches the pinned
+Ghostty source unless `GHOSTTY_SOURCE_DIR` points at a local checkout, and nmux
+records the active mode in promotion evidence.
 
 That current behavior is not enough by itself for a default engine, regular CI
 requirement, or packaged binary baseline. A default or packaged build needs a
