@@ -2197,11 +2197,15 @@ pub fn error_summary_from_frame(frame: &[u8]) -> Result<ErrorSummary, Box<dyn st
         return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
     }
     let error = envelope.body_as_error().ok_or("missing error body")?;
+    let pane_id = error
+        .pane_id()
+        .map(|pane_id| required_string(Some(pane_id), "error pane_id"))
+        .transpose()?;
     Ok(ErrorSummary {
         code: validate_error_code(error.code())?,
-        message: error.message().unwrap_or_default().to_owned(),
+        message: required_string(error.message(), "error message")?,
         retryable: error.retryable(),
-        pane_id: error.pane_id().map(ToOwned::to_owned),
+        pane_id,
         input_seq: error.input_seq(),
     })
 }
@@ -5498,15 +5502,24 @@ mod tests {
     }
 
     fn error_frame_with_code(code: protocol::ErrorCode) -> Vec<u8> {
+        error_frame_with_fields(code, Some("unsupported input"), None)
+    }
+
+    fn error_frame_with_fields(
+        code: protocol::ErrorCode,
+        message: Option<&str>,
+        pane_id: Option<&str>,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let message = builder.create_string("unsupported input");
+        let message = message.map(|message| builder.create_string(message));
+        let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
         let error = protocol::Error::create(
             &mut builder,
             &protocol::ErrorArgs {
                 code,
-                message: Some(message),
+                message,
                 retryable: false,
-                pane_id: None,
+                pane_id,
                 input_seq: 0,
             },
         );
@@ -11536,6 +11549,40 @@ mod tests {
                 input_seq: 0,
             }
         );
+    }
+
+    #[test]
+    fn rejects_error_frame_with_missing_or_empty_message() {
+        for (frame, expected) in [
+            (
+                error_frame_with_fields(protocol::ErrorCode::Unknown, None, None),
+                "missing error message",
+            ),
+            (
+                error_frame_with_fields(protocol::ErrorCode::Unknown, Some(""), None),
+                "empty error message",
+            ),
+        ] {
+            let err = error_summary_from_frame(&frame)
+                .expect_err("error frame message should be required");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_error_frame_with_empty_pane_id() {
+        let frame = error_frame_with_fields(
+            protocol::ErrorCode::PaneNotFound,
+            Some("pane missing"),
+            Some(""),
+        );
+        let err =
+            error_summary_from_frame(&frame).expect_err("empty error pane ID should be rejected");
+
+        assert!(err.to_string().contains("empty error pane_id"));
     }
 
     #[test]
