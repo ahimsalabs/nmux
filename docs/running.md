@@ -38,9 +38,9 @@ nix develop . -c cargo run --bin nmuxd -- --live-forever
 nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 ```
 
-Detach the live client with Ctrl-]. This uses the default `interim` engine and
-the shared default socket path unless `--socket` or `NMUX_SOCKET` selects a
-different local workspace.
+Detach the live client with Ctrl-]; stop the daemon in shell 1 with Ctrl-C when
+finished. This uses the default `interim` engine and the shared default socket
+path unless `--socket` or `NMUX_SOCKET` selects a different local workspace.
 
 Each attach starts with an `AttachRequest` carrying actor identity, attach mode,
 focused pane, and known pane surface versions. The daemon polls process output
@@ -253,7 +253,7 @@ rm -f /tmp/nmux.sock
 nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 ```
 
-Use `--live-forever` to keep the same daemon-owned workspace and PTY alive for sequential live clients until the daemon is stopped:
+Use `--live-forever` to keep the same daemon-owned workspace and PTY alive for sequential live clients until you stop it with Ctrl-C in the daemon shell:
 
 ```sh
 nix develop . -c cargo run --bin nmuxd -- --live-forever --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"

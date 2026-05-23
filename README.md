@@ -77,9 +77,10 @@ nix develop . -c cargo run --bin nmuxd -- --live-forever
 nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 ```
 
-Detach the live client with Ctrl-]. See [docs/running.md](docs/running.md) for
-socket selection, one-shot attach, persisted reattach, scrollback, resize, and
-opt-in `libghostty-vt` examples.
+Detach the live client with Ctrl-]; stop the daemon in shell 1 with Ctrl-C when
+finished. See [docs/running.md](docs/running.md) for socket selection, one-shot
+attach, persisted reattach, scrollback, resize, and opt-in `libghostty-vt`
+examples.
 
 ## Check
 
