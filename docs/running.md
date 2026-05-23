@@ -193,6 +193,13 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --follow --iter
 
 `--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and renders the scoped cached surface when `AttachStatus` reports the attached pane is already current. Follow mode is read-only for now, so it rejects input flags instead of repeatedly sending input.
 
+Inspect a persisted client cache without connecting to a daemon:
+
+```sh
+nix develop . -c cargo run --bin nmux -- --state /tmp/nmux-follow.state --state-info
+nix develop . -c cargo run --bin nmux -- --state /tmp/nmux-follow.state --state-info-json
+```
+
 For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 ## Live Attach CLI
@@ -220,14 +227,17 @@ path without connecting or binding; use `--print-socket-json` to include both
 the path and resolution source for scripts.
 Informational flags such as `--version`, `--version-json`, `--help`,
 `--print-socket`, `--print-socket-json`, client `--print-context`, and client
-`--print-context-json` exit before mode validation or socket/state/PTY work, so
-scripts can reuse broader command templates without accidentally opening a
-connection or starting a pane process.
+`--print-context-json`, `--state-info`, and `--state-info-json` exit before mode
+validation or socket/PTY work, so scripts can reuse broader command templates
+without accidentally opening a connection or starting a pane process.
+`--state-info` and `--state-info-json` require `--state PATH` and inspect the
+persisted client cache without connecting.
 
 ```sh
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --print-socket
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket-json
+nix develop . -c cargo run --bin nmux -- --state /tmp/nmux-live.state --state-info-json
 ```
 
 If the daemon is not running or the client points at the wrong socket, `nmux` reports the socket path in the connection error.
@@ -510,6 +520,8 @@ current. When a scoped state file is already current and the daemon sends no
 surface frame, explicit live key, paste, named-key, focus, and mouse input is
 still sent to daemon-owned input handling; disabled focus or mouse modes return
 protocol `Error` frames instead of relying on cached client mode state.
+Use `nmux --state PATH --state-info-json` to inspect this cache shape from a
+script without opening a socket.
 
 Start a long-running command-backed daemon:
 

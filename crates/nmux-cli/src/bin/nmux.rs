@@ -149,6 +149,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if args.state_info || args.state_info_json {
+        print_state_info(&args)?;
+        return Ok(());
+    }
+
     if args.live {
         return run_live(&args);
     }
@@ -1083,6 +1088,8 @@ struct Args {
     print_context_json: bool,
     print_socket: bool,
     print_socket_json: bool,
+    state_info: bool,
+    state_info_json: bool,
     socket_path: PathBuf,
     socket_source: local::SocketPathSource,
     input_text: Option<String>,
@@ -1129,6 +1136,8 @@ where
     let mut print_context_json = false;
     let mut print_socket = false;
     let mut print_socket_json = false;
+    let mut state_info = false;
+    let mut state_info_json = false;
     let (mut socket_path, mut socket_source) = local::default_socket_path_and_source();
     let mut input_text = None;
     let mut key_name = None;
@@ -1203,6 +1212,12 @@ where
             }
             "--print-socket-json" => {
                 print_socket_json = true;
+            }
+            "--state-info" => {
+                state_info = true;
+            }
+            "--state-info-json" => {
+                state_info_json = true;
             }
             "--socket" => {
                 socket_path = args
@@ -1365,7 +1380,9 @@ where
         || print_context
         || print_context_json
         || print_socket
-        || print_socket_json;
+        || print_socket_json
+        || state_info
+        || state_info_json;
     let live_resize = if exits_before_attach {
         match (live_cols, live_rows) {
             (Some(cols), Some(rows)) => Some((cols, rows)),
@@ -1446,6 +1463,8 @@ where
         print_context_json,
         print_socket,
         print_socket_json,
+        state_info,
+        state_info_json,
         socket_path,
         socket_source,
         input_text,
@@ -1494,6 +1513,22 @@ fn print_context(json: bool) -> Result<(), Box<dyn std::error::Error>> {
         println!("NMUX_PANE_ID={pane_id}");
         println!("NMUX_SOCKET={socket}");
         println!("NMUX_ORIGIN={origin}");
+    }
+    Ok(())
+}
+
+fn print_state_info(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(path) = args.state_path.as_deref() else {
+        return Err("--state-info requires --state PATH".into());
+    };
+    let exists = path.exists();
+    let state = local::ClientAttachState::load(path)
+        .map_err(|err| format!("failed to load client state {}: {err}", path.display()))?;
+    let summary = state.summary();
+    if args.state_info_json {
+        println!("{}", format_state_info_json(path, exists, &summary));
+    } else {
+        print!("{}", format_state_info_text(path, exists, &summary));
     }
     Ok(())
 }
@@ -2005,6 +2040,120 @@ fn format_context_json(session_id: &str, pane_id: &str, socket: &str, origin: &s
     )
 }
 
+fn format_state_info_text(
+    path: &Path,
+    exists: bool,
+    summary: &local::ClientStateSummary,
+) -> String {
+    let mut output = String::new();
+    output.push_str("state=");
+    output.push_str(&path.display().to_string());
+    output.push('\n');
+    output.push_str("exists=");
+    output.push_str(if exists { "true" } else { "false" });
+    output.push('\n');
+    match summary.scope {
+        Some(scope) => {
+            output.push_str(&format!(
+                "scope=socket dev={} ino={} ctime={}.{}\n",
+                scope.dev, scope.ino, scope.ctime, scope.ctime_nsec
+            ));
+        }
+        None => output.push_str("scope=none\n"),
+    }
+    output.push_str(&format!("surfaces={}\n", summary.surfaces.len()));
+    for surface in &summary.surfaces {
+        output.push_str(&format!(
+            "surface pane={} version={} size={}x{} kind={}",
+            surface.pane_id,
+            surface.version,
+            surface.cols,
+            surface.rows,
+            surface_kind_name(surface.surface_kind)
+        ));
+        if !surface.title.is_empty() {
+            output.push_str(" title=");
+            output.push_str(&surface.title);
+        }
+        if !surface.working_directory.is_empty() {
+            output.push_str(" working_directory=");
+            output.push_str(&surface.working_directory);
+        }
+        output.push('\n');
+    }
+    output.push_str(&format!("scrollbacks={}\n", summary.scrollbacks.len()));
+    for scrollback in &summary.scrollbacks {
+        let last_line = u64::from(scrollback.line_count)
+            .checked_sub(1)
+            .and_then(|offset| scrollback.start_line.checked_add(offset))
+            .unwrap_or(scrollback.start_line);
+        output.push_str(&format!(
+            "scrollback pane={} version={} range={}..{} total={}\n",
+            scrollback.pane_id,
+            scrollback.version,
+            scrollback.start_line,
+            last_line,
+            scrollback.total_lines
+        ));
+    }
+    output
+}
+
+fn format_state_info_json(
+    path: &Path,
+    exists: bool,
+    summary: &local::ClientStateSummary,
+) -> String {
+    let scope = summary
+        .scope
+        .map(|scope| {
+            format!(
+                "{{\"kind\":\"socket\",\"dev\":{},\"ino\":{},\"ctime\":{},\"ctime_nsec\":{}}}",
+                scope.dev, scope.ino, scope.ctime, scope.ctime_nsec
+            )
+        })
+        .unwrap_or_else(|| "null".to_owned());
+    let surfaces = summary
+        .surfaces
+        .iter()
+        .map(|surface| {
+            format!(
+                "{{\"pane_id\":{},\"version\":{},\"cols\":{},\"rows\":{},\"surface_kind\":{},\"title\":{},\"working_directory\":{},\"cursor\":{},\"modes\":{}}}",
+                local::json_string(&surface.pane_id),
+                surface.version,
+                surface.cols,
+                surface.rows,
+                local::json_string(surface_kind_name(surface.surface_kind)),
+                local::json_string(&surface.title),
+                local::json_string(&surface.working_directory),
+                format_cursor_json(surface.cursor),
+                format_terminal_modes_json(surface.modes)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let scrollbacks = summary
+        .scrollbacks
+        .iter()
+        .map(|scrollback| {
+            format!(
+                "{{\"pane_id\":{},\"version\":{},\"start_line\":{},\"line_count\":{},\"total_lines\":{}}}",
+                local::json_string(&scrollback.pane_id),
+                scrollback.version,
+                scrollback.start_line,
+                scrollback.line_count,
+                scrollback.total_lines
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"path\":{},\"exists\":{},\"scope\":{scope},\"surfaces\":[{surfaces}],\"scrollbacks\":[{scrollbacks}]}}",
+        local::json_string(&path.display().to_string()),
+        exists
+    )
+}
+
 fn required_context_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {
     match std::env::var(name) {
         Ok(value) if !value.is_empty() => Ok(value),
@@ -2263,6 +2412,8 @@ Options:
   --print-socket             Print the resolved socket path and exit
   --print-socket-json        Print the resolved socket path as JSON and exit
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
+  --state-info               Inspect --state cache without connecting
+  --state-info-json          Inspect --state cache as JSON without connecting
   --key TEXT                 Text input to send; opts into read-write attach
   --key-name NAME            Send a supported named key; repeat for a sequence
   --list-key-names           List supported --key-name values and aliases
@@ -2299,6 +2450,7 @@ Notes:
   --print-context prints inherited NMUX_* pane identity without connecting.
   --print-context-json prints the same inherited context as a JSON object.
   --print-socket-json prints the resolved socket path and source as JSON.
+  --state-info and --state-info-json require --state PATH and do not connect.
   --json emits one object for one-shot attach, or newline-delimited live events.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
@@ -2484,17 +2636,18 @@ mod tests {
         format_input_choices_json, format_key_names_json, format_live_attach_json,
         format_live_detach_json, format_live_error_json, format_live_surface_update_json,
         format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        format_state_info_json, format_state_info_text, interim_surface_fidelity_warning_needed,
+        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
     };
     use nmux_cli::local;
     use nmux_proto::protocol;
+    use std::path::Path;
 
     fn validate_mode_args(
         live: bool,
@@ -2578,6 +2731,8 @@ mod tests {
         assert!(!args.print_context_json);
         assert!(!args.print_socket);
         assert!(!args.print_socket_json);
+        assert!(!args.state_info);
+        assert!(!args.state_info_json);
     }
 
     #[test]
@@ -2944,6 +3099,71 @@ mod tests {
         .expect("args");
         assert!(args.print_socket_json);
         assert_eq!(args.socket_source, local::SocketPathSource::Explicit);
+    }
+
+    #[test]
+    fn state_info_args_exit_before_mode_validation() {
+        let args = args_from_iter(["--state", "/tmp/nmux.state", "--state-info", "--cols", "80"])
+            .expect("args");
+        assert!(args.state_info);
+        let args = args_from_iter([
+            "--state",
+            "/tmp/nmux.state",
+            "--state-info-json",
+            "--cols",
+            "80",
+        ])
+        .expect("args");
+        assert!(args.state_info_json);
+    }
+
+    #[test]
+    fn state_info_formatters_report_cached_objects() {
+        let summary = local::ClientStateSummary {
+            scope: Some(local::SocketIdentitySummary {
+                dev: 1,
+                ino: 2,
+                ctime: 3,
+                ctime_nsec: 4,
+            }),
+            surfaces: vec![local::ClientStateSurfaceSummary {
+                pane_id: "pane-1".to_owned(),
+                version: 7,
+                cols: 80,
+                rows: 24,
+                surface_kind: protocol::SurfaceKind::Main,
+                title: "shell".to_owned(),
+                working_directory: "file://localhost/tmp".to_owned(),
+                cursor: Some(local::CursorSummary {
+                    row: 1,
+                    col: 2,
+                    visible: true,
+                    shape: protocol::CursorShape::Beam,
+                    blinking: false,
+                }),
+                modes: local::TerminalModeSummary::default(),
+            }],
+            scrollbacks: vec![local::ClientPaneScrollback {
+                pane_id: "pane-1".to_owned(),
+                version: 9,
+                start_line: 6,
+                line_count: 2,
+                total_lines: 7,
+            }],
+        };
+        let path = Path::new("/tmp/nmux.state");
+        let text = format_state_info_text(path, true, &summary);
+        assert!(text.contains("state=/tmp/nmux.state"));
+        assert!(text.contains("exists=true"));
+        assert!(text.contains("scope=socket dev=1 ino=2 ctime=3.4"));
+        assert!(text.contains("surface pane=pane-1 version=7 size=80x24 kind=main"));
+        assert!(text.contains("scrollback pane=pane-1 version=9 range=6..7 total=7"));
+        let json = format_state_info_json(path, true, &summary);
+        assert!(json.contains("\"path\":\"/tmp/nmux.state\""));
+        assert!(json.contains("\"exists\":true"));
+        assert!(json.contains("\"scope\":{\"kind\":\"socket\",\"dev\":1"));
+        assert!(json.contains("\"surface_kind\":\"main\""));
+        assert!(json.contains("\"scrollbacks\":[{\"pane_id\":\"pane-1\",\"version\":9"));
     }
 
     #[test]
@@ -3737,6 +3957,8 @@ mod tests {
         assert!(usage.contains("--print-context-json"));
         assert!(usage.contains("--print-socket"));
         assert!(usage.contains("--print-socket-json"));
+        assert!(usage.contains("--state-info"));
+        assert!(usage.contains("--state-info-json"));
         assert!(usage.contains("--version-json"));
         assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--connect-timeout-ms MS"));

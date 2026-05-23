@@ -179,6 +179,103 @@ fn one_shot_cli_can_request_scrollback_tail() {
 }
 
 #[test]
+fn state_info_reports_persisted_cache_without_connecting() {
+    let socket_path = test_socket_path();
+    let state_path = test_state_path();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            "printf 'state-info\n'; cat >/dev/null",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let attach = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--no-input",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        attach.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&attach.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let info_json = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--state-info-json",
+        ])
+        .output()
+        .expect("run nmux --state-info-json");
+    assert!(
+        info_json.status.success(),
+        "state-info-json failed: {}",
+        String::from_utf8_lossy(&info_json.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&info_json.stdout);
+    assert!(
+        stdout.contains("\"exists\":true"),
+        "missing exists:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"scope\":{\"kind\":\"socket\""),
+        "missing socket scope:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"surfaces\":[{\"pane_id\":\"pane-1\""),
+        "missing surface summary:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"scrollbacks\":[{\"pane_id\":\"pane-1\""),
+        "missing scrollback summary:\n{stdout}"
+    );
+
+    let info_text = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--state",
+            state_path.to_str().expect("state path"),
+            "--state-info",
+        ])
+        .output()
+        .expect("run nmux --state-info");
+    assert!(
+        info_text.status.success(),
+        "state-info failed: {}",
+        String::from_utf8_lossy(&info_text.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&info_text.stdout);
+    assert!(stdout.contains("exists=true"), "missing exists:\n{stdout}");
+    assert!(
+        stdout.contains("surface pane=pane-1"),
+        "missing surface summary:\n{stdout}"
+    );
+
+    let _ = fs::remove_file(&state_path);
+}
+
+#[test]
 fn one_shot_daemon_can_set_command_cwd_and_env() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

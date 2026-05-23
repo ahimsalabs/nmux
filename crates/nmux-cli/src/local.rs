@@ -3923,6 +3923,34 @@ pub struct ClientPaneScrollback {
     pub total_lines: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientStateSummary {
+    pub scope: Option<SocketIdentitySummary>,
+    pub surfaces: Vec<ClientStateSurfaceSummary>,
+    pub scrollbacks: Vec<ClientPaneScrollback>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SocketIdentitySummary {
+    pub dev: u64,
+    pub ino: u64,
+    pub ctime: i64,
+    pub ctime_nsec: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientStateSurfaceSummary {
+    pub pane_id: String,
+    pub version: u64,
+    pub cols: u32,
+    pub rows: u32,
+    pub surface_kind: protocol::SurfaceKind,
+    pub title: String,
+    pub working_directory: String,
+    pub cursor: Option<CursorSummary>,
+    pub modes: TerminalModeSummary,
+}
+
 impl ClientAttachState {
     pub fn load(path: &Path) -> io::Result<Self> {
         match fs::read_to_string(path) {
@@ -3946,6 +3974,28 @@ impl ClientAttachState {
                 let _ = fs::remove_file(&tmp_path);
                 Err(err)
             }
+        }
+    }
+
+    pub fn summary(&self) -> ClientStateSummary {
+        ClientStateSummary {
+            scope: self.scope.map(SocketIdentitySummary::from),
+            surfaces: self
+                .surfaces
+                .iter()
+                .map(|surface| ClientStateSurfaceSummary {
+                    pane_id: surface.pane_id.clone(),
+                    version: surface.version,
+                    cols: surface.cols,
+                    rows: surface.rows,
+                    surface_kind: surface.surface,
+                    title: surface.title.clone(),
+                    working_directory: surface.working_directory.clone(),
+                    cursor: surface.cursor,
+                    modes: surface.modes,
+                })
+                .collect(),
+            scrollbacks: self.scrollbacks.clone(),
         }
     }
 
@@ -4905,6 +4955,17 @@ impl ClientAttachState {
             surfaces,
             scrollbacks,
         })
+    }
+}
+
+impl From<SocketIdentity> for SocketIdentitySummary {
+    fn from(identity: SocketIdentity) -> Self {
+        Self {
+            dev: identity.dev,
+            ino: identity.ino,
+            ctime: identity.ctime,
+            ctime_nsec: identity.ctime_nsec,
+        }
     }
 }
 

@@ -170,12 +170,13 @@ nix develop . -c cargo run --bin nmux -- --live --json --iterations 2 --key $'pi
 
 Both binaries share a stable default socket path for the current user. Explicit `--socket` wins; otherwise a valid absolute `NMUX_SOCKET` value wins, then `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Use `NMUX_SOCKET` for a shell-scoped local workspace, or pass `--socket` on both sides when you want an isolated smoke-test socket.
 Use `nmux --print-socket` or `nmuxd --print-socket` to print the resolved socket path without connecting or binding; use `--print-socket-json` to include both the path and resolution source for scripts.
-Informational flags such as `--version`, `--version-json`, `--help`, `--print-socket`, `--print-socket-json`, client `--print-context`, and client `--print-context-json` exit before mode validation or socket/state/PTY work, so scripts can combine them with broader command templates safely.
+Informational flags such as `--version`, `--version-json`, `--help`, `--print-socket`, `--print-socket-json`, client `--print-context`, `--print-context-json`, `--state-info`, and `--state-info-json` exit before mode validation or socket/PTY work, so scripts can combine them with broader command templates safely. `--state-info` and `--state-info-json` require `--state PATH` and inspect the persisted client cache without connecting.
 
 ```sh
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --print-socket
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket-json
+nix develop . -c cargo run --bin nmux -- --state /tmp/nmux-live.state --state-info-json
 ```
 
 Connection failures include the socket path, which helps distinguish a missing daemon from an isolated test socket.
