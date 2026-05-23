@@ -1174,7 +1174,7 @@ fn live_libghostty_vt_cli_persists_color_only_update_to_state() {
             "--terminal-engine",
             "libghostty-vt",
             "--command",
-            "printf 'ready\\n'; sleep 0.3; printf '\\033]12;#ff00ff\\033\\\\\\033]4;1;#112233\\033\\\\'; sleep 1",
+            "printf 'ready\\n'; sleep 0.3; printf '\\033[?2004h\\033]12;#ff00ff\\033\\\\\\033]4;1;#112233\\033\\\\'; sleep 1",
         ])
         .spawn()
         .expect("spawn nmuxd");
@@ -1214,7 +1214,9 @@ fn live_libghostty_vt_cli_persists_color_only_update_to_state() {
         "color-only update reprinted unchanged row text:\n{first_stdout}"
     );
     assert!(
-        !first_stdout.contains("\x1b]12;") && !first_stdout.contains("\x1b]4;"),
+        !first_stdout.contains("[?2004h")
+            && !first_stdout.contains("\x1b]12;")
+            && !first_stdout.contains("\x1b]4;"),
         "color controls leaked into first render:\n{first_stdout}"
     );
 
@@ -1226,6 +1228,10 @@ fn live_libghostty_vt_cli_persists_color_only_update_to_state() {
     assert!(
         first_state.contains("112233ff"),
         "first state did not persist palette-diff materialized color:\n{first_state}"
+    );
+    assert!(
+        first_state.contains("modes 1 0 0 0 0 0 1 0 0\n"),
+        "first state did not persist mode payload from color-only update:\n{first_state}"
     );
 
     let second_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
@@ -1259,7 +1265,9 @@ fn live_libghostty_vt_cli_persists_color_only_update_to_state() {
         "reattached client did not render cached row text:\n{second_stdout}"
     );
     assert!(
-        !second_stdout.contains("\x1b]12;") && !second_stdout.contains("\x1b]4;"),
+        !second_stdout.contains("[?2004h")
+            && !second_stdout.contains("\x1b]12;")
+            && !second_stdout.contains("\x1b]4;"),
         "color controls leaked after state reattach:\n{second_stdout}"
     );
 
@@ -1271,6 +1279,10 @@ fn live_libghostty_vt_cli_persists_color_only_update_to_state() {
     assert!(
         second_state.contains("112233ff"),
         "second state did not preserve palette-diff materialized color:\n{second_state}"
+    );
+    assert!(
+        second_state.contains("modes 1 0 0 0 0 0 1 0 0\n"),
+        "second state did not preserve mode payload from color-only update:\n{second_state}"
     );
 
     let _ = fs::remove_file(&socket_path);

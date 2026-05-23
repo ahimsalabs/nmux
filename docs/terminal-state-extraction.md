@@ -208,7 +208,8 @@ The nmux state-sync path now has coverage for snapshot/patch cursor blink,
 libghostty-vt live cursor-only patch cache persistence through real `--state`
 reattach, terminal query PTY reply routing through a real live PTY, title and working-directory
 metadata, terminal color state, color-only palette diffs, live color-only patch
-cache persistence through real `--state` reattach, row semantic prompt metadata, per-run semantic content,
+cache persistence through real `--state` reattach including mixed no-row
+color/mode changes, row semantic prompt metadata, per-run semantic content,
 live ReplaceRows row-metadata cache persistence through real `--state` reattach,
 live ReplaceRows hyperlink run-flag cache persistence through real `--state`
 reattach, styled/wide row-run state persistence through real `--state`

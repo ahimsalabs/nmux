@@ -2992,6 +2992,7 @@ impl ClientPaneSurface {
             };
             self.cursor = update.cursor;
             self.colors = colors.materialize(&self.colors)?;
+            self.modes = update.modes;
             self.title = update.title.clone();
             self.working_directory = update.working_directory.clone();
             self.version = update.version;
@@ -5144,6 +5145,7 @@ mod tests {
         let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
         let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
         patch.patch_kind = Some(protocol::PatchKind::ColorOnly);
+        patch.modes.bracketed_paste = true;
         patch.colors = Some(TerminalColorSummary {
             default_fg_rgba: 0xeeeeeeff,
             default_bg_rgba: 0x222222ff,
@@ -5162,6 +5164,7 @@ mod tests {
         assert_eq!(surface.colors.palette_rgba, vec![0x000000ff, 0x112233ff]);
         assert_eq!(surface.colors.palette_diff_start, None);
         assert_eq!(surface.colors.palette_diff_rgba, Vec::<u32>::new());
+        assert!(surface.modes.bracketed_paste);
     }
 
     #[test]
