@@ -16,6 +16,83 @@ const REDRAW_TERMINAL_ENTER: &str = "\x1b[?1049h\x1b[?25l";
 const REDRAW_TERMINAL_EXIT: &str = "\x1b[?25h\x1b[?1049l";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
+const SUPPORTED_KEY_NAMES: &[&str] = &[
+    "numpad-enter",
+    "numpad-0",
+    "numpad-1",
+    "numpad-2",
+    "numpad-3",
+    "numpad-4",
+    "numpad-5",
+    "numpad-6",
+    "numpad-7",
+    "numpad-8",
+    "numpad-9",
+    "arrow-up",
+    "arrow-down",
+    "arrow-right",
+    "arrow-left",
+    "enter",
+    "tab",
+    "space",
+    "backspace",
+    "escape",
+    "insert",
+    "delete",
+    "home",
+    "end",
+    "page-up",
+    "page-down",
+    "f1",
+    "f2",
+    "f3",
+    "f4",
+    "f5",
+    "f6",
+    "f7",
+    "f8",
+    "f9",
+    "f10",
+    "f11",
+    "f12",
+];
+const KEY_NAME_ALIASES: &[(&str, &str)] = &[
+    ("keypad-enter", "numpad-enter"),
+    ("keypad-0", "numpad-0"),
+    ("keypad-1", "numpad-1"),
+    ("keypad-2", "numpad-2"),
+    ("keypad-3", "numpad-3"),
+    ("keypad-4", "numpad-4"),
+    ("keypad-5", "numpad-5"),
+    ("keypad-6", "numpad-6"),
+    ("keypad-7", "numpad-7"),
+    ("keypad-8", "numpad-8"),
+    ("keypad-9", "numpad-9"),
+    ("kp-enter", "numpad-enter"),
+    ("kp-0", "numpad-0"),
+    ("kp-1", "numpad-1"),
+    ("kp-2", "numpad-2"),
+    ("kp-3", "numpad-3"),
+    ("kp-4", "numpad-4"),
+    ("kp-5", "numpad-5"),
+    ("kp-6", "numpad-6"),
+    ("kp-7", "numpad-7"),
+    ("kp-8", "numpad-8"),
+    ("kp-9", "numpad-9"),
+    ("up", "arrow-up"),
+    ("down", "arrow-down"),
+    ("right", "arrow-right"),
+    ("left", "arrow-left"),
+    ("return", "enter"),
+    ("esc", "escape"),
+    ("ins", "insert"),
+    ("del", "delete"),
+    ("pgup", "page-up"),
+    ("pageup", "page-up"),
+    ("pgdn", "page-down"),
+    ("pagedown", "page-down"),
+    ("bs", "backspace"),
+];
 
 fn main() {
     if let Err(err) = run() {
@@ -37,6 +114,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             println!("nmux {VERSION}");
         }
+        return Ok(());
+    }
+
+    if args.list_key_names {
+        print_key_names();
         return Ok(());
     }
 
@@ -916,6 +998,7 @@ struct Args {
     help: bool,
     version: bool,
     version_json: bool,
+    list_key_names: bool,
     print_context: bool,
     print_context_json: bool,
     print_socket: bool,
@@ -956,6 +1039,7 @@ where
     let mut help = false;
     let mut version = false;
     let mut version_json = false;
+    let mut list_key_names = false;
     let mut print_context = false;
     let mut print_context_json = false;
     let mut print_socket = false;
@@ -1005,6 +1089,9 @@ where
             }
             "--version-json" => {
                 version_json = true;
+            }
+            "--list-key-names" => {
+                list_key_names = true;
             }
             "--print-context" => {
                 print_context = true;
@@ -1160,6 +1247,7 @@ where
     let exits_before_attach = help
         || version
         || version_json
+        || list_key_names
         || print_context
         || print_context_json
         || print_socket
@@ -1229,6 +1317,7 @@ where
         help,
         version,
         version_json,
+        list_key_names,
         print_context,
         print_context_json,
         print_socket,
@@ -1281,6 +1370,15 @@ fn print_context(json: bool) -> Result<(), Box<dyn std::error::Error>> {
         println!("NMUX_ORIGIN={origin}");
     }
     Ok(())
+}
+
+fn print_key_names() {
+    for key_name in SUPPORTED_KEY_NAMES {
+        println!("{key_name}");
+    }
+    for (alias, canonical) in KEY_NAME_ALIASES {
+        println!("{alias} -> {canonical}");
+    }
 }
 
 fn format_context_json(session_id: &str, pane_id: &str, socket: &str, origin: &str) -> String {
@@ -1528,6 +1626,7 @@ Options:
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send; opts into read-write attach
   --key-name NAME            Send a supported named key
+  --list-key-names           List supported --key-name values and aliases
   --key-modifiers MODS       Modifiers for --key-name: shift,ctrl,alt,super
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send focus input; daemon rejects if reporting is off
@@ -1618,46 +1717,13 @@ fn parse_focus_event(value: &str) -> Result<FocusEvent, &'static str> {
 }
 
 fn parse_key_name(value: &str) -> Result<String, &'static str> {
-    match value {
-        "keypad-enter" | "numpad-enter" => Ok("numpad-enter".to_owned()),
-        "keypad-0" | "numpad-0" => Ok("numpad-0".to_owned()),
-        "keypad-1" | "numpad-1" => Ok("numpad-1".to_owned()),
-        "keypad-2" | "numpad-2" => Ok("numpad-2".to_owned()),
-        "keypad-3" | "numpad-3" => Ok("numpad-3".to_owned()),
-        "keypad-4" | "numpad-4" => Ok("numpad-4".to_owned()),
-        "keypad-5" | "numpad-5" => Ok("numpad-5".to_owned()),
-        "keypad-6" | "numpad-6" => Ok("numpad-6".to_owned()),
-        "keypad-7" | "numpad-7" => Ok("numpad-7".to_owned()),
-        "keypad-8" | "numpad-8" => Ok("numpad-8".to_owned()),
-        "keypad-9" | "numpad-9" => Ok("numpad-9".to_owned()),
-        "arrow-up" => Ok("arrow-up".to_owned()),
-        "arrow-down" => Ok("arrow-down".to_owned()),
-        "arrow-right" => Ok("arrow-right".to_owned()),
-        "arrow-left" => Ok("arrow-left".to_owned()),
-        "enter" => Ok("enter".to_owned()),
-        "tab" => Ok("tab".to_owned()),
-        "backspace" => Ok("backspace".to_owned()),
-        "escape" => Ok("escape".to_owned()),
-        "insert" => Ok("insert".to_owned()),
-        "delete" => Ok("delete".to_owned()),
-        "home" => Ok("home".to_owned()),
-        "end" => Ok("end".to_owned()),
-        "page-up" => Ok("page-up".to_owned()),
-        "page-down" => Ok("page-down".to_owned()),
-        "f1" => Ok("f1".to_owned()),
-        "f2" => Ok("f2".to_owned()),
-        "f3" => Ok("f3".to_owned()),
-        "f4" => Ok("f4".to_owned()),
-        "f5" => Ok("f5".to_owned()),
-        "f6" => Ok("f6".to_owned()),
-        "f7" => Ok("f7".to_owned()),
-        "f8" => Ok("f8".to_owned()),
-        "f9" => Ok("f9".to_owned()),
-        "f10" => Ok("f10".to_owned()),
-        "f11" => Ok("f11".to_owned()),
-        "f12" => Ok("f12".to_owned()),
-        _ => Err("--key-name requires a supported named key"),
+    if SUPPORTED_KEY_NAMES.contains(&value) {
+        return Ok(value.to_owned());
     }
+    KEY_NAME_ALIASES
+        .iter()
+        .find_map(|(alias, canonical)| (*alias == value).then_some((*canonical).to_owned()))
+        .ok_or("--key-name requires a supported named key")
 }
 
 fn parse_key_modifiers(value: &str) -> Result<u32, &'static str> {
@@ -1769,12 +1835,13 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FocusEvent, LiveUpdatePrintKind, LocalEcho, MouseEvent, args_from_iter,
-        format_context_json, format_scrollback, interim_surface_fidelity_warning_needed,
-        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        FocusEvent, KEY_NAME_ALIASES, LiveUpdatePrintKind, LocalEcho, MouseEvent,
+        SUPPORTED_KEY_NAMES, args_from_iter, format_context_json, format_scrollback,
+        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args,
@@ -1854,6 +1921,7 @@ mod tests {
         assert!(!args.live);
         assert!(!args.version);
         assert!(!args.version_json);
+        assert!(!args.list_key_names);
         assert!(!args.print_context);
         assert!(!args.print_context_json);
         assert!(!args.print_socket);
@@ -1870,6 +1938,12 @@ mod tests {
     fn version_json_arg_exits_before_mode_validation() {
         let args = args_from_iter(["--version-json", "--cols", "80"]).expect("args");
         assert!(args.version_json);
+    }
+
+    #[test]
+    fn list_key_names_arg_exits_before_mode_validation() {
+        let args = args_from_iter(["--list-key-names", "--cols", "80"]).expect("args");
+        assert!(args.list_key_names);
     }
 
     #[test]
@@ -2104,16 +2178,33 @@ mod tests {
             Ok("numpad-enter".to_owned())
         );
         assert_eq!(parse_key_name("keypad-0"), Ok("numpad-0".to_owned()));
+        assert_eq!(parse_key_name("kp-0"), Ok("numpad-0".to_owned()));
         assert_eq!(parse_key_name("numpad-0"), Ok("numpad-0".to_owned()));
         assert_eq!(parse_key_name("keypad-9"), Ok("numpad-9".to_owned()));
+        assert_eq!(parse_key_name("kp-9"), Ok("numpad-9".to_owned()));
         assert_eq!(parse_key_name("numpad-9"), Ok("numpad-9".to_owned()));
         assert_eq!(parse_key_name("arrow-up"), Ok("arrow-up".to_owned()));
+        assert_eq!(parse_key_name("up"), Ok("arrow-up".to_owned()));
         assert_eq!(parse_key_name("arrow-left"), Ok("arrow-left".to_owned()));
         assert_eq!(parse_key_name("enter"), Ok("enter".to_owned()));
+        assert_eq!(parse_key_name("return"), Ok("enter".to_owned()));
+        assert_eq!(parse_key_name("space"), Ok("space".to_owned()));
+        assert_eq!(parse_key_name("esc"), Ok("escape".to_owned()));
+        assert_eq!(parse_key_name("pgdn"), Ok("page-down".to_owned()));
         assert_eq!(parse_key_name("delete"), Ok("delete".to_owned()));
         assert_eq!(parse_key_name("page-down"), Ok("page-down".to_owned()));
         assert_eq!(parse_key_name("f12"), Ok("f12".to_owned()));
         assert!(parse_key_name("f13").is_err());
+    }
+
+    #[test]
+    fn listed_key_names_parse_to_canonical_names() {
+        for key_name in SUPPORTED_KEY_NAMES {
+            assert_eq!(parse_key_name(key_name), Ok((*key_name).to_owned()));
+        }
+        for (alias, canonical) in KEY_NAME_ALIASES {
+            assert_eq!(parse_key_name(alias), Ok((*canonical).to_owned()));
+        }
     }
 
     #[test]

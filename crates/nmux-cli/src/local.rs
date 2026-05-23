@@ -13462,6 +13462,7 @@ mod tests {
         let cases = [
             ("enter", b"\r".as_slice()),
             ("tab", b"\t".as_slice()),
+            ("space", b" ".as_slice()),
             ("backspace", b"\x7f".as_slice()),
             ("escape", b"\x1b".as_slice()),
             ("insert", b"\x1b[2~".as_slice()),
