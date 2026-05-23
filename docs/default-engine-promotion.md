@@ -59,6 +59,8 @@ engine or a regular CI requirement.
 - [Contributor workflow](contributor-workflow.md) documents when contributors
   should use the default gate, the opt-in terminal-correctness gate, and the
   combined promotion-evidence gate.
+- [CI notes](ci.md) document the required GitHub Actions default-engine gate and
+  the manual promotion-sample job.
 - The Makefile performs local tool preflight checks for `cargo`, `flatc`
   25.12.19, and the optional native-VT Zig 0.15.x requirement so non-Nix
   validation attempts fail with setup guidance instead of an opaque
@@ -79,6 +81,9 @@ engine or a regular CI requirement.
 - Multiple warm local Darwin arm64 `make check-all` samples are recorded below,
   including a post-info-flag run; these are useful trend evidence, not CI or
   cold-cache promotion evidence.
+- A GitHub Actions workflow now runs `make check` for pull requests and pushes
+  to `main`; the `make promotion-sample` job is manual and must be run before
+  any CI promotion evidence is recorded here.
 - ADR 0018 and ADR 0023 keep the native build out of the default development
   loop until the remaining evidence in this tracker is gathered.
 
@@ -109,7 +114,8 @@ be recorded.
 
 - Measure and record `make check-all` timing on more supported local systems,
   including at least one cold-checkout or cold-cache run.
-- Exercise the same gate in CI before making it a required check.
+- Exercise the manual promotion-sample job in CI before making the opt-in VT
+  gate required.
 - Validate the non-Nix toolchain checklist with platform-specific setup
   commands, `make promotion-sample` output, and timings; the current local
   non-Nix attempt failed before tests because `flatc` was absent from the host

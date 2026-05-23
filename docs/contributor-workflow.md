@@ -24,6 +24,8 @@ nix develop . -c make check
 This validates the schema with `flatc` and runs `cargo test --workspace`
 against the default engine. Keep interim renderer limitations explicit in
 user-facing docs; green default-engine tests are not a claim of VT correctness.
+GitHub Actions runs this default gate on pull requests and pushes to `main`;
+see [ci.md](ci.md) for the workflow shape.
 
 ## Terminal-Correctness Work
 
@@ -78,3 +80,5 @@ evidence.
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty
 source policy, or release binaries.
+Use the manual CI promotion-sample job when collecting CI evidence; a normal
+pull-request run remains default-engine-only.

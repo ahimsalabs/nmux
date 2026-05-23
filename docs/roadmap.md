@@ -191,6 +191,9 @@ Done:
   tool preflight, and non-Nix requirements checklist; promotion still needs
   platform-specific validation, CI behavior, source-fetch policy, and packaging
   decisions.
+- [CI notes](ci.md) document the GitHub Actions default-engine gate and manual
+  promotion-sample job; promotion still needs recorded CI runs before the opt-in
+  native VT gate can become required.
 - [Source fetch policy](source-fetch-policy.md) records the current opt-in
   `libghostty-vt-sys` fetch behavior and the remaining packaged/default-build
   policy choices.
@@ -201,7 +204,7 @@ Done:
 
 Next:
 
-- Keep adding supported-platform and CI results to [the default-engine promotion evidence tracker](default-engine-promotion.md) before proposing `libghostty-vt` as the default engine or a regular CI requirement.
+- Keep adding supported-platform and CI results to [the default-engine promotion evidence tracker](default-engine-promotion.md), including manual promotion-sample workflow results, before proposing `libghostty-vt` as the default engine or a regular CI requirement.
 - Use [the terminal state extraction checklist](terminal-state-extraction.md) and focused ADRs as the gate for expanding terminal-state protocol fields.
 - Keep client attach, reconnect, live streaming, and scrollback fetch semantics on nmux state objects.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.

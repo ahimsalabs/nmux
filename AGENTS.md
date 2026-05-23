@@ -24,6 +24,8 @@ nmux is a portable Ghostty-style terminal workspace. The current direction is do
 - [docs/default-engine-promotion.md](docs/default-engine-promotion.md) for the
   evidence required before `libghostty-vt` can become the default engine or a
   regular CI requirement.
+- [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions gate
+  and manual promotion-sample workflow.
 - [docs/adr](docs/adr) for durable architecture decisions.
 - [docs/upstream](docs/upstream) for upstream/API gaps that block otherwise
   desirable local work.
@@ -112,6 +114,9 @@ nix develop . -c make promotion-sample
 `libghostty-vt` gate without changing what `make check` means.
 `promotion-sample` prints `toolchain-info` and times `check-all` for evidence
 rows in `docs/default-engine-promotion.md`.
+GitHub Actions runs `make check` on pull requests and pushes to `main`; the
+promotion-sample job is manual and does not make `libghostty-vt` a required CI
+gate.
 
 If `nix develop` itself is unavailable, do not rewrite the flake or check in
 machine-local store paths. Either use an already entered dev shell, or record the

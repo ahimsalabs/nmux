@@ -571,6 +571,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   make toolchain-info prints cargo, rustc, flatc, Zig, GHOSTTY_SOURCE_DIR, explicit Ghostty source mode, and GIT_CONFIG_GLOBAL values for default-engine-promotion evidence records
   make promotion-sample prints toolchain-info and times make check-all for one-command local promotion evidence collection
   opt-in VT preflight rejects invalid GHOSTTY_SOURCE_DIR paths before the native build starts, while unset GHOSTTY_SOURCE_DIR is recorded as the pinned-fetch source mode
+  GitHub Actions now runs the default-engine make check gate on pull requests and main pushes, with make promotion-sample available only as a manual workflow_dispatch job for CI promotion evidence
   make check-all is the explicit combined default-plus-libghostty-vt validation gate for release-style checks and promotion evidence without changing regular make check
   keep frontend Ghostty renderer hydration separate from backend terminal-state extraction until upstream can render externally supplied nmux state without client-side PTY replay
   split future protocol expansion into explicit tracks before schema changes: wired hyperlink IDs, image placement/pixel data, richer damage objects, semantic command lifecycle metadata, and physical-key/text-event forwarding
