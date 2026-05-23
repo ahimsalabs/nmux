@@ -15,7 +15,7 @@ Use a broader target only when the change needs the extra evidence:
 | Normal default-engine or docs work | `nix develop . -c make check` and `nix develop . -c make local-smoke` |
 | Backend `libghostty-vt` correctness work | `nix develop . -c make check` and `nix develop . -c make check-ghostty-vt` |
 | Release-style local validation | `nix develop . -c make check-all` |
-| Default-engine promotion evidence | `nix develop . -c make promotion-evidence-bundle` then `nix develop . -c make promotion-evidence-verify` |
+| Self-contained promotion evidence bundle | `nix develop . -c make promotion-evidence-bundle` then `nix develop . -c make promotion-evidence-verify` |
 | Source-fetch evidence | `nix develop . -c make source-fetch-provenance-sample` or `nix develop . -c make source-fetch-offline-probe` |
 | Packaging evidence | Start with `nix develop . -c make packaging-archive-runtime-smoke` |
 
@@ -91,14 +91,10 @@ That target clears `target/promotion-cold` and times `make check-all` with that
 fresh Rust target directory. It does not clear Cargo registry, Git source, or
 Nix store caches, so record it as cold-target evidence rather than full
 cold-checkout evidence.
-For a combined local source-provenance, validation, and packaging/archive
-evidence pass, use:
+For isolated Cargo dependency/source-fetch evidence, use:
 
 ```sh
 nix develop . -c make promotion-cold-deps-sample
-nix develop . -c make promotion-local-sample
-nix develop . -c make promotion-evidence-bundle
-nix develop . -c make promotion-evidence-verify
 ```
 
 `make promotion-cold-deps-sample` clears `target/promotion-cold-deps` and
@@ -108,10 +104,26 @@ It records `target/promotion-cold-deps/REPORT.txt` plus `RUN.log`. Treat it as
 dependency/source-fetch evidence only: the Nix store, source checkout, and
 network state may still be warm.
 
+For a combined local source-provenance, validation, workflow-smoke,
+offline-probe, and package runtime evidence pass, use:
+
+```sh
+nix develop . -c make promotion-local-sample
+```
+
 The local sample target runs `make source-fetch-provenance-sample`,
 `make promotion-sample`, `make local-smoke`, `make source-fetch-offline-probe`,
-and then `make packaging-archive-runtime-smoke`. The bundle target runs the
-same local sample and gathers the run log, toolchain output, bundle
+and then `make packaging-archive-runtime-smoke`.
+
+Use the evidence bundle only when a self-contained artifact is needed:
+
+```sh
+nix develop . -c make promotion-evidence-bundle
+nix develop . -c make promotion-evidence-verify
+```
+
+The bundle target runs the same local sample and gathers the run log,
+toolchain output, bundle
 start/completion timestamps plus elapsed duration, extracted `time -p make
 check-all` values, `local_smoke` result, source-fetch report, offline probe
 report, package provenance, cargo tree, package archive, archive checksum,
