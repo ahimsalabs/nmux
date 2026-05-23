@@ -165,9 +165,12 @@ only after the backend extraction proves the exact shape needed.
   carries backend row dirty flags on surface snapshots, sparse row-replacement
   patches, and scrollback chunks. Rows also carry a `row_state_hash` covering
   runs, semantic metadata, dirty state, and Kitty placeholder state, while the
-  older `dirty_hash` remains a text-only compatibility fingerprint. Rich cells
-  may still need run-level or region-level patches beyond cursor-only updates
-  before nmux exposes a richer damage protocol.
+  older `dirty_hash` remains a text-only compatibility fingerprint. The
+  `libghostty-vt` extractor only emits no-row cursor or mode patches when
+  structured row runs are unchanged, so row-run metadata changes are not hidden
+  behind unchanged fallback text. Rich cells may still need run-level or
+  region-level patches beyond cursor-only updates before nmux exposes a richer
+  damage protocol.
 
 ## Initial Opt-In Acceptance Gate
 

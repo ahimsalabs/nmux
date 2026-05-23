@@ -705,6 +705,7 @@ mod ghostty_vt {
                 &mut styles,
             )?;
             let surface_lines = surface_rows.lines.clone();
+            let surface_row_runs = surface_rows.row_runs.clone();
             let surface_semantic_prompts = surface_rows.semantic_prompts.clone();
             let surface_dirty_rows = surface_rows.dirty_rows.clone();
             let surface_kitty_placeholders = surface_rows.kitty_placeholders.clone();
@@ -720,6 +721,7 @@ mod ghostty_vt {
             let patch_kind = if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
+                && surface_row_runs == input.surface_row_runs
                 && surface_semantic_prompts == input.surface_semantic_prompts
                 && surface_dirty_rows == input.surface_dirty_rows
                 && surface_kitty_placeholders == input.surface_kitty_placeholders
@@ -730,6 +732,7 @@ mod ghostty_vt {
             } else if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
+                && surface_row_runs == input.surface_row_runs
                 && surface_semantic_prompts == input.surface_semantic_prompts
                 && surface_dirty_rows == input.surface_dirty_rows
                 && surface_kitty_placeholders == input.surface_kitty_placeholders
@@ -752,7 +755,7 @@ mod ghostty_vt {
                 working_directory: working_directory.to_owned(),
                 colors,
                 styles,
-                surface_row_runs: surface_rows.row_runs,
+                surface_row_runs,
                 scrollback_row_runs: scrollback_rows.row_runs,
                 surface_semantic_prompts,
                 scrollback_semantic_prompts: scrollback_rows.semantic_prompts,
@@ -3120,6 +3123,32 @@ mod tests {
                 shape: protocol::CursorShape::Block,
                 blinking: false
             }
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_uses_replace_rows_for_row_run_change_with_cursor_movement() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let first = engine
+            .apply_output(terminal_input(2, &empty, &empty), b"input")
+            .expect("initial terminal update");
+
+        let row_run_change = engine
+            .apply_output(
+                terminal_input_from_update(&first),
+                b"\r\x1b]133;B\x1b\\input\x1b[1;1H",
+            )
+            .expect("row run and cursor update");
+
+        assert_eq!(row_run_change.patch_kind, protocol::PatchKind::ReplaceRows);
+        assert_eq!(row_run_change.surface_lines, first.surface_lines);
+        assert_ne!(row_run_change.cursor, first.cursor);
+        assert_ne!(row_run_change.surface_row_runs, first.surface_row_runs);
+        assert_eq!(
+            row_run_change.surface_row_runs[0][0].semantic_content,
+            protocol::CellSemanticContent::Input
         );
     }
 
