@@ -63,6 +63,7 @@ Run:
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-cold-deps-sample
+nix develop . -c make promotion-cold-deps-verify
 nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
 nix develop . -c make promotion-evidence-verify
@@ -103,6 +104,9 @@ source, or Nix store caches.
 `GHOSTTY_SOURCE_DIR` unset, and `GIT_CONFIG_GLOBAL=/dev/null`. Use it for
 dependency/source-fetch evidence, and record that it still does not prove cold
 Nix store, source checkout, or network state.
+`make promotion-cold-deps-verify` checks the existing `REPORT.txt` and
+`RUN.log` for the expected isolation fields, timing fields, passing result, and
+default plus opt-in test commands without rerunning the sample.
 
 `make promotion-local-sample` runs `make source-fetch-provenance-sample`,
 `make promotion-sample`, `make source-fetch-offline-probe`, and then

@@ -42,6 +42,7 @@ nix develop . -c make check-all
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-cold-deps-sample
+nix develop . -c make promotion-cold-deps-verify
 nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
 nix develop . -c make promotion-evidence-verify
@@ -68,7 +69,8 @@ toolchain evidence and times `make check-all` in the same run.
 times `make check-all` with an isolated repo-owned `CARGO_HOME` and
 `CARGO_TARGET_DIR`; it is dependency/source-fetch evidence, not full cold
 machine evidence because the Nix store, checkout, and network state may still
-be warm.
+be warm. `make promotion-cold-deps-verify` checks an existing
+`target/promotion-cold-deps` report and log without rerunning the sample.
 `make promotion-local-sample` runs source-fetch provenance, the timed validation
 sample, a cache-present offline source-fetch probe, and the package archive
 runtime smoke for one local evidence pass.
