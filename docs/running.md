@@ -1,6 +1,27 @@
 # Running nmux
 
-The current prototype is a local attach skeleton with a real local PTY host behind the daemon. `nmuxd` owns one workspace tree, one backend-owned pane surface, one scrollback object, and one attached actor. The client sends an `AttachRequest` with actor ID, attach mode, focused pane, and known pane surface versions. The daemon starts the pane command in a local PTY, polls already-pumped PTY output into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`, a `PresenceUpdate`, an `AttachStatus`, and, when needed, either a `PaneSurfaceSnapshot` or a `PaneSurfacePatch`. Decoded workspace, surface, attach-status, and scrollback state requires non-empty session, tab, and pane IDs before it can update client render/cache state. `AttachStatus` identifies the attached pane and says whether the client is already current or a surface frame follows. `nmux` applies those state objects to a client-side pane surface render state before printing. After rendering, it can send one explicit text, paste, named-key, focus, or mouse `InputEvent`, requests a scrollback range with `ScrollbackFetch`, and renders the returned `ScrollbackChunk`.
+The current default workflow is a local state-sync prototype with a real local
+PTY host behind the daemon. `nmuxd` owns one workspace tree, a daemon-owned
+terminal surface, scrollback, pane metadata, resize policy, and the local
+process host. `nmux` can attach once, run a live attach loop, reattach
+read-only, persist client render state, request daemon-owned scrollback ranges,
+send explicit text, paste, named-key, focus, mouse, or resize intents, and print
+nested `NMUX_*` pane context from commands running inside a pane. The runnable
+default-engine smoke path covers live stdin, persisted reattach, nested context
+reporting, and same-path socket recreation so stale cached surfaces do not leak
+into a new daemon.
+
+Each attach starts with an `AttachRequest` carrying actor identity, attach mode,
+focused pane, and known pane surface versions. The daemon polls process output
+into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`,
+`PresenceUpdate`, `AttachStatus`, and, when needed, either a
+`PaneSurfaceSnapshot` or a `PaneSurfacePatch`. Decoded workspace, surface,
+attach-status, and scrollback state requires non-empty session, tab, and pane
+IDs before it can update client render/cache state. `AttachStatus` identifies
+the attached pane and says whether the client is already current or a surface
+frame follows. `nmux` applies those state objects to a client-side pane surface
+render state before printing, then can send post-attach control frames and
+render returned `ScrollbackChunk` objects.
 
 Run all checks:
 
@@ -281,7 +302,14 @@ When an unbounded live client exits because the daemon closes the live socket, t
 
 The read-only client attaches once, sends no input or resize control intents, and prints streamed surface updates when the daemon observes process output. If `--iterations` is omitted, it keeps polling until the daemon closes the live connection.
 
-This is not a terminal emulator yet. The interim text surface only converts simple output bytes into backend-owned visible rows and scrollback. It proves the first local daemon/client path: server-owned workspace state, server-owned pane surface state derived from a local PTY, server-owned scrollback ranges, FlatBuffers envelope framing, client-side rendering from decoded state objects, and client-to-daemon input forwarding.
+The default engine is not a full terminal emulator yet. The interim text surface
+only converts simple output bytes into backend-owned visible rows and
+scrollback, so ANSI styling, cursor motion, alternate screen behavior, images,
+and grapheme/cell-width correctness are not complete in the default path. The
+default workflow proves the local state-sync spine: server-owned workspace
+state, server-owned pane surface state derived from a local PTY, server-owned
+scrollback ranges, FlatBuffers envelope framing, client-side rendering from
+decoded state objects, and client-to-daemon input/control forwarding.
 `nmuxd --terminal-engine interim` selects this current implementation explicitly. Backend `libghostty-vt` extraction is imported behind the `libghostty-vt` Cargo feature, but the default build keeps the interim engine to avoid making the native Ghostty/Zig build part of every development loop. ADR 0023 keeps that opt-in split after the M13 extraction milestone until native build, CI, packaging, source-fetch, and workflow costs are accepted deliberately.
 
 ## Optional libghostty-vt Build
