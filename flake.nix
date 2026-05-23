@@ -18,7 +18,7 @@
       cleanSrc =
         pkgs:
         pkgs.lib.cleanSourceWith {
-          src = self;
+          src = ./.;
           filter =
             path: type:
             !(builtins.elem (builtins.baseNameOf path) [
@@ -31,7 +31,12 @@
 
       sourceAuditFor =
         pkgs:
-        pkgs.runCommand "nmux-source-audit" { src = cleanSrc pkgs; } ''
+        pkgs.runCommand "nmux-source-audit"
+          {
+            src = cleanSrc pkgs;
+            maxSourceKiB = 64 * 1024;
+          }
+          ''
           if [ -e "$src/target" ]; then
             echo "flake source unexpectedly contains target/" >&2
             exit 1
@@ -42,9 +47,19 @@
             exit 1
           fi
 
+          source_kib="$(du -sk "$src" | cut -f1)"
+          if [ "$source_kib" -gt "$maxSourceKiB" ]; then
+            echo "flake source is unexpectedly large: ''${source_kib} KiB > ''${maxSourceKiB} KiB" >&2
+            exit 1
+          fi
+
           mkdir -p "$out"
-          printf 'flake_source_excludes_build_output=passed\n' > "$out/source-audit.txt"
-        '';
+          {
+            printf 'flake_source_excludes_build_output=passed\n'
+            printf 'flake_source_size_kib=%s\n' "$source_kib"
+            printf 'flake_source_max_kib=%s\n' "$maxSourceKiB"
+          } > "$out/source-audit.txt"
+          '';
     in
     {
       devShells = forEachSystem (
