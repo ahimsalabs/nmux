@@ -57,15 +57,18 @@ Use `make promotion-evidence-verify` on a locally generated artifact directory
 before transcribing it into the promotion tracker. For a downloaded artifact
 that is not under `target/promotion-evidence`, run
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify`. The
-verifier checks the required summary identity fields, artifact files,
-source/provenance records, archive hash, and packaged runtime smoke result; it
-does not replace human judgment about cache state, flake rate, or platform
-coverage.
+verifier checks the required summary identity fields, timing fields, artifact
+files, source/provenance records, archive hash, and packaged runtime smoke
+result; it does not replace human judgment about cache state, flake rate, or
+platform coverage.
 
 The bundle summary records GitHub Actions fields when present:
 `github_server_url`, `github_repository`, `github_run_id`,
 `github_run_attempt`, `github_ref`, `github_sha`, `runner_os`,
-`runner_arch`, and `runner_name`. Local runs record those fields as `unset`.
+`runner_arch`, and `runner_name`. It also records extracted
+`time -p make check-all` values as `check_all_real_seconds`,
+`check_all_user_seconds`, and `check_all_sys_seconds`. Local runs record GitHub
+identity fields as `unset`.
 
 Before this manual job can become a required or regular native-VT CI gate, a
 later ADR must satisfy

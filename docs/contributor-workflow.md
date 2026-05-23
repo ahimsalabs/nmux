@@ -102,7 +102,9 @@ runtime results.
 `RUN.log`, `TOOLCHAIN.txt`, `SOURCE_FETCH.txt`, `PACKAGE_PROVENANCE.txt`,
 `CARGO_TREE.txt`, `ARCHIVE.sha256`, and `SUMMARY.txt` under
 `target/promotion-evidence` for easier transcription into the promotion
-tracker or manual CI evidence records.
+tracker or manual CI evidence records. `SUMMARY.txt` includes the extracted
+`time -p make check-all` values as `check_all_real_seconds`,
+`check_all_user_seconds`, and `check_all_sys_seconds`.
 It runs `make promotion-evidence-verify` before printing the artifact list.
 Run `make promotion-evidence-verify` directly when reviewing an existing bundle
 without regenerating the native build and packaging sample. Use

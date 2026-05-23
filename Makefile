@@ -56,6 +56,13 @@ promotion-evidence-bundle:
 		echo "missing packaged_runtime_smoke result in $$run_log" >&2; \
 		exit 1; \
 	fi; \
+	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
+	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
+	check_all_sys="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^sys [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
+	if [ -z "$$check_all_real" ] || [ -z "$$check_all_user" ] || [ -z "$$check_all_sys" ]; then \
+		echo "missing check-all time -p result in $$run_log" >&2; \
+		exit 1; \
+	fi; \
 	{ \
 		printf 'nmux promotion evidence bundle\n'; \
 		printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
@@ -80,6 +87,9 @@ promotion-evidence-bundle:
 		printf 'source_fetch=%s\n' "$$bundle_dir/SOURCE_FETCH.txt"; \
 		printf 'package_provenance=%s\n' "$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
 		printf 'cargo_tree=%s\n' "$$bundle_dir/CARGO_TREE.txt"; \
+		printf 'check_all_real_seconds=%s\n' "$$check_all_real"; \
+		printf 'check_all_user_seconds=%s\n' "$$check_all_user"; \
+		printf 'check_all_sys_seconds=%s\n' "$$check_all_sys"; \
 		printf 'archive_sha256=%s\n' "$$archive_sha"; \
 		printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
 	} > "$$bundle_dir/SUMMARY.txt"; \
@@ -153,6 +163,19 @@ promotion-evidence-verify:
 	require_exact "$$summary" "source_fetch=$$source_fetch" 'source-fetch path'; \
 	require_exact "$$summary" "package_provenance=$$package_provenance" 'package provenance path'; \
 	require_exact "$$summary" "cargo_tree=$$cargo_tree" 'cargo tree path'; \
+	require_line "$$summary" '^check_all_real_seconds=[0-9]+([.][0-9]+)?$$' 'check-all real timing'; \
+	require_line "$$summary" '^check_all_user_seconds=[0-9]+([.][0-9]+)?$$' 'check-all user timing'; \
+	require_line "$$summary" '^check_all_sys_seconds=[0-9]+([.][0-9]+)?$$' 'check-all sys timing'; \
+	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
+	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
+	check_all_sys="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^sys [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
+	if [ -z "$$check_all_real" ] || [ -z "$$check_all_user" ] || [ -z "$$check_all_sys" ]; then \
+		echo "missing check-all time -p result in $$run_log" >&2; \
+		exit 1; \
+	fi; \
+	require_exact "$$summary" "check_all_real_seconds=$$check_all_real" 'check-all real timing matches run log'; \
+	require_exact "$$summary" "check_all_user_seconds=$$check_all_user" 'check-all user timing matches run log'; \
+	require_exact "$$summary" "check_all_sys_seconds=$$check_all_sys" 'check-all sys timing matches run log'; \
 	archive_sha="$$(cat "$$archive_sha_file")"; \
 	require_exact "$$summary" "archive_sha256=$$archive_sha" 'archive SHA-256'; \
 	require_exact "$$summary" 'packaged_runtime_smoke=passed' 'packaged runtime smoke'; \

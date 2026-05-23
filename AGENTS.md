@@ -138,12 +138,13 @@ registry, Git source, or Nix store caches.
 `promotion-sample`, and `packaging-archive-runtime-smoke` for one local evidence
 pass.
 `promotion-evidence-bundle` runs `promotion-local-sample` and gathers the log,
-toolchain output, source-fetch report, package provenance, cargo tree, and
-archive checksum under `target/promotion-evidence`.
-`promotion-evidence-verify` checks an existing bundle for required summary
-fields, artifact files, source/provenance records, archive hash, and packaged
-runtime smoke output; the bundle target runs it before printing the artifact
-list.
+toolchain output, extracted `make check-all` timing, source-fetch report,
+package provenance, cargo tree, and archive checksum under
+`target/promotion-evidence`.
+`promotion-evidence-verify` checks an existing bundle for required summary and
+timing fields, artifact files, source/provenance records, archive hash, and
+packaged runtime smoke output; the bundle target runs it before printing the
+artifact list.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `packaging-sample` builds default and opt-in release binaries in separate target
