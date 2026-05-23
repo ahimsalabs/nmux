@@ -56,8 +56,7 @@ engine, a regular CI requirement, or a packaging baseline.
 Run:
 
 ```sh
-nix develop . -c make toolchain-info
-nix develop . -c make check-all
+nix develop . -c make promotion-sample
 ```
 
 Record the host, command, result, timing, cache state, source-fetch mode, and
@@ -66,11 +65,12 @@ any CI or packaging context in
 `make check-all` sample is useful evidence, but it does not change the default
 engine by itself.
 
-Outside the Nix shell, run `make toolchain-info` before the attempted gate. The
-Makefile checks for `flatc` 25.12.19, `cargo`, and optional native-VT Zig
-0.15.x before running the full gate. Record missing-tool or wrong-version
-failures too; they are setup evidence for the non-Nix checklist, not passing
-promotion evidence.
+`make promotion-sample` prints `make toolchain-info` output and then times
+`make check-all` with `time -p`. Outside the Nix shell, run the same target for
+non-Nix setup attempts. The Makefile checks for `flatc` 25.12.19, `cargo`, and
+optional native-VT Zig 0.15.x before running the full gate. Record missing-tool
+or wrong-version failures too; they are setup evidence for the non-Nix
+checklist, not passing promotion evidence.
 
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty

@@ -6,6 +6,7 @@ The supported development path is the Nix shell:
 nix develop . -c make check
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
+nix develop . -c make promotion-sample
 ```
 
 `flake.nix` currently provides:
@@ -30,6 +31,14 @@ For setup and evidence records, print the active tools with:
 ```sh
 nix develop . -c make toolchain-info
 ```
+
+For a local default-engine-promotion evidence sample, use:
+
+```sh
+nix develop . -c make promotion-sample
+```
+
+That target prints `toolchain-info` and then runs `time -p make check-all`.
 
 ## Non-Nix Equivalents
 
@@ -78,8 +87,9 @@ Git URL rewrite rules from changing the HTTPS source fetch used by
 `libghostty-vt-sys`. If an environment uses a pre-fetched Ghostty checkout, set
 `GHOSTTY_SOURCE_DIR` according to the `libghostty-vt-sys` build path and record
 that source policy before using the result as promotion evidence.
-Record `make toolchain-info` output with any non-Nix setup attempt or promotion
-sample so the exact tool versions and source-fetch environment are visible.
+Use `make promotion-sample` for non-Nix setup attempts or promotion samples so
+the exact tool versions, source-fetch environment, and `check-all` timing are
+visible together.
 See [source-fetch-policy.md](source-fetch-policy.md) for the current opt-in
 policy and the remaining source-fetch decisions for packaged/default builds.
 See [packaging.md](packaging.md) for binary distribution questions that remain

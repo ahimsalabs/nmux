@@ -105,10 +105,13 @@ default-engine-promotion evidence:
 
 ```sh
 nix develop . -c make check-all
+nix develop . -c make promotion-sample
 ```
 
 `check-all` runs the regular default-engine gate plus the opt-in
 `libghostty-vt` gate without changing what `make check` means.
+`promotion-sample` prints `toolchain-info` and times `check-all` for evidence
+rows in `docs/default-engine-promotion.md`.
 
 If `nix develop` itself is unavailable, do not rewrite the flake or check in
 machine-local store paths. Either use an already entered dev shell, or record the

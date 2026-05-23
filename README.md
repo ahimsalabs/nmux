@@ -31,13 +31,15 @@ nix develop . -c make toolchain-info
 nix develop . -c make check
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
+nix develop . -c make promotion-sample
 ```
 
 The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
 FlatBuffers install is needed for the schema check. `make check` is the regular
 default-engine gate. `make check-ghostty-vt` is the opt-in full feature gate for
 backend `libghostty-vt` changes. `make check-all` runs both when validating
-release-style or default-engine-promotion work.
+release-style or default-engine-promotion work. `make promotion-sample` prints
+toolchain evidence and times `make check-all` in the same run.
 See [docs/contributor-workflow.md](docs/contributor-workflow.md) for when to use
 the default gate, the opt-in VT gate, or the combined promotion-evidence gate.
 See [docs/toolchain.md](docs/toolchain.md) for the supported Nix path and the

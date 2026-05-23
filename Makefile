@@ -3,7 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema require-cargo require-flatc require-zig rust-test toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema promotion-sample require-cargo require-flatc require-zig rust-test toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -12,6 +12,9 @@ check-all: check check-ghostty-vt
 check-ghostty-vt: check-vt-toolchain
 	GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt
 	GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-cli --features libghostty-vt
+
+promotion-sample: toolchain-info
+	time -p $(MAKE) check-all
 
 check-schema: require-flatc
 	flatc --json --strict-json --no-warnings -o /tmp $(SCHEMA)
