@@ -27,6 +27,12 @@ Current post-M14 state:
   [default-engine-promotion.md](default-engine-promotion.md); default-engine
   push samples, manual promotion bundle samples, frontend hydration, and future
   protocol objects stay separate tracks.
+- Frontend hydration work starts in
+  [upstream/ghostty-surface-hydration.md](upstream/ghostty-surface-hydration.md)
+  and must preserve the no-client-side-PTY-replay boundary.
+- Future protocol-object work starts in
+  [protocol-futures.md](protocol-futures.md) and needs an ADR-backed object
+  lifetime, compatibility, reconnect, and test plan before schema changes.
 
 Done:
 
