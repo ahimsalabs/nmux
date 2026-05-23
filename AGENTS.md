@@ -168,7 +168,8 @@ bundled revision. The bundle target runs it before printing the artifact list.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `source-fetch-provenance-verify` checks an existing source-fetch provenance
-report against the current `Cargo.lock` without regenerating it.
+report against the current `Cargo.lock` without regenerating it; override
+`SOURCE_FETCH_REPORT` when checking a copied or bundled report.
 `source-fetch-offline-probe` clears `target/source-fetch-offline` and checks
 whether `nmux-core --features libghostty-vt` can compile from current caches
 with `CARGO_NET_OFFLINE=true`; treat it as cache-present evidence only.

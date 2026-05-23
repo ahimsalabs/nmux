@@ -3,6 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 PROMOTION_EVIDENCE_DIR ?= target/promotion-evidence
+SOURCE_FETCH_REPORT ?= target/source-fetch-provenance/SOURCE_FETCH.txt
 PACKAGING_LAYOUT ?= target/packaging-libghostty-vt/package
 PACKAGING_ARCHIVE ?= target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz
 PACKAGING_ARCHIVE_SHA256 ?= $(PACKAGING_ARCHIVE).sha256
@@ -535,6 +536,7 @@ promotion-evidence-verify:
 	require_exact "$$run_log" 'verifying source-fetch provenance report' 'source-fetch provenance verifier ran'; \
 	require_exact "$$run_log" 'source_fetch_provenance_verified=target/source-fetch-provenance/SOURCE_FETCH.txt' 'source-fetch provenance verifier result'; \
 	require_exact "$$run_log" 'source_fetch_provenance=target/source-fetch-provenance/SOURCE_FETCH.txt' 'source-fetch provenance artifact path'; \
+	$(MAKE) --no-print-directory SOURCE_FETCH_REPORT="$$source_fetch" source-fetch-provenance-verify; \
 	require_exact "$$offline_probe" 'nmux source-fetch offline probe' 'offline probe title'; \
 	require_exact "$$offline_probe" 'probe_scope=cache-present opt-in native VT build only; not cold checkout, CI cache miss, network-failure, or default/package source policy evidence' 'offline probe scope'; \
 	require_exact "$$offline_probe" 'CARGO_NET_OFFLINE=true' 'offline probe Cargo offline mode'; \
@@ -663,7 +665,7 @@ source-fetch-provenance-sample: toolchain-info
 
 source-fetch-provenance-verify:
 	@echo "verifying source-fetch provenance report"
-	@report="target/source-fetch-provenance/SOURCE_FETCH.txt"; \
+	@report="$(SOURCE_FETCH_REPORT)"; \
 	require_file() { \
 		path="$$1"; \
 		if [ ! -s "$$path" ]; then \

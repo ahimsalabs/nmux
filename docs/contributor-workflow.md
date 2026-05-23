@@ -157,7 +157,8 @@ when updating source-fetch evidence or comparing pinned-fetch versus local
 `GHOSTTY_SOURCE_DIR` samples.
 `make source-fetch-provenance-verify` checks an existing `SOURCE_FETCH.txt`
 against the current `Cargo.lock`, toolchain records, source-mode fields, and
-policy note without regenerating the report.
+policy note without regenerating the report. Override `SOURCE_FETCH_REPORT`
+when checking a copied or bundled report.
 `make source-fetch-offline-probe` checks whether the opt-in
 `nmux-core --features libghostty-vt` build can compile from current caches with
 `CARGO_NET_OFFLINE=true`. Treat this as cache-present evidence only, not

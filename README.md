@@ -96,7 +96,9 @@ and runner fields and checks that `github_sha` matches the bundled revision.
 `make source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `make source-fetch-provenance-verify` checks an existing provenance report
-against the current `Cargo.lock` without regenerating it.
+against the current `Cargo.lock` without regenerating it; set
+`SOURCE_FETCH_REPORT=/path/to/SOURCE_FETCH.txt` to verify a copied or bundled
+report.
 `make source-fetch-offline-probe` clears `target/source-fetch-offline` and
 checks whether the opt-in `nmux-core --features libghostty-vt` build can compile
 from the current Cargo/Ghostty caches with `CARGO_NET_OFFLINE=true`; it is

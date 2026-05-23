@@ -41,6 +41,9 @@ includes the active source mode, `GHOSTTY_SOURCE_DIR`, `GIT_CONFIG_GLOBAL`,
 `Cargo.lock` SHA-256, toolchain info, and the locked `Cargo.lock` records for
 `libghostty-vt` and `libghostty-vt-sys`. It is evidence for the current local
 source-fetch path, not a default or packaged-build source-policy decision.
+Run `make SOURCE_FETCH_REPORT=/path/to/SOURCE_FETCH.txt
+source-fetch-provenance-verify` when checking a copied or bundled provenance
+report against the current `Cargo.lock`.
 
 Use this command to run the cache-present offline probe without inspecting
 Ghostty source:
