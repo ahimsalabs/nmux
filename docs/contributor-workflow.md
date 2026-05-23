@@ -190,7 +190,9 @@ layout, and then runs the no-rebuild archive verifier.
 `make packaging-archive-verify` validates an already-produced archive plus
 sidecar hash without rebuilding. Override `PACKAGING_ARCHIVE` and
 `PACKAGING_ARCHIVE_SHA256` when checking an artifact outside the default
-`target/packaging-libghostty-vt/archive` path.
+`target/packaging-libghostty-vt/archive` path. It reuses
+`make packaging-layout-verify` against the extracted layout before accepting
+the archive.
 `make packaging-archive-runtime-smoke` extracts the archive into a fresh `/tmp`
 install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset, then starts
 the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped client to

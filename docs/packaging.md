@@ -109,8 +109,10 @@ or downloaded artifact. The verifier checks the archive bytes against the
 sidecar hash, rejects unsafe archive paths, extracts into a temporary directory,
 requires the package metadata/provenance/cargo-tree files, validates staged
 file hashes against the extracted files, requires bundled `libghostty-vt`
-runtime libraries and dynamic dependency records, and runs wrapped `nmux` and
-`nmuxd` version checks with library-path environment variables unset.
+runtime libraries and dynamic dependency records, and then runs
+`make packaging-layout-verify` against the extracted layout so wrapper shape,
+layout metadata, runtime-library presence, and wrapped binary version checks
+are covered by the same staged-layout verifier.
 
 `make packaging-archive-runtime-smoke` builds on the archive sample, extracts
 the archive into a fresh `/tmp` install root outside `target/`, unsets

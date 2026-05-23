@@ -122,8 +122,9 @@ file, extracts it, verifies the wrapped binaries from the archive, and then runs
 the no-rebuild archive verifier.
 `make packaging-archive-verify` checks an already-produced archive plus its
 `.sha256` file without rebuilding: it verifies the archive hash, extracted
-layout, package metadata, provenance file hashes, native runtime library,
-dynamic dependency records, and wrapped binary version checks.
+layout, staged-layout wrapper shape, package metadata, provenance file hashes,
+native runtime library, dynamic dependency records, and wrapped binary version
+checks.
 `make packaging-archive-runtime-smoke` extracts the archive into a fresh `/tmp`
 install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset, then starts
 the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped client to

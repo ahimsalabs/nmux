@@ -1310,10 +1310,7 @@ packaging-archive-verify:
 		exit 1; \
 	fi; \
 	require_line "$$cargo_tree" '^nmux-cli v' 'cargo tree root'; \
-	printf 'archived libghostty-vt nmux version: '; \
-	env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmux" --version; \
-	printf 'archived libghostty-vt nmuxd version: '; \
-	env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmuxd" --version; \
+	$(MAKE) --no-print-directory PACKAGING_LAYOUT="$$pkg_dir" packaging-layout-verify; \
 	printf 'packaging_archive_verified=%s\n' "$$archive"
 
 packaging-archive-runtime-smoke: packaging-archive-sample
