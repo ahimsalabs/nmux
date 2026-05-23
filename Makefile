@@ -3,7 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-layout-sample packaging-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -63,6 +63,40 @@ packaging-sample: toolchain-info check-vt-toolchain
 		echo "one or more opt-in libghostty-vt binary version checks failed; record this as packaging evidence" >&2; \
 		exit "$$status"; \
 	fi
+
+packaging-layout-sample: packaging-sample
+	@echo "staging opt-in libghostty-vt package layout"
+	@pkg_dir=target/packaging-libghostty-vt/package; \
+	lib_path="$$(find target/packaging-libghostty-vt/release -path '*/ghostty-install/lib/libghostty-vt.*' -print -quit)"; \
+	if [ -z "$$lib_path" ]; then \
+		echo "missing packaged libghostty-vt runtime library directory" >&2; \
+		exit 1; \
+	fi; \
+	lib_dir="$$(dirname "$$lib_path")"; \
+	rm -rf "$$pkg_dir"; \
+	mkdir -p "$$pkg_dir/bin" "$$pkg_dir/lib" "$$pkg_dir/libexec"; \
+	cp target/packaging-libghostty-vt/release/nmux "$$pkg_dir/libexec/nmux"; \
+	cp target/packaging-libghostty-vt/release/nmuxd "$$pkg_dir/libexec/nmuxd"; \
+	cp "$$lib_dir"/libghostty-vt* "$$pkg_dir/lib/"; \
+	for bin in nmux nmuxd; do \
+		{ \
+			printf '%s\n' '#!/bin/sh'; \
+			printf '%s\n' 'set -eu'; \
+			printf '%s\n' 'bin_dir=$$(CDPATH= cd "$$(dirname "$$0")" && pwd)'; \
+			printf '%s\n' 'lib_dir=$$bin_dir/../lib'; \
+			printf '%s\n' 'DYLD_LIBRARY_PATH=$$lib_dir$${DYLD_LIBRARY_PATH:+:$$DYLD_LIBRARY_PATH}'; \
+			printf '%s\n' 'LD_LIBRARY_PATH=$$lib_dir$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}'; \
+			printf '%s\n' 'export DYLD_LIBRARY_PATH LD_LIBRARY_PATH'; \
+			printf 'exec "$$bin_dir/../libexec/%s" "$$@"\n' "$$bin"; \
+		} > "$$pkg_dir/bin/$$bin"; \
+		chmod +x "$$pkg_dir/bin/$$bin"; \
+	done; \
+	printf 'package_layout=%s\n' "$$pkg_dir"; \
+	find "$$pkg_dir" -type f | sort; \
+	printf 'packaged libghostty-vt nmux version: '; \
+	"$$pkg_dir/bin/nmux" --version; \
+	printf 'packaged libghostty-vt nmuxd version: '; \
+	"$$pkg_dir/bin/nmuxd" --version
 
 check-schema: require-flatc
 	flatc --json --strict-json --no-warnings -o /tmp $(SCHEMA)

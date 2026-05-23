@@ -60,6 +60,7 @@ Run:
 ```sh
 nix develop . -c make promotion-sample
 nix develop . -c make packaging-sample
+nix develop . -c make packaging-layout-sample
 ```
 
 Record the host, command, result, timing, cache state, source-fetch mode, and
@@ -81,6 +82,9 @@ evidence.
 `make packaging-sample` prints the same toolchain context, builds default and
 opt-in release binaries in separate target directories, and reports artifact
 sizes plus binary versions for packaging evidence.
+`make packaging-layout-sample` stages the opt-in binaries, wrapper scripts, and
+`libghostty-vt` runtime libraries under `target/packaging-libghostty-vt/package`
+and verifies the wrapped binaries can run from that local layout.
 
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty

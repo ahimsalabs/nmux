@@ -21,6 +21,7 @@ default engine:
 
 ```sh
 nix develop . -c make packaging-sample
+nix develop . -c make packaging-layout-sample
 ```
 
 The target prints `make toolchain-info`, validates the optional native-VT
@@ -41,6 +42,19 @@ mode, cache state, command, artifact sizes, and result. A passing local
 packaging sample proves the release binaries build in that environment; it does
 not answer install paths, signing/notarization, update channels, target support,
 or native-library provenance by itself.
+
+`make packaging-layout-sample` builds on `make packaging-sample` and stages an
+opt-in local package layout at `target/packaging-libghostty-vt/package`:
+
+- `bin/nmux` and `bin/nmuxd` wrapper scripts;
+- `libexec/nmux` and `libexec/nmuxd` release binaries;
+- `lib/libghostty-vt*` runtime-library artifacts.
+
+The wrappers resolve their own directory, set `DYLD_LIBRARY_PATH` and
+`LD_LIBRARY_PATH` to `../lib`, and then execute the matching binary from
+`../libexec`. This proves a relocatable local layout shape for the opt-in
+native VT build, but it is still not a signed, installed, notarized, or
+platform-native package.
 
 Current local Darwin evidence shows the default release binaries run directly
 and the opt-in `libghostty-vt` release binaries run when the produced

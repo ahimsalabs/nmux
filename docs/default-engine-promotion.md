@@ -74,6 +74,9 @@ engine or a regular CI requirement.
 - `make packaging-sample` prints that toolchain information, builds default and
   opt-in `libghostty-vt` release binaries in separate target directories, and
   reports artifact sizes plus binary versions for packaging evidence.
+- `make packaging-layout-sample` stages opt-in release binaries, wrapper
+  scripts, and `libghostty-vt` runtime-library artifacts in a local package
+  layout and verifies the wrapped binaries run from that layout.
 - The optional VT preflight rejects an invalid `GHOSTTY_SOURCE_DIR` before the
   native build starts, while unset `GHOSTTY_SOURCE_DIR` is recorded as the
   pinned-fetch source mode.
@@ -132,6 +135,7 @@ support, or native-library provenance by themselves.
 | Date | Host | Command | Result |
 | --- | --- | --- | --- |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-sample` | Passed. Default binaries ran `--version`; sizes: `nmux` 1065296 bytes, `nmuxd` 1182352 bytes. Opt-in `libghostty-vt` binaries built; sizes: `nmux` 1065424 bytes, `nmuxd` 1251648 bytes; `--version` passed with `DYLD_LIBRARY_PATH`/`LD_LIBRARY_PATH` set to the produced `ghostty-install/lib` runtime-library directory. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-layout-sample` | Passed. Staged opt-in package layout at `target/packaging-libghostty-vt/package` with `bin/nmux`, `bin/nmuxd`, `libexec/nmux`, `libexec/nmuxd`, and `lib/libghostty-vt*`; wrapped `nmux --version` and `nmuxd --version` both reported 0.1.0 from the staged layout. |
 
 ## Open Work
 
@@ -152,8 +156,8 @@ support, or native-library provenance by themselves.
   provenance, signing/notarization where relevant, release checks, and recorded
   `make packaging-sample` results. The current Darwin packaging sample shows
   the opt-in release binaries can run with an explicit runtime library path,
-  but packaged binaries still need an rpath, bundling, platform dependency, or
-  other distribution strategy for `libghostty-vt.dylib`.
+  but packaged binaries still need more evidence for rpath, bundling, platform
+  dependency, or another distribution strategy for `libghostty-vt.dylib`.
 - Keep contributor workflow guidance current as default-engine, opt-in
   terminal-correctness, and promotion-evidence responsibilities change.
 

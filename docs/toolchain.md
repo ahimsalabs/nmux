@@ -8,6 +8,7 @@ nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
 nix develop . -c make packaging-sample
+nix develop . -c make packaging-layout-sample
 ```
 
 `flake.nix` currently provides:
@@ -52,6 +53,15 @@ artifacts, the discovered runtime library directory, and binary versions. A
 failed opt-in binary version check is packaging evidence and should be recorded
 in
 [the default-engine promotion tracker](default-engine-promotion.md).
+For a local staged package-layout smoke check, use:
+
+```sh
+nix develop . -c make packaging-layout-sample
+```
+
+That target stages the opt-in binaries, wrapper scripts, and `libghostty-vt`
+runtime libraries under `target/packaging-libghostty-vt/package`, then verifies
+the wrapped binaries can run from that layout.
 
 ## Non-Nix Equivalents
 
