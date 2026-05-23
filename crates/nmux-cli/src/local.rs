@@ -2213,40 +2213,35 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         requires_mouse_tracking,
     ) = match input.kind() {
         protocol::InputKind::Key => {
-            let key = input.key();
-            let modifiers = validate_input_modifiers(key.map_or(0, |key| key.modifiers()))?;
+            let key = input.key().ok_or("missing key input")?;
+            let modifiers = validate_input_modifiers(key.modifiers())?;
             (
-                key.and_then(|key| key.text_utf8())
-                    .unwrap_or_default()
-                    .as_bytes()
-                    .to_vec(),
+                key.text_utf8().unwrap_or_default().as_bytes().to_vec(),
                 None,
-                key.and_then(|key| key.key_name()).map(ToOwned::to_owned),
+                key.key_name().map(ToOwned::to_owned),
                 modifiers,
                 None,
                 false,
                 false,
             )
         }
-        protocol::InputKind::RawBytes => (
-            input
-                .raw()
-                .and_then(|raw| raw.bytes())
-                .map(|bytes| bytes.iter().collect())
-                .unwrap_or_default(),
-            None,
-            None,
-            0,
-            None,
-            false,
-            false,
-        ),
+        protocol::InputKind::RawBytes => {
+            let raw = input.raw().ok_or("missing raw input")?;
+            (
+                raw.bytes()
+                    .map(|bytes| bytes.iter().collect())
+                    .unwrap_or_default(),
+                None,
+                None,
+                0,
+                None,
+                false,
+                false,
+            )
+        }
         protocol::InputKind::Paste => {
-            let paste_text = input
-                .paste()
-                .and_then(|paste| paste.text_utf8())
-                .unwrap_or_default()
-                .to_owned();
+            let paste = input.paste().ok_or("missing paste input")?;
+            let paste_text = paste.text_utf8().unwrap_or_default().to_owned();
             (
                 paste_text.as_bytes().to_vec(),
                 Some(paste_text),
@@ -2257,19 +2252,22 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                 false,
             )
         }
-        protocol::InputKind::Focus => (
-            if input.focus().is_some_and(|focus| focus.focused()) {
-                b"\x1b[I".to_vec()
-            } else {
-                b"\x1b[O".to_vec()
-            },
-            None,
-            None,
-            0,
-            None,
-            true,
-            false,
-        ),
+        protocol::InputKind::Focus => {
+            let focus = input.focus().ok_or("missing focus input")?;
+            (
+                if focus.focused() {
+                    b"\x1b[I".to_vec()
+                } else {
+                    b"\x1b[O".to_vec()
+                },
+                None,
+                None,
+                0,
+                None,
+                true,
+                false,
+            )
+        }
         protocol::InputKind::Mouse => {
             let mouse = input.mouse().ok_or("missing mouse input")?;
             let button = mouse_button_from_protocol(mouse.button())?;
@@ -5126,6 +5124,31 @@ mod tests {
             &mut builder,
             protocol::EnvelopeBody::AttachRequest,
             request.as_union_value(),
+        )
+    }
+
+    fn input_frame_without_payload(kind: protocol::InputKind) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let actor_id = builder.create_string("actor-1");
+        let pane_id = builder.create_string("pane-1");
+        let input = protocol::InputEvent::create(
+            &mut builder,
+            &protocol::InputEventArgs {
+                pane_id: Some(pane_id),
+                actor_id: Some(actor_id),
+                input_seq: 2,
+                kind,
+                key: None,
+                mouse: None,
+                paste: None,
+                raw: None,
+                focus: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::InputEvent,
+            input.as_union_value(),
         )
     }
 
@@ -11086,6 +11109,24 @@ mod tests {
                 .to_string()
                 .contains("unsupported input modifier bits")
         );
+    }
+
+    #[test]
+    fn rejects_input_with_missing_kind_payloads() {
+        for (kind, expected) in [
+            (protocol::InputKind::Key, "missing key input"),
+            (protocol::InputKind::RawBytes, "missing raw input"),
+            (protocol::InputKind::Paste, "missing paste input"),
+            (protocol::InputKind::Focus, "missing focus input"),
+            (protocol::InputKind::Mouse, "missing mouse input"),
+        ] {
+            let frame = input_frame_without_payload(kind);
+            let err = input_summary_from_frame(&frame).expect_err("missing input payload rejected");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?} for {kind:?}, got {err}"
+            );
+        }
     }
 
     #[test]
