@@ -188,8 +188,8 @@ engine or a regular CI requirement.
   pull requests and pushes to `main`; the `make promotion-evidence-bundle` job
   is manual, uploads the `nmux-promotion-evidence` artifact, and a dependent
   job downloads that artifact and runs `make promotion-evidence-verify` against
-  the downloaded copy. The manual workflow must be run before any CI promotion
-  evidence is recorded here.
+  the downloaded copy. The first passing manual CI promotion evidence run is
+  recorded below, and more samples are still required before promotion.
 - `target/promotion-evidence/SUMMARY.txt` records GitHub Actions run, ref, SHA,
   and runner fields when present, so CI rows can be copied from the uploaded
   artifact instead of inferred from the web UI.
@@ -303,15 +303,15 @@ promotion artifact, or verify a downloaded artifact copy.
 
 ## CI Promotion Samples
 
-No manual GitHub Actions promotion evidence bundle run has been recorded yet. When
-one is run, record it here with the field set in [CI notes](ci.md): workflow
-run, git revision, runner, toolchain, source mode, VCS status, open-work
-snapshot, cache state, timings, source-fetch provenance, uploaded artifact,
-downloaded-artifact verifier result, packaging/archive SHA-256, runtime smoke
-result, outcome, and follow-up.
+Manual GitHub Actions promotion evidence bundle runs should be recorded here
+with the field set in [CI notes](ci.md): workflow run, git revision, runner,
+toolchain, source mode, VCS status, open-work snapshot, cache state, timings,
+source-fetch provenance, uploaded artifact, downloaded-artifact verifier result,
+packaging/archive SHA-256, runtime smoke result, outcome, and follow-up.
 
 | Date | Workflow Run | Runner | Command | Result |
 | --- | --- | --- | --- | --- |
+| 2026-05-23 | [`26334374094`](https://github.com/ahimsalabs/nmux/actions/runs/26334374094), `workflow_dispatch` on `main`, commit `8d6911ec71d0af558905a908533948f6e1e9f81a`, attempt 1 | Linux X64, `runner_name=GitHub Actions 1000000140`, host `Linux runnervmg397c 6.17.0-1013-azure`; toolchain: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2; `GHOSTTY_SOURCE_DIR=unset`, source mode `pinned-fetch`; `GIT_CONFIG_GLOBAL=unset`; observed cache state: Nix store present, Cargo home/registry present, Cargo Git missing, default target dir present, promotion-cold target dir missing, packaging default and `libghostty-vt` target dirs present, source-fetch provenance and offline probe present | `nix develop . -c make promotion-evidence-bundle` in the manual promotion job; dependent artifact job downloaded `nmux-promotion-evidence` and ran `nix develop . -c make PROMOTION_EVIDENCE_DIR=target/downloaded-promotion-evidence promotion-evidence-verify`; local recheck of the downloaded artifact used the same verifier command | Passed. The default-engine job, promotion evidence bundle job, and downloaded-artifact verification job all succeeded. `SUMMARY.txt` recorded `working_tree_status=clean`, `github_sha` matching `git_revision`, `bundle_elapsed_seconds=533`, `check_all_real_seconds=316.57`, `check_all_user_seconds=333.97`, `check_all_sys_seconds=25.71`, `local_smoke=passed` with persisted reattach, print-context, and socket-recreation subresults passed, `source_fetch_offline_probe=passed` with `elapsed_seconds=73`, archive SHA-256 `6320323755adace6b92a1a16ef19dd11998adb241161a53695fe8a72a976c056`, and `packaged_runtime_smoke=passed`. |
 
 ## Open Work
 
@@ -320,14 +320,13 @@ result, outcome, and follow-up.
   evidence clears only `target/promotion-cold`, and current cold-deps evidence
   isolates Cargo home and target dirs but not the Nix store, checkout, or
   network state.
-- Exercise the manual promotion evidence bundle and downloaded-artifact verifier
-  jobs in CI before making the opt-in VT gate required. A 2026-05-23
-  workflow-dispatch attempt passed the default-engine job but failed during
-  `promotion-evidence-bundle` when the native-VT test process segfaulted on
-  Ubuntu while exercising terminal-generated PTY-write callbacks. The next CI
-  attempt should prove the heap-stabilized callback registration path, the
-  serialized `RUST_TEST_THREADS=1` native-VT gate, and the
-  downloaded-artifact verifier.
+- Record more manual promotion evidence bundle and downloaded-artifact verifier
+  samples in CI before making the opt-in VT gate required. The first passing
+  2026-05-23 sample proves the heap-stabilized callback registration path, the
+  serialized `RUST_TEST_THREADS=1` native-VT gate, and the downloaded-artifact
+  verifier on one Ubuntu GitHub Actions runner. Keep watching native-VT CI flake
+  rate, runner/cache behavior, and the GitHub Node 20 action deprecation warning
+  before treating this as enough CI evidence for promotion.
 - Validate the non-Nix toolchain checklist with platform-specific setup
   commands, `make promotion-sample` output, and timings; the current local
   non-Nix attempt failed before tests because `flatc` was absent from the host
