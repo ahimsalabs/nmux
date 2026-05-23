@@ -9,6 +9,15 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
+const DEFAULT_WORKSPACE_SUMMARY: &str =
+    "session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed";
+
+fn assert_default_workspace_attached(stdout: &str, context: &str) {
+    assert!(
+        stdout.contains(DEFAULT_WORKSPACE_SUMMARY),
+        "{context}:\n{stdout}"
+    );
+}
 
 #[test]
 fn one_shot_cli_receives_nmux_pane_environment() {
@@ -1764,10 +1773,7 @@ fn live_cli_can_wait_for_daemon_socket() {
         String::from_utf8_lossy(&client.stderr)
     );
     let stdout = String::from_utf8_lossy(&client.stdout);
-    assert!(
-        stdout.contains("session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"),
-        "client did not attach after waiting for socket:\n{stdout}"
-    );
+    assert_default_workspace_attached(&stdout, "client did not attach after waiting for socket");
 }
 
 #[test]
@@ -1811,9 +1817,9 @@ fn one_shot_cli_can_wait_for_daemon_socket() {
         String::from_utf8_lossy(&client.stderr)
     );
     let stdout = String::from_utf8_lossy(&client.stdout);
-    assert!(
-        stdout.contains("session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"),
-        "one-shot client did not attach after waiting for socket:\n{stdout}"
+    assert_default_workspace_attached(
+        &stdout,
+        "one-shot client did not attach after waiting for socket",
     );
 }
 
@@ -1861,9 +1867,9 @@ fn follow_cli_can_wait_for_daemon_socket() {
         String::from_utf8_lossy(&client.stderr)
     );
     let stdout = String::from_utf8_lossy(&client.stdout);
-    assert!(
-        stdout.contains("session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"),
-        "follow client did not attach after waiting for socket:\n{stdout}"
+    assert_default_workspace_attached(
+        &stdout,
+        "follow client did not attach after waiting for socket",
     );
 }
 
