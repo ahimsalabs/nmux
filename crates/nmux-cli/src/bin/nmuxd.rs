@@ -272,7 +272,10 @@ struct RawArgs {
         allow_hyphen_values = true
     )]
     env: Vec<(String, String)>,
-    #[arg(long = "resize-policy", value_name = "fixed|leader|active-client|manual")]
+    #[arg(
+        long = "resize-policy",
+        value_name = "fixed|leader|active-client|manual"
+    )]
     resize_policy: Option<String>,
     #[arg(long = "terminal-engine", value_name = "interim|libghostty-vt")]
     terminal_engine_kind: Option<String>,
@@ -502,8 +505,7 @@ fn validate_mode_args(args: DaemonModeArgs) -> Result<(), &'static str> {
     {
         return Err("--one-shot cannot be combined with live daemon modes");
     }
-    if args.live
-        && (args.live_forever || args.live_cycles.is_some() || args.live_clients.is_some())
+    if args.live && (args.live_forever || args.live_cycles.is_some() || args.live_clients.is_some())
     {
         return Err(
             "--live cannot be combined with --live-forever, --live-cycles, or --live-clients",
@@ -591,9 +593,8 @@ fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'stati
 mod tests {
     use super::{
         Args, DaemonModeArgs, SocketCleanup, args_from_iter, format_daemon_choices_json,
-        format_ready_error_json,
-        format_ready_json, parse_env_assignment, parse_numeric_arg, parse_resize_policy,
-        parse_terminal_engine_kind, usage, validate_mode_args,
+        format_ready_error_json, format_ready_json, parse_env_assignment, parse_numeric_arg,
+        parse_resize_policy, parse_terminal_engine_kind, usage, validate_mode_args,
     };
     use nmux_cli::local;
     use nmux_core::terminal::TerminalEngineKind;

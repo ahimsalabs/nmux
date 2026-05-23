@@ -9,6 +9,7 @@ use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use clap::{ArgAction, Parser};
 use nmux_cli::local;
 use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
@@ -1398,6 +1399,127 @@ struct Args {
     iterations: Option<usize>,
 }
 
+#[derive(Debug, Parser)]
+#[command(
+    name = "nmux",
+    disable_help_flag = true,
+    disable_version_flag = true,
+    args_override_self = true
+)]
+struct RawArgs {
+    #[arg(short = 'h', long = "help", action = ArgAction::SetTrue)]
+    help: bool,
+    #[arg(short = 'V', long = "version", action = ArgAction::SetTrue)]
+    version: bool,
+    #[arg(long = "version-json", action = ArgAction::SetTrue)]
+    version_json: bool,
+    #[arg(long = "list-key-names", action = ArgAction::SetTrue)]
+    list_key_names: bool,
+    #[arg(long = "list-key-names-json", action = ArgAction::SetTrue)]
+    list_key_names_json: bool,
+    #[arg(long = "list-input-choices-json", action = ArgAction::SetTrue)]
+    list_input_choices_json: bool,
+    #[arg(long = "json", action = ArgAction::SetTrue)]
+    output_json: bool,
+    #[arg(long = "print-context", action = ArgAction::SetTrue)]
+    print_context: bool,
+    #[arg(long = "print-context-json", action = ArgAction::SetTrue)]
+    print_context_json: bool,
+    #[arg(long = "print-socket", action = ArgAction::SetTrue)]
+    print_socket: bool,
+    #[arg(long = "print-socket-json", action = ArgAction::SetTrue)]
+    print_socket_json: bool,
+    #[arg(long = "state-info", action = ArgAction::SetTrue)]
+    state_info: bool,
+    #[arg(long = "state-info-json", action = ArgAction::SetTrue)]
+    state_info_json: bool,
+    #[arg(long = "socket", value_name = "PATH")]
+    socket_path: Option<PathBuf>,
+    #[arg(long = "key", value_name = "TEXT", allow_hyphen_values = true)]
+    key_text: Option<String>,
+    #[arg(
+        long = "key-name",
+        value_name = "NAME",
+        action = ArgAction::Append,
+        allow_hyphen_values = true
+    )]
+    key_names: Vec<String>,
+    #[arg(
+        long = "key-modifiers",
+        value_name = "MODS",
+        allow_hyphen_values = true
+    )]
+    key_modifiers: Option<String>,
+    #[arg(long = "paste", value_name = "TEXT", allow_hyphen_values = true)]
+    paste_text: Option<String>,
+    #[arg(long = "focus", value_name = "gained|lost", allow_hyphen_values = true)]
+    focus_event: Option<String>,
+    #[arg(
+        long = "mouse",
+        value_name = "action:button:row:col",
+        allow_hyphen_values = true
+    )]
+    mouse_event: Option<String>,
+    #[arg(
+        long = "mouse-modifiers",
+        value_name = "MODS",
+        allow_hyphen_values = true
+    )]
+    mouse_modifiers: Option<String>,
+    #[arg(long = "mouse-pixels", value_name = "x:y", allow_hyphen_values = true)]
+    mouse_pixels: Option<String>,
+    #[arg(long = "no-input", action = ArgAction::SetTrue)]
+    no_input: bool,
+    #[arg(long = "scrollback-start", value_name = "LINE")]
+    scrollback_start: Option<String>,
+    #[arg(long = "scrollback-count", value_name = "COUNT")]
+    scrollback_count: Option<String>,
+    #[arg(long = "scrollback-tail", value_name = "COUNT")]
+    scrollback_tail: Option<String>,
+    #[arg(long = "state", value_name = "PATH")]
+    state_path: Option<PathBuf>,
+    #[arg(long = "follow", action = ArgAction::SetTrue)]
+    follow: bool,
+    #[arg(long = "live", action = ArgAction::SetTrue)]
+    live: bool,
+    #[arg(long = "start", action = ArgAction::SetTrue)]
+    start: bool,
+    #[arg(long = "command", value_name = "SHELL", allow_hyphen_values = true)]
+    start_command: Option<String>,
+    #[arg(long = "cwd", value_name = "DIR", allow_hyphen_values = true)]
+    start_working_dir: Option<String>,
+    #[arg(
+        long = "env",
+        value_name = "KEY=VALUE",
+        value_parser = parse_env_assignment,
+        action = ArgAction::Append,
+        allow_hyphen_values = true
+    )]
+    start_env: Vec<(String, String)>,
+    #[arg(long = "stdin", action = ArgAction::SetTrue)]
+    stdin_input: bool,
+    #[arg(long = "stdin-bytes", action = ArgAction::SetTrue)]
+    stdin_bytes: bool,
+    #[arg(
+        long = "local-echo",
+        value_name = "off|tty",
+        allow_hyphen_values = true
+    )]
+    local_echo: Option<String>,
+    #[arg(long = "redraw", action = ArgAction::SetTrue)]
+    redraw: bool,
+    #[arg(long = "cols", value_name = "COUNT")]
+    live_cols: Option<String>,
+    #[arg(long = "rows", value_name = "COUNT")]
+    live_rows: Option<String>,
+    #[arg(long = "interval-ms", value_name = "MS")]
+    interval_ms: Option<String>,
+    #[arg(long = "connect-timeout-ms", value_name = "MS")]
+    connect_timeout_ms: Option<String>,
+    #[arg(long = "iterations", value_name = "COUNT")]
+    iterations: Option<String>,
+}
+
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
     args_from_iter(std::env::args().skip(1))
 }
@@ -1405,288 +1527,129 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
 fn args_from_iter<I, S>(args: I) -> Result<Args, Box<dyn std::error::Error>>
 where
     I: IntoIterator<Item = S>,
-    S: Into<String>,
+    S: Into<std::ffi::OsString>,
 {
-    let mut help = false;
-    let mut version = false;
-    let mut version_json = false;
-    let mut list_key_names = false;
-    let mut list_key_names_json = false;
-    let mut list_input_choices_json = false;
-    let mut output_json = false;
-    let mut print_context = false;
-    let mut print_context_json = false;
-    let mut print_socket = false;
-    let mut print_socket_json = false;
-    let mut state_info = false;
-    let mut state_info_json = false;
-    let (mut socket_path, mut socket_source) = local::default_socket_path_and_source();
-    let mut input_text = None;
+    let raw = RawArgs::try_parse_from(
+        std::iter::once(std::ffi::OsString::from("nmux")).chain(args.into_iter().map(Into::into)),
+    )?;
+    let (socket_path, socket_source) = match raw.socket_path {
+        Some(path) => (path, local::SocketPathSource::Explicit),
+        None => local::default_socket_path_and_source(),
+    };
+    let key_set = raw.key_text.is_some();
+    let key_name_set = !raw.key_names.is_empty();
+    let key_modifiers_set = raw.key_modifiers.is_some();
+    let paste_set = raw.paste_text.is_some();
+    let focus_set = raw.focus_event.is_some();
+    let mouse_set = raw.mouse_event.is_some();
+    let mouse_modifiers_set = raw.mouse_modifiers.is_some();
+    let mouse_pixels_set = raw.mouse_pixels.is_some();
+    let local_echo_set = raw.local_echo.is_some();
+    let scrollback_start_set = raw.scrollback_start.is_some();
+    let scrollback_count_set = raw.scrollback_count.is_some();
+    let scrollback_tail_set = raw.scrollback_tail.is_some();
+    let scrollback_start_line = raw
+        .scrollback_start
+        .map(|value| parse_numeric_arg("--scrollback-start", value))
+        .transpose()?
+        .unwrap_or(1);
+    let scrollback_line_count = raw
+        .scrollback_count
+        .map(|value| parse_numeric_arg("--scrollback-count", value))
+        .transpose()?
+        .unwrap_or(2);
+    let scrollback_tail_count = raw
+        .scrollback_tail
+        .map(|value| parse_numeric_arg("--scrollback-tail", value))
+        .transpose()?;
+    let live_cols = raw
+        .live_cols
+        .map(|value| parse_numeric_arg("--cols", value))
+        .transpose()?;
+    let live_rows = raw
+        .live_rows
+        .map(|value| parse_numeric_arg("--rows", value))
+        .transpose()?;
+    let interval_ms = raw
+        .interval_ms
+        .map(|value| parse_numeric_arg("--interval-ms", value))
+        .transpose()?
+        .unwrap_or(1000);
+    let connect_timeout_ms = raw
+        .connect_timeout_ms
+        .map(|value| parse_numeric_arg("--connect-timeout-ms", value))
+        .transpose()?;
+    let iterations = raw
+        .iterations
+        .map(|value| parse_numeric_arg("--iterations", value))
+        .transpose()?;
     let mut key_name = None;
     let mut key_names = Vec::new();
-    let mut key_modifiers = 0;
-    let mut paste_text = None;
-    let mut focus_event = None;
-    let mut mouse_event = None;
-    let mut mouse_modifiers = 0;
-    let mut mouse_pixels = None;
-    let mut scrollback_start_line = 1;
-    let mut scrollback_line_count = 2;
-    let mut scrollback_tail_count = None;
-    let mut state_path = None;
-    let mut follow = false;
-    let mut live = false;
-    let mut start = false;
-    let mut start_command = None;
-    let mut start_working_dir = None;
-    let mut start_env = Vec::new();
-    let mut stdin_input = false;
-    let mut stdin_bytes = false;
-    let mut local_echo = LocalEcho::Off;
-    let mut redraw = false;
-    let mut live_cols = None;
-    let mut live_rows = None;
-    let mut interval_ms = 1000;
-    let mut connect_timeout_ms = None;
-    let mut iterations = None;
-    let mut local_echo_set = false;
-    let mut key_set = false;
-    let mut key_name_set = false;
-    let mut key_modifiers_set = false;
-    let mut mouse_modifiers_set = false;
-    let mut paste_set = false;
-    let mut focus_set = false;
-    let mut mouse_set = false;
-    let mut no_input_set = false;
-    let mut args = args.into_iter().map(Into::into);
-    let mut mouse_pixels_set = false;
-    let mut scrollback_start_set = false;
-    let mut scrollback_count_set = false;
-    let mut scrollback_tail_set = false;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--help" | "-h" => {
-                help = true;
-            }
-            "--version" | "-V" => {
-                version = true;
-            }
-            "--version-json" => {
-                version_json = true;
-            }
-            "--list-key-names" => {
-                list_key_names = true;
-            }
-            "--list-key-names-json" => {
-                list_key_names_json = true;
-            }
-            "--list-input-choices-json" => {
-                list_input_choices_json = true;
-            }
-            "--json" => {
-                output_json = true;
-            }
-            "--print-context" => {
-                print_context = true;
-            }
-            "--print-context-json" => {
-                print_context_json = true;
-            }
-            "--print-socket" => {
-                print_socket = true;
-            }
-            "--print-socket-json" => {
-                print_socket_json = true;
-            }
-            "--state-info" => {
-                state_info = true;
-            }
-            "--state-info-json" => {
-                state_info_json = true;
-            }
-            "--socket" => {
-                socket_path = args
-                    .next()
-                    .map(PathBuf::from)
-                    .ok_or("--socket requires a path")?;
-                socket_source = local::SocketPathSource::Explicit;
-            }
-            "--key" => {
-                key_set = true;
-                input_text = Some(args.next().ok_or("--key requires text")?);
-            }
-            "--key-name" => {
-                key_name_set = true;
-                let parsed = parse_key_name(
-                    &args
-                        .next()
-                        .ok_or("--key-name requires a supported key name")?,
-                )?;
-                if key_name.is_none() {
-                    key_name = Some(parsed.clone());
-                }
-                key_names.push(parsed);
-                input_text = None;
-            }
-            "--key-modifiers" => {
-                key_modifiers_set = true;
-                key_modifiers =
-                    parse_key_modifiers(&args.next().ok_or("--key-modifiers requires modifiers")?)
-                        .map_err(|err| format!("--key-modifiers {err}"))?;
-            }
-            "--paste" => {
-                paste_set = true;
-                paste_text = Some(args.next().ok_or("--paste requires text")?);
-                input_text = None;
-            }
-            "--focus" => {
-                focus_set = true;
-                focus_event = Some(parse_focus_event(
-                    &args.next().ok_or("--focus requires gained or lost")?,
-                )?);
-                input_text = None;
-            }
-            "--mouse" => {
-                mouse_set = true;
-                mouse_event = Some(parse_mouse_event(
-                    &args
-                        .next()
-                        .ok_or("--mouse requires action:button:row:col")?,
-                )?);
-                input_text = None;
-            }
-            "--mouse-modifiers" => {
-                mouse_modifiers_set = true;
-                mouse_modifiers = parse_key_modifiers(
-                    &args.next().ok_or("--mouse-modifiers requires modifiers")?,
-                )
-                .map_err(|err| format!("--mouse-modifiers {err}"))?;
-            }
-            "--mouse-pixels" => {
-                mouse_pixels_set = true;
-                mouse_pixels = Some(parse_mouse_pixels(
-                    &args.next().ok_or("--mouse-pixels requires x:y")?,
-                )?);
-            }
-            "--no-input" => {
-                no_input_set = true;
-                input_text = None;
-            }
-            "--scrollback-start" => {
-                scrollback_start_set = true;
-                scrollback_start_line = parse_numeric_arg(
-                    "--scrollback-start",
-                    args.next().ok_or("--scrollback-start requires a line")?,
-                )?;
-            }
-            "--scrollback-count" => {
-                scrollback_count_set = true;
-                scrollback_line_count = parse_numeric_arg(
-                    "--scrollback-count",
-                    args.next().ok_or("--scrollback-count requires a count")?,
-                )?;
-            }
-            "--scrollback-tail" => {
-                scrollback_tail_set = true;
-                scrollback_tail_count = Some(parse_numeric_arg(
-                    "--scrollback-tail",
-                    args.next().ok_or("--scrollback-tail requires a count")?,
-                )?);
-            }
-            "--state" => {
-                state_path = Some(
-                    args.next()
-                        .map(PathBuf::from)
-                        .ok_or("--state requires a path")?,
-                );
-            }
-            "--follow" => {
-                follow = true;
-                input_text = None;
-            }
-            "--live" => {
-                live = true;
-            }
-            "--start" => {
-                start = true;
-            }
-            "--command" => {
-                start_command = Some(args.next().ok_or("--command requires a shell command")?);
-            }
-            "--cwd" => {
-                let value = args.next().ok_or("--cwd requires a directory path")?;
-                if value.is_empty() {
-                    return Err("--cwd requires a non-empty directory path".into());
-                }
-                start_working_dir = Some(value);
-            }
-            "--env" => {
-                start_env.push(parse_env_assignment(
-                    &args.next().ok_or("--env requires KEY=VALUE")?,
-                )?);
-            }
-            "--stdin" => {
-                stdin_input = true;
-            }
-            "--stdin-bytes" => {
-                stdin_bytes = true;
-            }
-            "--local-echo" => {
-                local_echo_set = true;
-                local_echo =
-                    parse_local_echo(&args.next().ok_or("--local-echo requires off or tty")?)
-                        .map_err(|err| format!("--local-echo {err}"))?;
-            }
-            "--redraw" => {
-                redraw = true;
-            }
-            "--cols" => {
-                live_cols = Some(parse_numeric_arg(
-                    "--cols",
-                    args.next().ok_or("--cols requires a count")?,
-                )?);
-            }
-            "--rows" => {
-                live_rows = Some(parse_numeric_arg(
-                    "--rows",
-                    args.next().ok_or("--rows requires a count")?,
-                )?);
-            }
-            "--interval-ms" => {
-                interval_ms = parse_numeric_arg(
-                    "--interval-ms",
-                    args.next().ok_or("--interval-ms requires milliseconds")?,
-                )?;
-            }
-            "--connect-timeout-ms" => {
-                connect_timeout_ms = Some(parse_numeric_arg(
-                    "--connect-timeout-ms",
-                    args.next()
-                        .ok_or("--connect-timeout-ms requires milliseconds")?,
-                )?);
-            }
-            "--iterations" => {
-                iterations = Some(parse_numeric_arg(
-                    "--iterations",
-                    args.next().ok_or("--iterations requires a count")?,
-                )?);
-            }
-            _ => return Err(format!("unknown argument: {arg}").into()),
+    for raw_key_name in &raw.key_names {
+        let parsed = parse_key_name(raw_key_name)?;
+        if key_name.is_none() {
+            key_name = Some(parsed.clone());
         }
+        key_names.push(parsed);
     }
-    let exits_before_attach = help
-        || version
-        || version_json
-        || list_key_names
-        || list_key_names_json
-        || list_input_choices_json
-        || print_context
-        || print_context_json
-        || print_socket
-        || print_socket_json
-        || state_info
-        || state_info_json;
+    let key_modifiers = raw
+        .key_modifiers
+        .as_deref()
+        .map(parse_key_modifiers)
+        .transpose()
+        .map_err(|err| format!("--key-modifiers {err}"))?
+        .unwrap_or(0);
+    let mut mouse_event = raw
+        .mouse_event
+        .as_deref()
+        .map(parse_mouse_event)
+        .transpose()?;
+    let mouse_modifiers = raw
+        .mouse_modifiers
+        .as_deref()
+        .map(parse_key_modifiers)
+        .transpose()
+        .map_err(|err| format!("--mouse-modifiers {err}"))?
+        .unwrap_or(0);
+    let mouse_pixels = raw
+        .mouse_pixels
+        .as_deref()
+        .map(parse_mouse_pixels)
+        .transpose()?;
+    let focus_event = raw
+        .focus_event
+        .as_deref()
+        .map(parse_focus_event)
+        .transpose()?;
+    let local_echo = raw
+        .local_echo
+        .as_deref()
+        .map(parse_local_echo)
+        .transpose()
+        .map_err(|err| format!("--local-echo {err}"))?
+        .unwrap_or(LocalEcho::Off);
+    let start_working_dir = match raw.start_working_dir {
+        Some(value) if value.is_empty() => {
+            return Err("--cwd requires a non-empty directory path".into());
+        }
+        value => value,
+    };
+    let mut input_text = raw.key_text;
+    if key_name_set || paste_set || focus_set || mouse_set || raw.no_input || raw.follow {
+        input_text = None;
+    }
+    let exits_before_attach = raw.help
+        || raw.version
+        || raw.version_json
+        || raw.list_key_names
+        || raw.list_key_names_json
+        || raw.list_input_choices_json
+        || raw.print_context
+        || raw.print_context_json
+        || raw.print_socket
+        || raw.print_socket_json
+        || raw.state_info
+        || raw.state_info_json;
     let live_resize = if exits_before_attach {
         match (live_cols, live_rows) {
             (Some(cols), Some(rows)) => Some((cols, rows)),
@@ -1700,7 +1663,7 @@ where
         }
     };
     if !exits_before_attach {
-        if stdin_input && stdin_bytes {
+        if raw.stdin_input && raw.stdin_bytes {
             return Err("--stdin and --stdin-bytes cannot be used together".into());
         }
         validate_positive_numeric_args(
@@ -1716,27 +1679,27 @@ where
             scrollback_start_set,
             scrollback_count_set,
         )?;
-        validate_explicit_input_modes(
+        validate_explicit_input_modes(ExplicitInputModeArgs {
             key_set,
             key_name_set,
             paste_set,
             focus_set,
             mouse_set,
-            no_input_set,
-            stdin_input,
-            stdin_bytes,
-        )?;
-        validate_no_input_resize_args(no_input_set, live_resize)?;
-        validate_mode_args(
-            live,
-            follow,
-            stdin_input,
-            stdin_bytes,
+            no_input_set: raw.no_input,
+            stdin_input: raw.stdin_input,
+            stdin_bytes: raw.stdin_bytes,
+        })?;
+        validate_no_input_resize_args(raw.no_input, live_resize)?;
+        validate_mode_args(ClientModeArgs {
+            live: raw.live,
+            follow: raw.follow,
+            stdin_input: raw.stdin_input,
+            stdin_bytes: raw.stdin_bytes,
             local_echo_set,
-            redraw,
+            redraw: raw.redraw,
             live_resize,
             iterations,
-            output_json,
+            output_json: raw.output_json,
             key_set,
             paste_set,
             focus_set,
@@ -1745,11 +1708,11 @@ where
             mouse_set,
             mouse_modifiers_set,
             mouse_pixels_set,
-            start,
-            start_command.is_some(),
-            start_working_dir.is_some(),
-            !start_env.is_empty(),
-        )?;
+            start: raw.start,
+            start_command_set: raw.start_command.is_some(),
+            start_working_dir_set: start_working_dir.is_some(),
+            start_env_set: !raw.start_env.is_empty(),
+        })?;
     }
     if let Some(mouse_event) = mouse_event.as_mut() {
         mouse_event.modifiers = mouse_modifiers;
@@ -1760,43 +1723,43 @@ where
     }
 
     Ok(Args {
-        help,
-        version,
-        version_json,
-        list_key_names,
-        list_key_names_json,
-        list_input_choices_json,
-        output_json,
-        print_context,
-        print_context_json,
-        print_socket,
-        print_socket_json,
-        state_info,
-        state_info_json,
+        help: raw.help,
+        version: raw.version,
+        version_json: raw.version_json,
+        list_key_names: raw.list_key_names,
+        list_key_names_json: raw.list_key_names_json,
+        list_input_choices_json: raw.list_input_choices_json,
+        output_json: raw.output_json,
+        print_context: raw.print_context,
+        print_context_json: raw.print_context_json,
+        print_socket: raw.print_socket,
+        print_socket_json: raw.print_socket_json,
+        state_info: raw.state_info,
+        state_info_json: raw.state_info_json,
         socket_path,
         socket_source,
         input_text,
         key_name,
         key_names,
         key_modifiers,
-        paste_text,
+        paste_text: raw.paste_text,
         focus_event,
         mouse_event,
         scrollback_start_line,
         scrollback_line_count,
         scrollback_tail_count,
-        state_path,
-        follow,
-        live,
-        start,
-        start_command,
+        state_path: raw.state_path,
+        follow: raw.follow,
+        live: raw.live,
+        start: raw.start,
+        start_command: raw.start_command,
         start_working_dir,
-        start_env,
-        stdin_input,
-        stdin_bytes,
-        no_input: no_input_set,
+        start_env: raw.start_env,
+        stdin_input: raw.stdin_input,
+        stdin_bytes: raw.stdin_bytes,
+        no_input: raw.no_input,
         local_echo,
-        redraw,
+        redraw: raw.redraw,
         live_resize,
         interval_ms,
         connect_timeout_ms,
@@ -2606,7 +2569,8 @@ fn validate_scrollback_selection_args(
     Ok(())
 }
 
-fn validate_explicit_input_modes(
+#[derive(Clone, Copy, Debug, Default)]
+struct ExplicitInputModeArgs {
     key_set: bool,
     key_name_set: bool,
     paste_set: bool,
@@ -2615,92 +2579,95 @@ fn validate_explicit_input_modes(
     no_input_set: bool,
     stdin_input: bool,
     stdin_bytes: bool,
-) -> Result<(), &'static str> {
-    if key_set && no_input_set {
+}
+
+fn validate_explicit_input_modes(args: ExplicitInputModeArgs) -> Result<(), &'static str> {
+    if args.key_set && args.no_input_set {
         return Err("--key cannot be combined with --no-input");
     }
-    if key_set && key_name_set {
+    if args.key_set && args.key_name_set {
         return Err("--key cannot be combined with --key-name");
     }
-    if key_set && paste_set {
+    if args.key_set && args.paste_set {
         return Err("--key cannot be combined with --paste");
     }
-    if key_set && focus_set {
+    if args.key_set && args.focus_set {
         return Err("--key cannot be combined with --focus");
     }
-    if key_set && mouse_set {
+    if args.key_set && args.mouse_set {
         return Err("--key cannot be combined with --mouse");
     }
-    if key_name_set && paste_set {
+    if args.key_name_set && args.paste_set {
         return Err("--key-name cannot be combined with --paste");
     }
-    if key_name_set && focus_set {
+    if args.key_name_set && args.focus_set {
         return Err("--key-name cannot be combined with --focus");
     }
-    if key_name_set && mouse_set {
+    if args.key_name_set && args.mouse_set {
         return Err("--key-name cannot be combined with --mouse");
     }
-    if key_name_set && no_input_set {
+    if args.key_name_set && args.no_input_set {
         return Err("--key-name cannot be combined with --no-input");
     }
-    if paste_set && focus_set {
+    if args.paste_set && args.focus_set {
         return Err("--paste cannot be combined with --focus");
     }
-    if paste_set && mouse_set {
+    if args.paste_set && args.mouse_set {
         return Err("--paste cannot be combined with --mouse");
     }
-    if paste_set && no_input_set {
+    if args.paste_set && args.no_input_set {
         return Err("--paste cannot be combined with --no-input");
     }
-    if focus_set && no_input_set {
+    if args.focus_set && args.no_input_set {
         return Err("--focus cannot be combined with --no-input");
     }
-    if focus_set && mouse_set {
+    if args.focus_set && args.mouse_set {
         return Err("--focus cannot be combined with --mouse");
     }
-    if mouse_set && no_input_set {
+    if args.mouse_set && args.no_input_set {
         return Err("--mouse cannot be combined with --no-input");
     }
-    if key_set && stdin_input {
+    if args.key_set && args.stdin_input {
         return Err("--key cannot be combined with --stdin");
     }
-    if key_set && stdin_bytes {
+    if args.key_set && args.stdin_bytes {
         return Err("--key cannot be combined with --stdin-bytes");
     }
-    if key_name_set && stdin_input {
+    if args.key_name_set && args.stdin_input {
         return Err("--key-name cannot be combined with --stdin");
     }
-    if key_name_set && stdin_bytes {
+    if args.key_name_set && args.stdin_bytes {
         return Err("--key-name cannot be combined with --stdin-bytes");
     }
-    if paste_set && stdin_input {
+    if args.paste_set && args.stdin_input {
         return Err("--paste cannot be combined with --stdin");
     }
-    if paste_set && stdin_bytes {
+    if args.paste_set && args.stdin_bytes {
         return Err("--paste cannot be combined with --stdin-bytes");
     }
-    if focus_set && stdin_input {
+    if args.focus_set && args.stdin_input {
         return Err("--focus cannot be combined with --stdin");
     }
-    if focus_set && stdin_bytes {
+    if args.focus_set && args.stdin_bytes {
         return Err("--focus cannot be combined with --stdin-bytes");
     }
-    if mouse_set && stdin_input {
+    if args.mouse_set && args.stdin_input {
         return Err("--mouse cannot be combined with --stdin");
     }
-    if mouse_set && stdin_bytes {
+    if args.mouse_set && args.stdin_bytes {
         return Err("--mouse cannot be combined with --stdin-bytes");
     }
-    if no_input_set && stdin_input {
+    if args.no_input_set && args.stdin_input {
         return Err("--no-input cannot be combined with --stdin");
     }
-    if no_input_set && stdin_bytes {
+    if args.no_input_set && args.stdin_bytes {
         return Err("--no-input cannot be combined with --stdin-bytes");
     }
     Ok(())
 }
 
-fn validate_mode_args(
+#[derive(Clone, Copy, Debug, Default)]
+struct ClientModeArgs {
     live: bool,
     follow: bool,
     stdin_input: bool,
@@ -2722,71 +2689,73 @@ fn validate_mode_args(
     start_command_set: bool,
     start_working_dir_set: bool,
     start_env_set: bool,
-) -> Result<(), &'static str> {
-    if start && follow {
+}
+
+fn validate_mode_args(args: ClientModeArgs) -> Result<(), &'static str> {
+    if args.start && args.follow {
         return Err("--start cannot be combined with --follow");
     }
-    if start_command_set && !start {
+    if args.start_command_set && !args.start {
         return Err("--command requires --start");
     }
-    if start_working_dir_set && !start {
+    if args.start_working_dir_set && !args.start {
         return Err("--cwd requires --start");
     }
-    if start_env_set && !start {
+    if args.start_env_set && !args.start {
         return Err("--env requires --start");
     }
-    if live && follow {
+    if args.live && args.follow {
         return Err("--follow cannot be combined with --live");
     }
-    if follow && key_set {
+    if args.follow && args.key_set {
         return Err("--follow cannot be combined with --key");
     }
-    if follow && paste_set {
+    if args.follow && args.paste_set {
         return Err("--follow cannot be combined with --paste");
     }
-    if follow && key_name_set {
+    if args.follow && args.key_name_set {
         return Err("--follow cannot be combined with --key-name");
     }
-    if follow && focus_set {
+    if args.follow && args.focus_set {
         return Err("--follow cannot be combined with --focus");
     }
-    if follow && mouse_set {
+    if args.follow && args.mouse_set {
         return Err("--follow cannot be combined with --mouse");
     }
-    if stdin_input && !live {
+    if args.stdin_input && !args.live {
         return Err("--stdin requires --live");
     }
-    if stdin_bytes && !live {
+    if args.stdin_bytes && !args.live {
         return Err("--stdin-bytes requires --live");
     }
-    if local_echo_set && !stdin_bytes {
+    if args.local_echo_set && !args.stdin_bytes {
         return Err("--local-echo requires --stdin-bytes");
     }
-    if redraw && !live {
+    if args.redraw && !args.live {
         return Err("--redraw requires --live");
     }
-    if live_resize.is_some() && !live {
+    if args.live_resize.is_some() && !args.live {
         return Err("--cols and --rows require --live");
     }
-    if output_json && follow {
+    if args.output_json && args.follow {
         return Err("--json cannot be combined with --follow");
     }
-    if output_json && redraw {
+    if args.output_json && args.redraw {
         return Err("--json cannot be combined with --redraw");
     }
-    if key_modifiers_set && !key_name_set {
+    if args.key_modifiers_set && !args.key_name_set {
         return Err("--key-modifiers requires --key-name");
     }
-    if mouse_modifiers_set && !mouse_set {
+    if args.mouse_modifiers_set && !args.mouse_set {
         return Err("--mouse-modifiers requires --mouse");
     }
-    if mouse_pixels_set && !mouse_set {
+    if args.mouse_pixels_set && !args.mouse_set {
         return Err("--mouse-pixels requires --mouse");
     }
-    if iterations.is_some() && !live && !follow {
+    if args.iterations.is_some() && !args.live && !args.follow {
         return Err("--iterations requires --live or --follow");
     }
-    if iterations == Some(0) {
+    if args.iterations == Some(0) {
         return Err("--iterations must be greater than 0");
     }
     Ok(())
@@ -3032,15 +3001,15 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FocusEvent, KEY_NAME_ALIASES, LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent,
-        SUPPORTED_KEY_NAMES, StateInfoSocketSummary, args_from_iter, format_cli_error_json,
-        format_context_json, format_input_choices_json, format_key_names_json,
-        format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
-        format_live_error_json, format_live_surface_update_json, format_live_workspace_json,
-        format_rendered_attach_json, format_scrollback, format_state_info_json,
-        format_state_info_text, interim_surface_fidelity_warning_needed, live_update_print_kind,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        ClientModeArgs, ExplicitInputModeArgs, FocusEvent, KEY_NAME_ALIASES, LiveDetachReason,
+        LiveUpdatePrintKind, LocalEcho, MouseEvent, SUPPORTED_KEY_NAMES, StateInfoSocketSummary,
+        args_from_iter, format_cli_error_json, format_context_json, format_input_choices_json,
+        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
+        format_live_detach_json, format_live_error_json, format_live_surface_update_json,
+        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
+        format_state_info_json, format_state_info_text, interim_surface_fidelity_warning_needed,
+        live_update_print_kind, parse_env_assignment, parse_focus_event, parse_key_modifiers,
+        parse_key_name, parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
         raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
         sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
@@ -3050,45 +3019,6 @@ mod tests {
     use nmux_cli::local;
     use nmux_proto::protocol;
     use std::path::Path;
-
-    fn validate_mode_args(
-        live: bool,
-        follow: bool,
-        stdin_input: bool,
-        stdin_bytes: bool,
-        local_echo_set: bool,
-        redraw: bool,
-        live_resize: Option<(u32, u32)>,
-        iterations: Option<usize>,
-        key_set: bool,
-        paste_set: bool,
-        focus_set: bool,
-        key_name_set: bool,
-    ) -> Result<(), &'static str> {
-        super_validate_mode_args(
-            live,
-            follow,
-            stdin_input,
-            stdin_bytes,
-            local_echo_set,
-            redraw,
-            live_resize,
-            iterations,
-            false,
-            key_set,
-            paste_set,
-            focus_set,
-            key_name_set,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-        )
-    }
 
     fn test_surface_update(
         kind: local::SurfaceUpdateKind,
@@ -3735,27 +3665,6 @@ mod tests {
         );
     }
 
-    fn validate_explicit_input_modes(
-        key_set: bool,
-        key_name_set: bool,
-        paste_set: bool,
-        focus_set: bool,
-        no_input_set: bool,
-        stdin_input: bool,
-        stdin_bytes: bool,
-    ) -> Result<(), &'static str> {
-        super_validate_explicit_input_modes(
-            key_set,
-            key_name_set,
-            paste_set,
-            focus_set,
-            false,
-            no_input_set,
-            stdin_input,
-            stdin_bytes,
-        )
-    }
-
     #[test]
     fn raw_terminal_mode_is_only_needed_for_stdin_bytes_on_tty() {
         assert!(raw_terminal_mode_needed(true, true));
@@ -3928,400 +3837,476 @@ mod tests {
     #[test]
     fn mode_validation_rejects_ignored_or_conflicting_flags() {
         assert_eq!(
-            validate_mode_args(
-                true, true, false, false, false, false, None, None, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                live: true,
+                follow: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--follow cannot be combined with --live")
         );
         assert_eq!(
-            super_validate_mode_args(
-                false, true, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, false, false, true, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                follow: true,
+                start: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--start cannot be combined with --follow")
         );
         assert_eq!(
-            super_validate_mode_args(
-                true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, false, false, false, true, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                start_command_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--command requires --start")
         );
         assert_eq!(
-            super_validate_mode_args(
-                true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, false, false, false, false, true, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                start_working_dir_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--cwd requires --start")
         );
         assert_eq!(
-            super_validate_mode_args(
-                true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, false, false, false, false, false, true
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                start_env_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--env requires --start")
         );
         assert_eq!(
-            validate_mode_args(
-                false, true, false, false, false, false, None, None, true, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                follow: true,
+                key_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--follow cannot be combined with --key")
         );
         assert_eq!(
-            validate_mode_args(
-                false, true, false, false, false, false, None, None, false, true, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                follow: true,
+                paste_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--follow cannot be combined with --paste")
         );
         assert_eq!(
-            validate_mode_args(
-                false, true, false, false, false, false, None, None, false, false, true, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                follow: true,
+                focus_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--follow cannot be combined with --focus")
         );
         assert_eq!(
-            validate_mode_args(
-                false, true, false, false, false, false, None, None, false, false, false, true
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                follow: true,
+                key_name_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--follow cannot be combined with --key-name")
         );
         assert_eq!(
-            super_validate_mode_args(
-                false, true, false, false, false, false, None, None, false, false, false, false,
-                false, false, true, false, false, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                follow: true,
+                mouse_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--follow cannot be combined with --mouse")
         );
         assert_eq!(
-            validate_mode_args(
-                false, false, true, false, false, false, None, None, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                stdin_input: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--stdin requires --live")
         );
         assert_eq!(
-            validate_mode_args(
-                false, false, false, true, false, false, None, None, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                stdin_bytes: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--stdin-bytes requires --live")
         );
         assert_eq!(
-            validate_mode_args(
-                true, false, false, false, true, false, None, None, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                live: true,
+                local_echo_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--local-echo requires --stdin-bytes")
         );
         assert_eq!(
-            validate_mode_args(
-                false, false, false, false, false, true, None, None, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                redraw: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--redraw requires --live")
         );
         assert_eq!(
-            validate_mode_args(
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                Some((80, 24)),
-                None,
-                false,
-                false,
-                false,
-                false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                live_resize: Some((80, 24)),
+                ..ClientModeArgs::default()
+            }),
             Err("--cols and --rows require --live")
         );
         assert_eq!(
-            validate_mode_args(
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                None,
-                Some(1),
-                false,
-                false,
-                false,
-                false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                iterations: Some(1),
+                ..ClientModeArgs::default()
+            }),
             Err("--iterations requires --live or --follow")
         );
         assert_eq!(
-            validate_mode_args(
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                None,
-                Some(0),
-                false,
-                false,
-                false,
-                false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                live: true,
+                iterations: Some(0),
+                ..ClientModeArgs::default()
+            }),
             Err("--iterations must be greater than 0")
         );
         assert_eq!(
-            super_validate_mode_args(
-                true, false, false, false, false, false, None, None, false, false, false, false,
-                false, true, false, false, false, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                key_modifiers_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--key-modifiers requires --key-name")
         );
         assert_eq!(
-            super_validate_mode_args(
-                true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, true, false, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                mouse_modifiers_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--mouse-modifiers requires --mouse")
         );
         assert_eq!(
-            super_validate_mode_args(
-                true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, false, true, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                mouse_pixels_set: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--mouse-pixels requires --mouse")
         );
         assert_eq!(
-            super_validate_mode_args(
-                false, true, false, false, false, false, None, None, true, false, false, false,
-                false, false, false, false, false, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                follow: true,
+                output_json: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--json cannot be combined with --follow")
         );
         assert_eq!(
-            super_validate_mode_args(
-                true, false, false, false, false, true, None, None, true, false, false, false,
-                false, false, false, false, false, false, false, false, false
-            ),
+            super_validate_mode_args(ClientModeArgs {
+                live: true,
+                redraw: true,
+                output_json: true,
+                ..ClientModeArgs::default()
+            }),
             Err("--json cannot be combined with --redraw")
         );
         assert!(
-            super_validate_mode_args(
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                None,
-                Some(1),
-                true,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false,
-                false
-            )
+            super_validate_mode_args(ClientModeArgs {
+                live: true,
+                iterations: Some(1),
+                output_json: true,
+                ..ClientModeArgs::default()
+            })
             .is_ok()
         );
         assert!(
-            validate_mode_args(
-                true,
-                false,
-                false,
-                true,
-                true,
-                true,
-                Some((80, 24)),
-                Some(1),
-                false,
-                false,
-                true,
-                true
-            )
+            super_validate_mode_args(ClientModeArgs {
+                live: true,
+                stdin_bytes: true,
+                local_echo_set: true,
+                redraw: true,
+                live_resize: Some((80, 24)),
+                iterations: Some(1),
+                focus_set: true,
+                key_name_set: true,
+                ..ClientModeArgs::default()
+            })
             .is_ok()
         );
         assert!(
-            validate_mode_args(
-                false, false, false, false, false, false, None, None, false, false, true, true
-            )
+            super_validate_mode_args(ClientModeArgs {
+                focus_set: true,
+                key_name_set: true,
+                ..ClientModeArgs::default()
+            })
             .is_ok()
         );
         assert!(
-            super_validate_mode_args(
-                false, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, true, false, false, false, false, false, false
-            )
+            super_validate_mode_args(ClientModeArgs {
+                mouse_set: true,
+                ..ClientModeArgs::default()
+            })
             .is_ok()
         );
         assert!(
-            validate_mode_args(
-                false,
-                true,
-                false,
-                false,
-                false,
-                false,
-                None,
-                Some(1),
-                false,
-                false,
-                false,
-                false
-            )
+            super_validate_mode_args(ClientModeArgs {
+                follow: true,
+                iterations: Some(1),
+                ..ClientModeArgs::default()
+            })
             .is_ok()
         );
     }
 
     #[test]
     fn input_mode_validation_rejects_explicit_conflicts() {
-        assert_eq!(
-            validate_explicit_input_modes(true, false, false, false, true, false, false),
-            Err("--key cannot be combined with --no-input")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(true, true, false, false, false, false, false),
-            Err("--key cannot be combined with --key-name")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(true, false, true, false, false, false, false),
-            Err("--key cannot be combined with --paste")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(true, false, false, true, false, false, false),
-            Err("--key cannot be combined with --focus")
-        );
-        assert_eq!(
-            super_validate_explicit_input_modes(
-                true, false, false, false, true, false, false, false
+        let rejected = [
+            (
+                ExplicitInputModeArgs {
+                    key_set: true,
+                    no_input_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key cannot be combined with --no-input",
             ),
-            Err("--key cannot be combined with --mouse")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, true, true, false, false, false, false),
-            Err("--key-name cannot be combined with --paste")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, true, false, true, false, false, false),
-            Err("--key-name cannot be combined with --focus")
-        );
-        assert_eq!(
-            super_validate_explicit_input_modes(
-                false, true, false, false, true, false, false, false
+            (
+                ExplicitInputModeArgs {
+                    key_set: true,
+                    key_name_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key cannot be combined with --key-name",
             ),
-            Err("--key-name cannot be combined with --mouse")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, true, false, false, true, false, false),
-            Err("--key-name cannot be combined with --no-input")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, false, true, true, false, false, false),
-            Err("--paste cannot be combined with --focus")
-        );
-        assert_eq!(
-            super_validate_explicit_input_modes(
-                false, false, true, false, true, false, false, false
+            (
+                ExplicitInputModeArgs {
+                    key_set: true,
+                    paste_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key cannot be combined with --paste",
             ),
-            Err("--paste cannot be combined with --mouse")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, false, true, false, true, false, false),
-            Err("--paste cannot be combined with --no-input")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, false, false, true, true, false, false),
-            Err("--focus cannot be combined with --no-input")
-        );
-        assert_eq!(
-            super_validate_explicit_input_modes(
-                false, false, false, true, true, false, false, false
+            (
+                ExplicitInputModeArgs {
+                    key_set: true,
+                    focus_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key cannot be combined with --focus",
             ),
-            Err("--focus cannot be combined with --mouse")
-        );
-        assert_eq!(
-            super_validate_explicit_input_modes(
-                false, false, false, false, true, true, false, false
+            (
+                ExplicitInputModeArgs {
+                    key_set: true,
+                    mouse_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key cannot be combined with --mouse",
             ),
-            Err("--mouse cannot be combined with --no-input")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(true, false, false, false, false, true, false),
-            Err("--key cannot be combined with --stdin")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(true, false, false, false, false, false, true),
-            Err("--key cannot be combined with --stdin-bytes")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, true, false, false, false, true, false),
-            Err("--key-name cannot be combined with --stdin")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, true, false, false, false, false, true),
-            Err("--key-name cannot be combined with --stdin-bytes")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, false, true, false, false, true, false),
-            Err("--paste cannot be combined with --stdin")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, false, true, false, false, false, true),
-            Err("--paste cannot be combined with --stdin-bytes")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, false, false, true, false, true, false),
-            Err("--focus cannot be combined with --stdin")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, false, false, true, false, false, true),
-            Err("--focus cannot be combined with --stdin-bytes")
-        );
-        assert_eq!(
-            super_validate_explicit_input_modes(
-                false, false, false, false, true, false, true, false
+            (
+                ExplicitInputModeArgs {
+                    key_name_set: true,
+                    paste_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key-name cannot be combined with --paste",
             ),
-            Err("--mouse cannot be combined with --stdin")
-        );
-        assert_eq!(
-            super_validate_explicit_input_modes(
-                false, false, false, false, true, false, false, true
+            (
+                ExplicitInputModeArgs {
+                    key_name_set: true,
+                    focus_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key-name cannot be combined with --focus",
             ),
-            Err("--mouse cannot be combined with --stdin-bytes")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, false, false, false, true, true, false),
-            Err("--no-input cannot be combined with --stdin")
-        );
-        assert_eq!(
-            validate_explicit_input_modes(false, false, false, false, true, false, true),
-            Err("--no-input cannot be combined with --stdin-bytes")
-        );
-        assert!(
-            validate_explicit_input_modes(false, false, false, false, false, true, false).is_ok()
-        );
-        assert!(
-            validate_explicit_input_modes(false, false, false, false, false, false, true).is_ok()
-        );
-        assert!(
-            validate_explicit_input_modes(true, false, false, false, false, false, false).is_ok()
-        );
-        assert!(
-            validate_explicit_input_modes(false, true, false, false, false, false, false).is_ok()
-        );
-        assert!(
-            validate_explicit_input_modes(false, false, true, false, false, false, false).is_ok()
-        );
-        assert!(
-            validate_explicit_input_modes(false, false, false, true, false, false, false).is_ok()
-        );
-        assert!(
-            validate_explicit_input_modes(false, false, false, false, true, false, false).is_ok()
-        );
+            (
+                ExplicitInputModeArgs {
+                    key_name_set: true,
+                    mouse_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key-name cannot be combined with --mouse",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    key_name_set: true,
+                    no_input_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key-name cannot be combined with --no-input",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    paste_set: true,
+                    focus_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--paste cannot be combined with --focus",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    paste_set: true,
+                    mouse_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--paste cannot be combined with --mouse",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    paste_set: true,
+                    no_input_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--paste cannot be combined with --no-input",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    focus_set: true,
+                    no_input_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--focus cannot be combined with --no-input",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    focus_set: true,
+                    mouse_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--focus cannot be combined with --mouse",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    mouse_set: true,
+                    no_input_set: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--mouse cannot be combined with --no-input",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    key_set: true,
+                    stdin_input: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key cannot be combined with --stdin",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    key_set: true,
+                    stdin_bytes: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key cannot be combined with --stdin-bytes",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    key_name_set: true,
+                    stdin_input: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key-name cannot be combined with --stdin",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    key_name_set: true,
+                    stdin_bytes: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--key-name cannot be combined with --stdin-bytes",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    paste_set: true,
+                    stdin_input: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--paste cannot be combined with --stdin",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    paste_set: true,
+                    stdin_bytes: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--paste cannot be combined with --stdin-bytes",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    focus_set: true,
+                    stdin_input: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--focus cannot be combined with --stdin",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    focus_set: true,
+                    stdin_bytes: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--focus cannot be combined with --stdin-bytes",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    mouse_set: true,
+                    stdin_input: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--mouse cannot be combined with --stdin",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    mouse_set: true,
+                    stdin_bytes: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--mouse cannot be combined with --stdin-bytes",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    no_input_set: true,
+                    stdin_input: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--no-input cannot be combined with --stdin",
+            ),
+            (
+                ExplicitInputModeArgs {
+                    no_input_set: true,
+                    stdin_bytes: true,
+                    ..ExplicitInputModeArgs::default()
+                },
+                "--no-input cannot be combined with --stdin-bytes",
+            ),
+        ];
+        for (args, error) in rejected {
+            assert_eq!(super_validate_explicit_input_modes(args), Err(error));
+        }
+
+        let accepted = [
+            ExplicitInputModeArgs {
+                stdin_input: true,
+                ..ExplicitInputModeArgs::default()
+            },
+            ExplicitInputModeArgs {
+                stdin_bytes: true,
+                ..ExplicitInputModeArgs::default()
+            },
+            ExplicitInputModeArgs {
+                key_set: true,
+                ..ExplicitInputModeArgs::default()
+            },
+            ExplicitInputModeArgs {
+                key_name_set: true,
+                ..ExplicitInputModeArgs::default()
+            },
+            ExplicitInputModeArgs {
+                paste_set: true,
+                ..ExplicitInputModeArgs::default()
+            },
+            ExplicitInputModeArgs {
+                focus_set: true,
+                ..ExplicitInputModeArgs::default()
+            },
+            ExplicitInputModeArgs {
+                mouse_set: true,
+                ..ExplicitInputModeArgs::default()
+            },
+        ];
+        for args in accepted {
+            assert!(super_validate_explicit_input_modes(args).is_ok());
+        }
     }
 
     #[test]
