@@ -1025,7 +1025,10 @@ mod ghostty_vt {
     }
 
     fn trimmable_trailing_run(run: &CellRun) -> bool {
-        run.style_id == 0 && run.flags == 0 && run.hyperlink_id == 0
+        run.style_id == 0
+            && run.flags == 0
+            && run.hyperlink_id == 0
+            && run.semantic_content == protocol::CellSemanticContent::Output
     }
 
     fn cursor(
@@ -2118,7 +2121,7 @@ mod tests {
 
         assert_eq!(
             update.surface_lines.first().map(String::as_str),
-            Some("prompt>")
+            Some("prompt> ")
         );
         assert_eq!(
             update.surface_semantic_prompts.first().copied(),
@@ -2167,6 +2170,32 @@ mod tests {
             runs.iter().map(|run| run.text.as_str()).collect::<Vec<_>>(),
             vec!["prompt ", "input", "output"]
         );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_preserves_semantic_trailing_blank_cells() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &[], &[]),
+                b"\x1b]133;A\x1b\\prompt\x1b]133;B\x1b\\   ",
+            )
+            .expect("semantic trailing blank update");
+
+        assert_eq!(
+            update.surface_lines.first().map(String::as_str),
+            Some("prompt   ")
+        );
+        let runs = update.surface_row_runs.first().expect("first row runs");
+        let input_run = runs
+            .iter()
+            .find(|run| run.semantic_content == protocol::CellSemanticContent::Input)
+            .expect("input semantic blank run");
+
+        assert_eq!(input_run.text, "   ");
+        assert_eq!(input_run.cell_widths, vec![1, 1, 1]);
+        assert_eq!(input_run.style_id, 0);
     }
 
     #[cfg(feature = "libghostty-vt")]

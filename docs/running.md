@@ -227,8 +227,8 @@ Current coverage includes:
 - cursor position/visibility/shape/blink, terminal title metadata, OSC 7
   working-directory metadata, terminal color state, render-state default
   colors/palette, palette overrides, and explicit cursor color;
-- style-separated visible rows, styled scrollback rows, style-bearing trailing
-  blanks, cell widths, combining marks, emoji ZWJ clusters, SGR style
+- style-separated visible rows, styled scrollback rows, style-bearing and
+  semantic-content trailing blanks, cell widths, combining marks, emoji ZWJ clusters, SGR style
   flags, underline variants, underline color, palette-indexed colors, row-level dirty state, row
   state hashes, hyperlink presence, and Kitty graphics placeholder metadata;
 - alternate-screen entry/restoration with alternate scrollback omission,

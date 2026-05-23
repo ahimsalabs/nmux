@@ -80,10 +80,11 @@ only after the backend extraction proves the exact shape needed.
 - Cell style runs: `libghostty-vt` now supplies foreground/background colors,
   underline color, SGR flags, underline variants, style identity, and cell widths for visible
   and scrollback rows. Surface snapshots and scrollback chunks carry a pane
-  style table. The extractor preserves style-bearing trailing blank cells so
-  background-colored terminal regions do not disappear from row runs, while
-  default trailing blanks are still trimmed; richer style semantics still need
-  protocol decisions.
+  style table. The extractor preserves style-bearing and semantic-content
+  trailing blank cells so background-colored terminal regions and
+  shell-integration spans do not disappear from row runs, while plain default
+  trailing blanks are still trimmed; richer style semantics still need protocol
+  decisions.
 - Grapheme and cell width: double-width cells, combining marks, and emoji ZWJ
   clusters are covered by `libghostty-vt` extraction tests and represented as
   per-cell run widths. Ambiguous-width policy and broader grapheme cases still
