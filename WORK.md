@@ -573,6 +573,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   make promotion-cold-target-sample clears target/promotion-cold and times make check-all with a fresh Rust target directory, without clearing Cargo registry, Git source, or Nix store caches
   make promotion-local-sample runs source-fetch provenance, the timed validation sample, and package archive runtime smoke for one local evidence pass
   make promotion-evidence-bundle runs the local sample and gathers its log, toolchain output, source-fetch report, package provenance, cargo tree, and archive checksum under target/promotion-evidence
+  promotion evidence bundle summaries now include GitHub Actions run/ref/SHA and runner fields when present, so uploaded CI artifacts carry the identity fields required by docs/ci.md
   make source-fetch-provenance-sample writes active source mode, Cargo.lock hash, and locked libghostty-vt/libghostty-vt-sys package records without inspecting Ghostty source
   make packaging-sample builds default and opt-in libghostty-vt release binaries in separate target directories and reports artifact sizes plus binary versions for packaging evidence
   make packaging-layout-sample stages opt-in release binaries, wrapper scripts, and libghostty-vt runtime-library artifacts in a local package layout, then verifies wrapped nmux and nmuxd version checks from that layout

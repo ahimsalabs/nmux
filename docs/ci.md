@@ -40,9 +40,9 @@ Record each manual run with these fields:
 | Field | Required Content |
 | --- | --- |
 | Date | UTC date of the workflow run. |
-| Workflow run | GitHub Actions run URL or run number. |
-| Git revision | Commit SHA and branch or pull request ref. |
-| Runner | Runner OS, architecture, image label, and hosted/self-hosted status. |
+| Workflow run | GitHub Actions run URL or run number from `SUMMARY.txt`. |
+| Git revision | Commit SHA and branch or pull request ref from `SUMMARY.txt`. |
+| Runner | Runner OS, architecture, image label, and hosted/self-hosted status from `SUMMARY.txt`. |
 | Toolchain | `make toolchain-info` output from the run. |
 | Source mode | `ghostty_source_mode`, `GHOSTTY_SOURCE_DIR`, and `GIT_CONFIG_GLOBAL`. |
 | Cache state | Whether Nix, Cargo registry, Cargo Git, Rust target, and native Ghostty/Zig build caches were cold, warm, restored, or unknown. |
@@ -51,6 +51,11 @@ Record each manual run with these fields:
 | Packaging | Archive name, SHA-256, `packaging-provenance-verify` result, and packaged runtime smoke result. |
 | Outcome | Passed, failed, or canceled, including failed command and error summary. |
 | Follow-up | Any flake, cache miss, source-fetch, packaging, or platform issue created from the run. |
+
+The bundle summary records GitHub Actions fields when present:
+`github_server_url`, `github_repository`, `github_run_id`,
+`github_run_attempt`, `github_ref`, `github_sha`, `runner_os`,
+`runner_arch`, and `runner_name`. Local runs record those fields as `unset`.
 
 Before this manual job can become a required or regular native-VT CI gate, a
 later ADR must satisfy

@@ -125,6 +125,9 @@ engine or a regular CI requirement.
   to `main`; the `make promotion-evidence-bundle` job is manual, uploads the
   `nmux-promotion-evidence` artifact, and must be run before any CI promotion
   evidence is recorded here.
+- `target/promotion-evidence/SUMMARY.txt` records GitHub Actions run, ref, SHA,
+  and runner fields when present, so CI rows can be copied from the uploaded
+  artifact instead of inferred from the web UI.
 - ADR 0018 and ADR 0023 keep the native build out of the default development
   loop until the remaining evidence in this tracker is gathered.
 

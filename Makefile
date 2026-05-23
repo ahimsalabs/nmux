@@ -60,6 +60,16 @@ promotion-evidence-bundle:
 		printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
 		printf 'host=%s\n' "$$(uname -a)"; \
 		printf 'git_revision=%s\n' "$$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"; \
+		printf 'github_actions=%s\n' "$${GITHUB_ACTIONS:-false}"; \
+		printf 'github_server_url=%s\n' "$${GITHUB_SERVER_URL:-unset}"; \
+		printf 'github_repository=%s\n' "$${GITHUB_REPOSITORY:-unset}"; \
+		printf 'github_run_id=%s\n' "$${GITHUB_RUN_ID:-unset}"; \
+		printf 'github_run_attempt=%s\n' "$${GITHUB_RUN_ATTEMPT:-unset}"; \
+		printf 'github_ref=%s\n' "$${GITHUB_REF:-unset}"; \
+		printf 'github_sha=%s\n' "$${GITHUB_SHA:-unset}"; \
+		printf 'runner_os=%s\n' "$${RUNNER_OS:-unset}"; \
+		printf 'runner_arch=%s\n' "$${RUNNER_ARCH:-unset}"; \
+		printf 'runner_name=%s\n' "$${RUNNER_NAME:-unset}"; \
 		printf 'ghostty_source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"; \
 		printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
 		printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
