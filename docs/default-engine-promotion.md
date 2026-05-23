@@ -56,9 +56,10 @@ engine or a regular CI requirement.
   defines the criteria a later source-policy promotion decision must satisfy.
   This allows local correctness work, but does not close the promotion blocker
   by itself.
-- [Packaging notes](packaging.md) document the current source-checkout
-  distribution path and the binary packaging questions that must be answered
-  before native VT builds become default or regular CI. [ADR 0025](adr/0025-native-vt-packaging-criteria.md)
+- [Packaging notes](packaging.md) document the current no-release-binary
+  posture, the local package-layout/archive runtime evidence, and the binary
+  packaging questions that must be answered before native VT builds become
+  default or regular CI. [ADR 0025](adr/0025-native-vt-packaging-criteria.md)
   defines the criteria a later packaging promotion decision must satisfy.
 - [Contributor workflow](contributor-workflow.md) documents when contributors
   should use the default gate, the opt-in terminal-correctness gate, and the
