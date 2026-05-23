@@ -71,6 +71,8 @@ engine or a regular CI requirement.
   samples.
 - `make promotion-sample` prints that toolchain information and then times
   `make check-all` with `time -p` for a single local evidence command.
+- `make promotion-local-sample` runs the timed validation sample and package
+  archive sample in one local evidence pass.
 - `make packaging-sample` prints that toolchain information, builds default and
   opt-in `libghostty-vt` release binaries in separate target directories, and
   reports artifact sizes plus binary versions for packaging evidence.
@@ -144,6 +146,16 @@ support, or native-library provenance by themselves.
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-layout-sample` | Passed. Staged opt-in package layout at `target/packaging-libghostty-vt/package` with `bin/nmux`, `bin/nmuxd`, `libexec/nmux`, `libexec/nmuxd`, and `lib/libghostty-vt*`; wrapped `nmux --version` and `nmuxd --version` both reported 0.1.0 from the staged layout. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-provenance-sample` | Passed. Wrote `target/packaging-libghostty-vt/package/PROVENANCE.txt` with toolchain/source mode, `Cargo.lock` SHA-256 `2e28c9036cf76971ebefb3f43a39bf3f3c122aeac89981cbf666105eb20d88c4`, staged file sizes and hashes, native runtime-library artifacts, `otool -L` output, and locked dependency tree. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-archive-sample` | Passed. Wrote `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`, SHA-256 `1f824cdc7634e5f85e092d72fe20635cce8be834bbae33c000ac3a522fba8bdd`, extracted it under `target/packaging-libghostty-vt/archive/check`, and verified wrapped `nmux --version` and `nmuxd --version` from the extracted layout. |
+
+## Local Combined Samples
+
+These samples run validation and archive packaging evidence together. They are
+useful before updating separate timing and packaging rows, but they do not
+replace CI, cold-cache, or multi-platform evidence.
+
+| Date | Host | Command | Result |
+| --- | --- | --- | --- |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-local-sample` | Passed. Timed inner `make check-all`: `real 16.71`, `user 2.64`, `sys 3.11`; then wrote and verified `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` with SHA-256 `2af9348e1d1ba98c3c18fbbb64ec5409e14dedf86d21f4eb0078c5a4bc171a8c` and verified wrapped `nmux --version` and `nmuxd --version` from the extracted archive. |
 
 ## Open Work
 

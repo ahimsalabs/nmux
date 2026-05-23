@@ -59,6 +59,7 @@ Run:
 
 ```sh
 nix develop . -c make promotion-sample
+nix develop . -c make promotion-local-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -80,6 +81,11 @@ directory; otherwise the evidence sample records the pinned-fetch source mode.
 Record missing-tool, wrong-version, or invalid-source-directory failures too;
 they are setup evidence for the non-Nix checklist, not passing promotion
 evidence.
+
+`make promotion-local-sample` runs `make promotion-sample` and then
+`make packaging-archive-sample` with clear section headers. Use it for a local
+evidence pass before updating the promotion tracker with both validation and
+packaging/archive results.
 
 `make packaging-sample` prints the same toolchain context, builds default and
 opt-in release binaries in separate target directories, and reports artifact

@@ -3,7 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-sample promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -15,6 +15,12 @@ check-ghostty-vt: check-vt-toolchain
 
 promotion-sample: toolchain-info
 	time -p $(MAKE) check-all
+
+promotion-local-sample:
+	@echo "== promotion local sample: validation =="
+	$(MAKE) promotion-sample
+	@echo "== promotion local sample: packaging archive =="
+	$(MAKE) packaging-archive-sample
 
 packaging-sample: toolchain-info check-vt-toolchain
 	@echo "building default release binaries"

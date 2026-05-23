@@ -7,6 +7,7 @@ nix develop . -c make check
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
+nix develop . -c make promotion-local-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -43,6 +44,13 @@ nix develop . -c make promotion-sample
 ```
 
 That target prints `toolchain-info` and then runs `time -p make check-all`.
+For a combined local validation plus packaging/archive evidence pass, use:
+
+```sh
+nix develop . -c make promotion-local-sample
+```
+
+That target runs `make promotion-sample` followed by `make packaging-archive-sample`.
 For local release-binary evidence, use:
 
 ```sh

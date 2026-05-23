@@ -108,6 +108,7 @@ default-engine-promotion evidence:
 ```sh
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
+nix develop . -c make promotion-local-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -118,6 +119,8 @@ nix develop . -c make packaging-archive-sample
 `libghostty-vt` gate without changing what `make check` means.
 `promotion-sample` prints `toolchain-info` and times `check-all` for evidence
 rows in `docs/default-engine-promotion.md`.
+`promotion-local-sample` runs `promotion-sample` plus `packaging-archive-sample`
+for one local evidence pass.
 `packaging-sample` builds default and opt-in release binaries in separate target
 directories and prints artifact sizes plus binary versions for packaging
 evidence rows.
