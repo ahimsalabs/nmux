@@ -276,10 +276,10 @@ promotion-evidence-bundle:
 			printf 'libghostty_vt_status=opt-in\n'; \
 			printf 'open_work_scope=%s\n' 'known blockers that must be resolved before libghostty-vt can become the default engine or a regular required CI gate'; \
 			printf 'open_work_ci=%s\n' 'manual promotion evidence bundle and downloaded-artifact verifier jobs still need recorded CI runs'; \
-			printf 'open_work_platforms=%s\n' 'more supported local systems and at least one full cold-checkout or dependency-fetch run still need timing evidence'; \
+			printf 'open_work_platforms=%s\n' 'more supported local systems and at least one full cold-checkout or cold-machine run still need timing evidence'; \
 			printf 'open_work_non_nix=%s\n' 'non-Nix toolchain checklist still needs a successful platform-specific validation run'; \
 			printf 'open_work_source_policy=%s\n' 'packaged/default build source policy still needs a decision and evidence'; \
-			printf 'open_work_packaging=%s\n' 'native VT binary distribution expectations still need supported-target, runtime-library, signing, provenance, and release-check decisions'; \
+			printf 'open_work_packaging=%s\n' 'native VT binary distribution expectations still need supported-target, signing, notarization, installed-package, and platform distribution decisions despite local layout, archive, provenance, and runtime-smoke verifiers'; \
 			printf 'open_work_frontend=%s\n' 'frontend Ghostty renderer hydration remains separate from backend terminal-state extraction'; \
 		} > "$$promotion_open_work"; \
 	}; \
@@ -600,13 +600,13 @@ promotion-evidence-verify:
 	require_exact "$$promotion_open_work" 'promotion_decision=not-promoted' 'promotion decision'; \
 	require_exact "$$promotion_open_work" 'default_terminal_engine=interim-text' 'default terminal engine'; \
 	require_exact "$$promotion_open_work" 'libghostty_vt_status=opt-in' 'libghostty-vt opt-in status'; \
-	require_line "$$promotion_open_work" '^open_work_scope=.+$$' 'promotion open work scope'; \
-	require_line "$$promotion_open_work" '^open_work_ci=.+$$' 'promotion open work CI gap'; \
-	require_line "$$promotion_open_work" '^open_work_platforms=.+$$' 'promotion open work platform gap'; \
-	require_line "$$promotion_open_work" '^open_work_non_nix=.+$$' 'promotion open work non-Nix gap'; \
-	require_line "$$promotion_open_work" '^open_work_source_policy=.+$$' 'promotion open work source-policy gap'; \
-	require_line "$$promotion_open_work" '^open_work_packaging=.+$$' 'promotion open work packaging gap'; \
-	require_line "$$promotion_open_work" '^open_work_frontend=.+$$' 'promotion open work frontend gap'; \
+	require_exact "$$promotion_open_work" 'open_work_scope=known blockers that must be resolved before libghostty-vt can become the default engine or a regular required CI gate' 'promotion open work scope'; \
+	require_exact "$$promotion_open_work" 'open_work_ci=manual promotion evidence bundle and downloaded-artifact verifier jobs still need recorded CI runs' 'promotion open work CI gap'; \
+	require_exact "$$promotion_open_work" 'open_work_platforms=more supported local systems and at least one full cold-checkout or cold-machine run still need timing evidence' 'promotion open work platform gap'; \
+	require_exact "$$promotion_open_work" 'open_work_non_nix=non-Nix toolchain checklist still needs a successful platform-specific validation run' 'promotion open work non-Nix gap'; \
+	require_exact "$$promotion_open_work" 'open_work_source_policy=packaged/default build source policy still needs a decision and evidence' 'promotion open work source-policy gap'; \
+	require_exact "$$promotion_open_work" 'open_work_packaging=native VT binary distribution expectations still need supported-target, signing, notarization, installed-package, and platform distribution decisions despite local layout, archive, provenance, and runtime-smoke verifiers' 'promotion open work packaging gap'; \
+	require_exact "$$promotion_open_work" 'open_work_frontend=frontend Ghostty renderer hydration remains separate from backend terminal-state extraction' 'promotion open work frontend gap'; \
 	printf 'promotion_evidence_verified=%s\n' "$$summary"
 
 source-fetch-provenance-sample: toolchain-info
