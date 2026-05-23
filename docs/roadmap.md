@@ -198,8 +198,8 @@ Done:
   still needs recorded CI runs before the opt-in native VT gate can become
   required.
 - [Source fetch policy](source-fetch-policy.md) records the current opt-in
-  `libghostty-vt-sys` fetch behavior and the remaining packaged/default-build
-  policy choices.
+  `libghostty-vt-sys` fetch behavior, a local cache-present Cargo offline
+  probe, and the remaining packaged/default-build policy choices.
 - [Packaging notes](packaging.md) record the current no-release-binary stance
   and the native-VT binary distribution questions that remain before promotion;
   `make packaging-sample` now provides local release-binary build evidence

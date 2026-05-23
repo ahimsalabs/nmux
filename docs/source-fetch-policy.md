@@ -42,6 +42,18 @@ includes the active source mode, `GHOSTTY_SOURCE_DIR`, `GIT_CONFIG_GLOBAL`,
 `libghostty-vt` and `libghostty-vt-sys`. It is evidence for the current local
 source-fetch path, not a default or packaged-build source-policy decision.
 
+A local cache-present offline probe on 2026-05-23 also passed with:
+
+```sh
+nix develop . -c env CARGO_NET_OFFLINE=true GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/source-fetch-offline cargo test -p nmux-core --features libghostty-vt --no-run
+```
+
+That probe compiled the opt-in `nmux-core` test binary from existing local
+caches with `GHOSTTY_SOURCE_DIR=unset`. It is useful evidence that the current
+pinned-fetch path can reuse local cache state in this checkout, but it does not
+prove cold-checkout behavior, CI cache-miss behavior, network-failure behavior,
+or a packaged/default source policy.
+
 ## Promotion Blockers
 
 Before `libghostty-vt` can become the documented default engine, a regular CI
