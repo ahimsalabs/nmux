@@ -21,8 +21,11 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
     assert!(stdout.contains("--print-context"));
+    assert!(stdout.contains("--print-context-json"));
     assert!(stdout.contains("--print-socket"));
+    assert!(stdout.contains("--print-socket-json"));
     assert!(stdout.contains("-V, --version"));
+    assert!(stdout.contains("--version-json"));
     assert!(stdout.contains("--key-name NAME"));
     assert!(stdout.contains("Send a supported named key"));
     assert!(stdout.contains("--paste TEXT"));
@@ -67,7 +70,9 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--live-cycles COUNT"));
     assert!(stdout.contains("--print-socket"));
+    assert!(stdout.contains("--print-socket-json"));
     assert!(stdout.contains("-V, --version"));
+    assert!(stdout.contains("--version-json"));
     assert!(stdout.contains("--live-forever"));
     assert!(stdout.contains("--live-clients COUNT"));
     assert!(stdout.contains("--resize-policy fixed|leader|active-client|manual"));
@@ -133,6 +138,54 @@ fn version_flags_report_binary_versions_without_side_effects() {
 }
 
 #[test]
+fn version_json_flags_report_binary_versions_without_side_effects() {
+    let client_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .arg("--version-json")
+        .output()
+        .expect("run nmux --version-json");
+
+    assert!(
+        client_output.status.success(),
+        "nmux --version-json failed: {}",
+        String::from_utf8_lossy(&client_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&client_output.stdout).trim(),
+        format!(
+            "{{\"binary\":\"nmux\",\"version\":\"{}\"}}",
+            env!("CARGO_PKG_VERSION")
+        )
+    );
+
+    let daemon_socket_path = test_socket_path();
+    let daemon_output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            daemon_socket_path.to_str().expect("socket path"),
+            "--version-json",
+        ])
+        .output()
+        .expect("run nmuxd --version-json");
+
+    assert!(
+        daemon_output.status.success(),
+        "nmuxd --version-json failed: {}",
+        String::from_utf8_lossy(&daemon_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&daemon_output.stdout).trim(),
+        format!(
+            "{{\"binary\":\"nmuxd\",\"version\":\"{}\"}}",
+            env!("CARGO_PKG_VERSION")
+        )
+    );
+    assert!(
+        !daemon_socket_path.exists(),
+        "nmuxd --version-json should not bind a socket path"
+    );
+}
+
+#[test]
 fn print_context_reports_inherited_nmux_context_without_connecting() {
     let socket_path = test_socket_path();
     let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
@@ -159,6 +212,37 @@ fn print_context_reports_inherited_nmux_context_without_connecting() {
     assert!(
         !socket_path.exists(),
         "nmux --print-context should not connect or create a socket path"
+    );
+}
+
+#[test]
+fn print_context_json_reports_inherited_nmux_context_without_connecting() {
+    let socket_path = test_socket_path();
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .arg("--print-context-json")
+        .env("NMUX", "1")
+        .env("NMUX_SESSION_ID", "session-7")
+        .env("NMUX_PANE_ID", "pane-3")
+        .env("NMUX_SOCKET", &socket_path)
+        .env("NMUX_ORIGIN", "local")
+        .output()
+        .expect("run nmux --print-context-json");
+
+    assert!(
+        output.status.success(),
+        "nmux --print-context-json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        format!(
+            "{{\"NMUX\":\"1\",\"NMUX_SESSION_ID\":\"session-7\",\"NMUX_PANE_ID\":\"pane-3\",\"NMUX_SOCKET\":\"{}\",\"NMUX_ORIGIN\":\"local\"}}",
+            socket_path.display()
+        )
+    );
+    assert!(
+        !socket_path.exists(),
+        "nmux --print-context-json should not connect or create a socket path"
     );
 }
 
@@ -240,6 +324,38 @@ fn no_connect_client_flags_skip_attach_mode_validation() {
         !socket_path.exists(),
         "no-connect flags should not create a socket path"
     );
+
+    let json_socket_path = test_socket_path();
+    let json_socket_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            json_socket_path.to_str().expect("socket path"),
+            "--print-socket-json",
+            "--redraw",
+            "--cols",
+            "100",
+            "--iterations",
+            "0",
+        ])
+        .output()
+        .expect("run nmux --print-socket-json with attach flags");
+
+    assert!(
+        json_socket_output.status.success(),
+        "nmux --print-socket-json should exit before attach-mode validation: {}",
+        String::from_utf8_lossy(&json_socket_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&json_socket_output.stdout).trim(),
+        format!(
+            "{{\"NMUX_SOCKET\":\"{}\",\"source\":\"--socket\"}}",
+            json_socket_path.display()
+        )
+    );
+    assert!(
+        !json_socket_path.exists(),
+        "json no-connect flags should not create a socket path"
+    );
 }
 
 #[test]
@@ -270,6 +386,37 @@ fn no_bind_daemon_flags_skip_daemon_mode_validation() {
     assert!(
         !socket_path.exists(),
         "nmuxd no-bind flags should not bind a socket path"
+    );
+
+    let json_socket_path = test_socket_path();
+    let json_socket_output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            json_socket_path.to_str().expect("socket path"),
+            "--print-socket-json",
+            "--one-shot",
+            "--live-forever",
+            "--live-clients",
+            "0",
+        ])
+        .output()
+        .expect("run nmuxd --print-socket-json with daemon flags");
+
+    assert!(
+        json_socket_output.status.success(),
+        "nmuxd --print-socket-json should exit before daemon-mode validation: {}",
+        String::from_utf8_lossy(&json_socket_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&json_socket_output.stdout).trim(),
+        format!(
+            "{{\"NMUX_SOCKET\":\"{}\",\"source\":\"--socket\"}}",
+            json_socket_path.display()
+        )
+    );
+    assert!(
+        !json_socket_path.exists(),
+        "nmuxd json no-bind flags should not bind a socket path"
     );
 
     let version_socket_path = test_socket_path();
@@ -400,6 +547,56 @@ fn print_socket_reports_resolved_socket_without_side_effects() {
     assert!(
         !daemon_env_override_path.exists(),
         "explicit --socket should win without touching NMUX_SOCKET"
+    );
+}
+
+#[test]
+fn print_socket_json_reports_resolved_socket_source_without_side_effects() {
+    let env_socket_path = test_socket_path();
+    let client_env_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .arg("--print-socket-json")
+        .env("NMUX_SOCKET", &env_socket_path)
+        .output()
+        .expect("run nmux --print-socket-json with NMUX_SOCKET");
+
+    assert!(
+        client_env_output.status.success(),
+        "nmux --print-socket-json with NMUX_SOCKET failed: {}",
+        String::from_utf8_lossy(&client_env_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&client_env_output.stdout).trim(),
+        format!(
+            "{{\"NMUX_SOCKET\":\"{}\",\"source\":\"NMUX_SOCKET\"}}",
+            env_socket_path.display()
+        )
+    );
+    assert!(
+        !env_socket_path.exists(),
+        "nmux --print-socket-json should not create an NMUX_SOCKET path"
+    );
+
+    let daemon_env_output = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .arg("--print-socket-json")
+        .env("NMUX_SOCKET", &env_socket_path)
+        .output()
+        .expect("run nmuxd --print-socket-json with NMUX_SOCKET");
+
+    assert!(
+        daemon_env_output.status.success(),
+        "nmuxd --print-socket-json with NMUX_SOCKET failed: {}",
+        String::from_utf8_lossy(&daemon_env_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&daemon_env_output.stdout).trim(),
+        format!(
+            "{{\"NMUX_SOCKET\":\"{}\",\"source\":\"NMUX_SOCKET\"}}",
+            env_socket_path.display()
+        )
+    );
+    assert!(
+        !env_socket_path.exists(),
+        "nmuxd --print-socket-json should not bind an NMUX_SOCKET path"
     );
 }
 
