@@ -142,11 +142,11 @@ fn print_context_reports_inherited_nmux_context_without_connecting() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("nmux=1"));
-    assert!(stdout.contains("session=session-7"));
-    assert!(stdout.contains("pane=pane-3"));
-    assert!(stdout.contains(&format!("socket={}", socket_path.display())));
-    assert!(stdout.contains("origin=local"));
+    assert!(stdout.contains("NMUX=1"));
+    assert!(stdout.contains("NMUX_SESSION_ID=session-7"));
+    assert!(stdout.contains("NMUX_PANE_ID=pane-3"));
+    assert!(stdout.contains(&format!("NMUX_SOCKET={}", socket_path.display())));
+    assert!(stdout.contains("NMUX_ORIGIN=local"));
     assert!(
         !socket_path.exists(),
         "nmux --print-context should not connect or create a socket path"

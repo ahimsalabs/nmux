@@ -90,8 +90,9 @@ On normal bounded exits, `nmuxd` removes the socket path it created if that path
 Local PTY commands receive `NMUX=1`, `NMUX_SESSION_ID`, `NMUX_PANE_ID`,
 `NMUX_SOCKET`, and `NMUX_ORIGIN` in their environment so nested tools can tell
 which nmux pane and socket they are running inside. Run `nmux --print-context`
-inside a pane to inspect that inherited identity without connecting; outside a
-complete nmux pane context, it fails clearly before socket or state work.
+inside a pane to print those inherited `NMUX_*` key/value lines without
+connecting; outside a complete nmux pane context, it fails clearly before socket
+or state work.
 
 ```sh
 rm -f /tmp/nmux-context.sock

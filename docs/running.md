@@ -139,8 +139,8 @@ Commands started in the local PTY receive `NMUX=1`, `NMUX_SESSION_ID`,
 `NMUX_PANE_ID`, `NMUX_SOCKET`, and `NMUX_ORIGIN` in their environment. These
 are local pane identity hints for nested nmux tooling and do not make the
 frontend replay raw PTY bytes. Inside a pane, `nmux --print-context` prints
-that inherited identity without connecting; outside a complete nmux pane
-context, it fails before socket or state work.
+the inherited `NMUX_*` key/value lines without connecting; outside a complete
+nmux pane context, it fails before socket or state work.
 
 To smoke the nested context path through a real daemon-owned PTY, start a
 one-shot daemon whose pane command invokes the client binary:

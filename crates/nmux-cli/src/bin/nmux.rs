@@ -1204,11 +1204,11 @@ fn print_context() -> Result<(), Box<dyn std::error::Error>> {
     let socket = required_context_env("NMUX_SOCKET")?;
     let origin = required_context_env("NMUX_ORIGIN")?;
 
-    println!("nmux=1");
-    println!("session={session_id}");
-    println!("pane={pane_id}");
-    println!("socket={socket}");
-    println!("origin={origin}");
+    println!("NMUX=1");
+    println!("NMUX_SESSION_ID={session_id}");
+    println!("NMUX_PANE_ID={pane_id}");
+    println!("NMUX_SOCKET={socket}");
+    println!("NMUX_ORIGIN={origin}");
     Ok(())
 }
 
@@ -1470,7 +1470,7 @@ Options:
 
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
-  --print-context reads inherited NMUX_* pane identity without connecting.
+  --print-context prints inherited NMUX_* pane identity without connecting.
   Without an explicit input or resize flag, nmux attaches read-only.
   The current renderer uses an interim text surface, not a VT-correct terminal emulator.
 

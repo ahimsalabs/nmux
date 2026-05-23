@@ -495,7 +495,7 @@ M12: live workspace usability [done]
   nmuxd bind failures include the socket path
   nmux --connect-timeout-ms waits for daemon socket startup races across attach modes
   local PTY commands receive NMUX, NMUX_SESSION_ID, NMUX_PANE_ID, NMUX_SOCKET, and NMUX_ORIGIN environment variables for nested nmux tooling
-  nmux --print-context reports inherited NMUX_* pane identity without connecting, fails clearly outside nmux, and has nested PTY smoke coverage
+  nmux --print-context reports inherited NMUX_* pane identity as exact key/value lines without connecting, fails clearly outside nmux, and has nested PTY smoke coverage
   one-shot and live post-attach input, resize, and scrollback control frames use the attached active pane ID instead of assuming pane-1
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available

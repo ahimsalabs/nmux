@@ -94,17 +94,23 @@ fn one_shot_cli_can_print_nested_nmux_context() {
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
-    assert!(stdout.contains("nmux=1"), "missing nmux flag:\n{stdout}");
+    assert!(stdout.contains("NMUX=1"), "missing nmux flag:\n{stdout}");
     assert!(
-        stdout.contains("session=local"),
+        stdout.contains("NMUX_SESSION_ID=local"),
         "missing session id:\n{stdout}"
     );
-    assert!(stdout.contains("pane=pane-1"), "missing pane id:\n{stdout}");
     assert!(
-        stdout.contains(&format!("socket={}", socket_path.display())),
+        stdout.contains("NMUX_PANE_ID=pane-1"),
+        "missing pane id:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("NMUX_SOCKET={}", socket_path.display())),
         "missing socket path:\n{stdout}"
     );
-    assert!(stdout.contains("origin=local"), "missing origin:\n{stdout}");
+    assert!(
+        stdout.contains("NMUX_ORIGIN=local"),
+        "missing origin:\n{stdout}"
+    );
 }
 
 #[test]
