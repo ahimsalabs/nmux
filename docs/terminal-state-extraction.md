@@ -249,5 +249,6 @@ widths, hyperlink-presence flags, and semantic content rather than collapsing
 to text-only fallback rows. `make check-ghostty-vt` runs the full `nmux-core`
 and `nmux-cli` test suites with `--features libghostty-vt`, so ordinary
 feature-sensitive tests are part of the opt-in gate. ADR 0018 keeps the default
-engine `interim` until a later decision explicitly accepts the native
-Ghostty/Zig build cost in normal development, CI, and packaging.
+engine `interim`, and ADR 0023 keeps `libghostty-vt` opt-in after M13 until a
+later decision explicitly accepts the native Ghostty/Zig build cost in normal
+development, CI, and packaging.

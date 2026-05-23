@@ -493,7 +493,7 @@ M12: live workspace usability [done]
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available
   keep runnable docs, help output, and tests aligned with each user-visible behavior change
 
-M13: backend libghostty-vt extraction [current correctness milestone]
+M13: backend libghostty-vt extraction [done for opt-in correctness milestone]
   terminal engine boundary wraps current interim text surface behavior
   terminal engine boundary owns pane cursor state along with surface and scrollback output
   local daemon serving paths keep terminal engines alive per pane across output polls, resize handling, and sequential clients
@@ -551,8 +551,8 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   keep frontend Ghostty renderer hydration as a separate upstream/API question
   do not copy code from GPL or AGPL terminal parsers
 
-M14: post-M13 promotion and product split [planned]
-  decide whether libghostty-vt becomes the documented default and regular CI path, or keep it opt-in with an ADR that names concrete native build, packaging, and developer-workflow blockers
+M14: post-M13 promotion and product split [decision accepted in ADR 0023]
+  libghostty-vt remains opt-in after M13 until a later decision accepts concrete native build, regular CI, packaging, source-fetch, and developer-workflow evidence
   keep frontend Ghostty renderer hydration separate from backend terminal-state extraction until upstream can render externally supplied nmux state without client-side PTY replay
   split future protocol expansion into explicit tracks before schema changes: wired hyperlink IDs, image placement/pixel data, richer damage objects, semantic command lifecycle metadata, and physical-key/text-event forwarding
   keep local attach, reconnect, live streaming, scrollback fetch, cached state, and daemon-owned structured-input behavior stable while the default-engine decision is made
