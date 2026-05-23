@@ -65,17 +65,20 @@ that is not under `target/promotion-evidence`, run
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify`. The
 verifier checks the required summary identity fields, timing fields,
 bundle-relative summary artifact names, cache-state artifact, relocation-safe
-`BUNDLE_MANIFEST.txt` hashes, VCS status artifact, open-work snapshot,
-source/provenance records, cache-present offline probe result, package archive
-bytes, bundle-relative archive hash, and packaged runtime smoke result; it does
-not replace human
-judgment about cache
-classification, flake rate, or platform coverage.
+`BUNDLE_MANIFEST.txt` hashes, VCS status artifact, summary/VCS git revision
+agreement, open-work snapshot, source/provenance records, cache-present offline
+probe result, package archive bytes, bundle-relative archive hash, and packaged
+runtime smoke result. When the bundle reports `github_actions=true`, the
+verifier also requires non-placeholder GitHub run, ref, SHA, and runner fields
+and checks that `github_sha` matches the bundled git revision. It does not
+replace human judgment about cache classification, flake rate, or platform
+coverage.
 
 The bundle summary records GitHub Actions fields when present:
 `github_server_url`, `github_repository`, `github_run_id`,
 `github_run_attempt`, `github_ref`, `github_sha`, `runner_os`,
-`runner_arch`, and `runner_name`. It also records extracted
+`runner_arch`, and `runner_name`; CI-generated bundles must have concrete
+values for those fields. It also records extracted
 `time -p make check-all` values as `check_all_real_seconds`,
 `check_all_user_seconds`, and `check_all_sys_seconds`, plus
 `started_at_utc`, `completed_at_utc`, and `bundle_elapsed_seconds` for the

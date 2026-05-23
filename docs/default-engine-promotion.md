@@ -76,6 +76,10 @@ engine or a regular CI requirement.
 - `make toolchain-info` prints the active Rust, FlatBuffers, Zig, and
   source-fetch environment fields that should accompany promotion-evidence
   samples.
+- `make promotion-evidence-verify` checks that `SUMMARY.txt` and
+  `VCS_STATUS.txt` agree on the git revision, and CI-generated bundles must
+  include concrete GitHub run, ref, SHA, and runner fields with `github_sha`
+  matching the bundled revision.
 - `make promotion-sample` prints that toolchain information and then times
   `make check-all` with `time -p` for a single local evidence command.
 - `make promotion-cold-target-sample` clears `target/promotion-cold` and times

@@ -349,6 +349,15 @@ promotion-evidence-verify:
 			exit 1; \
 		fi; \
 	}; \
+	require_absent_exact() { \
+		file="$$1"; \
+		line="$$2"; \
+		description="$$3"; \
+		if grep -Fxq "$$line" "$$file"; then \
+			echo "unexpected promotion evidence record in $$file: $$description" >&2; \
+			exit 1; \
+		fi; \
+	}; \
 	require_file "$$summary"; \
 	require_file "$$run_log"; \
 	require_file "$$toolchain"; \
@@ -404,6 +413,18 @@ promotion-evidence-verify:
 	require_line "$$summary" '^runner_os=.+$$' 'runner OS field'; \
 	require_line "$$summary" '^runner_arch=.+$$' 'runner architecture field'; \
 	require_line "$$summary" '^runner_name=.+$$' 'runner name field'; \
+	github_actions="$$(awk -F= '/^github_actions=/{print $$2; exit}' "$$summary")"; \
+	if [ "$$github_actions" = true ]; then \
+		require_line "$$summary" '^github_server_url=https?://.+$$' 'GitHub Actions server URL'; \
+		require_line "$$summary" '^github_repository=[^/]+/[^/]+$$' 'GitHub Actions repository'; \
+		require_line "$$summary" '^github_run_id=[0-9]+$$' 'GitHub Actions run ID'; \
+		require_line "$$summary" '^github_run_attempt=[0-9]+$$' 'GitHub Actions run attempt'; \
+		require_line "$$summary" '^github_ref=refs/.+$$' 'GitHub Actions ref'; \
+		require_line "$$summary" '^github_sha=[0-9a-f]{40}$$' 'GitHub Actions SHA'; \
+		require_line "$$summary" '^runner_os=(Linux|macOS|Windows)$$' 'GitHub Actions runner OS'; \
+		require_line "$$summary" '^runner_arch=(X64|ARM64|X86)$$' 'GitHub Actions runner architecture'; \
+		require_absent_exact "$$summary" 'runner_name=unset' 'GitHub Actions runner name must not be unset'; \
+	fi; \
 	require_line "$$summary" '^ghostty_source_mode=(pinned-fetch|local)$$' 'Ghostty source mode'; \
 	require_line "$$summary" '^GHOSTTY_SOURCE_DIR=.+$$' 'GHOSTTY_SOURCE_DIR field'; \
 	require_line "$$summary" '^GIT_CONFIG_GLOBAL=.+$$' 'GIT_CONFIG_GLOBAL field'; \
@@ -495,6 +516,19 @@ promotion-evidence-verify:
 	require_line "$$vcs_status" '^jj_status_available=(true|false)$$' 'VCS jj availability'; \
 	require_exact "$$vcs_status" '[jj_status]' 'VCS jj status section'; \
 	vcs_worktree_status="$$(awk -F= '/^git_status_porcelain=/{print $$2; exit}' "$$vcs_status")"; \
+	summary_git_revision="$$(awk -F= '/^git_revision=/{print $$2; exit}' "$$summary")"; \
+	vcs_git_revision="$$(awk -F= '/^git_revision=/{print $$2; exit}' "$$vcs_status")"; \
+	if [ "$$summary_git_revision" != "$$vcs_git_revision" ]; then \
+		echo "promotion evidence git revision mismatch: SUMMARY.txt has $$summary_git_revision but VCS_STATUS.txt has $$vcs_git_revision" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$github_actions" = true ]; then \
+		github_sha="$$(awk -F= '/^github_sha=/{print $$2; exit}' "$$summary")"; \
+		if [ "$$summary_git_revision" != "$$github_sha" ]; then \
+			echo "promotion evidence GitHub SHA mismatch: SUMMARY.txt git_revision is $$summary_git_revision but github_sha is $$github_sha" >&2; \
+			exit 1; \
+		fi; \
+	fi; \
 	require_exact "$$summary" "working_tree_status=$$vcs_worktree_status" 'summary working tree status matches VCS artifact'; \
 	require_exact "$$promotion_open_work" 'nmux native VT promotion open work' 'promotion open work title'; \
 	require_line "$$promotion_open_work" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'promotion open work timestamp'; \
