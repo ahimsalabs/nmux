@@ -766,6 +766,9 @@ impl ManagedDaemon {
             return Ok(Self { child });
         }
         let _ = child.wait();
+        if let Some(message) = managed_ready_error_message(&line) {
+            return Err(format!("managed nmuxd startup failed: {message}").into());
+        }
         Err(format!("managed nmuxd startup failed: {}", line.trim()).into())
     }
 }
@@ -784,6 +787,41 @@ fn nmuxd_binary_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let mut path = std::env::current_exe()?;
     path.set_file_name("nmuxd");
     Ok(path)
+}
+
+fn managed_ready_error_message(line: &str) -> Option<String> {
+    let message_key = "\"message\":";
+    let message_start = line.find(message_key)? + message_key.len();
+    decode_json_string_at(line[message_start..].trim_start()).ok()
+}
+
+fn decode_json_string_at(value: &str) -> Result<String, &'static str> {
+    let mut chars = value.chars();
+    if chars.next() != Some('"') {
+        return Err("expected JSON string");
+    }
+
+    let mut decoded = String::new();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => return Ok(decoded),
+            '\\' => match chars.next().ok_or("incomplete JSON escape")? {
+                '"' => decoded.push('"'),
+                '\\' => decoded.push('\\'),
+                '/' => decoded.push('/'),
+                'b' => decoded.push('\u{0008}'),
+                'f' => decoded.push('\u{000c}'),
+                'n' => decoded.push('\n'),
+                'r' => decoded.push('\r'),
+                't' => decoded.push('\t'),
+                'u' => return Err("unicode JSON escapes are not supported here"),
+                _ => return Err("invalid JSON escape"),
+            },
+            _ => decoded.push(ch),
+        }
+    }
+
+    Err("unterminated JSON string")
 }
 
 fn flush_stdout() -> io::Result<()> {
@@ -3217,10 +3255,11 @@ mod tests {
         format_live_error_json, format_live_surface_update_json, format_live_workspace_json,
         format_rendered_attach_json, format_scrollback, format_state_info_json,
         format_state_info_text, interim_surface_fidelity_warning_needed, live_update_print_kind,
-        parse_detach_key, parse_env_assignment, parse_focus_event, parse_key_modifiers,
-        parse_key_name, parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        managed_ready_error_message, parse_detach_key, parse_env_assignment, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -3338,6 +3377,30 @@ mod tests {
         assert_eq!(
             parse_env_assignment("missing"),
             Err("--env requires KEY=VALUE".to_owned())
+        );
+    }
+
+    #[test]
+    fn managed_ready_error_message_extracts_daemon_error_json() {
+        assert_eq!(
+            managed_ready_error_message(
+                "{\"event\":\"error\",\"error\":{\"message\":\"socket path already exists: /tmp/nmux.sock\"}}\n"
+            )
+            .as_deref(),
+            Some("socket path already exists: /tmp/nmux.sock")
+        );
+        assert_eq!(
+            managed_ready_error_message(
+                "{\"event\":\"error\",\"error\":{\"message\":\"escaped \\\"quote\\\" and \\\\slash\"}}\n"
+            )
+            .as_deref(),
+            Some("escaped \"quote\" and \\slash")
+        );
+        assert_eq!(
+            managed_ready_error_message(
+                "{\"event\":\"ready\",\"NMUX_SOCKET\":\"/tmp/nmux.sock\"}\n"
+            ),
+            None
         );
     }
 

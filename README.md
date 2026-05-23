@@ -247,6 +247,8 @@ it and repeatable `--env KEY=VALUE` are forwarded to the private daemon before
 daemon-owned `NMUX_*` identity variables are injected.
 `--startup-timeout-ms MS` controls how long the client waits for the private
 daemon readiness event before killing it and reporting a setup error.
+With `--json`, managed startup failures are reported as client JSON error
+objects using the daemon readiness error message, not nested daemon JSON.
 `nmux --shell` is the shorthand for the interactive private shell
 form: `--start --live --stdin-bytes --redraw`, using `$SHELL` and falling back
 to `sh`.

@@ -1024,6 +1024,49 @@ fn managed_start_one_shot_cli_can_print_attach_json() {
 }
 
 #[test]
+fn managed_start_json_reports_ready_error_without_nested_json() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    fs::write(&socket_path, b"not a socket").expect("create blocking socket path");
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--start",
+            "--json",
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--command",
+            "printf 'unreachable\n'",
+        ])
+        .output()
+        .expect("run nmux --start --json with blocked socket path");
+
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        !client.status.success(),
+        "nmux unexpectedly succeeded:\n{}",
+        String::from_utf8_lossy(&client.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.starts_with(
+            "{\"error\":{\"message\":\"managed nmuxd startup failed: socket path already exists:"
+        ),
+        "missing clean managed startup JSON error:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("\\\"event\\\":\\\"error\\\""),
+        "managed startup error nested daemon JSON instead of extracting message:\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains("nmux: managed nmuxd startup failed: socket path already exists:"),
+        "missing stderr managed startup context:\n{stderr}"
+    );
+}
+
+#[test]
 fn managed_start_passes_cwd_and_env_to_private_daemon() {
     let cwd = test_state_path();
     let _ = fs::remove_dir_all(&cwd);

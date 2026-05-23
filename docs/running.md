@@ -63,7 +63,10 @@ managed daemon runs `$SHELL` and falls back to `sh`. Managed `--cwd DIR` must
 name an existing directory; it and repeatable `--env KEY=VALUE` are passed to
 the private daemon before daemon-owned `NMUX_*` identity variables are injected.
 `--startup-timeout-ms MS` controls the managed readiness wait before the client
-kills the private daemon and reports setup failure. `nmux --shell` expands to
+kills the private daemon and reports setup failure. With `--json`, managed
+startup failures are reported as client JSON error objects using the daemon
+readiness error message rather than nesting daemon JSON inside a string.
+`nmux --shell` expands to
 the common interactive private shell path: `--start --live --stdin-bytes
 --redraw`.
 

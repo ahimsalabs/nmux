@@ -138,8 +138,10 @@ Done:
   up the managed daemon when the client exits; managed `--cwd DIR` is validated
   as an existing directory, repeatable `--env KEY=VALUE` is forwarded to the
   private daemon, and `--startup-timeout-ms MS` controls the managed readiness
-  wait. `nmux --shell` provides the common interactive private shell shorthand
-  over that same managed path.
+  wait. Managed `--start --json` setup failures use the daemon readiness error
+  message without nesting daemon JSON inside the client JSON error object.
+  `nmux --shell` provides the common interactive private shell shorthand over
+  that same managed path.
 - Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
   tooling without changing the current local socket protocol; nested local
   daemons append inherited `NMUX_ORIGIN` values as a local hop-chain hint.
