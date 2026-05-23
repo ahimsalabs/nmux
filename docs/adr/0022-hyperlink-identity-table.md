@@ -16,6 +16,11 @@ also has `CellRun.hyperlink_id`, but nmux deliberately leaves it at zero today
 because there is no protocol object that defines the referenced URI, OSC 8 id,
 parameters, range ownership, or lifetime.
 
+The schema object now exists, but current `libghostty-vt` bindings still do not
+expose enough structured identity data to fill it. They expose presence, not a
+per-cell hyperlink reference plus URI/id/params lookup. The upstream/API gap is
+tracked in [libghostty-vt hyperlink identity access](../upstream/libghostty-vt-hyperlink-identity.md).
+
 Inventing opaque IDs without a table would make snapshots and scrollback chunks
 ambiguous: clients could tell that a run references "some link" but not which
 URI or whether two runs refer to the same link. Encoding URIs directly into
@@ -50,6 +55,11 @@ snapshot.
 
 A later append-only schema change may add patch-scoped hyperlink table diffs
 when the table lifetime and client cache rules are proven.
+
+Until the backend exposes structured identity, nmux must keep emitted
+`CellRun.hyperlink_id` values at zero even if internal or test rows carry a
+placeholder nonzero value. Emitting an empty hyperlink table with nonzero run
+references is invalid.
 
 ## Consequences
 

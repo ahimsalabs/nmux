@@ -151,8 +151,11 @@ only after the backend extraction proves the exact shape needed.
   backend row/cell hyperlink presence is carried as bit 0 in `CellRun.flags`.
   `PaneSurfaceSnapshot` and `ScrollbackChunk` now carry a `Hyperlink` table, but
   nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
-  ownership, and lifetime are wired from the backend. ADR 0022 records the
-  conservative patching rule for new identities.
+  ownership, and lifetime are wired from the backend. Current `libghostty-vt`
+  bindings expose presence only, not a structured per-cell identity reference;
+  the upstream/API gap is tracked in
+  [libghostty-vt hyperlink identity access](upstream/libghostty-vt-hyperlink-identity.md).
+  ADR 0022 records the conservative patching rule for new identities.
 - Images and graphics protocols: nmux carries Kitty virtual placeholder
   presence on surface snapshots, surface patches, and scrollback chunks. Image
   placement, dimensions, persistence, pixel-data, and fallback protocol objects
