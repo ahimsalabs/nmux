@@ -54,6 +54,13 @@ Run the default end-to-end smoke first:
 nix develop . -c make local-smoke
 ```
 
+All Nix examples assume `nix-command` and `flakes` are enabled. If your Nix
+install has not enabled them globally, run the first smoke as:
+
+```sh
+nix --extra-experimental-features 'nix-command flakes' develop . -c make local-smoke
+```
+
 A successful run ends with:
 
 ```text

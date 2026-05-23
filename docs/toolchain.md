@@ -8,6 +8,10 @@ nix develop . -c make check
 nix develop . -c make local-smoke
 ```
 
+All Nix examples assume `nix-command` and `flakes` are enabled. If your Nix
+install has not enabled them globally, run the same commands as:
+`nix --extra-experimental-features 'nix-command flakes' develop . -c ...`.
+
 Use a broader target only when the change needs the extra evidence:
 
 | Work type | Target |
