@@ -189,16 +189,17 @@ Done:
   and an isolated cold-deps sample clears repo-owned Cargo home and target dirs
   without claiming cold Nix store or checkout state; remaining promotion
   evidence still needs more local platforms, full cold-checkout or cold-machine
-  behavior, CI behavior, a complete non-Nix workflow, source-fetch policy, and
-  packaging distribution decisions.
+  behavior, repeat CI samples with runner/cache classification and flake
+  tracking, a complete non-Nix workflow, source-fetch policy, and packaging
+  distribution decisions.
 - [Future protocol tracks](protocol-futures.md) split hyperlink identity, images,
   richer damage, command lifecycle metadata, and physical-key/text-event input
   into explicit pre-schema work.
 - README, running docs, and the terminal extraction checklist use post-M14 language for roadmap focus, implemented `libghostty-vt` mapping, attached-pane authority during reconnect, and explicit scrollback range semantics.
 - [Toolchain notes](toolchain.md) document the supported Nix path, Makefile
   tool preflight, and non-Nix requirements checklist; promotion still needs
-  platform-specific validation, CI behavior, source-fetch policy, and packaging
-  decisions.
+  platform-specific validation, repeated CI evidence with cache classification,
+  source-fetch policy, and packaging decisions.
 - [CI notes](ci.md) document the GitHub Actions default-engine gate, including
   `make check` and `make local-smoke`, and the manual promotion evidence bundle
   job, with `make promotion-evidence-verify` checking bundle timing fields and
