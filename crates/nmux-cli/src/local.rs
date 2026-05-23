@@ -1726,6 +1726,7 @@ pub fn surface_update_from_frame(
                     row.kitty_virtual_placeholder(),
                 )
             });
+            validate_row_update_terminal_enums(&row_updates)?;
             validate_no_row_patch_payload(patch.kind(), &row_updates)?;
             let text = render_decoded_rows(&row_updates);
             Ok(SurfaceUpdate {
@@ -3023,6 +3024,7 @@ impl ClientPaneSurface {
         {
             return Err("replace-rows patch changes terminal colors".into());
         }
+        validate_row_update_terminal_enums(&update.row_updates)?;
         validate_row_update_indices(&update.row_updates, self.row_text.len())?;
         validate_row_update_style_ids(&update.row_updates, &self.styles)?;
         validate_row_update_hyperlink_ids(&update.row_updates, &self.hyperlinks)?;
@@ -4955,13 +4957,25 @@ mod tests {
     }
 
     fn pane_surface_patch_with_row_frame(kind: protocol::PatchKind) -> Vec<u8> {
+        pane_surface_patch_with_run_metadata_frame(
+            kind,
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent::Output,
+        )
+    }
+
+    fn pane_surface_patch_with_run_metadata_frame(
+        kind: protocol::PatchKind,
+        semantic_prompt: protocol::RowSemanticPrompt,
+        semantic_content: protocol::CellSemanticContent,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
         let run = flatbuffer_run_with_metadata(
             &mut builder,
             0,
             0,
             0,
-            protocol::CellSemanticContent::Output,
+            semantic_content,
         );
         let runs = builder.create_vector(&[run]);
         let row = protocol::RowUpdate::create(
@@ -4970,7 +4984,7 @@ mod tests {
                 row: 0,
                 runs: Some(runs),
                 dirty_hash: 1,
-                semantic_prompt: protocol::RowSemanticPrompt::None,
+                semantic_prompt,
                 dirty: false,
                 kitty_virtual_placeholder: false,
                 row_state_hash: 1,
@@ -5334,6 +5348,27 @@ mod tests {
     }
 
     #[test]
+    fn rejects_surface_patch_with_unknown_semantic_enums_from_frame() {
+        let prompt_frame = pane_surface_patch_with_run_metadata_frame(
+            protocol::PatchKind::ReplaceRows,
+            protocol::RowSemanticPrompt(99),
+            protocol::CellSemanticContent::Output,
+        );
+        let err = surface_update_from_frame(&prompt_frame)
+            .expect_err("surface patch with unknown row semantic prompt should be rejected");
+        assert!(err.to_string().contains("unknown row semantic prompt"));
+
+        let content_frame = pane_surface_patch_with_run_metadata_frame(
+            protocol::PatchKind::ReplaceRows,
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent(99),
+        );
+        let err = surface_update_from_frame(&content_frame)
+            .expect_err("surface patch with unknown cell semantic content should be rejected");
+        assert!(err.to_string().contains("unknown semantic content"));
+    }
+
+    #[test]
     fn decodes_scrollback_chunk_hyperlink_table_from_frame() {
         let frame = scrollback_chunk_with_hyperlink_frame();
         let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
@@ -5617,6 +5652,56 @@ mod tests {
             .expect_err("unknown patch kind should be rejected");
 
         assert!(err.to_string().contains("unknown surface patch kind"));
+        assert_eq!(surface, before);
+    }
+
+    #[test]
+    fn client_surface_rejects_patch_with_unknown_terminal_enums_without_mutation() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top"), surface_row(1, "bottom")],
+        );
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let before = surface.clone();
+        let mut patch = surface_update(
+            SurfaceUpdateKind::Patch,
+            2,
+            Some(1),
+            vec![surface_row(0, "changed")],
+        );
+        patch.row_updates[0].semantic_prompt = protocol::RowSemanticPrompt(99);
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("unknown row semantic prompt should be rejected");
+
+        assert!(err.to_string().contains("unknown row semantic prompt"));
+        assert_eq!(surface, before);
+
+        let patch = surface_update(
+            SurfaceUpdateKind::Patch,
+            2,
+            Some(1),
+            vec![surface_row_with_runs(
+                0,
+                vec![CellRunSummary {
+                    text: "changed".to_owned(),
+                    cell_widths: vec![1, 1, 1, 1, 1, 1, 1],
+                    style_id: 0,
+                    flags: 0,
+                    hyperlink_id: 0,
+                    semantic_content: protocol::CellSemanticContent(99),
+                }],
+            )],
+        );
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("unknown cell semantic content should be rejected");
+
+        assert!(err.to_string().contains("unknown semantic content"));
         assert_eq!(surface, before);
     }
 
