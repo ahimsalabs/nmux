@@ -604,6 +604,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   use docs/upstream trackers for upstream-blocked work instead of treating it as local implementation debt
   README, running docs, and the terminal extraction checklist now use post-M14 language instead of treating M13 extraction as the active roadmap target or assuming pane-1/fixed scrollback behavior
   README, docs/running.md, and AGENTS now keep first-reader check and quick-start guidance short, point exhaustive target inventories to docs/toolchain.md and docs/contributor-workflow.md, and separate backend default-engine blockers from the frontend Ghostty renderer hydration track
+  docs/adr/README.md now shows ADR status in the index so accepted decisions and older proposed records are visible without opening every file
   README and docs/running.md show the local-smoke success signature so first-run users can recognize a completed default workflow through noisy build output
   README and docs/running.md label manual daemon/client examples by shell so first-run users do not mistake the long-running nmuxd side for a stuck single-shell command
   docs/toolchain.md now documents the supported Nix path, opens with the normal check/local-smoke path plus a quick target chooser, and keeps the non-Nix requirements checklist from counting as default-engine promotion evidence
