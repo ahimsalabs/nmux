@@ -54,6 +54,15 @@ Run the default end-to-end smoke first:
 nix develop . -c make local-smoke
 ```
 
+A successful run ends with:
+
+```text
+local_smoke_reattach=passed
+local_smoke_socket_recreation=passed
+local_smoke_print_context=passed
+local_smoke=passed
+```
+
 That starts a temporary `nmuxd`, sends live input through `nmux`, reattaches
 read-only from persisted state, checks nested `nmux --print-context`, and proves
 the client does not reuse stale state after a socket path is recreated.

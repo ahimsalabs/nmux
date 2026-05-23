@@ -19,6 +19,15 @@ Run the default end-to-end smoke first:
 nix develop . -c make local-smoke
 ```
 
+A successful run ends with:
+
+```text
+local_smoke_reattach=passed
+local_smoke_socket_recreation=passed
+local_smoke_print_context=passed
+local_smoke=passed
+```
+
 For a persistent local workspace, start the daemon in one shell and attach from
 another:
 
