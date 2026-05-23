@@ -3718,9 +3718,9 @@ fn live_cli_uses_shared_default_socket_from_runtime_dir() {
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
-    assert!(
-        stdout.contains("ready"),
-        "default-socket live attach missed daemon output:\n{stdout}"
+    assert_default_workspace_attached(
+        &stdout,
+        "default-socket live attach did not use XDG_RUNTIME_DIR socket",
     );
 }
 
@@ -3766,10 +3766,7 @@ fn live_cli_uses_shared_default_socket_from_env() {
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
-    assert!(
-        stdout.contains("ready"),
-        "env-socket live attach missed daemon output:\n{stdout}"
-    );
+    assert_default_workspace_attached(&stdout, "env-socket live attach did not use NMUX_SOCKET");
 }
 
 fn test_runtime_dir() -> PathBuf {
