@@ -89,6 +89,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         mouse: args.mouse_event.map(|mouse| local::AttachMouseInput {
             row: mouse.row,
             col: mouse.col,
+            pixel_x: mouse.pixel_x,
+            pixel_y: mouse.pixel_y,
             button: mouse.button,
             action: mouse.action,
             modifiers: mouse.modifiers,
@@ -232,6 +234,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     &attached_pane_id,
                     mouse_event.row,
                     mouse_event.col,
+                    mouse_event.pixel_x,
+                    mouse_event.pixel_y,
                     mouse_event.button,
                     mouse_event.action,
                     mouse_event.modifiers,
@@ -650,6 +654,8 @@ fn attach_once(
         mouse: args.mouse_event.map(|mouse| local::AttachMouseInput {
             row: mouse.row,
             col: mouse.col,
+            pixel_x: mouse.pixel_x,
+            pixel_y: mouse.pixel_y,
             button: mouse.button,
             action: mouse.action,
             modifiers: mouse.modifiers,
@@ -882,6 +888,7 @@ where
     let mut focus_event = None;
     let mut mouse_event = None;
     let mut mouse_modifiers = 0;
+    let mut mouse_pixels = None;
     let mut scrollback_start_line = 1;
     let mut scrollback_line_count = 2;
     let mut state_path = None;
@@ -906,6 +913,7 @@ where
     let mut mouse_set = false;
     let mut no_input_set = false;
     let mut args = args.into_iter().map(Into::into);
+    let mut mouse_pixels_set = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -964,6 +972,12 @@ where
                     &args.next().ok_or("--mouse-modifiers requires modifiers")?,
                 )
                 .map_err(|err| format!("--mouse-modifiers {err}"))?;
+            }
+            "--mouse-pixels" => {
+                mouse_pixels_set = true;
+                mouse_pixels = Some(parse_mouse_pixels(
+                    &args.next().ok_or("--mouse-pixels requires x:y")?,
+                )?);
             }
             "--no-input" => {
                 no_input_set = true;
@@ -1081,9 +1095,14 @@ where
         key_modifiers_set,
         mouse_set,
         mouse_modifiers_set,
+        mouse_pixels_set,
     )?;
     if let Some(mouse_event) = mouse_event.as_mut() {
         mouse_event.modifiers = mouse_modifiers;
+        if let Some((pixel_x, pixel_y)) = mouse_pixels {
+            mouse_event.pixel_x = Some(pixel_x);
+            mouse_event.pixel_y = Some(pixel_y);
+        }
     }
 
     Ok(Args {
@@ -1259,6 +1278,7 @@ fn validate_mode_args(
     key_modifiers_set: bool,
     mouse_set: bool,
     mouse_modifiers_set: bool,
+    mouse_pixels_set: bool,
 ) -> Result<(), &'static str> {
     if live && follow {
         return Err("--follow cannot be combined with --live");
@@ -1299,6 +1319,9 @@ fn validate_mode_args(
     if mouse_modifiers_set && !mouse_set {
         return Err("--mouse-modifiers requires --mouse");
     }
+    if mouse_pixels_set && !mouse_set {
+        return Err("--mouse-pixels requires --mouse");
+    }
     if iterations.is_some() && !live && !follow {
         return Err("--iterations requires --live or --follow");
     }
@@ -1325,6 +1348,7 @@ Options:
   --focus gained|lost        Send focus input; daemon rejects if reporting is off
   --mouse A:B:R:C            Send mouse press/release/motion input
   --mouse-modifiers MODS     Modifiers for --mouse: shift,ctrl,alt,super
+  --mouse-pixels X:Y         Pixel coordinates for --mouse SGR-pixels mode
   --no-input                 Attach read-only
   --scrollback-start LINE    First scrollback line to request
   --scrollback-count COUNT   Number of scrollback lines to request
@@ -1380,6 +1404,8 @@ struct MouseEvent {
     button: protocol::MouseButton,
     row: u32,
     col: u32,
+    pixel_x: Option<u32>,
+    pixel_y: Option<u32>,
     modifiers: u32,
 }
 
@@ -1496,8 +1522,26 @@ fn parse_mouse_event(value: &str) -> Result<MouseEvent, &'static str> {
         button,
         row,
         col,
+        pixel_x: None,
+        pixel_y: None,
         modifiers: 0,
     })
+}
+
+fn parse_mouse_pixels(value: &str) -> Result<(u32, u32), &'static str> {
+    let mut parts = value.split(':');
+    let pixel_x = parse_pixel_coordinate(parts.next().ok_or("--mouse-pixels requires x:y")?)?;
+    let pixel_y = parse_pixel_coordinate(parts.next().ok_or("--mouse-pixels requires x:y")?)?;
+    if parts.next().is_some() {
+        return Err("--mouse-pixels requires x:y");
+    }
+    Ok((pixel_x, pixel_y))
+}
+
+fn parse_pixel_coordinate(value: &str) -> Result<u32, &'static str> {
+    value
+        .parse::<u32>()
+        .map_err(|_| "--mouse-pixels x and y must be non-negative integers")
 }
 
 fn parse_mouse_action(value: &str) -> Result<protocol::MouseAction, &'static str> {
@@ -1536,8 +1580,9 @@ mod tests {
         FocusEvent, LiveUpdatePrintKind, LocalEcho, MouseEvent, args_from_iter,
         interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
         parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        parse_mouse_pixels, raw_terminal_lflag, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args,
@@ -1572,6 +1617,7 @@ mod tests {
             paste_set,
             focus_set,
             key_name_set,
+            false,
             false,
             false,
             false,
@@ -1641,7 +1687,24 @@ mod tests {
                 button: protocol::MouseButton::Left,
                 row: 0,
                 col: 1,
+                pixel_x: None,
+                pixel_y: None,
                 modifiers: 4,
+            })
+        );
+
+        let args =
+            args_from_iter(["--mouse", "press:left:1:2", "--mouse-pixels", "9:17"]).expect("args");
+        assert_eq!(
+            args.mouse_event,
+            Some(MouseEvent {
+                action: protocol::MouseAction::Press,
+                button: protocol::MouseButton::Left,
+                row: 0,
+                col: 1,
+                pixel_x: Some(9),
+                pixel_y: Some(17),
+                modifiers: 0,
             })
         );
     }
@@ -1838,6 +1901,8 @@ mod tests {
                 button: protocol::MouseButton::Left,
                 row: 0,
                 col: 1,
+                pixel_x: None,
+                pixel_y: None,
                 modifiers: 0,
             })
         );
@@ -1848,9 +1913,14 @@ mod tests {
                 button: protocol::MouseButton::None,
                 row: 23,
                 col: 79,
+                pixel_x: None,
+                pixel_y: None,
                 modifiers: 0,
             })
         );
+        assert_eq!(parse_mouse_pixels("9:17"), Ok((9, 17)));
+        assert!(parse_mouse_pixels("9").is_err());
+        assert!(parse_mouse_pixels("x:17").is_err());
         assert!(parse_mouse_event("click:left:1:1").is_err());
         assert!(parse_mouse_event("press:left:0:1").is_err());
         assert!(parse_mouse_event("press:left:1").is_err());
@@ -1891,7 +1961,7 @@ mod tests {
         assert_eq!(
             super_validate_mode_args(
                 false, true, false, false, false, false, None, None, false, false, false, false,
-                false, true, false
+                false, true, false, false
             ),
             Err("--follow cannot be combined with --mouse")
         );
@@ -1973,16 +2043,23 @@ mod tests {
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                true, false, false
+                true, false, false, false
             ),
             Err("--key-modifiers requires --key-name")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, true
+                false, false, true, false
             ),
             Err("--mouse-modifiers requires --mouse")
+        );
+        assert_eq!(
+            super_validate_mode_args(
+                true, false, false, false, false, false, None, None, false, false, false, false,
+                false, false, false, true
+            ),
+            Err("--mouse-pixels requires --mouse")
         );
         assert!(
             validate_mode_args(
@@ -2010,7 +2087,7 @@ mod tests {
         assert!(
             super_validate_mode_args(
                 false, false, false, false, false, false, None, None, false, false, false, false,
-                false, true, false
+                false, true, false, false
             )
             .is_ok()
         );
@@ -2241,6 +2318,7 @@ mod tests {
         assert!(usage.contains("--local-echo off|tty"));
         assert!(usage.contains("--key-modifiers MODS"));
         assert!(usage.contains("--mouse-modifiers MODS"));
+        assert!(usage.contains("--mouse-pixels X:Y"));
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));
         assert!(usage.contains("interim text surface"));

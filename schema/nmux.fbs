@@ -275,6 +275,9 @@ table MouseInput {
   button:MouseButton = None;
   modifiers:uint;
   action:MouseAction = Press;
+  has_pixels:bool;
+  pixel_x:uint;
+  pixel_y:uint;
 }
 
 table PasteInput {

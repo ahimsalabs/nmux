@@ -1442,7 +1442,39 @@ impl Session {
         action: protocol::MouseAction,
         modifiers: u32,
     ) -> Vec<u8> {
+        self.mouse_input_frame_with_pixels(
+            connection_id,
+            seq,
+            actor_id,
+            pane_id,
+            input_seq,
+            row,
+            col,
+            None,
+            None,
+            button,
+            action,
+            modifiers,
+        )
+    }
+
+    pub fn mouse_input_frame_with_pixels(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        actor_id: &str,
+        pane_id: &str,
+        input_seq: u64,
+        row: u32,
+        col: u32,
+        pixel_x: Option<u32>,
+        pixel_y: Option<u32>,
+        button: protocol::MouseButton,
+        action: protocol::MouseAction,
+        modifiers: u32,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
+        let has_pixels = pixel_x.is_some() && pixel_y.is_some();
 
         let mouse = protocol::MouseInput::create(
             &mut builder,
@@ -1452,6 +1484,9 @@ impl Session {
                 button,
                 modifiers,
                 action,
+                has_pixels,
+                pixel_x: pixel_x.unwrap_or_default(),
+                pixel_y: pixel_y.unwrap_or_default(),
             },
         );
         let pane_id = builder.create_string(pane_id);
@@ -3021,6 +3056,35 @@ mod tests {
         assert_eq!(mouse.button(), protocol::MouseButton::Left);
         assert_eq!(mouse.action(), protocol::MouseAction::Press);
         assert_eq!(mouse.modifiers(), 2);
+        assert!(!mouse.has_pixels());
+        assert_eq!(mouse.pixel_x(), 0);
+        assert_eq!(mouse.pixel_y(), 0);
+    }
+
+    #[test]
+    fn mouse_pixel_input_frame_decodes_to_input_event() {
+        let frame = Session::initial().mouse_input_frame_with_pixels(
+            "conn-1",
+            9,
+            "actor-1",
+            "pane-1",
+            3,
+            4,
+            5,
+            Some(33),
+            Some(65),
+            protocol::MouseButton::Left,
+            protocol::MouseAction::Press,
+            2,
+        );
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let input = envelope.body_as_input_event().expect("input event body");
+        let mouse = input.mouse().expect("mouse input");
+        assert_eq!(mouse.row(), 4);
+        assert_eq!(mouse.col(), 5);
+        assert!(mouse.has_pixels());
+        assert_eq!(mouse.pixel_x(), 33);
+        assert_eq!(mouse.pixel_y(), 65);
     }
 
     #[test]

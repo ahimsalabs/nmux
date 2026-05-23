@@ -4757,6 +4757,9 @@ impl<'a> MouseInput<'a> {
   pub const VT_BUTTON: ::flatbuffers::VOffsetT = 8;
   pub const VT_MODIFIERS: ::flatbuffers::VOffsetT = 10;
   pub const VT_ACTION: ::flatbuffers::VOffsetT = 12;
+  pub const VT_HAS_PIXELS: ::flatbuffers::VOffsetT = 14;
+  pub const VT_PIXEL_X: ::flatbuffers::VOffsetT = 16;
+  pub const VT_PIXEL_Y: ::flatbuffers::VOffsetT = 18;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -4768,9 +4771,12 @@ impl<'a> MouseInput<'a> {
     args: &'args MouseInputArgs
   ) -> ::flatbuffers::WIPOffset<MouseInput<'bldr>> {
     let mut builder = MouseInputBuilder::new(_fbb);
+    builder.add_pixel_y(args.pixel_y);
+    builder.add_pixel_x(args.pixel_x);
     builder.add_modifiers(args.modifiers);
     builder.add_col(args.col);
     builder.add_row(args.row);
+    builder.add_has_pixels(args.has_pixels);
     builder.add_action(args.action);
     builder.add_button(args.button);
     builder.finish()
@@ -4812,6 +4818,27 @@ impl<'a> MouseInput<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<MouseAction>(MouseInput::VT_ACTION, Some(MouseAction::Press)).unwrap()}
   }
+  #[inline]
+  pub fn has_pixels(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(MouseInput::VT_HAS_PIXELS, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn pixel_x(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(MouseInput::VT_PIXEL_X, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn pixel_y(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(MouseInput::VT_PIXEL_Y, Some(0)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for MouseInput<'_> {
@@ -4825,6 +4852,9 @@ impl ::flatbuffers::Verifiable for MouseInput<'_> {
      .visit_field::<MouseButton>("button", Self::VT_BUTTON, false)?
      .visit_field::<u32>("modifiers", Self::VT_MODIFIERS, false)?
      .visit_field::<MouseAction>("action", Self::VT_ACTION, false)?
+     .visit_field::<bool>("has_pixels", Self::VT_HAS_PIXELS, false)?
+     .visit_field::<u32>("pixel_x", Self::VT_PIXEL_X, false)?
+     .visit_field::<u32>("pixel_y", Self::VT_PIXEL_Y, false)?
      .finish();
     Ok(())
   }
@@ -4835,6 +4865,9 @@ pub struct MouseInputArgs {
     pub button: MouseButton,
     pub modifiers: u32,
     pub action: MouseAction,
+    pub has_pixels: bool,
+    pub pixel_x: u32,
+    pub pixel_y: u32,
 }
 impl<'a> Default for MouseInputArgs {
   #[inline]
@@ -4845,6 +4878,9 @@ impl<'a> Default for MouseInputArgs {
       button: MouseButton::None,
       modifiers: 0,
       action: MouseAction::Press,
+      has_pixels: false,
+      pixel_x: 0,
+      pixel_y: 0,
     }
   }
 }
@@ -4875,6 +4911,18 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> MouseInputBuilder<'a, 'b, A> 
     self.fbb_.push_slot::<MouseAction>(MouseInput::VT_ACTION, action, MouseAction::Press);
   }
   #[inline]
+  pub fn add_has_pixels(&mut self, has_pixels: bool) {
+    self.fbb_.push_slot::<bool>(MouseInput::VT_HAS_PIXELS, has_pixels, false);
+  }
+  #[inline]
+  pub fn add_pixel_x(&mut self, pixel_x: u32) {
+    self.fbb_.push_slot::<u32>(MouseInput::VT_PIXEL_X, pixel_x, 0);
+  }
+  #[inline]
+  pub fn add_pixel_y(&mut self, pixel_y: u32) {
+    self.fbb_.push_slot::<u32>(MouseInput::VT_PIXEL_Y, pixel_y, 0);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> MouseInputBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     MouseInputBuilder {
@@ -4897,6 +4945,9 @@ impl ::core::fmt::Debug for MouseInput<'_> {
       ds.field("button", &self.button());
       ds.field("modifiers", &self.modifiers());
       ds.field("action", &self.action());
+      ds.field("has_pixels", &self.has_pixels());
+      ds.field("pixel_x", &self.pixel_x());
+      ds.field("pixel_y", &self.pixel_y());
       ds.finish()
   }
 }

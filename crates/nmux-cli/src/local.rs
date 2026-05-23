@@ -1092,6 +1092,8 @@ pub struct KnownScrollbackVersion {
 pub struct AttachMouseInput {
     pub row: u32,
     pub col: u32,
+    pub pixel_x: Option<u32>,
+    pub pixel_y: Option<u32>,
     pub button: protocol::MouseButton,
     pub action: protocol::MouseAction,
     pub modifiers: u32,
@@ -1167,6 +1169,8 @@ pub fn attach_with_client_options(
                 &attached_pane_id,
                 mouse.row,
                 mouse.col,
+                mouse.pixel_x,
+                mouse.pixel_y,
                 mouse.button,
                 mouse.action,
                 mouse.modifiers,
@@ -1451,6 +1455,8 @@ pub fn send_mouse_input(
         pane_id,
         row,
         col,
+        None,
+        None,
         button,
         action,
         modifiers,
@@ -1463,11 +1469,13 @@ pub fn send_mouse_input_with_sequence(
     pane_id: &str,
     row: u32,
     col: u32,
+    pixel_x: Option<u32>,
+    pixel_y: Option<u32>,
     button: protocol::MouseButton,
     action: protocol::MouseAction,
     modifiers: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let frame = Session::initial().mouse_input_frame(
+    let frame = Session::initial().mouse_input_frame_with_pixels(
         "local-client",
         sequence.next_envelope_seq(),
         "local-actor",
@@ -1475,6 +1483,8 @@ pub fn send_mouse_input_with_sequence(
         sequence.next_input_seq(),
         row,
         col,
+        pixel_x,
+        pixel_y,
         button,
         action,
         modifiers,
@@ -2193,6 +2203,8 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                 Some(MouseSummary {
                     row: mouse.row(),
                     col: mouse.col(),
+                    pixel_x: mouse.has_pixels().then_some(mouse.pixel_x()),
+                    pixel_y: mouse.has_pixels().then_some(mouse.pixel_y()),
                     button: mouse_button_from_protocol(mouse.button()),
                     action: mouse_action_from_protocol(mouse.action()),
                     modifiers: mouse.modifiers(),
@@ -4109,6 +4121,8 @@ pub struct InputSummary {
 pub struct MouseSummary {
     pub row: u32,
     pub col: u32,
+    pub pixel_x: Option<u32>,
+    pub pixel_y: Option<u32>,
     pub button: MouseButton,
     pub action: MouseAction,
     pub modifiers: u32,
@@ -4141,6 +4155,17 @@ impl InputSummary {
         };
         if mouse.row >= rows || mouse.col >= cols {
             return Some(InputRejection::MouseCoordinatesOutOfBounds);
+        }
+        if let (Some(pixel_x), Some(pixel_y)) = (mouse.pixel_x, mouse.pixel_y) {
+            let Some(width) = cols.checked_mul(8) else {
+                return Some(InputRejection::MousePixelCoordinatesOutOfBounds);
+            };
+            let Some(height) = rows.checked_mul(16) else {
+                return Some(InputRejection::MousePixelCoordinatesOutOfBounds);
+            };
+            if pixel_x >= width || pixel_y >= height {
+                return Some(InputRejection::MousePixelCoordinatesOutOfBounds);
+            }
         }
         (!mouse_input_allowed(mode, mouse)).then_some(InputRejection::MouseActionRejected(mode))
     }
@@ -4182,6 +4207,8 @@ impl InputSummary {
                 .encode_mouse_input(MouseTerminalInput {
                     row: mouse.row,
                     col: mouse.col,
+                    pixel_x: mouse.pixel_x,
+                    pixel_y: mouse.pixel_y,
                     button: mouse.button,
                     action: mouse.action,
                     modifiers: mouse.modifiers,
@@ -4202,6 +4229,7 @@ enum InputRejection {
     FocusReportingDisabled,
     MouseTrackingDisabled,
     MouseCoordinatesOutOfBounds,
+    MousePixelCoordinatesOutOfBounds,
     MouseActionRejected(protocol::MouseTrackingMode),
 }
 
@@ -4212,6 +4240,9 @@ impl InputRejection {
             Self::MouseTrackingDisabled => "input rejected: mouse tracking is disabled",
             Self::MouseCoordinatesOutOfBounds => {
                 "input rejected: mouse coordinates are outside pane bounds"
+            }
+            Self::MousePixelCoordinatesOutOfBounds => {
+                "input rejected: mouse pixel coordinates are outside pane bounds"
             }
             Self::MouseActionRejected(protocol::MouseTrackingMode::X10) => {
                 "input rejected: X10 mouse tracking accepts press events only"
@@ -6125,6 +6156,8 @@ mod tests {
                 mouse: Some(AttachMouseInput {
                     row: 0,
                     col: 0,
+                    pixel_x: None,
+                    pixel_y: None,
                     button: protocol::MouseButton::Left,
                     action: protocol::MouseAction::Press,
                     modifiers: 0,
@@ -6172,6 +6205,8 @@ mod tests {
                 mouse: Some(AttachMouseInput {
                     row: 24,
                     col: 0,
+                    pixel_x: None,
+                    pixel_y: None,
                     button: protocol::MouseButton::Left,
                     action: protocol::MouseAction::Press,
                     modifiers: 0,
@@ -8861,6 +8896,8 @@ mod tests {
                 mouse: Some(AttachMouseInput {
                     row: 0,
                     col: 0,
+                    pixel_x: None,
+                    pixel_y: None,
                     button: protocol::MouseButton::Left,
                     action: protocol::MouseAction::Press,
                     modifiers: 0,
@@ -8933,6 +8970,8 @@ mod tests {
                 mouse: Some(AttachMouseInput {
                     row: 0,
                     col: 0,
+                    pixel_x: None,
+                    pixel_y: None,
                     button: protocol::MouseButton::Left,
                     action: protocol::MouseAction::Press,
                     modifiers: 0,
@@ -9157,6 +9196,8 @@ mod tests {
             "pane-1",
             1,
             2,
+            None,
+            None,
             protocol::MouseButton::Left,
             protocol::MouseAction::Press,
             0,
@@ -9762,12 +9803,42 @@ mod tests {
             Some(MouseSummary {
                 row: 4,
                 col: 5,
+                pixel_x: None,
+                pixel_y: None,
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 3,
             })
         );
         assert!(input.requires_mouse_tracking);
+
+        let frame = Session::initial().mouse_input_frame_with_pixels(
+            "conn-1",
+            9,
+            "actor-1",
+            "pane-1",
+            2,
+            4,
+            5,
+            Some(33),
+            Some(65),
+            protocol::MouseButton::Left,
+            protocol::MouseAction::Press,
+            3,
+        );
+        let input = input_summary_from_frame(&frame).expect("mouse pixel summary");
+        assert_eq!(
+            input.mouse,
+            Some(MouseSummary {
+                row: 4,
+                col: 5,
+                pixel_x: Some(33),
+                pixel_y: Some(65),
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 3,
+            })
+        );
     }
 
     #[test]
@@ -9810,6 +9881,8 @@ mod tests {
             mouse: Some(MouseSummary {
                 row: 0,
                 col: 0,
+                pixel_x: None,
+                pixel_y: None,
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 0,
@@ -9848,6 +9921,8 @@ mod tests {
             mouse: Some(MouseSummary {
                 row: 24,
                 col: 79,
+                pixel_x: None,
+                pixel_y: None,
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 0,
@@ -9865,6 +9940,8 @@ mod tests {
             mouse: Some(MouseSummary {
                 row: 23,
                 col: 80,
+                pixel_x: None,
+                pixel_y: None,
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 0,
@@ -9880,6 +9957,8 @@ mod tests {
             mouse: Some(MouseSummary {
                 row: 23,
                 col: 79,
+                pixel_x: None,
+                pixel_y: None,
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 0,
@@ -9887,6 +9966,23 @@ mod tests {
             ..input
         };
         assert_eq!(input.forwarding_rejection(&session), None);
+
+        let input = InputSummary {
+            mouse: Some(MouseSummary {
+                row: 23,
+                col: 79,
+                pixel_x: Some(640),
+                pixel_y: Some(10),
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 0,
+            }),
+            ..input
+        };
+        assert_eq!(
+            input.forwarding_rejection(&session),
+            Some(InputRejection::MousePixelCoordinatesOutOfBounds)
+        );
     }
 
     #[test]
@@ -9894,6 +9990,8 @@ mod tests {
         let press = MouseSummary {
             row: 0,
             col: 0,
+            pixel_x: None,
+            pixel_y: None,
             button: MouseButton::Left,
             action: MouseAction::Press,
             modifiers: 0,

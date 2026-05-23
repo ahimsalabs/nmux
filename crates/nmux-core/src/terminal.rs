@@ -207,6 +207,8 @@ pub struct KeyTerminalInput<'a> {
 pub struct MouseTerminalInput {
     pub row: u32,
     pub col: u32,
+    pub pixel_x: Option<u32>,
+    pub pixel_y: Option<u32>,
     pub button: MouseButton,
     pub action: MouseAction,
     pub modifiers: u32,
@@ -1145,8 +1147,8 @@ mod ghostty_vt {
                 u16::try_from(input.modifiers).ok()?,
             ))
             .set_position(mouse::Position {
-                x: input.col.checked_mul(8)? as f32,
-                y: input.row.checked_mul(16)? as f32,
+                x: input.pixel_x.unwrap_or(input.col.checked_mul(8)?) as f32,
+                y: input.pixel_y.unwrap_or(input.row.checked_mul(16)?) as f32,
             });
         let mut bytes = Vec::new();
         encoder.encode_to_vec(&event, &mut bytes).ok()?;
@@ -2835,6 +2837,8 @@ mod tests {
             .encode_mouse_input(MouseTerminalInput {
                 row: 0,
                 col: 0,
+                pixel_x: None,
+                pixel_y: None,
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 0,
@@ -2864,6 +2868,8 @@ mod tests {
             .encode_mouse_input(MouseTerminalInput {
                 row: 0,
                 col: 0,
+                pixel_x: None,
+                pixel_y: None,
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 2,
@@ -2873,6 +2879,38 @@ mod tests {
             .expect("encoded mouse input");
 
         assert_eq!(bytes, b"\x1b[<16;1;1M");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_encodes_sgr_pixel_mouse_coordinates() {
+        use super::{MouseAction, MouseButton, MouseTerminalInput};
+
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let update = engine
+            .apply_output(
+                terminal_input(24, &empty, &empty),
+                b"\x1b[?1000h\x1b[?1006h\x1b[?1016h",
+            )
+            .expect("terminal update");
+        assert_eq!(update.modes.mouse_format, protocol::MouseFormat::SgrPixels);
+
+        let bytes = engine
+            .encode_mouse_input(MouseTerminalInput {
+                row: 0,
+                col: 0,
+                pixel_x: Some(9),
+                pixel_y: Some(17),
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 0,
+                cols: 80,
+                rows: 24,
+            })
+            .expect("encoded mouse input");
+
+        assert_eq!(bytes, b"\x1b[<0;9;17M");
     }
 
     #[cfg(feature = "libghostty-vt")]
