@@ -59,6 +59,7 @@ Run:
 
 ```sh
 nix develop . -c make promotion-sample
+nix develop . -c make packaging-sample
 ```
 
 Record the host, command, result, timing, cache state, source-fetch mode, and
@@ -76,6 +77,10 @@ directory; otherwise the evidence sample records the pinned-fetch source mode.
 Record missing-tool, wrong-version, or invalid-source-directory failures too;
 they are setup evidence for the non-Nix checklist, not passing promotion
 evidence.
+
+`make packaging-sample` prints the same toolchain context, builds default and
+opt-in release binaries in separate target directories, and reports artifact
+sizes plus binary versions for packaging evidence.
 
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty

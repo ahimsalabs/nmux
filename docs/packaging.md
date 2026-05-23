@@ -14,6 +14,38 @@ distribution path is source checkout plus the supported Nix development shell.
   shell completions, notarization/signing, update channels, or binary artifact
   provenance.
 
+## Local Packaging Sample
+
+Use this command to collect local binary-build evidence without changing the
+default engine:
+
+```sh
+nix develop . -c make packaging-sample
+```
+
+The target prints `make toolchain-info`, validates the optional native-VT
+toolchain preflight, builds default release `nmux` and `nmuxd` binaries into
+`target/packaging-default`, builds opt-in `--features libghostty-vt` release
+binaries into `target/packaging-libghostty-vt`, then prints artifact paths,
+byte sizes, discovered `libghostty-vt` dynamic-library artifacts, and
+`--version` output. The opt-in build uses `GIT_CONFIG_GLOBAL=/dev/null` and the
+same `GHOSTTY_SOURCE_DIR` validation as the terminal-correctness gate. If a
+built binary cannot run its version check, the target exits nonzero after
+reporting all version-check failures.
+
+Record successful or failed samples in
+[default-engine-promotion.md](default-engine-promotion.md) with host, source
+mode, cache state, command, artifact sizes, and result. A passing local
+packaging sample proves the release binaries build in that environment; it does
+not answer install paths, signing/notarization, update channels, target support,
+or native-library provenance by itself.
+
+Current local Darwin evidence shows the default release binaries run, but the
+opt-in `libghostty-vt` release binaries fail at runtime because
+`@rpath/libghostty-vt.dylib` is not discoverable and the binaries have no
+`LC_RPATH`. This must be resolved before native-VT binaries are treated as
+shippable.
+
 ## Default-Engine Promotion Packaging Questions
 
 Before a later ADR can make `libghostty-vt` the default engine or a regular CI

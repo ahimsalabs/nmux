@@ -3,7 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -15,6 +15,47 @@ check-ghostty-vt: check-vt-toolchain
 
 promotion-sample: toolchain-info
 	time -p $(MAKE) check-all
+
+packaging-sample: toolchain-info check-vt-toolchain
+	@echo "building default release binaries"
+	CARGO_TARGET_DIR=target/packaging-default cargo build -p nmux-cli --release --bins
+	@echo "default release artifacts"
+	@for bin in target/packaging-default/release/nmux target/packaging-default/release/nmuxd; do \
+		printf '%s bytes=%s\n' "$$bin" "$$(wc -c < "$$bin" | tr -d ' ')"; \
+	done
+	@printf 'default nmux version: '
+	@if ! target/packaging-default/release/nmux --version; then \
+		echo "default nmux version check failed" >&2; \
+		exit 1; \
+	fi
+	@printf 'default nmuxd version: '
+	@if ! target/packaging-default/release/nmuxd --version; then \
+		echo "default nmuxd version check failed" >&2; \
+		exit 1; \
+	fi
+	@echo "building opt-in libghostty-vt release binaries"
+	GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/packaging-libghostty-vt cargo build -p nmux-cli --release --bins --features libghostty-vt
+	@echo "opt-in libghostty-vt release artifacts"
+	@for bin in target/packaging-libghostty-vt/release/nmux target/packaging-libghostty-vt/release/nmuxd; do \
+		printf '%s bytes=%s\n' "$$bin" "$$(wc -c < "$$bin" | tr -d ' ')"; \
+	done
+	@echo "opt-in libghostty-vt dynamic library artifacts"
+	@find target/packaging-libghostty-vt/release -name 'libghostty-vt*.dylib' -o -name 'libghostty-vt*.so' -o -name 'libghostty-vt*.dll'
+	@printf 'libghostty-vt nmux version: '
+	@status=0; \
+	if ! target/packaging-libghostty-vt/release/nmux --version; then \
+		echo "libghostty-vt nmux version check failed" >&2; \
+		status=1; \
+	fi; \
+	printf 'libghostty-vt nmuxd version: '; \
+	if ! target/packaging-libghostty-vt/release/nmuxd --version; then \
+		echo "libghostty-vt nmuxd version check failed" >&2; \
+		status=1; \
+	fi; \
+	if [ "$$status" -ne 0 ]; then \
+		echo "one or more opt-in libghostty-vt binary version checks failed; record this as packaging evidence" >&2; \
+		exit "$$status"; \
+	fi
 
 check-schema: require-flatc
 	flatc --json --strict-json --no-warnings -o /tmp $(SCHEMA)

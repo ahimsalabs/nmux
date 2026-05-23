@@ -7,6 +7,7 @@ nix develop . -c make check
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
+nix develop . -c make packaging-sample
 ```
 
 `flake.nix` currently provides:
@@ -39,6 +40,17 @@ nix develop . -c make promotion-sample
 ```
 
 That target prints `toolchain-info` and then runs `time -p make check-all`.
+For local release-binary evidence, use:
+
+```sh
+nix develop . -c make packaging-sample
+```
+
+That target builds default and opt-in `libghostty-vt` release binaries in
+separate target directories, then prints artifact sizes, dynamic-library
+artifacts, and binary versions. A failed opt-in binary version check is
+packaging evidence and should be recorded in
+[the default-engine promotion tracker](default-engine-promotion.md).
 
 ## Non-Nix Equivalents
 

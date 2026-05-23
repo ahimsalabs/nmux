@@ -198,7 +198,9 @@ Done:
   `libghostty-vt-sys` fetch behavior and the remaining packaged/default-build
   policy choices.
 - [Packaging notes](packaging.md) record the current no-release-binary stance
-  and the native-VT binary distribution questions that remain before promotion.
+  and the native-VT binary distribution questions that remain before promotion;
+  `make packaging-sample` now provides local release-binary build evidence
+  without changing the default engine.
 - [Contributor workflow](contributor-workflow.md) records the default-engine,
   opt-in terminal-correctness, and promotion-evidence check paths.
 

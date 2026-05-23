@@ -570,6 +570,8 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   a local non-Nix make check-all attempt is recorded as failing during tool preflight because flatc is not on the host PATH outside the Nix shell, and Makefile preflight now reports missing or unsupported cargo/flatc/zig requirements with Nix fallback guidance
   make toolchain-info prints cargo, rustc, flatc, Zig, GHOSTTY_SOURCE_DIR, explicit Ghostty source mode, and GIT_CONFIG_GLOBAL values for default-engine-promotion evidence records
   make promotion-sample prints toolchain-info and times make check-all for one-command local promotion evidence collection
+  make packaging-sample builds default and opt-in libghostty-vt release binaries in separate target directories and reports artifact sizes plus binary versions for packaging evidence
+  the first local packaging-sample run built both default and opt-in release binaries, but the opt-in libghostty-vt binaries failed runtime version checks on Darwin because @rpath/libghostty-vt.dylib was not discoverable and dyld reported no LC_RPATHs
   opt-in VT preflight rejects invalid GHOSTTY_SOURCE_DIR paths before the native build starts, while unset GHOSTTY_SOURCE_DIR is recorded as the pinned-fetch source mode
   GitHub Actions now runs the default-engine make check gate on pull requests and main pushes, with make promotion-sample available only as a manual workflow_dispatch job for CI promotion evidence
   make check-all is the explicit combined default-plus-libghostty-vt validation gate for release-style checks and promotion evidence without changing regular make check

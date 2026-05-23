@@ -108,12 +108,16 @@ default-engine-promotion evidence:
 ```sh
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
+nix develop . -c make packaging-sample
 ```
 
 `check-all` runs the regular default-engine gate plus the opt-in
 `libghostty-vt` gate without changing what `make check` means.
 `promotion-sample` prints `toolchain-info` and times `check-all` for evidence
 rows in `docs/default-engine-promotion.md`.
+`packaging-sample` builds default and opt-in release binaries in separate target
+directories and prints artifact sizes plus binary versions for packaging
+evidence rows.
 GitHub Actions runs `make check` on pull requests and pushes to `main`; the
 promotion-sample job is manual and does not make `libghostty-vt` a required CI
 gate.

@@ -71,6 +71,9 @@ engine or a regular CI requirement.
   samples.
 - `make promotion-sample` prints that toolchain information and then times
   `make check-all` with `time -p` for a single local evidence command.
+- `make packaging-sample` prints that toolchain information, builds default and
+  opt-in `libghostty-vt` release binaries in separate target directories, and
+  reports artifact sizes plus binary versions for packaging evidence.
 - The optional VT preflight rejects an invalid `GHOSTTY_SOURCE_DIR` before the
   native build starts, while unset `GHOSTTY_SOURCE_DIR` is recorded as the
   pinned-fetch source mode.
@@ -120,6 +123,16 @@ be recorded.
 | --- | --- | --- | --- |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, repository caches present; host shell outside Nix; no `flatc` on PATH | `/usr/bin/time -p env GIT_CONFIG_GLOBAL=/dev/null make check-all` | Failed during tool preflight before schema or Rust tests; missing `flatc`; `real 0.01`, `user 0.00`, `sys 0.00` |
 
+## Packaging Samples
+
+These samples prove release binary build behavior in a specific environment.
+They do not answer install paths, signing/notarization, update channels, target
+support, or native-library provenance by themselves.
+
+| Date | Host | Command | Result |
+| --- | --- | --- | --- |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-sample` | Failed after successful release builds. Default binaries ran `--version`; sizes: `nmux` 1065296 bytes, `nmuxd` 1182352 bytes. Opt-in `libghostty-vt` binaries built; sizes: `nmux` 1065424 bytes, `nmuxd` 1251648 bytes; both `--version` checks failed because `@rpath/libghostty-vt.dylib` was not loaded and dyld reported no `LC_RPATH`s found. |
+
 ## Open Work
 
 - Measure and record `make check-all` timing on more supported local systems,
@@ -136,7 +149,10 @@ be recorded.
   prefetching, or a native-library package/artifact cache.
 - Define packaging expectations for binaries that include the native Ghostty VT
   dependency, including supported targets, static/dynamic linkage, artifact
-  provenance, signing/notarization where relevant, and release checks.
+  provenance, signing/notarization where relevant, release checks, and recorded
+  `make packaging-sample` results. The current Darwin packaging sample shows
+  the opt-in release binaries need an explicit runtime-library strategy for
+  `libghostty-vt.dylib`.
 - Keep contributor workflow guidance current as default-engine, opt-in
   terminal-correctness, and promotion-evidence responsibilities change.
 

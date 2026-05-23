@@ -33,6 +33,7 @@ nix develop . -c make check
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
+nix develop . -c make packaging-sample
 ```
 
 The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
@@ -41,6 +42,8 @@ default-engine gate. `make check-ghostty-vt` is the opt-in full feature gate for
 backend `libghostty-vt` changes. `make check-all` runs both when validating
 release-style or default-engine-promotion work. `make promotion-sample` prints
 toolchain evidence and times `make check-all` in the same run.
+`make packaging-sample` builds default and opt-in release binaries in separate
+target directories and prints artifact sizes plus binary versions.
 See [docs/contributor-workflow.md](docs/contributor-workflow.md) for when to use
 the default gate, the opt-in VT gate, or the combined promotion-evidence gate.
 See [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions
