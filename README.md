@@ -19,7 +19,7 @@ The current implementation is a Rust workspace with:
 - runnable notes in [docs/running.md](docs/running.md);
 - default-engine promotion evidence in [docs/default-engine-promotion.md](docs/default-engine-promotion.md);
 - CI notes in [docs/ci.md](docs/ci.md), including the default gate and manual
-  promotion-local-sample workflow;
+  promotion evidence bundle workflow;
 - future protocol-object tracks in [docs/protocol-futures.md](docs/protocol-futures.md);
 - opt-in native source-fetch policy in [docs/source-fetch-policy.md](docs/source-fetch-policy.md);
 - packaging notes in [docs/packaging.md](docs/packaging.md);
@@ -42,6 +42,7 @@ nix develop . -c make check-all
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
+nix develop . -c make promotion-evidence-bundle
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
@@ -61,6 +62,9 @@ toolchain evidence and times `make check-all` in the same run.
 `make check-all` with that fresh Rust target directory.
 `make promotion-local-sample` runs source-fetch provenance, the timed validation
 sample, and the package archive runtime smoke for one local evidence pass.
+`make promotion-evidence-bundle` runs that local sample and gathers the log,
+toolchain output, source-fetch report, package provenance, cargo tree, and
+archive checksum under `target/promotion-evidence`.
 `make source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `make packaging-sample` builds default and opt-in release binaries in separate
@@ -80,8 +84,8 @@ runtime layout can serve a real pane.
 See [docs/contributor-workflow.md](docs/contributor-workflow.md) for when to use
 the default gate, the opt-in VT gate, or the combined promotion-evidence gate.
 See [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions
-gate, the manual promotion-local-sample workflow, and the CI promotion evidence
-recording template.
+gate, the manual promotion evidence bundle workflow, and the CI promotion
+evidence recording template.
 See [docs/toolchain.md](docs/toolchain.md) for the supported Nix path and the
 non-Nix requirements checklist that still needs validation before default-engine
 promotion. `make toolchain-info` prints the active tool versions for evidence

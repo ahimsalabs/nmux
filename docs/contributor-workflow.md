@@ -61,6 +61,7 @@ Run:
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
+nix develop . -c make promotion-evidence-bundle
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
@@ -96,6 +97,11 @@ source, or Nix store caches.
 clear section headers. Use it for a local evidence pass before updating the
 promotion tracker with source-provenance, validation, and packaging/archive
 runtime results.
+`make promotion-evidence-bundle` runs the local sample and gathers
+`RUN.log`, `TOOLCHAIN.txt`, `SOURCE_FETCH.txt`, `PACKAGE_PROVENANCE.txt`,
+`CARGO_TREE.txt`, `ARCHIVE.sha256`, and `SUMMARY.txt` under
+`target/promotion-evidence` for easier transcription into the promotion
+tracker or manual CI evidence records.
 
 `make source-fetch-provenance-sample` writes the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source. Use it
@@ -124,5 +130,5 @@ runtime layout can serve a real pane.
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty
 source policy, or release binaries.
-Use the manual CI promotion-local-sample job when collecting CI evidence; a normal
-pull-request run remains default-engine-only.
+Use the manual CI promotion evidence bundle job when collecting CI evidence; a
+normal pull-request run remains default-engine-only.

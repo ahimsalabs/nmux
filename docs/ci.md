@@ -22,13 +22,15 @@ The same workflow exposes a manual `workflow_dispatch` job for promotion
 evidence:
 
 ```sh
-nix develop . -c make promotion-local-sample
+nix develop . -c make promotion-evidence-bundle
 ```
 
 That job is intentionally manual. It records source-fetch provenance, runs the
 default gate plus the opt-in `libghostty-vt` gate, times the inner
-`make check-all` run, and produces a verifiable native-VT package archive. Copy
-passing or failing results into
+`make check-all` run, and produces a verifiable native-VT package archive. The
+bundle target gathers the same local promotion evidence under
+`target/promotion-evidence` for artifact upload or transcription. Copy passing
+or failing results into
 [default-engine-promotion.md](default-engine-promotion.md) with runner, cache,
 source-fetch, packaging, and flake context before using them as promotion
 evidence.

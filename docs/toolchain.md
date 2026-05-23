@@ -9,6 +9,7 @@ nix develop . -c make check-all
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
+nix develop . -c make promotion-evidence-bundle
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
@@ -63,10 +64,14 @@ evidence pass, use:
 
 ```sh
 nix develop . -c make promotion-local-sample
+nix develop . -c make promotion-evidence-bundle
 ```
 
-That target runs `make source-fetch-provenance-sample`, `make promotion-sample`,
-and then `make packaging-archive-runtime-smoke`.
+The local sample target runs `make source-fetch-provenance-sample`,
+`make promotion-sample`, and then `make packaging-archive-runtime-smoke`. The
+bundle target runs the same local sample and gathers the run log, toolchain
+output, source-fetch report, package provenance, cargo tree, and archive
+checksum under `target/promotion-evidence`.
 For source-fetch provenance evidence, use:
 
 ```sh

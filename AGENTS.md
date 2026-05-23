@@ -29,7 +29,7 @@ nmux is a portable Ghostty-style terminal workspace. The current direction is do
   evidence required before `libghostty-vt` can become the default engine or a
   regular CI requirement.
 - [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions gate
-  and manual promotion-local-sample workflow.
+  and manual promotion evidence bundle workflow.
 - [docs/adr/0026-native-vt-ci-promotion-criteria.md](docs/adr/0026-native-vt-ci-promotion-criteria.md)
   for criteria a future native-VT CI promotion decision must satisfy.
 - [docs/adr](docs/adr) for durable architecture decisions.
@@ -116,6 +116,7 @@ nix develop . -c make check-all
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
+nix develop . -c make promotion-evidence-bundle
 nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
@@ -135,6 +136,9 @@ registry, Git source, or Nix store caches.
 `promotion-local-sample` runs `source-fetch-provenance-sample`,
 `promotion-sample`, and `packaging-archive-runtime-smoke` for one local evidence
 pass.
+`promotion-evidence-bundle` runs `promotion-local-sample` and gathers the log,
+toolchain output, source-fetch report, package provenance, cargo tree, and
+archive checksum under `target/promotion-evidence`.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `packaging-sample` builds default and opt-in release binaries in separate target
@@ -154,7 +158,7 @@ extracts it, and verifies the wrapped binaries from the archive.
 daemon and attaches the extracted client to prove the packaged runtime layout
 can serve a real pane.
 GitHub Actions runs `make check` on pull requests and pushes to `main`; the
-promotion-local-sample job is manual and does not make `libghostty-vt` a
+promotion-evidence-bundle job is manual and does not make `libghostty-vt` a
 required CI gate. Use the field template in `docs/ci.md` when recording manual
 CI promotion evidence.
 

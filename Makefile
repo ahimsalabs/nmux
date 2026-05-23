@@ -3,7 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-target-sample promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-provenance-sample toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-target-sample promotion-evidence-bundle promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-provenance-sample toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -28,6 +28,53 @@ promotion-local-sample:
 	$(MAKE) promotion-sample
 	@echo "== promotion local sample: packaging archive runtime smoke =="
 	$(MAKE) packaging-archive-runtime-smoke
+
+promotion-evidence-bundle:
+	@echo "writing local promotion evidence bundle"
+	@set -u; \
+	bundle_dir=target/promotion-evidence; \
+	run_log="$$bundle_dir/RUN.log"; \
+	rm -rf "$$bundle_dir"; \
+	mkdir -p "$$bundle_dir"; \
+	$(MAKE) --no-print-directory promotion-local-sample > "$$run_log" 2>&1; \
+	status="$$?"; \
+	if [ "$$status" -ne 0 ]; then \
+		cat "$$run_log"; \
+		echo "promotion evidence bundle failed; partial log: $$run_log" >&2; \
+		exit "$$status"; \
+	fi; \
+	set -e; \
+	cp target/source-fetch-provenance/SOURCE_FETCH.txt "$$bundle_dir/SOURCE_FETCH.txt"; \
+	cp target/packaging-libghostty-vt/package/PROVENANCE.txt "$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
+	cp target/packaging-libghostty-vt/package/CARGO_TREE.txt "$$bundle_dir/CARGO_TREE.txt"; \
+	cp target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz.sha256 "$$bundle_dir/ARCHIVE.sha256"; \
+	$(MAKE) --no-print-directory toolchain-info > "$$bundle_dir/TOOLCHAIN.txt"; \
+	archive_sha="$$(cat "$$bundle_dir/ARCHIVE.sha256")"; \
+	runtime_smoke="$$(grep -m1 '^packaged_runtime_smoke=' "$$run_log" | cut -d= -f2- || true)"; \
+	if [ -z "$$runtime_smoke" ]; then \
+		echo "missing packaged_runtime_smoke result in $$run_log" >&2; \
+		exit 1; \
+	fi; \
+	{ \
+		printf 'nmux promotion evidence bundle\n'; \
+		printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+		printf 'host=%s\n' "$$(uname -a)"; \
+		printf 'git_revision=%s\n' "$$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"; \
+		printf 'ghostty_source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"; \
+		printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
+		printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
+		printf 'cache_state=%s\n' 'not captured; record Nix/Cargo/native cache context separately'; \
+		printf 'run_log=%s\n' "$$run_log"; \
+		printf 'toolchain=%s\n' "$$bundle_dir/TOOLCHAIN.txt"; \
+		printf 'source_fetch=%s\n' "$$bundle_dir/SOURCE_FETCH.txt"; \
+		printf 'package_provenance=%s\n' "$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
+		printf 'cargo_tree=%s\n' "$$bundle_dir/CARGO_TREE.txt"; \
+		printf 'archive_sha256=%s\n' "$$archive_sha"; \
+		printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
+	} > "$$bundle_dir/SUMMARY.txt"; \
+	cat "$$run_log"; \
+	printf 'promotion_evidence_bundle=%s\n' "$$bundle_dir"; \
+	find "$$bundle_dir" -type f | sort
 
 source-fetch-provenance-sample: toolchain-info
 	@echo "writing source-fetch provenance report"

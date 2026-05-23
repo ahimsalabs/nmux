@@ -572,6 +572,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   make promotion-sample prints toolchain-info and times make check-all for one-command local promotion evidence collection
   make promotion-cold-target-sample clears target/promotion-cold and times make check-all with a fresh Rust target directory, without clearing Cargo registry, Git source, or Nix store caches
   make promotion-local-sample runs source-fetch provenance, the timed validation sample, and package archive runtime smoke for one local evidence pass
+  make promotion-evidence-bundle runs the local sample and gathers its log, toolchain output, source-fetch report, package provenance, cargo tree, and archive checksum under target/promotion-evidence
   make source-fetch-provenance-sample writes active source mode, Cargo.lock hash, and locked libghostty-vt/libghostty-vt-sys package records without inspecting Ghostty source
   make packaging-sample builds default and opt-in libghostty-vt release binaries in separate target directories and reports artifact sizes plus binary versions for packaging evidence
   make packaging-layout-sample stages opt-in release binaries, wrapper scripts, and libghostty-vt runtime-library artifacts in a local package layout, then verifies wrapped nmux and nmuxd version checks from that layout
@@ -581,8 +582,8 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   make packaging-archive-runtime-smoke starts the extracted opt-in libghostty-vt daemon and attaches the extracted client to prove the packaged runtime layout can serve a real pane
   the first local packaging-sample evidence run built both default and opt-in release binaries and proved the opt-in libghostty-vt binaries run on Darwin when the produced ghostty-install/lib directory is supplied as the runtime library path; packaged binaries still need an explicit runtime-library distribution strategy
   opt-in VT preflight rejects invalid GHOSTTY_SOURCE_DIR paths before the native build starts, while unset GHOSTTY_SOURCE_DIR is recorded as the pinned-fetch source mode
-  GitHub Actions now runs the default-engine make check gate on pull requests and main pushes, with make promotion-local-sample available only as a manual workflow_dispatch job for CI promotion evidence
-  docs/ci.md defines the required field set for recording manual promotion-local-sample CI evidence, and docs/default-engine-promotion.md has a dedicated CI promotion samples table for those runs
+  GitHub Actions now runs the default-engine make check gate on pull requests and main pushes, with make promotion-evidence-bundle available only as a manual workflow_dispatch job for CI promotion evidence
+  docs/ci.md defines the required field set for recording manual promotion evidence bundle CI evidence, and docs/default-engine-promotion.md has a dedicated CI promotion samples table for those runs
   ADR 0026 defines acceptance criteria for any future native-VT CI promotion decision, including runner matrix, cache/fetch behavior, runtime evidence, packaging claims, and failure-triage expectations
   make check-all is the explicit combined default-plus-libghostty-vt validation gate for release-style checks and promotion evidence without changing regular make check
   keep frontend Ghostty renderer hydration separate from backend terminal-state extraction until upstream can render externally supplied nmux state without client-side PTY replay
