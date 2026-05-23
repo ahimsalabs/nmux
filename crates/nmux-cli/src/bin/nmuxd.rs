@@ -33,7 +33,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.print_socket || args.print_socket_json {
         if args.print_socket_json {
-            println!("{}", local::socket_path_json(&args.socket_path));
+            println!(
+                "{}",
+                local::socket_path_json(&args.socket_path, args.socket_source)
+            );
         } else {
             println!("{}", args.socket_path.display());
         }
@@ -161,6 +164,7 @@ struct Args {
     print_socket: bool,
     print_socket_json: bool,
     socket_path: PathBuf,
+    socket_source: local::SocketPathSource,
     one_shot: bool,
     live: bool,
     live_forever: bool,
@@ -176,7 +180,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut version = false;
     let mut print_socket = false;
     let mut print_socket_json = false;
-    let mut socket_path = local::default_socket_path();
+    let (mut socket_path, mut socket_source) = local::default_socket_path_and_source();
     let mut one_shot = false;
     let mut live = false;
     let mut live_forever = false;
@@ -206,6 +210,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
                     .next()
                     .map(PathBuf::from)
                     .ok_or("--socket requires a path")?;
+                socket_source = local::SocketPathSource::Explicit;
             }
             "--one-shot" => one_shot = true,
             "--live" => live = true,
@@ -253,6 +258,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         print_socket,
         print_socket_json,
         socket_path,
+        socket_source,
         one_shot,
         live,
         live_forever,
@@ -311,7 +317,7 @@ Usage:
 Options:
   --socket PATH                         Unix socket path
   --print-socket                        Print the resolved socket path and exit
-  --print-socket-json                   Print the resolved socket path as JSON
+  --print-socket-json                   Print the resolved socket path/source as JSON
   --one-shot                            Serve one attach client
   --live                                Serve one live client until detach
   --live-forever                        Serve sequential live clients until stopped

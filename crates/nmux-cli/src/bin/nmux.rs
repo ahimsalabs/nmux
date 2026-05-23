@@ -43,7 +43,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.print_socket || args.print_socket_json {
         if args.print_socket_json {
-            println!("{}", local::socket_path_json(&args.socket_path));
+            println!(
+                "{}",
+                local::socket_path_json(&args.socket_path, args.socket_source)
+            );
         } else {
             println!("{}", args.socket_path.display());
         }
@@ -897,6 +900,7 @@ struct Args {
     print_socket: bool,
     print_socket_json: bool,
     socket_path: PathBuf,
+    socket_source: local::SocketPathSource,
     input_text: Option<String>,
     key_name: Option<String>,
     key_modifiers: u32,
@@ -934,7 +938,7 @@ where
     let mut print_context_json = false;
     let mut print_socket = false;
     let mut print_socket_json = false;
-    let mut socket_path = local::default_socket_path();
+    let (mut socket_path, mut socket_source) = local::default_socket_path_and_source();
     let mut input_text = None;
     let mut key_name = None;
     let mut key_modifiers = 0;
@@ -994,6 +998,7 @@ where
                     .next()
                     .map(PathBuf::from)
                     .ok_or("--socket requires a path")?;
+                socket_source = local::SocketPathSource::Explicit;
             }
             "--key" => {
                 key_set = true;
@@ -1198,6 +1203,7 @@ where
         print_socket,
         print_socket_json,
         socket_path,
+        socket_source,
         input_text,
         key_name,
         key_modifiers,
@@ -1518,7 +1524,7 @@ Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   --print-context prints inherited NMUX_* pane identity without connecting.
   --print-context-json prints the same inherited context as a JSON object.
-  --print-socket-json prints the resolved socket path as a JSON object.
+  --print-socket-json prints the resolved socket path and source as JSON.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
   Without an explicit input or resize flag, nmux attaches read-only.
@@ -1838,8 +1844,16 @@ mod tests {
 
     #[test]
     fn print_socket_json_arg_exits_before_mode_validation() {
-        let args = args_from_iter(["--print-socket-json", "--cols", "80"]).expect("args");
+        let args = args_from_iter([
+            "--socket",
+            "/tmp/nmux-json.sock",
+            "--print-socket-json",
+            "--cols",
+            "80",
+        ])
+        .expect("args");
         assert!(args.print_socket_json);
+        assert_eq!(args.socket_source, local::SocketPathSource::Explicit);
     }
 
     #[test]
