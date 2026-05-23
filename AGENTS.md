@@ -140,7 +140,8 @@ nix develop . -c make packaging-archive-runtime-smoke
 `libghostty-vt` gate without changing what `make check` means.
 `local-smoke` runs a real default-engine local daemon/client live smoke over a
 temporary socket and persisted client state file; use it for quick user-level
-workflow checks.
+workflow checks. The default GitHub Actions job runs both `make check` and
+`make local-smoke`.
 `promotion-sample` prints `toolchain-info` and times `check-all` for evidence
 rows in `docs/default-engine-promotion.md`.
 `promotion-cold-target-sample` clears `target/promotion-cold` and times
@@ -213,12 +214,12 @@ wrapped binary version checks.
 install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset, then starts
 the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped client to
 prove the relocated package layout can serve a real pane.
-GitHub Actions runs `make check` on pull requests and pushes to `main`; the
-promotion-evidence-bundle job is manual and does not make `libghostty-vt` a
-required CI gate. That manual path uploads `nmux-promotion-evidence` and then a
-dependent job downloads the artifact and runs `make promotion-evidence-verify`
-against the downloaded copy. Use the field template in `docs/ci.md` when
-recording manual CI promotion evidence.
+GitHub Actions runs `make check` and `make local-smoke` on pull requests and
+pushes to `main`; the promotion-evidence-bundle job is manual and does not make
+`libghostty-vt` a required CI gate. That manual path uploads
+`nmux-promotion-evidence` and then a dependent job downloads the artifact and
+runs `make promotion-evidence-verify` against the downloaded copy. Use the
+field template in `docs/ci.md` when recording manual CI promotion evidence.
 
 If `nix develop` itself is unavailable, do not rewrite the flake or check in
 machine-local store paths. Either use an already entered dev shell, or record the

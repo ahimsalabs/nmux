@@ -10,11 +10,14 @@ Pull requests and pushes to `main` run the default-engine gate:
 ```sh
 nix develop . -c make toolchain-info
 nix develop . -c make check
+nix develop . -c make local-smoke
 ```
 
 This keeps regular CI on the default `interim` engine. A green required CI run
 does not claim `libghostty-vt` correctness and does not change the default
-engine decision.
+engine decision. `make local-smoke` adds a real default-engine daemon/client
+workflow check: it starts `nmuxd`, sends live stdin through `nmux`, persists
+client state, and verifies a sequential read-only reattach sees the output.
 
 ## Manual Promotion Evidence
 

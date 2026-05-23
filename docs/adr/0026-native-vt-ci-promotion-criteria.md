@@ -17,8 +17,8 @@ CI, source-fetch, packaging, and workflow costs are accepted deliberately.
 
 The repository now has a GitHub Actions default-engine job for pull requests and
 pushes to `main`, plus a manual `workflow_dispatch` promotion evidence job that
-runs `make promotion-local-sample`. That manual job is useful evidence, but a
-regular or required native-VT CI gate would have different consequences:
+runs `make promotion-evidence-bundle`. That manual job is useful evidence, but
+a regular or required native-VT CI gate would have different consequences:
 network fetch behavior, cache misses, Zig/native build provisioning, runner
 cost, artifact provenance, and failure triage become part of every protected
 change.
@@ -51,8 +51,9 @@ prove these criteria:
   also changes the default engine decision.
 
 Until a later ADR satisfies those criteria and updates the workflow, the GitHub
-Actions required path remains the default-engine `make check` job, and the
-native-VT promotion job remains manual evidence collection.
+Actions required path remains default-engine `make check` plus `make
+local-smoke`, and the native-VT promotion job remains manual evidence
+collection.
 
 ## Consequences
 

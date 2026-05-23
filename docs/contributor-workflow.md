@@ -19,15 +19,17 @@ Run focused tests while iterating, then run:
 
 ```sh
 nix develop . -c make check
+nix develop . -c make local-smoke
 ```
 
 This validates the schema with `flatc` and runs `cargo test --workspace`
-against the default engine. Keep interim renderer limitations explicit in
-user-facing docs; green default-engine tests are not a claim of VT correctness.
-GitHub Actions runs this default gate on pull requests and pushes to `main`;
-the manual promotion workflow also uploads `nmux-promotion-evidence` and
-verifies the downloaded artifact in a dependent job. See [ci.md](ci.md) for the
-workflow shape.
+against the default engine, then runs a real local daemon/client smoke over a
+temporary socket. Keep interim renderer limitations explicit in user-facing
+docs; green default-engine tests and smoke checks are not a claim of VT
+correctness. GitHub Actions runs this default gate on pull requests and pushes
+to `main`; the manual promotion workflow also uploads `nmux-promotion-evidence`
+and verifies the downloaded artifact in a dependent job. See [ci.md](ci.md) for
+the workflow shape.
 
 ## Terminal-Correctness Work
 

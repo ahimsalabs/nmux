@@ -179,12 +179,12 @@ engine or a regular CI requirement.
   directory and is not full cold-checkout evidence. An isolated cold-deps
   sample clears repo-owned Cargo home and target directories, but still does
   not prove cold Nix store, source checkout, or network state.
-- A GitHub Actions workflow now runs `make check` for pull requests and pushes
-  to `main`; the `make promotion-evidence-bundle` job is manual, uploads the
-  `nmux-promotion-evidence` artifact, and a dependent job downloads that
-  artifact and runs `make promotion-evidence-verify` against the downloaded
-  copy. The manual workflow must be run before any CI promotion evidence is
-  recorded here.
+- A GitHub Actions workflow now runs `make check` and `make local-smoke` for
+  pull requests and pushes to `main`; the `make promotion-evidence-bundle` job
+  is manual, uploads the `nmux-promotion-evidence` artifact, and a dependent
+  job downloads that artifact and runs `make promotion-evidence-verify` against
+  the downloaded copy. The manual workflow must be run before any CI promotion
+  evidence is recorded here.
 - `target/promotion-evidence/SUMMARY.txt` records GitHub Actions run, ref, SHA,
   and runner fields when present, so CI rows can be copied from the uploaded
   artifact instead of inferred from the web UI.

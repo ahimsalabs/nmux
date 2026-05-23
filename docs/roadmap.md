@@ -197,11 +197,11 @@ Done:
   tool preflight, and non-Nix requirements checklist; promotion still needs
   platform-specific validation, CI behavior, source-fetch policy, and packaging
   decisions.
-- [CI notes](ci.md) document the GitHub Actions default-engine gate and manual
-  promotion evidence bundle job, with `make promotion-evidence-verify` checking
-  bundle timing fields and artifacts before upload or transcription; promotion
-  still needs recorded CI runs before the opt-in native VT gate can become
-  required.
+- [CI notes](ci.md) document the GitHub Actions default-engine gate, including
+  `make check` and `make local-smoke`, and the manual promotion evidence bundle
+  job, with `make promotion-evidence-verify` checking bundle timing fields and
+  artifacts before upload or transcription; promotion still needs recorded CI
+  runs before the opt-in native VT gate can become required.
 - [Source fetch policy](source-fetch-policy.md) records the current opt-in
   `libghostty-vt-sys` fetch behavior, the reusable local cache-present Cargo
   offline probe, and the remaining packaged/default-build policy choices.

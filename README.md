@@ -146,8 +146,9 @@ prove the relocated package layout can serve a real pane.
 See [docs/contributor-workflow.md](docs/contributor-workflow.md) for when to use
 the default gate, the opt-in VT gate, or the combined promotion-evidence gate.
 See [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions
-gate, the manual promotion evidence bundle workflow, the downloaded artifact
-verification job, and the CI promotion evidence recording template.
+gate, including `make check` and `make local-smoke`, the manual promotion
+evidence bundle workflow, the downloaded artifact verification job, and the CI
+promotion evidence recording template.
 See [docs/toolchain.md](docs/toolchain.md) for the supported Nix path and the
 non-Nix requirements checklist that still needs validation before default-engine
 promotion. `make toolchain-info` prints the active tool versions for evidence

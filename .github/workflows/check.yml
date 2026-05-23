@@ -26,6 +26,8 @@ jobs:
         run: nix develop . -c make toolchain-info
       - name: Check
         run: nix develop . -c make check
+      - name: Local smoke
+        run: nix develop . -c make local-smoke
 
   promotion-evidence-bundle:
     name: promotion evidence bundle
