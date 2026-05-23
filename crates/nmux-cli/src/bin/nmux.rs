@@ -1,11 +1,13 @@
-use std::io::{self, BufRead, Read, Write};
+use std::fs;
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nmux_cli::local;
 use nmux_core::session::AttachMode;
@@ -158,6 +160,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             return Err(err);
         }
         return Ok(());
+    }
+
+    if args.start {
+        return run_managed_live(args);
     }
 
     if args.live {
@@ -566,6 +572,127 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     finish_live(args, &client_state, detach_reason)
+}
+
+fn run_managed_live(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    if !args.live {
+        return Err("--start requires --live".into());
+    }
+    let workspace = ManagedWorkspacePaths::new()?;
+    if args.socket_source != local::SocketPathSource::Explicit {
+        args.socket_path = workspace.socket_path.clone();
+        args.socket_source = local::SocketPathSource::Explicit;
+    }
+    if args.state_path.is_none() {
+        args.state_path = Some(workspace.state_path.clone());
+    }
+    if args.connect_timeout_ms.is_none() {
+        args.connect_timeout_ms = Some(5000);
+    }
+    let command = args
+        .start_command
+        .clone()
+        .or_else(|| std::env::var("SHELL").ok())
+        .filter(|command| !command.trim().is_empty())
+        .unwrap_or_else(|| "sh".to_owned());
+    let daemon = ManagedDaemon::start(&args.socket_path, &command)?;
+    run_live(&args)?;
+    drop(daemon);
+    Ok(())
+}
+
+struct ManagedWorkspacePaths {
+    root: PathBuf,
+    socket_path: PathBuf,
+    state_path: PathBuf,
+}
+
+impl ManagedWorkspacePaths {
+    fn new() -> io::Result<Self> {
+        let root = PathBuf::from("/tmp").join(format!(
+            "nmux-managed-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root)?;
+        Ok(Self {
+            socket_path: root.join("nmuxd.sock"),
+            state_path: root.join("state.nmux"),
+            root,
+        })
+    }
+}
+
+impl Drop for ManagedWorkspacePaths {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+struct ManagedDaemon {
+    child: Child,
+}
+
+impl ManagedDaemon {
+    fn start(socket_path: &Path, command: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let nmuxd = nmuxd_binary_path()?;
+        let mut child = Command::new(nmuxd)
+            .args([
+                "--socket",
+                socket_path
+                    .to_str()
+                    .ok_or("managed socket path is not UTF-8")?,
+                "--ready-json",
+                "--live-forever",
+                "--command",
+                command,
+            ])
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("failed to start managed nmuxd: {err}"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("managed nmuxd stdout was not captured")?;
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => {
+                let _ = child.wait();
+                return Err("managed nmuxd exited before readiness".into());
+            }
+            Ok(_) => {}
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("failed to read managed nmuxd readiness: {err}").into());
+            }
+        }
+        if line.contains("\"event\":\"ready\"") {
+            return Ok(Self { child });
+        }
+        let _ = child.wait();
+        Err(format!("managed nmuxd startup failed: {}", line.trim()).into())
+    }
+}
+
+impl Drop for ManagedDaemon {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn nmuxd_binary_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_nmuxd") {
+        return Ok(PathBuf::from(path));
+    }
+    let mut path = std::env::current_exe()?;
+    path.set_file_name("nmuxd");
+    Ok(path)
 }
 
 fn flush_stdout() -> io::Result<()> {
@@ -1169,6 +1296,7 @@ fn scrollback_range_label(scrollback: &local::ScrollbackChunkSummary) -> String 
     }
 }
 
+#[derive(Clone)]
 struct Args {
     help: bool,
     version: bool,
@@ -1198,6 +1326,8 @@ struct Args {
     state_path: Option<PathBuf>,
     follow: bool,
     live: bool,
+    start: bool,
+    start_command: Option<String>,
     stdin_input: bool,
     stdin_bytes: bool,
     no_input: bool,
@@ -1247,6 +1377,8 @@ where
     let mut state_path = None;
     let mut follow = false;
     let mut live = false;
+    let mut start = false;
+    let mut start_command = None;
     let mut stdin_input = false;
     let mut stdin_bytes = false;
     let mut local_echo = LocalEcho::Off;
@@ -1415,6 +1547,12 @@ where
             "--live" => {
                 live = true;
             }
+            "--start" => {
+                start = true;
+            }
+            "--command" => {
+                start_command = Some(args.next().ok_or("--command requires a shell command")?);
+            }
             "--stdin" => {
                 stdin_input = true;
             }
@@ -1534,6 +1672,8 @@ where
             mouse_set,
             mouse_modifiers_set,
             mouse_pixels_set,
+            start,
+            start_command.is_some(),
         )?;
     }
     if let Some(mouse_event) = mouse_event.as_mut() {
@@ -1573,6 +1713,8 @@ where
         state_path,
         follow,
         live,
+        start,
+        start_command,
         stdin_input,
         stdin_bytes,
         no_input: no_input_set,
@@ -2486,7 +2628,15 @@ fn validate_mode_args(
     mouse_set: bool,
     mouse_modifiers_set: bool,
     mouse_pixels_set: bool,
+    start: bool,
+    start_command_set: bool,
 ) -> Result<(), &'static str> {
+    if start && !live {
+        return Err("--start requires --live");
+    }
+    if start_command_set && !start {
+        return Err("--command requires --start");
+    }
     if live && follow {
         return Err("--follow cannot be combined with --live");
     }
@@ -2579,6 +2729,8 @@ Options:
   --state PATH               Persist client-side pane surface cache
   --follow                   Reconnect in a polling loop
   --live                     Keep one attach connection open
+  --start                    Start a private local nmuxd before live attach
+  --command SHELL            Managed nmuxd pane command for --start
   --stdin                    Stream newline-delimited stdin in live mode
   --stdin-bytes              Stream raw stdin chunks in live mode
   --local-echo off|tty       Local TTY echo policy for --stdin-bytes
@@ -2598,6 +2750,7 @@ Notes:
   --print-socket-json prints the resolved socket path and source as JSON.
   --state-info and --state-info-json require --state PATH and do not connect.
   --json emits one object for one-shot attach, or newline-delimited live events.
+  --start requires --live, waits for nmuxd --ready-json, and cleans up on exit.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
   Without an explicit input or resize flag, nmux attaches read-only.
@@ -2610,6 +2763,7 @@ Examples:
   nmux --live --cols 100 --rows 30
   nmux --live --no-input
   nmux --live --stdin-bytes --redraw
+  nmux --start --live --stdin-bytes --redraw --command '$SHELL'
 "
 }
 
@@ -2828,6 +2982,8 @@ mod tests {
             false,
             false,
             false,
+            false,
+            false,
         )
     }
 
@@ -2880,6 +3036,14 @@ mod tests {
         assert!(!args.print_socket_json);
         assert!(!args.state_info);
         assert!(!args.state_info_json);
+    }
+
+    #[test]
+    fn start_args_accept_managed_command() {
+        let args = args_from_iter(["--start", "--live", "--command", "printf hi"]).expect("args");
+        assert!(args.start);
+        assert!(args.live);
+        assert_eq!(args.start_command.as_deref(), Some("printf hi"));
     }
 
     #[test]
@@ -3637,6 +3801,20 @@ mod tests {
             Err("--follow cannot be combined with --live")
         );
         assert_eq!(
+            super_validate_mode_args(
+                false, false, false, false, false, false, None, None, false, false, false, false,
+                false, false, false, false, false, true, false
+            ),
+            Err("--start requires --live")
+        );
+        assert_eq!(
+            super_validate_mode_args(
+                true, false, false, false, false, false, None, None, false, false, false, false,
+                false, false, false, false, false, false, true
+            ),
+            Err("--command requires --start")
+        );
+        assert_eq!(
             validate_mode_args(
                 false, true, false, false, false, false, None, None, true, false, false, false
             ),
@@ -3663,7 +3841,7 @@ mod tests {
         assert_eq!(
             super_validate_mode_args(
                 false, true, false, false, false, false, None, None, false, false, false, false,
-                false, false, true, false, false
+                false, false, true, false, false, false, false
             ),
             Err("--follow cannot be combined with --mouse")
         );
@@ -3745,35 +3923,35 @@ mod tests {
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                false, true, false, false, false
+                false, true, false, false, false, false, false
             ),
             Err("--key-modifiers requires --key-name")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, true, false
+                false, false, false, true, false, false, false
             ),
             Err("--mouse-modifiers requires --mouse")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, false, false, true
+                false, false, false, false, true, false, false
             ),
             Err("--mouse-pixels requires --mouse")
         );
         assert_eq!(
             super_validate_mode_args(
                 false, true, false, false, false, false, None, None, true, false, false, false,
-                false, false, false, false, false
+                false, false, false, false, false, false, false
             ),
             Err("--json cannot be combined with --follow")
         );
         assert_eq!(
             super_validate_mode_args(
                 true, false, false, false, false, true, None, None, true, false, false, false,
-                false, false, false, false, false
+                false, false, false, false, false, false, false
             ),
             Err("--json cannot be combined with --redraw")
         );
@@ -3788,6 +3966,8 @@ mod tests {
                 None,
                 Some(1),
                 true,
+                false,
+                false,
                 false,
                 false,
                 false,
@@ -3825,7 +4005,7 @@ mod tests {
         assert!(
             super_validate_mode_args(
                 false, false, false, false, false, false, None, None, false, false, false, false,
-                false, false, true, false, false
+                false, false, true, false, false, false, false
             )
             .is_ok()
         );
@@ -4126,6 +4306,8 @@ mod tests {
         assert!(usage.contains("--print-socket-json"));
         assert!(usage.contains("--state-info"));
         assert!(usage.contains("--state-info-json"));
+        assert!(usage.contains("--start"));
+        assert!(usage.contains("--command SHELL"));
         assert!(usage.contains("--version-json"));
         assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--connect-timeout-ms MS"));
@@ -4135,6 +4317,7 @@ mod tests {
         assert!(usage.contains("--mouse-pixels X:Y"));
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));
+        assert!(usage.contains("--start requires --live"));
         assert!(usage.contains("interim text surface"));
     }
 

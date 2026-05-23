@@ -765,6 +765,42 @@ fn live_cli_streams_command_output_and_committed_resize() {
 }
 
 #[test]
+fn managed_start_live_cli_runs_private_daemon() {
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--start",
+            "--live",
+            "--iterations",
+            "2",
+            "--key",
+            "managed\n",
+            "--interval-ms",
+            "100",
+            "--command",
+            "printf 'managed-ready\n'; while IFS= read -r line; do printf 'managed:%s\n' \"$line\"; done",
+        ])
+        .output()
+        .expect("run nmux --start --live");
+
+    assert!(
+        client.status.success(),
+        "nmux --start --live failed: {}\n{}",
+        String::from_utf8_lossy(&client.stderr),
+        String::from_utf8_lossy(&client.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("managed-ready"),
+        "missing managed daemon output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("managed:managed"),
+        "missing managed input echo:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_cli_can_stream_json_events() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

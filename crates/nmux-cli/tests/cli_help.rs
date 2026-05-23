@@ -42,6 +42,9 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("Live ResizeIntent columns; both dimensions required"));
     assert!(stdout.contains("--mouse-modifiers MODS"));
     assert!(stdout.contains("--redraw"));
+    assert!(stdout.contains("--start"));
+    assert!(stdout.contains("--command SHELL"));
+    assert!(stdout.contains("--start requires --live"));
     assert!(stdout.contains("Without an explicit input or resize flag"));
     assert!(stdout.contains("interim text surface"));
     assert!(
@@ -722,6 +725,11 @@ fn nmux_rejects_live_only_flags_outside_live_mode() {
     assert_nmux_rejects(&["--stdin"], "nmux: --stdin requires --live");
     assert_nmux_rejects(&["--stdin-bytes"], "nmux: --stdin-bytes requires --live");
     assert_nmux_rejects(&["--redraw"], "nmux: --redraw requires --live");
+    assert_nmux_rejects(&["--start"], "nmux: --start requires --live");
+    assert_nmux_rejects(
+        &["--command", "printf hi"],
+        "nmux: --command requires --start",
+    );
     assert_nmux_rejects(
         &["--cols", "100", "--rows", "30"],
         "nmux: --cols and --rows require --live",

@@ -44,6 +44,18 @@ Detach the live client with Ctrl-]; stop the daemon in shell 1 with Ctrl-C when
 finished. This uses the default `interim` engine and the shared default socket
 path unless `--socket` or `NMUX_SOCKET` selects a different local workspace.
 
+For a private local workspace owned by one client command, use `--start`:
+
+```sh
+nix develop . -c cargo run --bin nmux -- --start --live --stdin-bytes --redraw --command '$SHELL'
+```
+
+`--start` requires `--live`. The client starts a managed
+`nmuxd --live-forever --ready-json` on a short temporary socket path, waits for
+the daemon readiness event internally, attaches with live mode, and stops the
+managed daemon when the live client exits. If `--command SHELL` is omitted, the
+managed daemon runs `$SHELL` and falls back to `sh`.
+
 Each attach starts with an `AttachRequest` carrying actor identity, attach mode,
 focused pane, and known pane surface versions. The daemon polls process output
 into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`,
@@ -232,6 +244,9 @@ Explicit input modes such as `--key`, `--key-name`, `--paste`, `--focus`,
 Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and
 `--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes
 fail before the client tries to connect.
+`nmux --start --live` is the single-command form for a private managed daemon;
+it uses an isolated temporary socket and state path unless `--socket` or
+`--state` is supplied explicitly.
 
 By default, `nmuxd` and `nmux` use the same local socket path. The precedence
 is explicit `--socket`, then a valid absolute `NMUX_SOCKET`, then
