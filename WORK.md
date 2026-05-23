@@ -553,6 +553,7 @@ M13: backend libghostty-vt extraction [done for opt-in correctness milestone]
 
 M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   libghostty-vt remains opt-in after M13 until a later decision accepts concrete native build, regular CI, packaging, source-fetch, and developer-workflow evidence
+  docs/default-engine-promotion.md tracks the native build, CI, toolchain, source-fetch, packaging, workflow, and state-sync evidence required before promotion
   make check-all is the explicit combined default-plus-libghostty-vt validation gate for release-style checks and promotion evidence without changing regular make check
   keep frontend Ghostty renderer hydration separate from backend terminal-state extraction until upstream can render externally supplied nmux state without client-side PTY replay
   split future protocol expansion into explicit tracks before schema changes: wired hyperlink IDs, image placement/pixel data, richer damage objects, semantic command lifecycle metadata, and physical-key/text-event forwarding

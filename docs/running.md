@@ -16,6 +16,10 @@ evidence:
 nix develop . -c make check-all
 ```
 
+Record promotion evidence in
+[docs/default-engine-promotion.md](default-engine-promotion.md) before proposing
+any change to the default engine or regular CI requirements.
+
 Start a one-shot daemon with the default local shell:
 
 ```sh

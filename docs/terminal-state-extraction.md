@@ -253,4 +253,5 @@ engine `interim`, and ADR 0023 keeps `libghostty-vt` opt-in after M13 until a
 later decision explicitly accepts the native Ghostty/Zig build cost in normal
 development, CI, and packaging. `make check-all` is the explicit combined gate
 for release-style validation and default-engine-promotion evidence; it does not
-change the regular meaning of `make check`.
+change the regular meaning of `make check`. Record that evidence in
+[the default-engine promotion tracker](default-engine-promotion.md).
