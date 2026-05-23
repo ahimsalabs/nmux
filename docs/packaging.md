@@ -16,20 +16,16 @@ distribution path is source checkout plus the supported Nix development shell.
 
 ## Local Packaging Sample
 
-Use this command to collect local binary-build evidence without changing the
-default engine:
+Use the narrowest packaging target that matches the evidence question:
 
-```sh
-nix develop . -c make packaging-sample
-nix develop . -c make packaging-layout-sample
-nix develop . -c make packaging-layout-verify
-nix develop . -c make packaging-provenance-sample
-nix develop . -c make packaging-provenance-verify
-nix develop . -c make packaging-provenance-manifest-verify
-nix develop . -c make packaging-archive-sample
-nix develop . -c make packaging-archive-verify
-nix develop . -c make packaging-archive-runtime-smoke
-```
+| Question | Command |
+| --- | --- |
+| Do default and opt-in release binaries build and report versions locally? | `nix develop . -c make packaging-sample` |
+| Does the local opt-in layout stage wrappers and runtime libraries correctly? | `nix develop . -c make packaging-layout-sample` then `nix develop . -c make packaging-layout-verify` |
+| Does the staged layout have the required local provenance records? | `nix develop . -c make packaging-provenance-sample` then `nix develop . -c make packaging-provenance-verify` |
+| Can an existing copied or bundled provenance manifest be checked without rebuilding? | `nix develop . -c make packaging-provenance-manifest-verify` |
+| Does the staged layout archive and verify as a self-contained artifact? | `nix develop . -c make packaging-archive-sample` then `nix develop . -c make packaging-archive-verify` |
+| Can the relocated archive serve a real opt-in native-VT pane? | `nix develop . -c make packaging-archive-runtime-smoke` |
 
 The target prints `make toolchain-info`, validates the optional native-VT
 toolchain preflight, builds default release `nmux` and `nmuxd` binaries into
