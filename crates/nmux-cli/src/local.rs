@@ -18,6 +18,7 @@ use nmux_core::terminal::{
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 
 const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
+const INPUT_MODIFIER_MASK: u32 = 0x0f;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SocketIdentity {
@@ -2213,6 +2214,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
     ) = match input.kind() {
         protocol::InputKind::Key => {
             let key = input.key();
+            let modifiers = validate_input_modifiers(key.map_or(0, |key| key.modifiers()))?;
             (
                 key.and_then(|key| key.text_utf8())
                     .unwrap_or_default()
@@ -2220,7 +2222,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                     .to_vec(),
                 None,
                 key.and_then(|key| key.key_name()).map(ToOwned::to_owned),
-                key.map_or(0, |key| key.modifiers()),
+                modifiers,
                 None,
                 false,
                 false,
@@ -2272,6 +2274,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
             let mouse = input.mouse().ok_or("missing mouse input")?;
             let button = mouse_button_from_protocol(mouse.button())?;
             let action = mouse_action_from_protocol(mouse.action())?;
+            let modifiers = validate_input_modifiers(mouse.modifiers())?;
             (
                 Vec::new(),
                 None,
@@ -2284,7 +2287,7 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                     pixel_y: mouse.has_pixels().then_some(mouse.pixel_y()),
                     button,
                     action,
-                    modifiers: mouse.modifiers(),
+                    modifiers,
                 }),
                 false,
                 true,
@@ -2305,6 +2308,13 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         requires_focus_reporting,
         requires_mouse_tracking,
     })
+}
+
+fn validate_input_modifiers(modifiers: u32) -> Result<u32, Box<dyn std::error::Error>> {
+    if modifiers & !INPUT_MODIFIER_MASK != 0 {
+        return Err(format!("unsupported input modifier bits {modifiers:#x}").into());
+    }
+    Ok(modifiers)
 }
 
 fn mouse_action_from_protocol(
@@ -11036,6 +11046,46 @@ mod tests {
         assert_eq!(input.bytes, Vec::<u8>::new());
         assert_eq!(input.key_name.as_deref(), Some("arrow-up"));
         assert_eq!(input.key_modifiers, 2);
+    }
+
+    #[test]
+    fn rejects_input_with_unsupported_modifier_bits() {
+        let key_frame = Session::initial().named_key_input_frame_with_modifiers(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            "arrow-up",
+            0x10,
+        );
+        let key_err =
+            input_summary_from_frame(&key_frame).expect_err("key modifier bits should be rejected");
+        assert!(
+            key_err
+                .to_string()
+                .contains("unsupported input modifier bits")
+        );
+
+        let mouse_frame = Session::initial().mouse_input_frame(
+            "local-client",
+            3,
+            "actor-1",
+            "pane-1",
+            2,
+            4,
+            5,
+            protocol::MouseButton::Left,
+            protocol::MouseAction::Press,
+            0x10,
+        );
+        let mouse_err = input_summary_from_frame(&mouse_frame)
+            .expect_err("mouse modifier bits should be rejected");
+        assert!(
+            mouse_err
+                .to_string()
+                .contains("unsupported input modifier bits")
+        );
     }
 
     #[test]
