@@ -145,6 +145,8 @@ extracted `make check-all` timing, source-fetch report, package provenance,
 cargo tree, package archive, archive checksum, observed cache-state report,
 offline probe report, and bundle artifact manifest under
 `target/promotion-evidence`.
+The bundled `ARCHIVE.sha256` must name `PACKAGE_ARCHIVE.tar.gz`, not the
+original build-tree archive path, so downloaded evidence stays self-contained.
 `promotion-evidence-verify` checks an existing bundle for required summary,
 bundle timing, `make check-all` timing, artifact files, cache-state report,
 artifact manifest hashes, source/provenance records, package archive bytes,

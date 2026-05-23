@@ -80,8 +80,9 @@ source-fetch report, offline probe report, package provenance, cargo tree,
 package archive, archive checksum, observed cache-state report, and bundle
 artifact manifest under `target/promotion-evidence`, then runs
 `make promotion-evidence-verify`. Run the verifier directly to check an
-existing bundle without rebuilding the native VT package; it validates the
-bundled archive bytes through `make packaging-archive-verify`. Pass
+existing bundle without rebuilding the native VT package; `ARCHIVE.sha256`
+names `PACKAGE_ARCHIVE.tar.gz`, and the verifier validates those bundled
+archive bytes through `make packaging-archive-verify`. Pass
 `PROMOTION_EVIDENCE_DIR=/path/to/artifact` for a downloaded bundle outside the
 default `target/promotion-evidence` path.
 For source-fetch provenance evidence, use:

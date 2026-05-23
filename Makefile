@@ -56,9 +56,7 @@ promotion-evidence-bundle:
 	cp target/packaging-libghostty-vt/package/PROVENANCE.txt "$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
 	cp target/packaging-libghostty-vt/package/CARGO_TREE.txt "$$bundle_dir/CARGO_TREE.txt"; \
 	cp target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz "$$bundle_dir/PACKAGE_ARCHIVE.tar.gz"; \
-	cp target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz.sha256 "$$bundle_dir/ARCHIVE.sha256"; \
 	$(MAKE) --no-print-directory toolchain-info > "$$bundle_dir/TOOLCHAIN.txt"; \
-	archive_sha="$$(cat "$$bundle_dir/ARCHIVE.sha256")"; \
 	runtime_smoke="$$(grep -m1 '^packaged_runtime_smoke=' "$$run_log" | cut -d= -f2- || true)"; \
 	if [ -z "$$runtime_smoke" ]; then \
 		echo "missing packaged_runtime_smoke result in $$run_log" >&2; \
@@ -78,6 +76,9 @@ promotion-evidence-bundle:
 			shasum -a 256 "$$1" | awk '{print $$1}'; \
 		fi; \
 	}; \
+	archive_digest="$$(hash_file "$$bundle_dir/PACKAGE_ARCHIVE.tar.gz")"; \
+	printf '%s  %s\n' "$$archive_digest" 'PACKAGE_ARCHIVE.tar.gz' > "$$bundle_dir/ARCHIVE.sha256"; \
+	archive_sha="$$(cat "$$bundle_dir/ARCHIVE.sha256")"; \
 	path_status() { \
 		if [ -e "$$1" ]; then \
 			printf 'present'; \
@@ -346,7 +347,7 @@ promotion-evidence-verify:
 	require_line "$$run_log" '^packaged_runtime_smoke_library_env=unset$$' 'clean packaged runtime library environment'; \
 	require_line "$$run_log" '^packaged_runtime_smoke=passed$$' 'runtime smoke result'; \
 	require_line "$$cargo_tree" '^nmux-cli v' 'cargo tree root'; \
-	require_line "$$archive_sha_file" '^[0-9a-f]{64}  target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package\.tar\.gz$$' 'archive SHA-256 file'; \
+	require_line "$$archive_sha_file" '^[0-9a-f]{64}  PACKAGE_ARCHIVE\.tar\.gz$$' 'archive SHA-256 file'; \
 	$(MAKE) --no-print-directory PACKAGING_ARCHIVE="$$archive_file" PACKAGING_ARCHIVE_SHA256="$$archive_sha_file" packaging-archive-verify || exit "$$?"; \
 	require_exact "$$cache_state" 'nmux promotion evidence cache state' 'cache state title'; \
 	require_line "$$cache_state" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'cache state timestamp'; \

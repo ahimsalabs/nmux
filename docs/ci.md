@@ -64,9 +64,9 @@ that is not under `target/promotion-evidence`, run
 verifier checks the required summary identity fields, timing fields,
 bundle-relative summary artifact names, cache-state artifact, relocation-safe
 `BUNDLE_MANIFEST.txt` hashes, source/provenance records, cache-present offline
-probe result, package archive bytes, archive hash, and packaged runtime smoke
-result; it does not replace human judgment about cache classification, flake
-rate, or platform coverage.
+probe result, package archive bytes, bundle-relative archive hash, and packaged
+runtime smoke result; it does not replace human judgment about cache
+classification, flake rate, or platform coverage.
 
 The bundle summary records GitHub Actions fields when present:
 `github_server_url`, `github_repository`, `github_run_id`,

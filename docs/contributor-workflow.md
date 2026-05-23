@@ -109,6 +109,8 @@ packaging/archive runtime results.
 `ARCHIVE.sha256`, `CACHE_STATE.txt`, `SUMMARY.txt`, and
 `BUNDLE_MANIFEST.txt` under `target/promotion-evidence` for easier
 transcription into the promotion tracker or manual CI evidence records.
+`ARCHIVE.sha256` names `PACKAGE_ARCHIVE.tar.gz`, not the original build-tree
+archive path, so copied or downloaded bundles stay self-contained.
 `SUMMARY.txt` includes the extracted `time -p make check-all` values as
 `check_all_real_seconds`, `check_all_user_seconds`, and
 `check_all_sys_seconds`, plus `started_at_utc`, `completed_at_utc`, and
