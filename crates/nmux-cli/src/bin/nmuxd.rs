@@ -62,6 +62,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(command) = args.command {
         session.tabs[0].root.host.command = CommandSpec::new("sh").with_args(["-lc", &command]);
     }
+    if let Some(working_dir) = args.working_dir {
+        session.tabs[0].root.host.command.working_dir = Some(working_dir);
+    }
+    if !args.env.is_empty() {
+        session.tabs[0].root.host.command.env.extend(args.env);
+    }
     session.set_pane_resize_policy("pane-1", args.resize_policy);
     let pane_id = "pane-1";
     let inherited_origin = inherited_nmux_origin();
@@ -184,6 +190,8 @@ struct Args {
     live_cycles: Option<usize>,
     live_clients: Option<usize>,
     command: Option<String>,
+    working_dir: Option<String>,
+    env: Vec<(String, String)>,
     resize_policy: protocol::ResizePolicy,
     terminal_engine_kind: TerminalEngineKind,
 }
@@ -202,6 +210,8 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut live_cycles = None;
     let mut live_clients = None;
     let mut command = None;
+    let mut working_dir = None;
+    let mut env = Vec::new();
     let mut resize_policy = protocol::ResizePolicy::Fixed;
     let mut terminal_engine_kind = TerminalEngineKind::InterimText;
     let mut args = std::env::args().skip(1);
@@ -251,6 +261,18 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             "--command" => {
                 command = Some(args.next().ok_or("--command requires a shell command")?);
             }
+            "--cwd" => {
+                let value = args.next().ok_or("--cwd requires a directory path")?;
+                if value.is_empty() {
+                    return Err("--cwd requires a non-empty directory path".into());
+                }
+                working_dir = Some(value);
+            }
+            "--env" => {
+                env.push(parse_env_assignment(
+                    &args.next().ok_or("--env requires KEY=VALUE")?,
+                )?);
+            }
             "--resize-policy" => {
                 resize_policy =
                     parse_resize_policy(&args.next().ok_or(
@@ -294,6 +316,8 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         live_cycles,
         live_clients,
         command,
+        working_dir,
+        env,
         resize_policy,
         terminal_engine_kind,
     })
@@ -347,6 +371,19 @@ where
         .map_err(|err| format!("{flag} requires a valid number: {err}"))
 }
 
+fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
+    let Some((key, value)) = value.split_once('=') else {
+        return Err("--env requires KEY=VALUE".to_owned());
+    };
+    if key.is_empty() {
+        return Err("--env requires a non-empty key".to_owned());
+    }
+    if key.contains('\0') || value.contains('\0') {
+        return Err("--env cannot contain NUL bytes".to_owned());
+    }
+    Ok((key.to_owned(), value.to_owned()))
+}
+
 fn validate_mode_args(
     one_shot: bool,
     live: bool,
@@ -392,6 +429,8 @@ Options:
   --live-cycles COUNT                   Serve a bounded live client
   --live-clients COUNT                  Serve bounded sequential live clients
   --command SHELL                       Run a shell command in the pane PTY
+  --cwd DIR                             Run the pane command from DIR
+  --env KEY=VALUE                       Add an environment variable to the pane command
   --resize-policy fixed|leader|active-client|manual
                                          Publish and enforce pane resize policy
   --terminal-engine interim|libghostty-vt
@@ -439,8 +478,8 @@ fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'stati
 #[cfg(test)]
 mod tests {
     use super::{
-        SocketCleanup, format_daemon_choices_json, parse_numeric_arg, parse_resize_policy,
-        parse_terminal_engine_kind, usage, validate_mode_args,
+        SocketCleanup, format_daemon_choices_json, parse_env_assignment, parse_numeric_arg,
+        parse_resize_policy, parse_terminal_engine_kind, usage, validate_mode_args,
     };
     use nmux_core::terminal::TerminalEngineKind;
     use nmux_proto::protocol;
@@ -513,6 +552,22 @@ mod tests {
     }
 
     #[test]
+    fn env_arg_accepts_key_value_with_equals_in_value() {
+        assert_eq!(
+            parse_env_assignment("NMUX_TEST=one=two"),
+            Ok(("NMUX_TEST".to_owned(), "one=two".to_owned()))
+        );
+        assert_eq!(
+            parse_env_assignment("=value"),
+            Err("--env requires a non-empty key".to_owned())
+        );
+        assert_eq!(
+            parse_env_assignment("missing"),
+            Err("--env requires KEY=VALUE".to_owned())
+        );
+    }
+
+    #[test]
     fn usage_mentions_live_and_resize_policy_flags() {
         let usage = usage();
         assert!(usage.contains("--live"));
@@ -524,6 +579,8 @@ mod tests {
         assert!(usage.contains("--live-forever"));
         assert!(usage.contains("--live-cycles COUNT"));
         assert!(usage.contains("--live-clients COUNT"));
+        assert!(usage.contains("--cwd DIR"));
+        assert!(usage.contains("--env KEY=VALUE"));
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
         assert!(usage.contains("--terminal-engine interim|libghostty-vt"));
         assert!(usage.contains("libghostty-vt requires building nmux"));

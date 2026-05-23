@@ -131,6 +131,65 @@ fn one_shot_cli_can_print_attach_json() {
 }
 
 #[test]
+fn one_shot_daemon_can_set_command_cwd_and_env() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let cwd_path = std::env::temp_dir().join(format!(
+        "nmux-cwd-{}-{}",
+        std::process::id(),
+        socket_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("test")
+    ));
+    fs::create_dir_all(&cwd_path).expect("create cwd");
+    let expected_cwd = fs::canonicalize(&cwd_path).expect("canonical cwd");
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--cwd",
+            cwd_path.to_str().expect("cwd path"),
+            "--env",
+            "NMUX_TEST_VALUE=one=two",
+            "--command",
+            "printf 'cwd:%s env:%s\\n' \"$(pwd -P)\" \"$NMUX_TEST_VALUE\"; cat >/dev/null",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args(["--socket", socket_path.to_str().expect("socket path")])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_dir_all(&cwd_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains(&format!("cwd:{}", expected_cwd.display())),
+        "missing cwd in output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("env:one=two"),
+        "missing env in output:\n{stdout}"
+    );
+}
+
+#[test]
 fn one_shot_json_cli_reports_protocol_error_object() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
