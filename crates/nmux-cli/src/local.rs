@@ -31,10 +31,25 @@ pub trait ProcessHostOutput: ProcessHost + ProcessOutput {}
 impl<T> ProcessHostOutput for T where T: ProcessHost + ProcessOutput {}
 
 pub fn default_socket_path() -> PathBuf {
-    default_socket_path_from(env::var_os("XDG_RUNTIME_DIR"), effective_uid())
+    default_socket_path_from(
+        env::var_os("NMUX_SOCKET"),
+        env::var_os("XDG_RUNTIME_DIR"),
+        effective_uid(),
+    )
 }
 
-fn default_socket_path_from(runtime_dir: Option<OsString>, uid: u32) -> PathBuf {
+fn default_socket_path_from(
+    socket_path: Option<OsString>,
+    runtime_dir: Option<OsString>,
+    uid: u32,
+) -> PathBuf {
+    if let Some(socket_path) = socket_path.map(PathBuf::from)
+        && !socket_path.as_os_str().is_empty()
+        && socket_path.is_absolute()
+    {
+        return socket_path;
+    }
+
     match runtime_dir.map(PathBuf::from) {
         Some(runtime_dir) if !runtime_dir.as_os_str().is_empty() && runtime_dir.is_absolute() => {
             runtime_dir.join("nmux").join("nmuxd.sock")
@@ -5043,7 +5058,43 @@ mod tests {
     #[test]
     fn default_socket_path_uses_runtime_dir_when_available() {
         assert_eq!(
-            default_socket_path_from(Some(OsString::from("/run/user/1000")), 1000),
+            default_socket_path_from(None, Some(OsString::from("/run/user/1000")), 1000),
+            PathBuf::from("/run/user/1000")
+                .join("nmux")
+                .join("nmuxd.sock")
+        );
+    }
+
+    #[test]
+    fn default_socket_path_uses_valid_env_socket_before_runtime_dir() {
+        assert_eq!(
+            default_socket_path_from(
+                Some(OsString::from("/tmp/project-nmux.sock")),
+                Some(OsString::from("/run/user/1000")),
+                1000,
+            ),
+            PathBuf::from("/tmp/project-nmux.sock")
+        );
+    }
+
+    #[test]
+    fn default_socket_path_ignores_invalid_env_socket() {
+        assert_eq!(
+            default_socket_path_from(
+                Some(OsString::from("relative.sock")),
+                Some(OsString::from("/run/user/1000")),
+                1000,
+            ),
+            PathBuf::from("/run/user/1000")
+                .join("nmux")
+                .join("nmuxd.sock")
+        );
+        assert_eq!(
+            default_socket_path_from(
+                Some(OsString::from("")),
+                Some(OsString::from("/run/user/1000")),
+                1000,
+            ),
             PathBuf::from("/run/user/1000")
                 .join("nmux")
                 .join("nmuxd.sock")
@@ -5052,8 +5103,8 @@ mod tests {
 
     #[test]
     fn default_socket_path_fallback_is_stable_for_user() {
-        let first = default_socket_path_from(None, 501);
-        let second = default_socket_path_from(None, 501);
+        let first = default_socket_path_from(None, None, 501);
+        let second = default_socket_path_from(None, None, 501);
 
         assert_eq!(first, second);
         assert_eq!(first, PathBuf::from("/tmp/nmux-501").join("nmuxd.sock"));
@@ -5062,11 +5113,11 @@ mod tests {
     #[test]
     fn default_socket_path_falls_back_for_invalid_runtime_dir() {
         assert_eq!(
-            default_socket_path_from(Some(OsString::from("")), 501),
+            default_socket_path_from(None, Some(OsString::from("")), 501),
             PathBuf::from("/tmp/nmux-501").join("nmuxd.sock")
         );
         assert_eq!(
-            default_socket_path_from(Some(OsString::from("relative-runtime")), 501),
+            default_socket_path_from(None, Some(OsString::from("relative-runtime")), 501),
             PathBuf::from("/tmp/nmux-501").join("nmuxd.sock")
         );
     }

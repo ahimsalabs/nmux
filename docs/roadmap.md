@@ -90,7 +90,7 @@ Done:
 - The live daemon treats a client EOF/disconnect during read-write polling as a clean detach, so piped stdin clients can finish without requiring a matching daemon cycle count.
 - `nmuxd --live-clients COUNT` keeps the same local workspace and PTY alive across bounded sequential live clients.
 - `nmuxd` rejects ambiguous live server mode combinations and flag-specific invalid-number or zero live counts instead of silently choosing one mode.
-- `nmuxd` and `nmux` share a stable default socket path for local workflows without `--socket`.
+- `nmuxd` and `nmux` share a stable default socket path for local workflows without `--socket`, and a valid absolute `NMUX_SOCKET` can select a shell-scoped local workspace.
 - `nmux --connect-timeout-ms` can wait across daemon socket startup races.
 - Numeric `nmux` flags report the failing flag name for invalid-number errors before connecting.
 - ADR 0012 documents the backend terminal engine boundary.

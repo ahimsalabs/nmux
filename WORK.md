@@ -475,7 +475,7 @@ M12: live workspace usability [done]
   explicit nmux input modes fail fast on conflicting --key/--key-name/--paste/--focus/--mouse/--stdin/--stdin-bytes/--no-input combinations
   nmux live loop timing, explicit resize dimensions, scrollback ranges, connect timeouts, and iteration counts report flag-specific invalid-number, zero, or out-of-range errors before connecting
   nmux --state load/save failures include the state path before socket connection work
-  nmuxd and nmux share a stable default socket path for local workflows without --socket
+  nmuxd and nmux share a stable default socket path for local workflows without --socket, with valid absolute NMUX_SOCKET values available for shell-scoped workspace selection
   help output and quick-start docs show default-socket live workflows first
   help output documents the shared default socket path
   nmux connection failures include the socket path

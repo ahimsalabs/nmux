@@ -102,7 +102,12 @@ For a daemon that keeps serving snapshots, omit `--one-shot`.
 
 The live attach prototype keeps one local connection open for repeated input/output cycles. It is not a terminal UI yet; without an explicit input or resize flag it observes read-only, while `--key` sends the same text on each bounded client cycle, `--stdin` line-streams stdin, and `--stdin-bytes` forwards raw stdin byte chunks. It renders streamed pane surface updates through the same client-side pane surface state used by reconnects. Explicit input modes such as `--key`, `--key-name`, `--paste`, `--focus`, `--mouse`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive. Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes fail before the client tries to connect.
 
-By default, `nmuxd` and `nmux` use the same local socket path: `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Pass `--socket` on both sides when you want an isolated smoke-test socket.
+By default, `nmuxd` and `nmux` use the same local socket path. The precedence
+is explicit `--socket`, then a valid absolute `NMUX_SOCKET`, then
+`$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute
+path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Use `NMUX_SOCKET` for a
+shell-scoped local workspace, or pass `--socket` on both sides when you want an
+isolated smoke-test socket.
 If the daemon is not running or the client points at the wrong socket, `nmux` reports the socket path in the connection error.
 When a script starts `nmux` before `nmuxd` has finished binding, pass `--connect-timeout-ms MS` so the client waits for the socket instead of failing immediately.
 If `nmuxd` cannot bind the socket path, it reports that path. If a socket path already exists, `nmuxd` refuses to replace it and includes a recovery hint; remove a stale socket only after confirming no daemon is using it, or pass a different `--socket`.

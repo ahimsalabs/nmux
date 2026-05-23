@@ -2225,6 +2225,7 @@ fn live_cli_uses_shared_default_socket_from_runtime_dir() {
 
     let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
         .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .env_remove("NMUX_SOCKET")
         .args([
             "--live-cycles",
             "1",
@@ -2238,6 +2239,7 @@ fn live_cli_uses_shared_default_socket_from_runtime_dir() {
 
     let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .env_remove("NMUX_SOCKET")
         .args([
             "--live",
             "--no-input",
@@ -2263,6 +2265,54 @@ fn live_cli_uses_shared_default_socket_from_runtime_dir() {
     assert!(
         stdout.contains("ready"),
         "default-socket live attach missed daemon output:\n{stdout}"
+    );
+}
+
+#[test]
+fn live_cli_uses_shared_default_socket_from_env() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .env("NMUX_SOCKET", &socket_path)
+        .args([
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'ready\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", &socket_path)
+        .args([
+            "--live",
+            "--no-input",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("ready"),
+        "env-socket live attach missed daemon output:\n{stdout}"
     );
 }
 

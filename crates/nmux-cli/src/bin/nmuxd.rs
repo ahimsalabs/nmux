@@ -270,7 +270,7 @@ Options:
   -h, --help                            Show this help
 
 Notes:
-  Default socket: valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+  Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   Existing socket paths are not replaced automatically.
   libghostty-vt requires building nmux with the libghostty-vt feature.
 
