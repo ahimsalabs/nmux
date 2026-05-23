@@ -546,6 +546,13 @@ M13: backend libghostty-vt extraction [current correctness milestone]
   preserve frontend state-sync semantics; do not introduce client-side raw PTY replay
   keep frontend Ghostty renderer hydration as a separate upstream/API question
   do not copy code from GPL or AGPL terminal parsers
+
+M14: post-M13 promotion and product split [planned]
+  decide whether libghostty-vt becomes the documented default and regular CI path, or keep it opt-in with an ADR that names concrete native build, packaging, and developer-workflow blockers
+  keep frontend Ghostty renderer hydration separate from backend terminal-state extraction until upstream can render externally supplied nmux state without client-side PTY replay
+  split future protocol expansion into explicit tracks before schema changes: wired hyperlink IDs, image placement/pixel data, richer damage objects, semantic command lifecycle metadata, and physical-key/text-event forwarding
+  keep local attach, reconnect, live streaming, scrollback fetch, cached state, and daemon-owned structured-input behavior stable while the default-engine decision is made
+  use docs/upstream trackers for upstream-blocked work instead of treating it as local implementation debt
 ```
 
 The crisp product phrase is:
