@@ -2864,6 +2864,69 @@ fn live_cli_reports_focus_reporting_rejections() {
 }
 
 #[test]
+fn live_json_cli_reports_protocol_error_event() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'ready\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--json",
+            "--iterations",
+            "1",
+            "--focus",
+            "gained",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux --live --json");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        !client.status.success(),
+        "nmux unexpectedly succeeded:\n{}",
+        String::from_utf8_lossy(&client.stdout)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("\"event\":\"error\""),
+        "missing JSON error event:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"code\":\"permission-denied\"")
+            && stdout.contains("\"pane_id\":\"pane-1\"")
+            && stdout.contains("\"input_seq\":1"),
+        "missing structured JSON error attribution:\n{stdout}"
+    );
+
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        stderr.contains("nmux: live server error: input rejected: focus reporting is disabled"),
+        "missing stderr error:\n{stderr}"
+    );
+}
+
+#[test]
 fn live_cli_redraw_repaints_surface_in_place() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

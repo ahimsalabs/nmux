@@ -453,6 +453,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::Error(error) => {
+                    if args.output_json {
+                        println!("{}", format_live_error_json(&error));
+                        flush_stdout()?;
+                    }
                     return Err(format!("live server error: {error}").into());
                 }
                 local::LiveSurfaceRead::NoFrame => break,
@@ -1544,6 +1548,21 @@ fn format_live_surface_update_json(
     )
 }
 
+fn format_live_error_json(error: &local::ErrorSummary) -> String {
+    let pane_id = error
+        .pane_id
+        .as_ref()
+        .map(|pane_id| local::json_string(pane_id))
+        .unwrap_or_else(|| "null".to_owned());
+    format!(
+        "{{\"event\":\"error\",\"error\":{{\"code\":{},\"message\":{},\"retryable\":{},\"pane_id\":{pane_id},\"input_seq\":{}}}}}",
+        local::json_string(error_code_name(error.code)),
+        local::json_string(&error.message),
+        error.retryable,
+        error.input_seq
+    )
+}
+
 fn format_workspace_json(workspace: &local::WorkspaceSummary) -> String {
     format!(
         "{{\"session_id\":{},\"tab_id\":{},\"pane_id\":{},\"cols\":{},\"rows\":{},\"resize_policy\":{}}}",
@@ -1627,6 +1646,18 @@ fn attach_surface_state_name(state: protocol::AttachSurfaceState) -> &'static st
         protocol::AttachSurfaceState::Current => "current",
         protocol::AttachSurfaceState::Snapshot => "snapshot",
         protocol::AttachSurfaceState::Patch => "patch",
+        _ => "unknown",
+    }
+}
+
+fn error_code_name(code: protocol::ErrorCode) -> &'static str {
+    match code {
+        protocol::ErrorCode::Unknown => "unknown",
+        protocol::ErrorCode::ProtocolVersionUnsupported => "protocol-version-unsupported",
+        protocol::ErrorCode::SessionNotFound => "session-not-found",
+        protocol::ErrorCode::PaneNotFound => "pane-not-found",
+        protocol::ErrorCode::PermissionDenied => "permission-denied",
+        protocol::ErrorCode::StaleVersion => "stale-version",
         _ => "unknown",
     }
 }
@@ -2109,13 +2140,13 @@ mod tests {
     use super::{
         FocusEvent, KEY_NAME_ALIASES, LiveUpdatePrintKind, LocalEcho, MouseEvent,
         SUPPORTED_KEY_NAMES, args_from_iter, format_context_json, format_input_choices_json,
-        format_key_names_json, format_live_attach_json, format_live_surface_update_json,
-        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        format_key_names_json, format_live_attach_json, format_live_error_json,
+        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
+        format_scrollback, interim_surface_fidelity_warning_needed, live_update_print_kind,
+        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
+        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag,
+        raw_terminal_mode_needed, redraw_terminal_guard_needed, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args,
@@ -2364,6 +2395,18 @@ mod tests {
         assert!(update_json.contains("\"kind\":\"patch\""));
         assert!(update_json.contains("\"base_version\":6"));
         assert!(update_json.contains("\"patch_kind\":\"mode-only\""));
+
+        let error_json = format_live_error_json(&local::ErrorSummary {
+            code: protocol::ErrorCode::PermissionDenied,
+            message: "input rejected".to_owned(),
+            retryable: false,
+            pane_id: Some("pane-1".to_owned()),
+            input_seq: 3,
+        });
+        assert_eq!(
+            error_json,
+            "{\"event\":\"error\",\"error\":{\"code\":\"permission-denied\",\"message\":\"input rejected\",\"retryable\":false,\"pane_id\":\"pane-1\",\"input_seq\":3}}"
+        );
     }
 
     #[test]
