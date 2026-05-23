@@ -49,7 +49,7 @@ Record each manual run with these fields:
 | Cache state | `CACHE_STATE.txt` plus CI cache setup context; classify whether Nix, Cargo registry, Cargo Git, Rust target, and native Ghostty/Zig build caches were cold, warm, restored, or unknown. |
 | Timings | `check_all_real_seconds`, `check_all_user_seconds`, `check_all_sys_seconds`, `bundle_elapsed_seconds`, and total GitHub job duration. |
 | Provenance | `nmux-promotion-evidence` artifact, `SOURCE_FETCH.txt`, `Cargo.lock` hash, and locked `libghostty-vt`/`libghostty-vt-sys` records. |
-| Packaging | Archive name, SHA-256, `packaging-provenance-verify` result, and packaged runtime smoke result. |
+| Packaging | Archive name, SHA-256, package metadata, `packaging-provenance-verify` result, relocated install root, clean library-path environment, and packaged runtime smoke result. |
 | Outcome | Passed, failed, or canceled, including failed command and error summary. |
 | Follow-up | Any flake, cache miss, source-fetch, packaging, or platform issue created from the run. |
 

@@ -132,8 +132,8 @@ sizes plus binary versions for packaging evidence.
 `libghostty-vt` runtime libraries under `target/packaging-libghostty-vt/package`
 and verifies the wrapped binaries can run from that local layout.
 `make packaging-provenance-sample` writes a manifest for that staged layout with
-file hashes, toolchain/source mode, dependency tree, native runtime-library
-artifacts, and dynamic dependency output.
+file hashes, package metadata, toolchain/source mode, dependency tree, native
+runtime-library artifacts, and dynamic dependency output.
 `make packaging-provenance-verify` regenerates that manifest and asserts the
 required toolchain, source-mode, locked native-VT package, staged-file,
 runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree
@@ -141,9 +141,10 @@ records are present.
 `make packaging-archive-sample` archives the staged layout, writes an archive
 SHA-256 file, extracts it, and verifies the wrapped binaries from the extracted
 layout.
-`make packaging-archive-runtime-smoke` starts the extracted opt-in
-`libghostty-vt` daemon and attaches the extracted client to prove the packaged
-runtime layout can serve a real pane.
+`make packaging-archive-runtime-smoke` extracts the archive into a fresh `/tmp`
+install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset, then starts
+the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped client to
+prove the relocated package layout can serve a real pane.
 
 Use [toolchain.md](toolchain.md), [source-fetch-policy.md](source-fetch-policy.md),
 and [packaging.md](packaging.md) when the work touches non-Nix setup, Ghostty

@@ -62,12 +62,15 @@ platform-native package.
 
 `make packaging-provenance-sample` writes
 `target/packaging-libghostty-vt/package/PROVENANCE.txt` for that staged layout.
-The manifest includes toolchain and source-mode fields, `Cargo.lock` hash,
-locked `libghostty-vt` and `libghostty-vt-sys` package records, staged file
-byte sizes and SHA-256 hashes, native runtime-library artifacts, best-effort
-dynamic dependency output from `otool -L` or `ldd`, and a locked `cargo tree`
-for `nmux-cli --features libghostty-vt`. This is local provenance evidence,
-not a release signing or supply-chain attestation format.
+The staged layout also includes `PACKAGE_METADATA.txt` with the local archive
+format, host target, opt-in terminal-engine status, source mode, and wrapper
+managed runtime-library strategy. The provenance manifest includes toolchain
+and source-mode fields, `Cargo.lock` hash, locked `libghostty-vt` and
+`libghostty-vt-sys` package records, staged file byte sizes and SHA-256 hashes,
+native runtime-library artifacts, best-effort dynamic dependency output from
+`otool -L` or `ldd`, and a locked `cargo tree` for `nmux-cli --features
+libghostty-vt`. This is local provenance evidence, not a release signing or
+supply-chain attestation format.
 
 `make packaging-provenance-verify` regenerates that manifest and fails if the
 required toolchain, source-mode, locked native-VT package, staged-file,
@@ -84,12 +87,14 @@ a matching `.sha256` file, extracts the archive under
 is a local release-artifact smoke check; it is still not a signed, notarized,
 published, or platform-native package.
 
-`make packaging-archive-runtime-smoke` builds on the extracted archive and runs
-the wrapped `nmuxd --terminal-engine libghostty-vt --one-shot` plus wrapped
-`nmux` client against a temporary socket. It asserts that the client observes a
-known PTY sentinel from the packaged daemon. This proves the extracted package
-layout can serve a real opt-in native-VT pane locally; it is still not a
-multi-platform or installed-package guarantee.
+`make packaging-archive-runtime-smoke` builds on the archive sample, extracts
+the archive into a fresh `/tmp` install root outside `target/`, unsets
+`DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH`, and runs the wrapped
+`nmuxd --terminal-engine libghostty-vt --one-shot` plus wrapped `nmux` client
+against a temporary socket. It asserts that the client observes a known PTY
+sentinel from the packaged daemon. This proves the relocated package layout can
+serve a real opt-in native-VT pane locally through its own wrappers; it is still
+not a multi-platform or installed-package guarantee.
 
 Current local Darwin evidence shows the default release binaries run directly
 and the opt-in `libghostty-vt` release binaries run when the produced

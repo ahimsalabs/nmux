@@ -303,13 +303,19 @@ promotion-evidence-verify:
 	require_line "$$package_provenance" '^\[staged_files\]$$' 'packaging staged file hashes'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux wrapper hash'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmuxd bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmuxd wrapper hash'; \
+	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/PACKAGE_METADATA\.txt bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'package metadata hash'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/libexec/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux binary hash'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/libexec/nmuxd bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmuxd binary hash'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/lib/libghostty-vt.* bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged native runtime library hash'; \
 	require_line "$$package_provenance" '^\[native_runtime_libraries\]$$' 'packaging runtime libraries'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/lib/libghostty-vt' 'packaging runtime library path'; \
+	require_line "$$package_provenance" '^package_format=local-tar-archive-layout$$' 'package metadata format'; \
+	require_line "$$package_provenance" '^terminal_engine=libghostty-vt$$' 'package metadata terminal engine'; \
+	require_line "$$package_provenance" '^terminal_engine_status=opt-in$$' 'package metadata terminal engine status'; \
 	require_line "$$package_provenance" '^\[dynamic_dependencies\]$$' 'packaging dynamic dependencies'; \
 	require_line "$$run_log" '^provenance_manifest_verified=target/packaging-libghostty-vt/package/PROVENANCE\.txt$$' 'package provenance verifier result'; \
+	require_line "$$run_log" '^packaged_runtime_smoke_install_root=/tmp/nmuxpkg\.[^/]+/install$$' 'relocated package install root'; \
+	require_line "$$run_log" '^packaged_runtime_smoke_library_env=unset$$' 'clean packaged runtime library environment'; \
 	require_line "$$run_log" '^packaged_runtime_smoke=passed$$' 'runtime smoke result'; \
 	require_line "$$cargo_tree" '^nmux-cli v' 'cargo tree root'; \
 	require_line "$$archive_sha_file" '^[0-9a-f]{64}  target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package\.tar\.gz$$' 'archive SHA-256 file'; \
@@ -428,6 +434,19 @@ packaging-layout-sample: packaging-sample
 	cp target/packaging-libghostty-vt/release/nmux "$$pkg_dir/libexec/nmux"; \
 	cp target/packaging-libghostty-vt/release/nmuxd "$$pkg_dir/libexec/nmuxd"; \
 	cp "$$lib_dir"/libghostty-vt* "$$pkg_dir/lib/"; \
+	{ \
+		printf 'nmux opt-in native VT package metadata\n'; \
+		printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+		printf 'package_format=%s\n' 'local-tar-archive-layout'; \
+		printf 'release_status=%s\n' 'local evidence artifact; not a signed, notarized, installed, or published release package'; \
+		printf 'target_host=%s\n' "$$(rustc -vV | awk '/^host: / { print $$2 }')"; \
+		printf 'terminal_engine=%s\n' 'libghostty-vt'; \
+		printf 'terminal_engine_status=%s\n' 'opt-in'; \
+		printf 'binaries=%s\n' 'nmux,nmuxd'; \
+		printf 'runtime_library_strategy=%s\n' 'bundled dynamic libghostty-vt libraries loaded by wrapper-managed DYLD_LIBRARY_PATH/LD_LIBRARY_PATH'; \
+		printf 'source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"; \
+		printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
+	} > "$$pkg_dir/PACKAGE_METADATA.txt"; \
 	for bin in nmux nmuxd; do \
 		{ \
 			printf '%s\n' '#!/bin/sh'; \
@@ -484,6 +503,8 @@ packaging-provenance-sample: packaging-layout-sample
 		cargo_lock_record libghostty-vt; \
 		printf '\n[cargo_lock:libghostty-vt-sys]\n'; \
 		cargo_lock_record libghostty-vt-sys; \
+		printf '\n[package_metadata]\n'; \
+		cat "$$pkg_dir/PACKAGE_METADATA.txt"; \
 		printf '\n[staged_files]\n'; \
 		find "$$pkg_dir" -type f ! -name PROVENANCE.txt | sort | while read -r file; do \
 			printf '%s bytes=%s sha256=%s\n' "$$file" "$$(wc -c < "$$file" | tr -d ' ')" "$$(hash_file "$$file")"; \
@@ -587,9 +608,17 @@ packaging-provenance-verify: packaging-provenance-sample
 	require_cargo_lock_record libghostty-vt; \
 	require_line '^\[cargo_lock:libghostty-vt-sys\]$$' 'locked libghostty-vt-sys package section'; \
 	require_cargo_lock_record libghostty-vt-sys; \
+	require_line '^\[package_metadata\]$$' 'package metadata section'; \
+	require_line '^package_format=local-tar-archive-layout$$' 'package metadata format'; \
+	require_line '^target_host=.+$$' 'package metadata target host'; \
+	require_line '^terminal_engine=libghostty-vt$$' 'package metadata terminal engine'; \
+	require_line '^terminal_engine_status=opt-in$$' 'package metadata terminal engine status'; \
+	require_line '^runtime_library_strategy=bundled dynamic libghostty-vt libraries loaded by wrapper-managed DYLD_LIBRARY_PATH/LD_LIBRARY_PATH$$' 'package metadata runtime-library strategy'; \
+	require_line '^source_mode=(pinned-fetch|local)$$' 'package metadata source mode'; \
 	require_line '^\[staged_files\]$$' 'staged file section'; \
 	require_file_record "$$pkg_dir/bin/nmux"; \
 	require_file_record "$$pkg_dir/bin/nmuxd"; \
+	require_file_record "$$pkg_dir/PACKAGE_METADATA.txt"; \
 	require_file_record "$$pkg_dir/libexec/nmux"; \
 	require_file_record "$$pkg_dir/libexec/nmuxd"; \
 	require_line "^$$pkg_dir/lib/libghostty-vt.* bytes=[0-9]+ sha256=[0-9a-f]{64}$$" 'libghostty-vt runtime library hash'; \
@@ -632,8 +661,12 @@ packaging-archive-sample: packaging-provenance-verify
 
 packaging-archive-runtime-smoke: packaging-archive-sample
 	@echo "running packaged opt-in libghostty-vt archive runtime smoke"
-	@pkg_dir=target/packaging-libghostty-vt/archive/check/package; \
+	@archive=target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz; \
 	work_dir="$$(mktemp -d "/tmp/nmuxpkg.XXXXXX")"; \
+	install_root="$$work_dir/install"; \
+	mkdir -p "$$install_root"; \
+	tar -C "$$install_root" -xzf "$$archive"; \
+	pkg_dir="$$install_root/package"; \
 	socket="$$work_dir/nmuxd.sock"; \
 	client_out="$$work_dir/client.out"; \
 	client_err="$$work_dir/client.err"; \
@@ -641,9 +674,11 @@ packaging-archive-runtime-smoke: packaging-archive-sample
 	daemon_err="$$work_dir/daemon.err"; \
 	daemon_pid=""; \
 	trap 'status=$$?; if [ -n "$${daemon_pid:-}" ] && kill -0 "$$daemon_pid" >/dev/null 2>&1; then kill "$$daemon_pid" >/dev/null 2>&1 || true; wait "$$daemon_pid" >/dev/null 2>&1 || true; fi; rm -rf "$$work_dir"; exit "$$status"' EXIT INT TERM; \
-	"$$pkg_dir/bin/nmuxd" --socket "$$socket" --one-shot --terminal-engine libghostty-vt --command "printf 'packaged-runtime-smoke\n'; cat >/dev/null" >"$$daemon_out" 2>"$$daemon_err" & \
+	printf 'packaged_runtime_smoke_install_root=%s\n' "$$install_root"; \
+	printf 'packaged_runtime_smoke_library_env=unset\n'; \
+	env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmuxd" --socket "$$socket" --one-shot --terminal-engine libghostty-vt --command "printf 'packaged-runtime-smoke\n'; cat >/dev/null" >"$$daemon_out" 2>"$$daemon_err" & \
 	daemon_pid="$$!"; \
-	if ! "$$pkg_dir/bin/nmux" --socket "$$socket" --connect-timeout-ms 5000 --no-input --scrollback-start 1 --scrollback-count 5 >"$$client_out" 2>"$$client_err"; then \
+	if ! env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmux" --socket "$$socket" --connect-timeout-ms 5000 --no-input --scrollback-start 1 --scrollback-count 5 >"$$client_out" 2>"$$client_err"; then \
 		echo "packaged runtime smoke client failed" >&2; \
 		cat "$$client_err" >&2; \
 		exit 1; \

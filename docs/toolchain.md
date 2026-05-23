@@ -119,12 +119,13 @@ nix develop . -c make packaging-provenance-verify
 ```
 
 The sample target writes `target/packaging-libghostty-vt/package/PROVENANCE.txt`
-with staged file sizes and SHA-256 hashes, `Cargo.lock` hash,
+with staged file sizes and SHA-256 hashes, package metadata, `Cargo.lock` hash,
 toolchain/source mode, dependency tree, native runtime-library artifacts, and
 best-effort dynamic dependency output. The verifier regenerates that manifest
 and asserts the required toolchain, source-mode, locked native-VT package,
-staged-file, runtime-library, per-binary `libghostty-vt` dynamic-dependency,
-and cargo-tree records are present before archive packaging continues.
+staged-file, package metadata, runtime-library, per-binary `libghostty-vt`
+dynamic-dependency, and cargo-tree records are present before archive packaging
+continues.
 For local archive evidence, use:
 
 ```sh
@@ -140,8 +141,10 @@ For local packaged runtime evidence, use:
 nix develop . -c make packaging-archive-runtime-smoke
 ```
 
-That target starts the extracted opt-in `libghostty-vt` daemon and attaches the
-extracted client to prove the packaged runtime layout can serve a real pane.
+That target extracts the archive into a fresh `/tmp` install root with
+`DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset, then starts the wrapped opt-in
+`libghostty-vt` daemon and attaches the wrapped client to prove the relocated
+package layout can serve a real pane.
 
 ## Non-Nix Equivalents
 

@@ -79,16 +79,18 @@ target directories and prints artifact sizes plus binary versions.
 `make packaging-layout-sample` stages a local opt-in package layout with
 wrappers that resolve the native VT library from `../lib`.
 `make packaging-provenance-sample` writes a manifest with staged file hashes,
-toolchain/source mode, dependency tree, and dynamic dependency output.
+package metadata, toolchain/source mode, dependency tree, and dynamic dependency
+output.
 `make packaging-provenance-verify` regenerates that manifest and asserts the
 required toolchain, source-mode, locked native-VT package, staged-file,
 runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree
 records are present.
 `make packaging-archive-sample` archives the staged layout, writes a SHA-256
 file, extracts it, and verifies the wrapped binaries from the archive.
-`make packaging-archive-runtime-smoke` starts the extracted opt-in
-`libghostty-vt` daemon and attaches the extracted client to prove the packaged
-runtime layout can serve a real pane.
+`make packaging-archive-runtime-smoke` extracts the archive into a fresh `/tmp`
+install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset, then starts
+the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped client to
+prove the relocated package layout can serve a real pane.
 See [docs/contributor-workflow.md](docs/contributor-workflow.md) for when to use
 the default gate, the opt-in VT gate, or the combined promotion-evidence gate.
 See [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions

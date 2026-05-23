@@ -156,16 +156,18 @@ evidence rows.
 that resolve `libghostty-vt` from `../lib`; it is packaging evidence, not a
 release format decision.
 `packaging-provenance-sample` writes a local manifest with staged file hashes,
-toolchain/source mode, dependency tree, and dynamic dependency output.
+package metadata, toolchain/source mode, dependency tree, and dynamic dependency
+output.
 `packaging-provenance-verify` regenerates that manifest and asserts the
 required toolchain, source-mode, locked native-VT package, staged-file,
 runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree
 records are present.
 `packaging-archive-sample` archives the staged layout, writes a SHA-256 file,
 extracts it, and verifies the wrapped binaries from the archive.
-`packaging-archive-runtime-smoke` starts the extracted opt-in `libghostty-vt`
-daemon and attaches the extracted client to prove the packaged runtime layout
-can serve a real pane.
+`packaging-archive-runtime-smoke` extracts the archive into a fresh `/tmp`
+install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset, then starts
+the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped client to
+prove the relocated package layout can serve a real pane.
 GitHub Actions runs `make check` on pull requests and pushes to `main`; the
 promotion-evidence-bundle job is manual and does not make `libghostty-vt` a
 required CI gate. Use the field template in `docs/ci.md` when recording manual
