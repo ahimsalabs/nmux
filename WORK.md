@@ -498,6 +498,7 @@ M12: live workspace usability [done]
   local PTY commands receive NMUX, NMUX_SESSION_ID, NMUX_PANE_ID, NMUX_SOCKET, and NMUX_ORIGIN environment variables for nested nmux tooling, and nested local daemons append inherited NMUX_ORIGIN as a local hop chain
   help output documents NMUX_ORIGIN local hop-chain behavior for nested clients and daemons
   nmux --print-context reports inherited NMUX_* pane identity as exact key/value lines without connecting, fails clearly outside nmux, and has nested PTY smoke coverage
+  make local-smoke runs a default-engine local daemon/client live workflow through a temporary socket and persisted state file, verifies piped stdin input produces echoed output, and verifies a sequential read-only reattach sees that output
   one-shot and live post-attach input, resize, and scrollback control frames use the attached active pane ID instead of assuming pane-1
   preserve the backend-owned state-sync model rather than adding raw PTY replay shortcuts
   keep interim renderer limitations explicit until libghostty-backed state/render integration is available

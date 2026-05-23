@@ -101,6 +101,9 @@ Done:
 - `nmux --print-context` reports inherited `NMUX_*` pane identity without
   connecting, prints the exact inherited key/value names, fails clearly outside
   a complete nmux pane context, and has nested PTY smoke coverage.
+- `make local-smoke` runs a default-engine local daemon/client workflow through
+  a temporary socket and persisted state file, verifies piped live stdin output,
+  and verifies a sequential read-only reattach sees that output.
 - Numeric `nmux` flags report the failing flag name for invalid-number errors before connecting.
 - ADR 0012 documents the backend terminal engine boundary.
 - `nmux-core` routes pane output and cursor ownership through a terminal engine trait, with the interim text engine as the current implementation.

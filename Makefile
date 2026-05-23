@@ -11,11 +11,67 @@ PACKAGING_PROVENANCE_MANIFEST ?= target/packaging-libghostty-vt/package/PROVENAN
 PACKAGING_ARCHIVE ?= target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz
 PACKAGING_ARCHIVE_SHA256 ?= $(PACKAGING_ARCHIVE).sha256
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-manifest-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema local-smoke packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-manifest-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
 
 check: check-toolchain check-schema rust-test
 
 check-all: check check-ghostty-vt
+
+local-smoke: check-toolchain
+	@echo "running local nmux daemon/client smoke"
+	@tmp_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/nmux-local-smoke.XXXXXX")"; \
+	socket="$$tmp_dir/nmux.sock"; \
+	state="$$tmp_dir/state.json"; \
+	daemon_out="$$tmp_dir/daemon.out"; \
+	daemon_err="$$tmp_dir/daemon.err"; \
+	client1_out="$$tmp_dir/client1.out"; \
+	client1_err="$$tmp_dir/client1.err"; \
+	client2_out="$$tmp_dir/client2.out"; \
+	client2_err="$$tmp_dir/client2.err"; \
+	cleanup() { \
+		status="$$?"; \
+		if [ -n "$${daemon_pid:-}" ] && kill -0 "$$daemon_pid" >/dev/null 2>&1; then \
+			kill "$$daemon_pid" >/dev/null 2>&1 || true; \
+			wait "$$daemon_pid" >/dev/null 2>&1 || true; \
+		fi; \
+		rm -rf "$$tmp_dir"; \
+		exit "$$status"; \
+	}; \
+	trap cleanup EXIT INT TERM; \
+	command_text="printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$$line\"; done"; \
+	cargo run --quiet --bin nmuxd -- --socket "$$socket" --live-clients 2 --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
+	daemon_pid="$$!"; \
+	if ! printf 'ping\n' | cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --state "$$state" --live --iterations 1 --stdin --scrollback-start 1 --scrollback-count 8 >"$$client1_out" 2>"$$client1_err"; then \
+		cat "$$daemon_err" "$$client1_err" >&2; \
+		exit 1; \
+	fi; \
+	if ! cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --state "$$state" --live --no-input --iterations 1 --scrollback-start 1 --scrollback-count 8 >"$$client2_out" 2>"$$client2_err"; then \
+		cat "$$daemon_err" "$$client2_err" >&2; \
+		exit 1; \
+	fi; \
+	if ! wait "$$daemon_pid"; then \
+		daemon_pid=""; \
+		cat "$$daemon_err" >&2; \
+		exit 1; \
+	fi; \
+	daemon_pid=""; \
+	require_output() { \
+		file="$$1"; \
+		text="$$2"; \
+		description="$$3"; \
+		if ! grep -Fq "$$text" "$$file"; then \
+			echo "missing local smoke output: $$description" >&2; \
+			cat "$$daemon_err" "$$client1_err" "$$client2_err" >&2; \
+			echo "--- $$file ---" >&2; \
+			cat "$$file" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_output "$$client1_out" 'ready' 'initial daemon output'; \
+	require_output "$$client1_out" 'echo:ping' 'read-write live input response'; \
+	require_output "$$client2_out" 'echo:ping' 'sequential read-only reattach sees prior output'; \
+	test -s "$$state" || { echo "missing local smoke state file: $$state" >&2; exit 1; }; \
+	printf 'local_smoke=passed\n'
 
 check-ghostty-vt: check-vt-toolchain
 	GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt

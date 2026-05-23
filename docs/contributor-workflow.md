@@ -61,6 +61,7 @@ Run:
 
 ```sh
 nix develop . -c make promotion-sample
+nix develop . -c make local-smoke
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-cold-deps-sample
 nix develop . -c make promotion-cold-deps-verify
@@ -87,6 +88,12 @@ any CI or packaging context in
 [docs/default-engine-promotion.md](default-engine-promotion.md). A passing local
 `make check-all` sample is useful evidence, but it does not change the default
 engine by itself.
+
+`make local-smoke` is a quick user-level workflow check for the default engine:
+it starts `nmuxd` and two sequential `nmux` live clients over a temporary
+socket, sends piped stdin input, verifies the echoed output survives read-only
+reattach through a persisted state file, and exits without leaving the socket
+behind.
 
 `make promotion-sample` prints `make toolchain-info` output and then times
 `make check-all` with `time -p`. Outside the Nix shell, run the same target for

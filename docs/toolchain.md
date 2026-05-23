@@ -6,6 +6,7 @@ The supported development path is the Nix shell:
 nix develop . -c make check
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
+nix develop . -c make local-smoke
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-local-sample
@@ -37,6 +38,9 @@ the default `interim` terminal engine. `make check-ghostty-vt` and
 `make check-all` are explicit opt-in gates for changes that touch backend
 `libghostty-vt` extraction, feature-sensitive attach/reconnect behavior, cached
 state, daemon-owned structured input, or default-engine promotion evidence.
+`make local-smoke` is a default-engine user workflow smoke for the local
+daemon/client path; it does not enable the native VT feature or replace the
+test suite.
 See [contributor-workflow.md](contributor-workflow.md) for choosing between
 those gates.
 

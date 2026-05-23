@@ -37,6 +37,7 @@ The current implementation is a Rust workspace with:
 nix develop . -c flatc --version
 nix develop . -c make toolchain-info
 nix develop . -c make check
+nix develop . -c make local-smoke
 nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
@@ -63,7 +64,9 @@ nix develop . -c make packaging-archive-runtime-smoke
 
 The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
 FlatBuffers install is needed for the schema check. `make check` is the regular
-default-engine gate. `make check-ghostty-vt` is the opt-in full feature gate for
+default-engine gate. `make local-smoke` runs a real local `nmuxd`/`nmux` live
+daemon/client smoke over a temporary socket and state file. `make
+check-ghostty-vt` is the opt-in full feature gate for
 backend `libghostty-vt` changes. `make check-all` runs both when validating
 release-style or default-engine-promotion work. `make promotion-sample` prints
 toolchain evidence and times `make check-all` in the same run.

@@ -113,6 +113,7 @@ default-engine-promotion evidence:
 
 ```sh
 nix develop . -c make check-all
+nix develop . -c make local-smoke
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
 nix develop . -c make promotion-cold-deps-sample
@@ -137,6 +138,9 @@ nix develop . -c make packaging-archive-runtime-smoke
 
 `check-all` runs the regular default-engine gate plus the opt-in
 `libghostty-vt` gate without changing what `make check` means.
+`local-smoke` runs a real default-engine local daemon/client live smoke over a
+temporary socket and persisted client state file; use it for quick user-level
+workflow checks.
 `promotion-sample` prints `toolchain-info` and times `check-all` for evidence
 rows in `docs/default-engine-promotion.md`.
 `promotion-cold-target-sample` clears `target/promotion-cold` and times
