@@ -102,6 +102,8 @@ local-smoke: check-toolchain
 	require_output "$$client3_out" 'fresh daemon' 'recreated socket path forces fresh daemon surface'; \
 	reject_output "$$client3_out" 'echo:ping' 'stale cached surface after socket recreation'; \
 	test -s "$$state" || { echo "missing local smoke state file: $$state" >&2; exit 1; }; \
+	printf 'local_smoke_reattach=passed\n'; \
+	printf 'local_smoke_socket_recreation=passed\n'; \
 	printf 'local_smoke=passed\n'
 
 check-ghostty-vt: check-vt-toolchain
@@ -275,6 +277,16 @@ promotion-evidence-bundle:
 		echo "missing local_smoke result in $$run_log" >&2; \
 		exit 1; \
 	fi; \
+	local_smoke_reattach="$$(grep -m1 '^local_smoke_reattach=' "$$run_log" | cut -d= -f2- || true)"; \
+	if [ -z "$$local_smoke_reattach" ]; then \
+		echo "missing local_smoke_reattach result in $$run_log" >&2; \
+		exit 1; \
+	fi; \
+	local_smoke_socket_recreation="$$(grep -m1 '^local_smoke_socket_recreation=' "$$run_log" | cut -d= -f2- || true)"; \
+	if [ -z "$$local_smoke_socket_recreation" ]; then \
+		echo "missing local_smoke_socket_recreation result in $$run_log" >&2; \
+		exit 1; \
+	fi; \
 	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_sys="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^sys [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
@@ -419,6 +431,8 @@ promotion-evidence-bundle:
 			printf 'check_all_real_seconds=%s\n' "$$check_all_real"; \
 			printf 'check_all_user_seconds=%s\n' "$$check_all_user"; \
 			printf 'check_all_sys_seconds=%s\n' "$$check_all_sys"; \
+			printf 'local_smoke_reattach=%s\n' "$$local_smoke_reattach"; \
+			printf 'local_smoke_socket_recreation=%s\n' "$$local_smoke_socket_recreation"; \
 			printf 'local_smoke=%s\n' "$$local_smoke"; \
 			printf 'archive_sha256=%s\n' "$$archive_sha"; \
 			printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
@@ -606,6 +620,8 @@ promotion-evidence-verify:
 	require_line "$$summary" '^check_all_real_seconds=[0-9]+([.][0-9]+)?$$' 'check-all real timing'; \
 	require_line "$$summary" '^check_all_user_seconds=[0-9]+([.][0-9]+)?$$' 'check-all user timing'; \
 	require_line "$$summary" '^check_all_sys_seconds=[0-9]+([.][0-9]+)?$$' 'check-all sys timing'; \
+	require_exact "$$summary" 'local_smoke_reattach=passed' 'local workflow persisted reattach smoke'; \
+	require_exact "$$summary" 'local_smoke_socket_recreation=passed' 'local workflow socket recreation smoke'; \
 	require_exact "$$summary" 'local_smoke=passed' 'local workflow smoke'; \
 	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
@@ -655,6 +671,8 @@ promotion-evidence-verify:
 	$(MAKE) --no-print-directory SOURCE_FETCH_OFFLINE_PROBE_REPORT="$$offline_probe" SOURCE_FETCH_OFFLINE_PROBE_LOG="$$run_log" source-fetch-offline-probe-verify; \
 	require_line "$$run_log" '^== promotion local sample: local workflow smoke ==$$' 'local smoke run-log section'; \
 	require_exact "$$run_log" 'running local nmux daemon/client smoke' 'local smoke ran'; \
+	require_exact "$$run_log" 'local_smoke_reattach=passed' 'local smoke persisted reattach result'; \
+	require_exact "$$run_log" 'local_smoke_socket_recreation=passed' 'local smoke socket recreation result'; \
 	require_exact "$$run_log" 'local_smoke=passed' 'local smoke result'; \
 	require_line "$$package_provenance" '^\[staged_files\]$$' 'packaging staged file hashes'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux wrapper hash'; \

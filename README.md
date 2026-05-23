@@ -87,8 +87,9 @@ evidence pass.
 `make promotion-evidence-bundle` runs that local sample and gathers the log,
 toolchain output, bundle start/completion timestamps plus elapsed duration,
 extracted `make check-all` timing, `local_smoke` result, source-fetch report,
-offline probe report, package provenance, cargo tree, package archive, archive
-checksum, observed cache-state report, VCS status report, open-work snapshot,
+including persisted reattach and socket-recreation subresults, offline probe
+report, package provenance, cargo tree, package archive, archive checksum,
+observed cache-state report, VCS status report, open-work snapshot,
 and bundle artifact manifest under `target/promotion-evidence`, then runs the
 verifier.
 The bundled `ARCHIVE.sha256` uses the bundle-relative archive name
