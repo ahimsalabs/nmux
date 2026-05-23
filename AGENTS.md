@@ -78,6 +78,16 @@ Ghostty source. The Nix shell pins Zig 0.15 for that native build. Keep this
 path opt-in unless a later ADR explicitly makes the native Ghostty/Zig build
 part of regular CI, default development, and packaging.
 
+Use the explicit combined gate for release-style validation or
+default-engine-promotion evidence:
+
+```sh
+nix develop . -c make check-all
+```
+
+`check-all` runs the regular default-engine gate plus the opt-in
+`libghostty-vt` gate without changing what `make check` means.
+
 If `nix develop` itself is unavailable, do not rewrite the flake or check in
 machine-local store paths. Either use an already entered dev shell, or record the
 environmental failure and keep changes scoped to work that can still be

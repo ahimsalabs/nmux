@@ -1,9 +1,11 @@
 SCHEMA := schema/nmux.fbs
 GEN_DIR := crates/nmux-proto/src/generated
 
-.PHONY: check check-ghostty-vt check-schema generate-schema rust-test
+.PHONY: check check-all check-ghostty-vt check-schema generate-schema rust-test
 
 check: check-schema rust-test
+
+check-all: check check-ghostty-vt
 
 check-ghostty-vt:
 	GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt

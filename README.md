@@ -22,7 +22,12 @@ The current implementation is a Rust workspace with:
 ```sh
 nix develop . -c make check
 nix develop . -c make check-ghostty-vt
+nix develop . -c make check-all
 ```
+
+`make check` is the regular default-engine gate. `make check-ghostty-vt` is the
+opt-in full feature gate for backend `libghostty-vt` changes. `make check-all`
+runs both when validating release-style or default-engine-promotion work.
 
 ## Quick Smoke
 

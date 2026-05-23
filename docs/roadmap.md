@@ -166,7 +166,7 @@ Done:
 
 Next:
 
-- Gather concrete native build, CI, non-Nix toolchain, source-fetch, and packaging evidence before proposing `libghostty-vt` as the default engine or a regular CI requirement.
+- Use `nix develop . -c make check-all` for release-style validation while gathering concrete native build, CI, non-Nix toolchain, source-fetch, and packaging evidence before proposing `libghostty-vt` as the default engine or a regular CI requirement.
 - Use [the terminal state extraction checklist](terminal-state-extraction.md) and focused ADRs as the gate for expanding terminal-state protocol fields.
 - Keep client attach, reconnect, live streaming, and scrollback fetch semantics on nmux state objects.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.

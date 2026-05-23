@@ -8,6 +8,14 @@ Run all checks:
 nix develop . -c make check
 ```
 
+Run the regular default-engine gate plus the opt-in backend `libghostty-vt`
+gate when doing release-style validation or gathering default-engine-promotion
+evidence:
+
+```sh
+nix develop . -c make check-all
+```
+
 Start a one-shot daemon with the default local shell:
 
 ```sh
