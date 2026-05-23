@@ -1497,8 +1497,9 @@ fn format_rendered_attach_json(rendered: &local::RenderedAttach) -> String {
         .map(format_scrollback_json)
         .unwrap_or_else(|| "null".to_owned());
     format!(
-        "{{\"workspace\":{},\"terminal\":{},\"surface_text\":{surface_text},\"scrollback\":{scrollback}}}",
+        "{{\"workspace\":{},\"attach_status\":{},\"terminal\":{},\"surface_text\":{surface_text},\"scrollback\":{scrollback}}}",
         format_workspace_json(&rendered.workspace),
+        format_attach_status_json(&rendered.status),
         format_terminal_metadata_json(&rendered.surface_metadata),
     )
 }
@@ -1555,6 +1556,15 @@ fn format_workspace_json(workspace: &local::WorkspaceSummary) -> String {
     )
 }
 
+fn format_attach_status_json(status: &local::AttachStatusSummary) -> String {
+    format!(
+        "{{\"pane_id\":{},\"surface_version\":{},\"surface_state\":{}}}",
+        local::json_string(&status.pane_id),
+        status.surface_version,
+        local::json_string(attach_surface_state_name(status.surface_state))
+    )
+}
+
 fn format_terminal_metadata_json(metadata: &local::TerminalMetadataSummary) -> String {
     format!(
         "{{\"title\":{},\"working_directory\":{}}}",
@@ -1608,6 +1618,15 @@ fn patch_kind_name(kind: protocol::PatchKind) -> &'static str {
         protocol::PatchKind::CursorOnly => "cursor-only",
         protocol::PatchKind::ModeOnly => "mode-only",
         protocol::PatchKind::ColorOnly => "color-only",
+        _ => "unknown",
+    }
+}
+
+fn attach_surface_state_name(state: protocol::AttachSurfaceState) -> &'static str {
+    match state {
+        protocol::AttachSurfaceState::Current => "current",
+        protocol::AttachSurfaceState::Snapshot => "snapshot",
+        protocol::AttachSurfaceState::Patch => "patch",
         _ => "unknown",
     }
 }
@@ -2261,6 +2280,11 @@ mod tests {
                 rows: 24,
                 resize_policy: protocol::ResizePolicy::ActiveClient,
             },
+            status: local::AttachStatusSummary {
+                pane_id: "pane-1".to_owned(),
+                surface_version: 17,
+                surface_state: protocol::AttachSurfaceState::Snapshot,
+            },
             surface_metadata: local::TerminalMetadataSummary {
                 title: "build\nshell".to_owned(),
                 working_directory: "/tmp/nmux".to_owned(),
@@ -2289,6 +2313,8 @@ mod tests {
 
         let json = format_rendered_attach_json(&rendered);
         assert!(json.contains("\"session_id\":\"session\\\"1\""));
+        assert!(json.contains("\"surface_version\":17"));
+        assert!(json.contains("\"surface_state\":\"snapshot\""));
         assert!(json.contains("\"resize_policy\":\"active-client\""));
         assert!(json.contains("\"title\":\"build\\nshell\""));
         assert!(json.contains("\"surface_text\":\"hello\\nworld\""));
@@ -2308,6 +2334,11 @@ mod tests {
         };
         let rendered = local::RenderedAttach {
             workspace: workspace.clone(),
+            status: local::AttachStatusSummary {
+                pane_id: "pane-1".to_owned(),
+                surface_version: 7,
+                surface_state: protocol::AttachSurfaceState::Current,
+            },
             surface_metadata: local::TerminalMetadataSummary::default(),
             surface_text: Some("initial".to_owned()),
             scrollback: None,

@@ -3003,6 +3003,7 @@ pub struct AttachSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedAttach {
     pub workspace: WorkspaceSummary,
+    pub status: AttachStatusSummary,
     pub surface_metadata: TerminalMetadataSummary,
     pub surface_text: Option<String>,
     pub scrollback: Option<ScrollbackChunkSummary>,
@@ -3906,6 +3907,7 @@ impl ClientAttachState {
 
         Ok(RenderedAttach {
             workspace: snapshot.workspace,
+            status: snapshot.status,
             surface_metadata,
             surface_text,
             scrollback: snapshot.scrollback,
