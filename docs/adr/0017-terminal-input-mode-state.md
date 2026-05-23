@@ -44,6 +44,10 @@ The daemon remains the authority for input gating:
 
 - paste input is wrapped by the daemon in bracketed-paste delimiters only when
   the current pane mode reports bracketed paste enabled;
+- the historical `PasteInput.bracketed` field is not a client authority. Local
+  serving paths ignore it and derive delimiter selection from daemon-owned pane
+  mode so current-surface reconnects and multiple clients cannot disagree about
+  bracketed paste state;
 - focus gained/lost input is sent to the daemon, which forwards it only when
   focus reporting is enabled and otherwise reports a structured error;
 - keypad and cursor named keys are encoded through the live pane terminal
@@ -54,8 +58,11 @@ The daemon remains the authority for input gating:
   explicit mouse actions.
 
 The mouse format is preserved as terminal state and passed to the terminal
-engine for byte encoding. Clients should not recover from unsupported mode
-state by replaying raw PTY bytes.
+engine for byte encoding. Public `MouseInput` currently carries zero-based cell
+coordinates only. `MouseFormat::SgrPixels` may be observed from the backend and
+cached as terminal state, but pixel-coordinate forwarding remains withheld until
+the input schema grows explicit pixel fields. Clients should not recover from
+unsupported mode state by replaying raw PTY bytes.
 
 ## Consequences
 
@@ -67,3 +74,7 @@ clients enough state to reason about tracking policy and encoding format.
 Physical-key and text-event forwarding remain withheld until nmux has a
 frontend-facing input object model that can represent platform key identity and
 text composition without baking in one terminal UI's assumptions.
+
+Pixel-coordinate mouse forwarding is likewise withheld. A future schema change
+can append pixel coordinate fields or a separate mouse-pixel input object
+without changing the current cell-coordinate semantics.
