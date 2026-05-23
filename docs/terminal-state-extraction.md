@@ -2,8 +2,8 @@
 
 M13 proves the opt-in path from the interim text engine toward daemon-owned
 backend `libghostty-vt` state extraction. This file records the mapping work
-already proven by the opt-in backend and the remaining protocol decisions needed
-before default/CI promotion.
+already proven by the opt-in backend and the remaining terminal-state protocol
+decisions that must stay separate from default-engine promotion evidence.
 
 `libghostty-vt` is now present as an optional Cargo feature and compiles through
 the vendored native Ghostty VT build. ADR 0018 keeps the default `nmuxd` engine
@@ -34,20 +34,21 @@ The current terminal engine boundary owns:
 - PTY output bytes;
 - resize events.
 
-## First Backend Mapping
+## Implemented Backend Mapping
 
-The first `libghostty-vt` engine should keep the existing client contract and map
+The opt-in `libghostty-vt` engine keeps the existing client contract and maps
 backend terminal state into the same nmux objects:
 
-- Cursor: row, column, visibility, and shape must come from the VT engine, not
+- Cursor: row, column, visibility, shape, and blink state come from the VT engine, not
   from row-count heuristics or serializer defaults.
-- Surface kind: active main versus alternate screen state must come from the
-  terminal engine and be present on full surface snapshots.
+- Surface kind: active main versus alternate screen state comes from the
+  terminal engine and is present on full surface snapshots.
 - Visible rows: extract the active screen viewport as row runs compatible with
   the current `PaneSurfaceSnapshot` and `PaneSurfacePatch` fields. Snapshot and
   patch serialization must stay pane-scoped.
-- Cell runs: preserve style identity and cell-width metadata from the VT engine
-  while keeping rendered row text available as a client fallback.
+- Cell runs: preserve style identity, semantic content, hyperlink presence, and
+  cell-width metadata from the VT engine while keeping rendered row text
+  available as a client fallback.
 - Scrollback: expose historical rows through the existing `ScrollbackChunk`
   range model and advance scrollback versions when backend-owned history
   changes. Fetch handling must stay pane-scoped, treat version zero as no
@@ -65,10 +66,10 @@ backend terminal state into the same nmux objects:
   terminal title, or surface dimensions change; scrollback-only updates should
   not force a surface version bump. Keep workspace versions for tree metadata
   changes.
-- Patch kind: cursor-only changes should use `PatchKind::CursorOnly`; terminal
-  mode-only changes should use `PatchKind::ModeOnly`; terminal color-only
-  changes should use `PatchKind::ColorOnly`; row text or row-run-only changes
-  should use `PatchKind::ReplaceRows` with only changed rows when pane geometry
+- Patch kind: cursor-only changes use `PatchKind::CursorOnly`; terminal
+  mode-only changes use `PatchKind::ModeOnly`; terminal color-only
+  changes use `PatchKind::ColorOnly`; row text or row-run-only changes
+  use `PatchKind::ReplaceRows` with only changed rows when pane geometry
   is stable; changes that cannot be expressed by the current patch schema,
   including style-table changes and row changes coupled to color changes, should
   force a full snapshot. Clients must reject unsupported patch kinds rather

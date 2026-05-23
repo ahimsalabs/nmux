@@ -308,12 +308,12 @@ Reconnect metadata is carried by `AttachRequest.known_surfaces`.
 Current behavior:
 
 - no known surface version: daemon sends a full `PaneSurfaceSnapshot`
-- known `pane-1` surface version is current: daemon sends `AttachStatus.surface_state = Current` and no surface frame
-- known `pane-1` surface version is patchable: daemon sends `AttachStatus.surface_state = Patch` followed by a `PaneSurfacePatch`
-- known `pane-1` surface version has a latest `FullRefreshRequired` update:
+- known surface version for the attached pane is current: daemon sends `AttachStatus.surface_state = Current` and no surface frame
+- known surface version for the attached pane is patchable: daemon sends `AttachStatus.surface_state = Patch` followed by a `PaneSurfacePatch`
+- known surface version for the attached pane has a latest `FullRefreshRequired` update:
   daemon recovers during attach with `AttachStatus.surface_state = Snapshot`
   followed immediately by a full `PaneSurfaceSnapshot`
-- known `pane-1` surface version is stale: daemon sends `AttachStatus.surface_state = Snapshot` followed by a full `PaneSurfaceSnapshot`
+- known surface version for the attached pane is stale: daemon sends `AttachStatus.surface_state = Snapshot` followed by a full `PaneSurfaceSnapshot`
 
 The CLI can persist its local render state with `--state`. This records the
 rendered pane surface, terminal title, OSC 7 working directory, terminal modes
@@ -360,10 +360,22 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --key $'ping\n'
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nmux-client.state --no-input --scrollback-start 1 --scrollback-count 4
 ```
 
-The final attach sends the cached `pane-1` surface version in `AttachRequest`. If the daemon has exactly one newer surface version, it sends `PaneSurfacePatch`; `nmux` applies that patch to the persisted client surface and updates `/tmp/nmux-client.state`.
+The final attach sends the cached surface version for the attached pane in
+`AttachRequest`. If the daemon has exactly one newer surface version, it sends
+`PaneSurfacePatch`; `nmux` applies that patch to the persisted client surface
+and updates `/tmp/nmux-client.state`. `AttachStatus.pane_id` remains the
+authority for the attached pane; post-attach input, resize, and scrollback
+control use that pane ID instead of assuming a fixed local pane name.
 
 This proves the reconnect decision and client-side patch rendering through the public FlatBuffers attach metadata.
 
 ## Scrollback Behavior
 
-The prototype keeps scrollback separate from the visible pane surface. The client currently requests two lines starting at line `1`, and the daemon replies with a `ScrollbackChunk`. Tests assert that the visible surface matches the tail of the backend-owned scrollback object.
+The prototype keeps scrollback separate from the visible pane surface. Clients
+request explicit 1-based ranges with `--scrollback-start` and
+`--scrollback-count`, and the daemon replies with a `ScrollbackChunk` for the
+attached pane. Persisted client state records last-seen scrollback range/version
+metadata, still fetches daemon-owned scrollback when the visible surface is
+current, and retries once without a version precondition if the daemon reports a
+stale scrollback version. Tests assert that visible surfaces and scrollback
+chunks stay backend-owned state objects rather than raw PTY replay.

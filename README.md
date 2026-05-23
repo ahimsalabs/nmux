@@ -16,7 +16,7 @@ The current implementation is a Rust workspace with:
 - ADRs under [docs/adr](docs/adr);
 - runnable notes in [docs/running.md](docs/running.md);
 - default-engine promotion evidence in [docs/default-engine-promotion.md](docs/default-engine-promotion.md);
-- the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on backend `libghostty-vt` extraction.
+- the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on post-M14 default-engine promotion evidence, frontend hydration tracking, future protocol-object decisions, and local usability.
 
 ## Check
 
