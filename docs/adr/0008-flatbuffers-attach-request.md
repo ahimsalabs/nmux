@@ -26,7 +26,13 @@ The first public request should be minimal and state-sync oriented:
 - actor ID, user ID, display name, attach mode, and focused pane ID;
 - known pane surface versions keyed by pane ID.
 
-The server should continue to answer with the existing state objects: `WorkspaceTreeSnapshot`, `PresenceUpdate`, `PaneSurfaceSnapshot` or `PaneSurfacePatch`, and `ScrollbackChunk` when requested. An explicit `AttachAccepted` acknowledgement can be added later if the server needs to communicate accepted mode, assigned actor identity, or connection capabilities before state frames.
+The server should continue to answer with the existing state objects:
+`WorkspaceTreeSnapshot`, `PresenceUpdate`, `PaneSurfaceSnapshot` or
+`PaneSurfacePatch`, and `ScrollbackChunk` when requested. ADR 0021 later adds
+`AttachStatus` as the explicit attach barrier between presence and any optional
+surface frame. `AttachStatus` covers the immediate need for accepted pane ID and
+current/snapshot/patch surface state; broader connection capabilities still
+need a separate decision if they become necessary.
 
 ## Consequences
 
@@ -45,3 +51,6 @@ This does not promote host specs, process launch metadata, auth tokens, transpor
 ## Compatibility
 
 This supersedes the ADR 0004 note that a later public attach body can replace the local attach prelude. The replacement should happen in a separate implementation commit after this ADR.
+
+ADR 0021 supersedes the earlier possibility of a generic `AttachAccepted`
+acknowledgement for current local attach completion by adding `AttachStatus`.
