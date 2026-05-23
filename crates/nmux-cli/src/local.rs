@@ -1675,6 +1675,13 @@ pub fn surface_update_from_frame(
             validate_row_update_terminal_enums(&row_updates)?;
             validate_row_update_style_ids(&row_updates, &styles)?;
             validate_row_update_hyperlink_ids(&row_updates, &hyperlinks)?;
+            let cursor = snapshot.cursor().map(CursorSummary::from_protocol);
+            validate_cursor_summary(cursor)?;
+            let modes = snapshot
+                .modes()
+                .map(TerminalModeSummary::from_protocol)
+                .unwrap_or_default();
+            validate_terminal_mode_summary(modes)?;
             let text = render_decoded_rows(&row_updates);
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Snapshot,
@@ -1685,11 +1692,8 @@ pub fn surface_update_from_frame(
                 cols: Some(snapshot.cols()),
                 rows: Some(snapshot.rows()),
                 surface: Some(snapshot.surface()),
-                cursor: snapshot.cursor().map(CursorSummary::from_protocol),
-                modes: snapshot
-                    .modes()
-                    .map(TerminalModeSummary::from_protocol)
-                    .unwrap_or_default(),
+                cursor,
+                modes,
                 title: snapshot
                     .metadata()
                     .and_then(|metadata| metadata.title())
@@ -1729,6 +1733,13 @@ pub fn surface_update_from_frame(
             });
             validate_row_update_terminal_enums(&row_updates)?;
             validate_no_row_patch_payload(patch.kind(), &row_updates)?;
+            let cursor = patch.cursor().map(CursorSummary::from_protocol);
+            validate_cursor_summary(cursor)?;
+            let modes = patch
+                .modes()
+                .map(TerminalModeSummary::from_protocol)
+                .unwrap_or_default();
+            validate_terminal_mode_summary(modes)?;
             let text = render_decoded_rows(&row_updates);
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Patch,
@@ -1739,11 +1750,8 @@ pub fn surface_update_from_frame(
                 cols: None,
                 rows: None,
                 surface: None,
-                cursor: patch.cursor().map(CursorSummary::from_protocol),
-                modes: patch
-                    .modes()
-                    .map(TerminalModeSummary::from_protocol)
-                    .unwrap_or_default(),
+                cursor,
+                modes,
                 title: patch
                     .metadata()
                     .and_then(|metadata| metadata.title())
@@ -2919,6 +2927,8 @@ impl ClientPaneSurface {
             row_state_hashes: Vec::new(),
         };
         validate_surface_kind(surface.surface)?;
+        validate_cursor_summary(surface.cursor)?;
+        validate_terminal_mode_summary(surface.modes)?;
         validate_hyperlink_table(&surface.hyperlinks)?;
         let row_count =
             usize::try_from(surface.rows).map_err(|_| "surface row count does not fit in usize")?;
@@ -2974,6 +2984,8 @@ impl ClientPaneSurface {
         if let Some(patch_kind) = update.patch_kind {
             validate_patch_kind(patch_kind)?;
         }
+        validate_cursor_summary(update.cursor)?;
+        validate_terminal_mode_summary(update.modes)?;
         if !update.hyperlinks.is_empty() {
             return Err("surface patch cannot change hyperlink table".into());
         }
@@ -3145,6 +3157,33 @@ fn validate_surface_kind(
     } else {
         Err(format!("unknown surface kind {}", surface.0).into())
     }
+}
+
+fn validate_cursor_summary(
+    cursor: Option<CursorSummary>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(cursor) = cursor
+        && cursor.shape.variant_name().is_none()
+    {
+        return Err(format!("unknown cursor shape {}", cursor.shape.0).into());
+    }
+    Ok(())
+}
+
+fn validate_terminal_mode_summary(
+    modes: TerminalModeSummary,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if modes.mouse_tracking_mode.variant_name().is_none() {
+        return Err(format!(
+            "unknown mouse tracking mode {}",
+            modes.mouse_tracking_mode.0
+        )
+        .into());
+    }
+    if modes.mouse_format.variant_name().is_none() {
+        return Err(format!("unknown mouse format {}", modes.mouse_format.0).into());
+    }
+    Ok(())
 }
 
 fn validate_row_update_indices(
@@ -4810,6 +4849,43 @@ mod tests {
         )
     }
 
+    fn flatbuffer_cursor<'a>(
+        builder: &mut FlatBufferBuilder<'a>,
+        shape: protocol::CursorShape,
+    ) -> flatbuffers::WIPOffset<protocol::CursorState<'a>> {
+        protocol::CursorState::create(
+            builder,
+            &protocol::CursorStateArgs {
+                row: 0,
+                col: 0,
+                visible: true,
+                shape,
+                blinking: true,
+            },
+        )
+    }
+
+    fn flatbuffer_modes<'a>(
+        builder: &mut FlatBufferBuilder<'a>,
+        mouse_tracking_mode: protocol::MouseTrackingMode,
+        mouse_format: protocol::MouseFormat,
+    ) -> flatbuffers::WIPOffset<protocol::TerminalModeState<'a>> {
+        protocol::TerminalModeState::create(
+            builder,
+            &protocol::TerminalModeStateArgs {
+                bracketed_paste: false,
+                mouse_tracking: mouse_tracking_mode != protocol::MouseTrackingMode::None,
+                focus_reporting: false,
+                application_keypad: false,
+                application_cursor: false,
+                origin: false,
+                wraparound: true,
+                mouse_tracking_mode,
+                mouse_format,
+            },
+        )
+    }
+
     fn envelope_frame<'a>(
         builder: &mut FlatBufferBuilder<'a>,
         body_type: protocol::EnvelopeBody,
@@ -4928,6 +5004,63 @@ mod tests {
         )
     }
 
+    fn pane_surface_snapshot_with_cursor_and_modes_frame(
+        cursor_shape: protocol::CursorShape,
+        mouse_tracking_mode: protocol::MouseTrackingMode,
+        mouse_format: protocol::MouseFormat,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let run = flatbuffer_run_with_metadata(
+            &mut builder,
+            0,
+            0,
+            0,
+            protocol::CellSemanticContent::Output,
+        );
+        let runs = builder.create_vector(&[run]);
+        let row = protocol::SurfaceRow::create(
+            &mut builder,
+            &protocol::SurfaceRowArgs {
+                row: 0,
+                runs: Some(runs),
+                dirty_hash: 1,
+                semantic_prompt: protocol::RowSemanticPrompt::None,
+                dirty: false,
+                kitty_virtual_placeholder: false,
+                row_state_hash: 1,
+            },
+        );
+        let rows = builder.create_vector(&[row]);
+        let styles = builder.create_vector::<flatbuffers::WIPOffset<protocol::Style>>(&[]);
+        let hyperlinks = builder.create_vector::<flatbuffers::WIPOffset<protocol::Hyperlink>>(&[]);
+        let colors = flatbuffer_terminal_colors(&mut builder);
+        let cursor = flatbuffer_cursor(&mut builder, cursor_shape);
+        let modes = flatbuffer_modes(&mut builder, mouse_tracking_mode, mouse_format);
+        let pane_id = builder.create_string("pane-1");
+        let snapshot = protocol::PaneSurfaceSnapshot::create(
+            &mut builder,
+            &protocol::PaneSurfaceSnapshotArgs {
+                pane_id: Some(pane_id),
+                version: 1,
+                surface: protocol::SurfaceKind::Main,
+                cols: 80,
+                rows: 1,
+                cursor: Some(cursor),
+                modes: Some(modes),
+                metadata: None,
+                styles: Some(styles),
+                rows_data: Some(rows),
+                colors: Some(colors),
+                hyperlinks: Some(hyperlinks),
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::PaneSurfaceSnapshot,
+            snapshot.as_union_value(),
+        )
+    }
+
     fn scrollback_chunk_with_hyperlink_frame() -> Vec<u8> {
         scrollback_chunk_with_run_metadata_frame(
             protocol::RowSemanticPrompt::None,
@@ -4983,6 +5116,37 @@ mod tests {
             &mut builder,
             protocol::EnvelopeBody::ScrollbackChunk,
             chunk.as_union_value(),
+        )
+    }
+
+    fn pane_surface_patch_with_cursor_and_modes_frame(
+        cursor_shape: protocol::CursorShape,
+        mouse_tracking_mode: protocol::MouseTrackingMode,
+        mouse_format: protocol::MouseFormat,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let rows = builder.create_vector::<flatbuffers::WIPOffset<protocol::RowUpdate>>(&[]);
+        let cursor = flatbuffer_cursor(&mut builder, cursor_shape);
+        let modes = flatbuffer_modes(&mut builder, mouse_tracking_mode, mouse_format);
+        let pane_id = builder.create_string("pane-1");
+        let patch = protocol::PaneSurfacePatch::create(
+            &mut builder,
+            &protocol::PaneSurfacePatchArgs {
+                pane_id: Some(pane_id),
+                base_version: 1,
+                version: 2,
+                kind: protocol::PatchKind::CursorOnly,
+                row_updates: Some(rows),
+                cursor: Some(cursor),
+                modes: Some(modes),
+                metadata: None,
+                colors: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::PaneSurfacePatch,
+            patch.as_union_value(),
         )
     }
 
@@ -5376,6 +5540,45 @@ mod tests {
     }
 
     #[test]
+    fn surface_updates_reject_unknown_cursor_and_mode_enums_from_frame() {
+        let snapshot_frame = pane_surface_snapshot_with_cursor_and_modes_frame(
+            protocol::CursorShape(99),
+            protocol::MouseTrackingMode::None,
+            protocol::MouseFormat::X10,
+        );
+        let err = surface_update_from_frame(&snapshot_frame)
+            .expect_err("surface snapshot with unknown cursor shape should be rejected");
+        assert!(err.to_string().contains("unknown cursor shape"));
+
+        let patch_frame = pane_surface_patch_with_cursor_and_modes_frame(
+            protocol::CursorShape(99),
+            protocol::MouseTrackingMode::None,
+            protocol::MouseFormat::X10,
+        );
+        let err = surface_update_from_frame(&patch_frame)
+            .expect_err("surface patch with unknown cursor shape should be rejected");
+        assert!(err.to_string().contains("unknown cursor shape"));
+
+        let patch_frame = pane_surface_patch_with_cursor_and_modes_frame(
+            protocol::CursorShape::Block,
+            protocol::MouseTrackingMode(99),
+            protocol::MouseFormat::X10,
+        );
+        let err = surface_update_from_frame(&patch_frame)
+            .expect_err("surface patch with unknown mouse tracking mode should be rejected");
+        assert!(err.to_string().contains("unknown mouse tracking mode"));
+
+        let patch_frame = pane_surface_patch_with_cursor_and_modes_frame(
+            protocol::CursorShape::Block,
+            protocol::MouseTrackingMode::Any,
+            protocol::MouseFormat(99),
+        );
+        let err = surface_update_from_frame(&patch_frame)
+            .expect_err("surface patch with unknown mouse format should be rejected");
+        assert!(err.to_string().contains("unknown mouse format"));
+    }
+
+    #[test]
     fn rejects_no_row_surface_patch_with_row_updates_from_frame() {
         let frame = pane_surface_patch_with_row_frame(protocol::PatchKind::CursorOnly);
         let err = surface_update_from_frame(&frame)
@@ -5765,6 +5968,51 @@ mod tests {
             .expect_err("unknown snapshot surface kind should be rejected");
 
         assert!(err.to_string().contains("unknown surface kind"));
+    }
+
+    #[test]
+    fn client_surface_rejects_unknown_cursor_and_mode_enums_without_mutation() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top")],
+        );
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let before = surface.clone();
+
+        let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        patch.patch_kind = Some(protocol::PatchKind::CursorOnly);
+        patch.cursor = Some(CursorSummary {
+            row: 0,
+            col: 0,
+            visible: true,
+            shape: protocol::CursorShape(99),
+            blinking: true,
+        });
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("unknown cursor shape should be rejected");
+        assert!(err.to_string().contains("unknown cursor shape"));
+        assert_eq!(surface, before);
+
+        let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        patch.patch_kind = Some(protocol::PatchKind::ModeOnly);
+        patch.modes.mouse_tracking_mode = protocol::MouseTrackingMode(99);
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("unknown mouse tracking mode should be rejected");
+        assert!(err.to_string().contains("unknown mouse tracking mode"));
+        assert_eq!(surface, before);
+
+        let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        patch.patch_kind = Some(protocol::PatchKind::ModeOnly);
+        patch.modes.mouse_format = protocol::MouseFormat(99);
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("unknown mouse format should be rejected");
+        assert!(err.to_string().contains("unknown mouse format"));
+        assert_eq!(surface, before);
     }
 
     #[test]
