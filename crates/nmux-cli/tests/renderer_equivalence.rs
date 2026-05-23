@@ -17,6 +17,7 @@ fn renderer_equivalence_smoke_captures_structured_nmux_state() {
     let command = concat!(
         "printf '\\033]0;renderer fixture\\007'; ",
         "printf '\\033]7;file://localhost/tmp/nmux-renderer\\033\\\\'; ",
+        "printf '\\033[?2004h\\033[?1000h'; ",
         "printf '\\033[31mred\\033[0m plain'; printf '\\n'; ",
         "printf 'wide:中'; printf '\\n'; ",
         "printf '\\033]8;;https://example.invalid\\033\\\\link\\033]8;;\\033\\\\'; printf '\\n'; ",
@@ -74,6 +75,23 @@ fn renderer_equivalence_smoke_captures_structured_nmux_state() {
         title: "renderer fixture".to_owned(),
         working_directory: "file://localhost/tmp/nmux-renderer".to_owned(),
         surface_kind: "main".to_owned(),
+        cursor: CanonicalCursor {
+            row: 4,
+            col: 0,
+            visible: true,
+            shape: "block".to_owned(),
+        },
+        modes: CanonicalModes {
+            bracketed_paste: true,
+            mouse_tracking: true,
+            focus_reporting: false,
+            application_keypad: false,
+            application_cursor: false,
+            origin: false,
+            wraparound: true,
+            mouse_tracking_mode: "normal".to_owned(),
+            mouse_format: "x10".to_owned(),
+        },
         rows: vec![
             CanonicalRow {
                 text: "red plain".to_owned(),
@@ -142,7 +160,30 @@ struct CanonicalSurface {
     title: String,
     working_directory: String,
     surface_kind: String,
+    cursor: CanonicalCursor,
+    modes: CanonicalModes,
     rows: Vec<CanonicalRow>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct CanonicalCursor {
+    row: u64,
+    col: u64,
+    visible: bool,
+    shape: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct CanonicalModes {
+    bracketed_paste: bool,
+    mouse_tracking: bool,
+    focus_reporting: bool,
+    application_keypad: bool,
+    application_cursor: bool,
+    origin: bool,
+    wraparound: bool,
+    mouse_tracking_mode: String,
+    mouse_format: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -166,6 +207,8 @@ fn materialize_surface(decoded: &Value) -> CanonicalSurface {
         title: string_field(terminal, "title"),
         working_directory: string_field(terminal, "working_directory"),
         surface_kind: string_field(terminal, "surface_kind"),
+        cursor: materialize_cursor(terminal.get("cursor").expect("cursor object")),
+        modes: materialize_modes(terminal.get("modes").expect("modes object")),
         rows: surface
             .get("row_updates")
             .and_then(Value::as_array)
@@ -173,6 +216,29 @@ fn materialize_surface(decoded: &Value) -> CanonicalSurface {
             .iter()
             .map(materialize_row)
             .collect(),
+    }
+}
+
+fn materialize_cursor(cursor: &Value) -> CanonicalCursor {
+    CanonicalCursor {
+        row: numeric_field(cursor, "row"),
+        col: numeric_field(cursor, "col"),
+        visible: bool_field(cursor, "visible"),
+        shape: string_field(cursor, "shape"),
+    }
+}
+
+fn materialize_modes(modes: &Value) -> CanonicalModes {
+    CanonicalModes {
+        bracketed_paste: bool_field(modes, "bracketed_paste"),
+        mouse_tracking: bool_field(modes, "mouse_tracking"),
+        focus_reporting: bool_field(modes, "focus_reporting"),
+        application_keypad: bool_field(modes, "application_keypad"),
+        application_cursor: bool_field(modes, "application_cursor"),
+        origin: bool_field(modes, "origin"),
+        wraparound: bool_field(modes, "wraparound"),
+        mouse_tracking_mode: string_field(modes, "mouse_tracking_mode"),
+        mouse_format: string_field(modes, "mouse_format"),
     }
 }
 
@@ -228,6 +294,13 @@ fn string_field(value: &Value, name: &str) -> String {
         .and_then(Value::as_str)
         .unwrap_or_else(|| panic!("missing string field {name} in {value:?}"))
         .to_owned()
+}
+
+fn bool_field(value: &Value, name: &str) -> bool {
+    value
+        .get(name)
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| panic!("missing bool field {name} in {value:?}"))
 }
 
 fn numeric_field(value: &Value, name: &str) -> u64 {
