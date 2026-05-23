@@ -57,10 +57,11 @@ Use `make promotion-evidence-verify` on a locally generated artifact directory
 before transcribing it into the promotion tracker. For a downloaded artifact
 that is not under `target/promotion-evidence`, run
 `make PROMOTION_EVIDENCE_DIR=/path/to/artifact promotion-evidence-verify`. The
-verifier checks the required summary identity fields, timing fields, artifact
-files, source/provenance records, archive hash, and packaged runtime smoke
-result; it does not replace human judgment about cache state, flake rate, or
-platform coverage.
+verifier checks the required summary identity fields, timing fields,
+bundle-relative summary artifact names, relocation-safe `BUNDLE_MANIFEST.txt`
+hashes, source/provenance records,
+archive hash, and packaged runtime smoke result; it does not replace human
+judgment about cache state, flake rate, or platform coverage.
 
 The bundle summary records GitHub Actions fields when present:
 `github_server_url`, `github_repository`, `github_run_id`,

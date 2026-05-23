@@ -65,6 +65,13 @@ promotion-evidence-bundle:
 		echo "missing check-all time -p result in $$run_log" >&2; \
 		exit 1; \
 	fi; \
+	hash_file() { \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			sha256sum "$$1" | awk '{print $$1}'; \
+		else \
+			shasum -a 256 "$$1" | awk '{print $$1}'; \
+		fi; \
+	}; \
 	write_summary() { \
 		completed_utc="$$1"; \
 		elapsed_seconds="$$2"; \
@@ -90,11 +97,11 @@ promotion-evidence-bundle:
 			printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
 			printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
 			printf 'cache_state=%s\n' 'not captured; record Nix/Cargo/native cache context separately'; \
-			printf 'run_log=%s\n' "$$run_log"; \
-			printf 'toolchain=%s\n' "$$bundle_dir/TOOLCHAIN.txt"; \
-			printf 'source_fetch=%s\n' "$$bundle_dir/SOURCE_FETCH.txt"; \
-			printf 'package_provenance=%s\n' "$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
-			printf 'cargo_tree=%s\n' "$$bundle_dir/CARGO_TREE.txt"; \
+			printf 'run_log=%s\n' 'RUN.log'; \
+			printf 'toolchain=%s\n' 'TOOLCHAIN.txt'; \
+			printf 'source_fetch=%s\n' 'SOURCE_FETCH.txt'; \
+			printf 'package_provenance=%s\n' 'PACKAGE_PROVENANCE.txt'; \
+			printf 'cargo_tree=%s\n' 'CARGO_TREE.txt'; \
 			printf 'check_all_real_seconds=%s\n' "$$check_all_real"; \
 			printf 'check_all_user_seconds=%s\n' "$$check_all_user"; \
 			printf 'check_all_sys_seconds=%s\n' "$$check_all_sys"; \
@@ -102,13 +109,31 @@ promotion-evidence-bundle:
 			printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
 		} > "$$bundle_dir/SUMMARY.txt"; \
 	}; \
+	write_manifest() { \
+		manifest="$$bundle_dir/BUNDLE_MANIFEST.txt"; \
+		{ \
+			printf 'nmux promotion evidence bundle manifest\n'; \
+			for name in \
+				ARCHIVE.sha256 \
+				CARGO_TREE.txt \
+				PACKAGE_PROVENANCE.txt \
+				RUN.log \
+				SOURCE_FETCH.txt \
+				SUMMARY.txt \
+				TOOLCHAIN.txt; do \
+				printf '%s  %s\n' "$$(hash_file "$$bundle_dir/$$name")" "$$name"; \
+			done; \
+		} > "$$manifest"; \
+	}; \
 	end_epoch="$$(date -u '+%s')"; \
 	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
 	write_summary "$$completed_utc" "$$((end_epoch - start_epoch))"; \
+	write_manifest; \
 	$(MAKE) --no-print-directory PROMOTION_EVIDENCE_DIR="$$bundle_dir" promotion-evidence-verify; \
 	end_epoch="$$(date -u '+%s')"; \
 	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
 	write_summary "$$completed_utc" "$$((end_epoch - start_epoch))"; \
+	write_manifest; \
 	$(MAKE) --no-print-directory PROMOTION_EVIDENCE_DIR="$$bundle_dir" promotion-evidence-verify; \
 	cat "$$run_log"; \
 	printf 'promotion_evidence_bundle=%s\n' "$$bundle_dir"; \
@@ -124,6 +149,14 @@ promotion-evidence-verify:
 	package_provenance="$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
 	cargo_tree="$$bundle_dir/CARGO_TREE.txt"; \
 	archive_sha_file="$$bundle_dir/ARCHIVE.sha256"; \
+	bundle_manifest="$$bundle_dir/BUNDLE_MANIFEST.txt"; \
+	hash_file() { \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			sha256sum "$$1" | awk '{print $$1}'; \
+		else \
+			shasum -a 256 "$$1" | awk '{print $$1}'; \
+		fi; \
+	}; \
 	require_file() { \
 		path="$$1"; \
 		if [ ! -s "$$path" ]; then \
@@ -156,6 +189,27 @@ promotion-evidence-verify:
 	require_file "$$package_provenance"; \
 	require_file "$$cargo_tree"; \
 	require_file "$$archive_sha_file"; \
+	require_file "$$bundle_manifest"; \
+	expected_manifest="$$(mktemp)"; \
+	{ \
+		printf 'nmux promotion evidence bundle manifest\n'; \
+		for name in \
+			ARCHIVE.sha256 \
+			CARGO_TREE.txt \
+			PACKAGE_PROVENANCE.txt \
+			RUN.log \
+			SOURCE_FETCH.txt \
+			SUMMARY.txt \
+			TOOLCHAIN.txt; do \
+			printf '%s  %s\n' "$$(hash_file "$$bundle_dir/$$name")" "$$name"; \
+		done; \
+	} > "$$expected_manifest"; \
+	if ! cmp -s "$$expected_manifest" "$$bundle_manifest"; then \
+		echo "bundle manifest mismatch: $$bundle_manifest" >&2; \
+		rm -f "$$expected_manifest"; \
+		exit 1; \
+	fi; \
+	rm -f "$$expected_manifest"; \
 	require_exact "$$summary" 'nmux promotion evidence bundle' 'summary title'; \
 	require_line "$$summary" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'generation timestamp'; \
 	require_line "$$summary" '^started_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'bundle start timestamp'; \
@@ -177,11 +231,11 @@ promotion-evidence-verify:
 	require_line "$$summary" '^GHOSTTY_SOURCE_DIR=.+$$' 'GHOSTTY_SOURCE_DIR field'; \
 	require_line "$$summary" '^GIT_CONFIG_GLOBAL=.+$$' 'GIT_CONFIG_GLOBAL field'; \
 	require_line "$$summary" '^cache_state=.+$$' 'cache state field'; \
-	require_exact "$$summary" "run_log=$$run_log" 'run log path'; \
-	require_exact "$$summary" "toolchain=$$toolchain" 'toolchain path'; \
-	require_exact "$$summary" "source_fetch=$$source_fetch" 'source-fetch path'; \
-	require_exact "$$summary" "package_provenance=$$package_provenance" 'package provenance path'; \
-	require_exact "$$summary" "cargo_tree=$$cargo_tree" 'cargo tree path'; \
+	require_exact "$$summary" 'run_log=RUN.log' 'run log path'; \
+	require_exact "$$summary" 'toolchain=TOOLCHAIN.txt' 'toolchain path'; \
+	require_exact "$$summary" 'source_fetch=SOURCE_FETCH.txt' 'source-fetch path'; \
+	require_exact "$$summary" 'package_provenance=PACKAGE_PROVENANCE.txt' 'package provenance path'; \
+	require_exact "$$summary" 'cargo_tree=CARGO_TREE.txt' 'cargo tree path'; \
 	require_line "$$summary" '^check_all_real_seconds=[0-9]+([.][0-9]+)?$$' 'check-all real timing'; \
 	require_line "$$summary" '^check_all_user_seconds=[0-9]+([.][0-9]+)?$$' 'check-all user timing'; \
 	require_line "$$summary" '^check_all_sys_seconds=[0-9]+([.][0-9]+)?$$' 'check-all sys timing'; \

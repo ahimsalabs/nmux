@@ -74,7 +74,8 @@ The local sample target runs `make source-fetch-provenance-sample`,
 bundle target runs the same local sample and gathers the run log, toolchain
 output, bundle start/completion timestamps plus elapsed duration, extracted
 `time -p make check-all` values, source-fetch report, package provenance, cargo
-tree, and archive checksum under `target/promotion-evidence`, then runs
+tree, archive checksum, and bundle artifact manifest under
+`target/promotion-evidence`, then runs
 `make promotion-evidence-verify`. Run the verifier directly to check an
 existing bundle without rebuilding the native VT package, or pass
 `PROMOTION_EVIDENCE_DIR=/path/to/artifact` for a downloaded bundle outside the

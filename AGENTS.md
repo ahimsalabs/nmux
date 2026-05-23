@@ -140,11 +140,12 @@ pass.
 `promotion-evidence-bundle` runs `promotion-local-sample` and gathers the log,
 toolchain output, bundle start/completion timestamps plus elapsed duration,
 extracted `make check-all` timing, source-fetch report, package provenance,
-cargo tree, and archive checksum under `target/promotion-evidence`.
+cargo tree, archive checksum, and bundle artifact manifest under
+`target/promotion-evidence`.
 `promotion-evidence-verify` checks an existing bundle for required summary,
-bundle timing, `make check-all` timing, artifact files, source/provenance
-records, archive hash, and packaged runtime smoke output; the bundle target
-runs it before printing the artifact list.
+bundle timing, `make check-all` timing, artifact files, artifact manifest
+hashes, source/provenance records, archive hash, and packaged runtime smoke
+output; the bundle target runs it before printing the artifact list.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `packaging-sample` builds default and opt-in release binaries in separate target

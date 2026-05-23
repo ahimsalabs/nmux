@@ -100,13 +100,17 @@ promotion tracker with source-provenance, validation, and packaging/archive
 runtime results.
 `make promotion-evidence-bundle` runs the local sample and gathers
 `RUN.log`, `TOOLCHAIN.txt`, `SOURCE_FETCH.txt`, `PACKAGE_PROVENANCE.txt`,
-`CARGO_TREE.txt`, `ARCHIVE.sha256`, and `SUMMARY.txt` under
-`target/promotion-evidence` for easier transcription into the promotion
-tracker or manual CI evidence records. `SUMMARY.txt` includes the extracted
-`time -p make check-all` values as `check_all_real_seconds`,
-`check_all_user_seconds`, and `check_all_sys_seconds`, plus
-`started_at_utc`, `completed_at_utc`, and `bundle_elapsed_seconds` for the
-bundle artifact generation and verifier pass before final console output.
+`CARGO_TREE.txt`, `ARCHIVE.sha256`, `SUMMARY.txt`, and
+`BUNDLE_MANIFEST.txt` under `target/promotion-evidence` for easier
+transcription into the promotion tracker or manual CI evidence records.
+`SUMMARY.txt` includes the extracted `time -p make check-all` values as
+`check_all_real_seconds`, `check_all_user_seconds`, and
+`check_all_sys_seconds`, plus `started_at_utc`, `completed_at_utc`, and
+`bundle_elapsed_seconds` for the bundle artifact generation and verifier pass
+before final console output. `BUNDLE_MANIFEST.txt` records SHA-256 hashes for
+the evidence files in the bundle using stable relative artifact names, and
+`SUMMARY.txt` records bundle artifacts by those same relative names so copied
+or downloaded bundles remain verifiable.
 It runs `make promotion-evidence-verify` before printing the artifact list.
 Run `make promotion-evidence-verify` directly when reviewing an existing bundle
 without regenerating the native build and packaging sample. Use
