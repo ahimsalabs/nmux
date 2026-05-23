@@ -34,9 +34,21 @@
         pkgs.runCommand "nmux-source-audit"
           {
             src = cleanSrc pkgs;
+            flakeSrc = self.outPath;
             maxSourceKiB = 64 * 1024;
+            maxFlakeSourceKiB = 64 * 1024;
           }
           ''
+          if [ -e "$flakeSrc/target" ]; then
+            echo "flake input source unexpectedly contains target/" >&2
+            exit 1
+          fi
+
+          if [ -e "$flakeSrc/.git" ] || [ -e "$flakeSrc/.jj" ]; then
+            echo "flake input source unexpectedly contains VCS metadata" >&2
+            exit 1
+          fi
+
           if [ -e "$src/target" ]; then
             echo "flake source unexpectedly contains target/" >&2
             exit 1
@@ -53,8 +65,17 @@
             exit 1
           fi
 
+          flake_source_kib="$(du -sk "$flakeSrc" | cut -f1)"
+          if [ "$flake_source_kib" -gt "$maxFlakeSourceKiB" ]; then
+            echo "flake input source is unexpectedly large: ''${flake_source_kib} KiB > ''${maxFlakeSourceKiB} KiB" >&2
+            exit 1
+          fi
+
           mkdir -p "$out"
           {
+            printf 'flake_input_source_excludes_build_output=passed\n'
+            printf 'flake_input_source_size_kib=%s\n' "$flake_source_kib"
+            printf 'flake_input_source_max_kib=%s\n' "$maxFlakeSourceKiB"
             printf 'flake_source_excludes_build_output=passed\n'
             printf 'flake_source_size_kib=%s\n' "$source_kib"
             printf 'flake_source_max_kib=%s\n' "$maxSourceKiB"
