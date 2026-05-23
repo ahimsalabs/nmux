@@ -113,7 +113,9 @@ For source-fetch provenance evidence, use:
 
 ```sh
 nix develop . -c make source-fetch-provenance-sample
+nix develop . -c make source-fetch-provenance-verify
 nix develop . -c make source-fetch-offline-probe
+nix develop . -c make source-fetch-offline-probe-verify
 ```
 
 That target writes `target/source-fetch-provenance/SOURCE_FETCH.txt` with the
@@ -141,6 +143,7 @@ For a local staged package-layout smoke check, use:
 
 ```sh
 nix develop . -c make packaging-layout-sample
+nix develop . -c make packaging-layout-verify
 ```
 
 That target stages the opt-in binaries, wrapper scripts, and `libghostty-vt`
