@@ -27,3 +27,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 - [0019: Color-Only Palette Diffs](0019-color-only-palette-diffs.md)
 - [0020: Attributed Error Frames](0020-attributed-error-frames.md)
 - [0021: Explicit Attach Status](0021-explicit-attach-status.md)
+- [0022: Hyperlink Identity Table](0022-hyperlink-identity-table.md)
