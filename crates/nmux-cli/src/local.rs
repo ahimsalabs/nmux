@@ -1725,6 +1725,7 @@ pub fn surface_update_from_frame(
                     row.kitty_virtual_placeholder(),
                 )
             });
+            validate_no_row_patch_payload(patch.kind(), &row_updates)?;
             let text = render_decoded_rows(&row_updates);
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Patch,
@@ -2969,6 +2970,9 @@ impl ClientPaneSurface {
         if !update.hyperlinks.is_empty() {
             return Err("surface patch cannot change hyperlink table".into());
         }
+        if let Some(patch_kind) = update.patch_kind {
+            validate_no_row_patch_payload(patch_kind, &update.row_updates)?;
+        }
         if update.patch_kind == Some(protocol::PatchKind::CursorOnly) {
             if let Some(colors) = update.colors.as_ref()
                 && colors != &self.colors
@@ -3094,6 +3098,23 @@ fn validate_row_update_hyperlink_ids(
 ) -> Result<(), Box<dyn std::error::Error>> {
     for row in rows {
         validate_cell_run_hyperlink_ids(&row.runs, hyperlinks)?;
+    }
+    Ok(())
+}
+
+fn validate_no_row_patch_payload(
+    patch_kind: protocol::PatchKind,
+    rows: &[SurfaceRowUpdate],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !rows.is_empty()
+        && matches!(
+            patch_kind,
+            protocol::PatchKind::CursorOnly
+                | protocol::PatchKind::ModeOnly
+                | protocol::PatchKind::ColorOnly
+        )
+    {
+        return Err(format!("{patch_kind:?} patch cannot carry row updates").into());
     }
     Ok(())
 }
@@ -4919,6 +4940,51 @@ mod tests {
         )
     }
 
+    fn pane_surface_patch_with_row_frame(kind: protocol::PatchKind) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let run = flatbuffer_run_with_metadata(
+            &mut builder,
+            0,
+            0,
+            0,
+            protocol::CellSemanticContent::Output,
+        );
+        let runs = builder.create_vector(&[run]);
+        let row = protocol::RowUpdate::create(
+            &mut builder,
+            &protocol::RowUpdateArgs {
+                row: 0,
+                runs: Some(runs),
+                dirty_hash: 1,
+                semantic_prompt: protocol::RowSemanticPrompt::None,
+                dirty: false,
+                kitty_virtual_placeholder: false,
+                row_state_hash: 1,
+            },
+        );
+        let rows = builder.create_vector(&[row]);
+        let pane_id = builder.create_string("pane-1");
+        let patch = protocol::PaneSurfacePatch::create(
+            &mut builder,
+            &protocol::PaneSurfacePatchArgs {
+                pane_id: Some(pane_id),
+                base_version: 1,
+                version: 2,
+                kind,
+                row_updates: Some(rows),
+                cursor: None,
+                modes: None,
+                metadata: None,
+                colors: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::PaneSurfacePatch,
+            patch.as_union_value(),
+        )
+    }
+
     fn rename_initial_pane(session: &mut Session, pane_id: &str) {
         session.tabs[0].active_pane_id = pane_id.to_owned();
         session.tabs[0].root.id = pane_id.to_owned();
@@ -5236,6 +5302,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_no_row_surface_patch_with_row_updates_from_frame() {
+        let frame = pane_surface_patch_with_row_frame(protocol::PatchKind::CursorOnly);
+        let err = surface_update_from_frame(&frame)
+            .expect_err("cursor-only patch with row updates should be rejected");
+
+        assert!(err.to_string().contains("cannot carry row updates"));
+    }
+
+    #[test]
     fn decodes_scrollback_chunk_hyperlink_table_from_frame() {
         let frame = scrollback_chunk_with_hyperlink_frame();
         let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
@@ -5455,6 +5530,50 @@ mod tests {
 
         assert!(err.to_string().contains("repeated"));
         assert_eq!(surface, before);
+    }
+
+    #[test]
+    fn client_surface_rejects_no_row_patch_with_rows_without_mutation() {
+        for kind in [
+            protocol::PatchKind::CursorOnly,
+            protocol::PatchKind::ModeOnly,
+            protocol::PatchKind::ColorOnly,
+        ] {
+            let mut snapshot = surface_update(
+                SurfaceUpdateKind::Snapshot,
+                1,
+                None,
+                vec![surface_row(0, "top"), surface_row(1, "bottom")],
+            );
+            snapshot.colors = Some(TerminalColorSummary {
+                default_fg_rgba: 0xeeeeeeff,
+                default_bg_rgba: 0x111111ff,
+                cursor_rgba: 0,
+                cursor_rgba_set: false,
+                palette_rgba: vec![0x000000ff],
+                palette_diff_start: None,
+                palette_diff_rgba: Vec::new(),
+            });
+            let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+            let before = surface.clone();
+            let mut patch = surface_update(
+                SurfaceUpdateKind::Patch,
+                2,
+                Some(1),
+                vec![surface_row(0, "changed")],
+            );
+            patch.patch_kind = Some(kind);
+            if kind == protocol::PatchKind::ColorOnly {
+                patch.colors = Some(surface.colors.clone());
+            }
+
+            let err = surface
+                .apply_patch(&patch)
+                .expect_err("no-row patch with rows should be rejected");
+
+            assert!(err.to_string().contains("cannot carry row updates"));
+            assert_eq!(surface, before);
+        }
     }
 
     #[test]
