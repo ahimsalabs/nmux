@@ -2449,6 +2449,7 @@ pub fn scrollback_fetch_from_frame(
     let fetch = envelope
         .body_as_scrollback_fetch()
         .ok_or("missing scrollback fetch body")?;
+    validate_scrollback_fetch_range(fetch.start_line(), fetch.line_count())?;
     Ok(ScrollbackFetchSummary {
         pane_id: required_string(fetch.pane_id(), "scrollback fetch pane_id")?,
         actor_id: required_string(fetch.actor_id(), "scrollback fetch actor_id")?,
@@ -2477,6 +2478,7 @@ pub fn scrollback_chunk_from_frame(
         .unwrap_or_default();
     let colors = decoded_terminal_colors(chunk.colors()).unwrap_or_default();
     let rows = chunk.rows().ok_or("scrollback chunk has no rows")?;
+    validate_scrollback_chunk_start_line(chunk.start_line())?;
     let mut lines = Vec::with_capacity(rows.len());
     for index in 0..rows.len() {
         let row = rows.get(index);
@@ -2485,6 +2487,7 @@ pub fn scrollback_chunk_from_frame(
         validate_cell_run_semantic_content(&runs)?;
         validate_cell_run_style_ids(&runs, &styles)?;
         validate_cell_run_hyperlink_ids(&runs, &hyperlinks)?;
+        validate_scrollback_row_line(row.line())?;
         lines.push(ScrollbackLine {
             line: row.line(),
             text: render_run_summaries(&runs),
@@ -3344,6 +3347,33 @@ fn validate_no_row_patch_payload(
     Ok(())
 }
 
+fn validate_scrollback_fetch_range(
+    start_line: u64,
+    line_count: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if start_line == 0 {
+        return Err("scrollback fetch start_line must be 1-based".into());
+    }
+    if line_count == 0 {
+        return Err("scrollback fetch line_count must be nonzero".into());
+    }
+    Ok(())
+}
+
+fn validate_scrollback_chunk_start_line(start_line: u64) -> Result<(), Box<dyn std::error::Error>> {
+    if start_line == 0 {
+        return Err("scrollback chunk start_line must be 1-based".into());
+    }
+    Ok(())
+}
+
+fn validate_scrollback_row_line(line: u64) -> Result<(), Box<dyn std::error::Error>> {
+    if line == 0 {
+        return Err("scrollback row line must be 1-based".into());
+    }
+    Ok(())
+}
+
 fn validate_patch_kind(patch_kind: protocol::PatchKind) -> Result<(), Box<dyn std::error::Error>> {
     if patch_kind.variant_name().is_some() {
         Ok(())
@@ -3967,12 +3997,26 @@ impl ClientAttachState {
                 total_lines,
             ] = scope_parts.as_slice()
             {
+                let start_line = parse_state_u64(start_line)?;
+                let line_count = parse_state_u32(line_count)?;
+                if start_line == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "cached scrollback start_line must be 1-based",
+                    ));
+                }
+                if line_count == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "cached scrollback line_count must be nonzero",
+                    ));
+                }
                 scrollbacks.push(ClientPaneScrollback {
                     pane_id: String::from_utf8(hex_decode(pane_id)?)
                         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?,
                     version: parse_state_u64(version)?,
-                    start_line: parse_state_u64(start_line)?,
-                    line_count: parse_state_u32(line_count)?,
+                    start_line,
+                    line_count,
                     total_lines: parse_state_u64(total_lines)?,
                 });
                 continue;
@@ -5308,6 +5352,15 @@ mod tests {
     }
 
     fn scrollback_fetch_frame_with_ids(pane_id: Option<&str>, actor_id: Option<&str>) -> Vec<u8> {
+        scrollback_fetch_frame_with_ids_and_range(pane_id, actor_id, 1, 2)
+    }
+
+    fn scrollback_fetch_frame_with_ids_and_range(
+        pane_id: Option<&str>,
+        actor_id: Option<&str>,
+        start_line: u64,
+        line_count: u32,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
         let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
         let actor_id = actor_id.map(|actor_id| builder.create_string(actor_id));
@@ -5316,8 +5369,8 @@ mod tests {
             &protocol::ScrollbackFetchArgs {
                 pane_id,
                 actor_id,
-                start_line: 1,
-                line_count: 2,
+                start_line,
+                line_count,
                 known_scrollback_version: 0,
             },
         );
@@ -5788,6 +5841,16 @@ mod tests {
         semantic_prompt: protocol::RowSemanticPrompt,
         semantic_content: protocol::CellSemanticContent,
     ) -> Vec<u8> {
+        scrollback_chunk_with_public_lines(pane_id, semantic_prompt, semantic_content, 1, 1)
+    }
+
+    fn scrollback_chunk_with_public_lines(
+        pane_id: Option<&str>,
+        semantic_prompt: protocol::RowSemanticPrompt,
+        semantic_content: protocol::CellSemanticContent,
+        start_line: u64,
+        row_line: u64,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
         let run = flatbuffer_run_with_metadata(
             &mut builder,
@@ -5800,7 +5863,7 @@ mod tests {
         let row = protocol::ScrollbackRow::create(
             &mut builder,
             &protocol::ScrollbackRowArgs {
-                line: 1,
+                line: row_line,
                 runs: Some(runs),
                 dirty_hash: 1,
                 semantic_prompt,
@@ -5820,7 +5883,7 @@ mod tests {
             &protocol::ScrollbackChunkArgs {
                 pane_id,
                 scrollback_version: 1,
-                start_line: 1,
+                start_line,
                 total_lines: 1,
                 rows: Some(rows),
                 styles: Some(styles),
@@ -6616,6 +6679,41 @@ mod tests {
         let content_err = scrollback_chunk_from_frame(&content_frame)
             .expect_err("scrollback run with unknown semantic content should be rejected");
         assert!(content_err.to_string().contains("unknown semantic content"));
+    }
+
+    #[test]
+    fn rejects_scrollback_chunk_with_zero_public_line_numbers() {
+        let start_frame = scrollback_chunk_with_public_lines(
+            Some("pane-1"),
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent::Output,
+            0,
+            1,
+        );
+        let start_err = scrollback_chunk_from_frame(&start_frame)
+            .expect_err("zero scrollback chunk start_line should be rejected");
+        assert!(
+            start_err
+                .to_string()
+                .contains("scrollback chunk start_line must be 1-based"),
+            "{start_err}"
+        );
+
+        let row_frame = scrollback_chunk_with_public_lines(
+            Some("pane-1"),
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent::Output,
+            1,
+            0,
+        );
+        let row_err = scrollback_chunk_from_frame(&row_frame)
+            .expect_err("zero scrollback row line should be rejected");
+        assert!(
+            row_err
+                .to_string()
+                .contains("scrollback row line must be 1-based"),
+            "{row_err}"
+        );
     }
 
     #[test]
@@ -7482,6 +7580,24 @@ mod tests {
         assert!(decoded.surfaces[0].hyperlinks.is_empty());
         assert_eq!(decoded.surfaces[0].render_text(), "cached");
         assert!(decoded.scrollbacks.is_empty());
+    }
+
+    #[test]
+    fn client_attach_state_rejects_zero_cached_scrollback_ranges() {
+        for (state, expected) in [
+            (
+                "NMUX_CLIENT_STATE 7\nscrollback 70616e652d31 1 0 1 3\n",
+                "cached scrollback start_line must be 1-based",
+            ),
+            (
+                "NMUX_CLIENT_STATE 7\nscrollback 70616e652d31 1 1 0 3\n",
+                "cached scrollback line_count must be nonzero",
+            ),
+        ] {
+            let err = ClientAttachState::decode(state)
+                .expect_err("zero cached scrollback range should be rejected");
+            assert!(err.to_string().contains(expected), "{err}");
+        }
     }
 
     #[test]
@@ -12675,6 +12791,24 @@ mod tests {
                 known_scrollback_version: 1,
             }
         );
+    }
+
+    #[test]
+    fn rejects_scrollback_fetch_with_zero_range_from_frame() {
+        for (frame, expected) in [
+            (
+                scrollback_fetch_frame_with_ids_and_range(Some("pane-1"), Some("actor-1"), 0, 2),
+                "scrollback fetch start_line must be 1-based",
+            ),
+            (
+                scrollback_fetch_frame_with_ids_and_range(Some("pane-1"), Some("actor-1"), 1, 0),
+                "scrollback fetch line_count must be nonzero",
+            ),
+        ] {
+            let err = scrollback_fetch_from_frame(&frame)
+                .expect_err("zero scrollback range should be rejected");
+            assert!(err.to_string().contains(expected), "{err}");
+        }
     }
 
     #[test]

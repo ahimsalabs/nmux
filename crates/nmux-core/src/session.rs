@@ -840,6 +840,9 @@ impl Session {
         start_line: u64,
         line_count: u32,
     ) -> Option<Vec<u8>> {
+        if start_line == 0 || line_count == 0 {
+            return None;
+        }
         let scrollback = self.pane_scrollback(pane_id)?;
         let mut builder = FlatBufferBuilder::new();
 
@@ -2588,7 +2591,7 @@ mod tests {
             CellRun::plain(" plain"),
         ]];
 
-        let frame = session.scrollback_chunk_frame("conn-1", 11, 0, 1);
+        let frame = session.scrollback_chunk_frame("conn-1", 11, 1, 1);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let chunk = envelope
             .body_as_scrollback_chunk()
@@ -2628,6 +2631,16 @@ mod tests {
         assert!(
             session
                 .scrollback_chunk_frame_for_pane("conn-1", 11, "missing", 1, 2)
+                .is_none()
+        );
+        assert!(
+            session
+                .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 0, 1)
+                .is_none()
+        );
+        assert!(
+            session
+                .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 0)
                 .is_none()
         );
 
