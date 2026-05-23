@@ -2533,25 +2533,42 @@ fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
         for index in 0..known.len() {
             let surface = known.get(index);
             known_surfaces.push(KnownSurfaceVersion {
-                pane_id: surface.pane_id().unwrap_or_default().to_owned(),
+                pane_id: required_io_string(surface.pane_id(), "known surface pane_id")?,
                 version: surface.version(),
             });
         }
     }
 
+    let focused_pane_id = request
+        .focused_pane_id()
+        .map(|pane_id| required_io_string(Some(pane_id), "focused pane_id"))
+        .transpose()?;
+
     Ok(AttachRequest {
-        actor_id: request.actor_id().unwrap_or("local-actor").to_owned(),
-        user_id: request.user_id().unwrap_or("local-user").to_owned(),
-        display_name: request.display_name().unwrap_or("local").to_owned(),
+        actor_id: required_io_string(request.actor_id(), "attach actor_id")?,
+        user_id: required_io_string(request.user_id(), "attach user_id")?,
+        display_name: required_io_string(request.display_name(), "attach display_name")?,
         mode: attach_mode_from_protocol(request.mode()).map_err(|err| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("invalid attach mode: {err}"),
             )
         })?,
-        focused_pane_id: request.focused_pane_id().map(ToOwned::to_owned),
+        focused_pane_id,
         known_surfaces,
     })
+}
+
+fn required_io_string(value: Option<&str>, field: &str) -> io::Result<String> {
+    let value = value
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("missing {field}")))?;
+    if value.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("empty {field}"),
+        ));
+    }
+    Ok(value.to_owned())
 }
 
 fn wire_error_to_io(err: wire::WireError) -> io::Error {
@@ -5126,6 +5143,48 @@ mod tests {
                 mode,
                 focused_pane_id: Some(focused_pane_id),
                 known_surfaces: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::AttachRequest,
+            request.as_union_value(),
+        )
+    }
+
+    fn attach_request_frame_with_fields(
+        actor_id: Option<&str>,
+        user_id: Option<&str>,
+        display_name: Option<&str>,
+        focused_pane_id: Option<&str>,
+        known_surface_pane_id: Option<Option<&str>>,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let actor_id = actor_id.map(|actor_id| builder.create_string(actor_id));
+        let user_id = user_id.map(|user_id| builder.create_string(user_id));
+        let display_name = display_name.map(|display_name| builder.create_string(display_name));
+        let focused_pane_id =
+            focused_pane_id.map(|focused_pane_id| builder.create_string(focused_pane_id));
+        let known_surfaces = known_surface_pane_id.map(|pane_id| {
+            let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
+            let known_surface = protocol::KnownPaneSurfaceVersion::create(
+                &mut builder,
+                &protocol::KnownPaneSurfaceVersionArgs {
+                    pane_id,
+                    version: 1,
+                },
+            );
+            builder.create_vector(&[known_surface])
+        });
+        let request = protocol::AttachRequest::create(
+            &mut builder,
+            &protocol::AttachRequestArgs {
+                actor_id,
+                user_id,
+                display_name,
+                mode: protocol::AttachMode::ReadWrite,
+                focused_pane_id,
+                known_surfaces,
             },
         );
         envelope_frame(
@@ -10618,6 +10677,123 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(err.to_string().contains("unknown attach mode"));
+    }
+
+    #[test]
+    fn rejects_attach_request_with_missing_or_empty_identity_fields() {
+        for (frame, expected) in [
+            (
+                attach_request_frame_with_fields(
+                    None,
+                    Some("local-user"),
+                    Some("local"),
+                    Some("pane-1"),
+                    None,
+                ),
+                "missing attach actor_id",
+            ),
+            (
+                attach_request_frame_with_fields(
+                    Some(""),
+                    Some("local-user"),
+                    Some("local"),
+                    Some("pane-1"),
+                    None,
+                ),
+                "empty attach actor_id",
+            ),
+            (
+                attach_request_frame_with_fields(
+                    Some("local-actor"),
+                    None,
+                    Some("local"),
+                    Some("pane-1"),
+                    None,
+                ),
+                "missing attach user_id",
+            ),
+            (
+                attach_request_frame_with_fields(
+                    Some("local-actor"),
+                    Some(""),
+                    Some("local"),
+                    Some("pane-1"),
+                    None,
+                ),
+                "empty attach user_id",
+            ),
+            (
+                attach_request_frame_with_fields(
+                    Some("local-actor"),
+                    Some("local-user"),
+                    None,
+                    Some("pane-1"),
+                    None,
+                ),
+                "missing attach display_name",
+            ),
+            (
+                attach_request_frame_with_fields(
+                    Some("local-actor"),
+                    Some("local-user"),
+                    Some(""),
+                    Some("pane-1"),
+                    None,
+                ),
+                "empty attach display_name",
+            ),
+        ] {
+            let err = read_attach_request(&mut frame.as_slice()).expect_err("attach id rejected");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_attach_request_with_empty_focused_or_known_surface_panes() {
+        for (frame, expected) in [
+            (
+                attach_request_frame_with_fields(
+                    Some("local-actor"),
+                    Some("local-user"),
+                    Some("local"),
+                    Some(""),
+                    None,
+                ),
+                "empty focused pane_id",
+            ),
+            (
+                attach_request_frame_with_fields(
+                    Some("local-actor"),
+                    Some("local-user"),
+                    Some("local"),
+                    Some("pane-1"),
+                    Some(None),
+                ),
+                "missing known surface pane_id",
+            ),
+            (
+                attach_request_frame_with_fields(
+                    Some("local-actor"),
+                    Some("local-user"),
+                    Some("local"),
+                    Some("pane-1"),
+                    Some(Some("")),
+                ),
+                "empty known surface pane_id",
+            ),
+        ] {
+            let err =
+                read_attach_request(&mut frame.as_slice()).expect_err("attach pane id rejected");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
     }
 
     #[test]

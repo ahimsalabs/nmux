@@ -19,7 +19,7 @@ state-sync envelope bodies:
   to a pane.
 - `ResizeIntent` for client-originated size requests.
 - `PresenceUpdate` for actor join/leave-style presence events.
-- `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time.
+- `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time. Decoded attach requests reject missing or empty identity strings and known-surface pane IDs instead of substituting local defaults.
 - `AttachStatus` for the daemon-selected pane and whether a surface frame
   follows the attach response.
 - `Error` for protocol-level failures.
