@@ -1,8 +1,9 @@
-**nmux is a portable Ghostty-style workspace whose backend owns terminal state, and libghostty is the canonical terminal-state/snapshot engine.**
+**nmux is a portable Ghostty-style workspace whose backend owns terminal state. Backend `libghostty-vt` is the intended VT-correct terminal-state path, but today it remains opt-in while the default engine is the interim text surface.**
 
 Garden note: this file mixes product thesis, aspirational protocol sketches, and
-implemented milestone status. Treat `docs/roadmap.md`, `docs/protocol.md`, and
-ADRs as authoritative for current schema and implementation details.
+implemented milestone status. Treat `README.md`, `docs/roadmap.md`,
+`docs/protocol.md`, and ADRs as authoritative for current defaults, schema, and
+implementation details.
 
 That means nmux should not primarily synchronize raw PTY bytes. It should synchronize **versioned terminal state objects**: session tree, tab tree, pane grid, cursor, scrollback ranges, titles, agent state, presence, and input/control events. That matches the direction in your prior notes: `session -> tab -> pane`, resumable connections, multi-player presence, sandbox-hosted PTYs, and a protocol boundary rather than a herdr-shaped core. 
 
