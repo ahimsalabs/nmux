@@ -1329,13 +1329,7 @@ pub fn attach_from_stream(
         protocol::AttachSurfaceState::Snapshot | protocol::AttachSurfaceState::Patch => {
             let surface_frame = wire::read_default_frame(stream)?;
             let update = surface_update_from_frame(&surface_frame)?;
-            if update.pane_id != status.pane_id {
-                return Err(format!(
-                    "attach surface pane_id {} does not match attach status pane_id {}",
-                    update.pane_id, status.pane_id
-                )
-                .into());
-            }
+            validate_attach_surface_update(&status, &update)?;
             Some(update)
         }
         other => return Err(format!("unsupported attach surface state: {other:?}").into()),
@@ -1988,6 +1982,30 @@ fn validate_palette_diff_scope(
 
 fn terminal_colors_have_palette_diff(colors: &TerminalColorSummary) -> bool {
     colors.palette_diff_start.is_some() || !colors.palette_diff_rgba.is_empty()
+}
+
+fn validate_attach_surface_update(
+    status: &AttachStatusSummary,
+    update: &SurfaceUpdate,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if update.pane_id != status.pane_id {
+        return Err(format!(
+            "attach surface pane_id {} does not match attach status pane_id {}",
+            update.pane_id, status.pane_id
+        )
+        .into());
+    }
+
+    match (status.surface_state, update.kind) {
+        (protocol::AttachSurfaceState::Snapshot, SurfaceUpdateKind::Snapshot)
+        | (protocol::AttachSurfaceState::Patch, SurfaceUpdateKind::Patch) => Ok(()),
+        (protocol::AttachSurfaceState::Current, _) => {
+            Err("attach status Current cannot include a surface frame".into())
+        }
+        (state, kind) => {
+            Err(format!("attach status {state:?} does not match surface update {kind:?}").into())
+        }
+    }
 }
 
 fn required_string(value: Option<&str>, field: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -3735,11 +3753,21 @@ impl ClientAttachState {
     ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
         let pane_id = snapshot.status.pane_id.clone();
         let (surface_metadata, surface_text) = match snapshot.surface.as_ref() {
-            Some(update) => (
-                TerminalMetadataSummary::from_update(update),
-                Some(self.apply_surface_update(update)?),
-            ),
+            Some(update) => {
+                validate_attach_surface_update(&snapshot.status, update)?;
+                (
+                    TerminalMetadataSummary::from_update(update),
+                    Some(self.apply_surface_update(update)?),
+                )
+            }
             None => {
+                if snapshot.status.surface_state != protocol::AttachSurfaceState::Current {
+                    return Err(format!(
+                        "attach status {:?} requires a matching surface frame",
+                        snapshot.status.surface_state
+                    )
+                    .into());
+                }
                 let surface =
                     self.cached_current_surface(&pane_id, snapshot.status.surface_version)?;
                 (
@@ -6392,10 +6420,22 @@ mod tests {
     }
 
     fn attach_status_summary(pane_id: &str, surface_version: u64) -> AttachStatusSummary {
+        attach_status_summary_with_state(
+            pane_id,
+            surface_version,
+            protocol::AttachSurfaceState::Snapshot,
+        )
+    }
+
+    fn attach_status_summary_with_state(
+        pane_id: &str,
+        surface_version: u64,
+        surface_state: protocol::AttachSurfaceState,
+    ) -> AttachStatusSummary {
         AttachStatusSummary {
             pane_id: pane_id.to_owned(),
             surface_version,
-            surface_state: protocol::AttachSurfaceState::Snapshot,
+            surface_state,
         }
     }
 
@@ -7713,7 +7753,11 @@ mod tests {
             .render_attach(AttachSnapshot {
                 workspace: rendered.workspace,
                 presence: presence_summary(AttachMode::ReadWrite),
-                status: attach_status_summary("pane-1", 2),
+                status: attach_status_summary_with_state(
+                    "pane-1",
+                    3,
+                    protocol::AttachSurfaceState::Patch,
+                ),
                 surface: Some(patch_update),
                 scrollback: None,
             })
@@ -7874,6 +7918,106 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("current attach surface version mismatch"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn client_attach_state_rejects_missing_surface_for_non_current_status() {
+        let mut state = ClientAttachState::default();
+
+        let err = state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                status: attach_status_summary("pane-1", 7),
+                surface: None,
+                scrollback: None,
+            })
+            .expect_err("non-current attach status without surface should fail");
+
+        assert!(
+            err.to_string()
+                .contains("requires a matching surface frame"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn client_attach_state_rejects_surface_for_current_status() {
+        let mut state = ClientAttachState::default();
+        let update = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            7,
+            None,
+            vec![surface_row(0, "unexpected")],
+        );
+
+        let err = state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                status: attach_status_summary_with_state(
+                    "pane-1",
+                    7,
+                    protocol::AttachSurfaceState::Current,
+                ),
+                surface: Some(update),
+                scrollback: None,
+            })
+            .expect_err("current attach status with surface should fail");
+
+        assert!(
+            err.to_string()
+                .contains("Current cannot include a surface frame"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn client_attach_state_rejects_attach_status_surface_kind_mismatch() {
+        let mut state = ClientAttachState::default();
+        let update = surface_update(
+            SurfaceUpdateKind::Patch,
+            8,
+            Some(7),
+            vec![surface_row(0, "patch")],
+        );
+
+        let err = state
+            .render_attach(AttachSnapshot {
+                workspace: WorkspaceSummary {
+                    session_id: "local".to_owned(),
+                    tab_id: "tab-1".to_owned(),
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                },
+                presence: presence_summary(AttachMode::ReadWrite),
+                status: attach_status_summary("pane-1", 8),
+                surface: Some(update),
+                scrollback: None,
+            })
+            .expect_err("attach status surface kind mismatch should fail");
+
+        assert!(
+            err.to_string()
+                .contains("does not match surface update Patch"),
             "{err}"
         );
     }
@@ -8616,6 +8760,120 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("does not match attach status pane_id"),
+            "unexpected error: {err}"
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_from_stream_rejects_surface_kind_mismatch_with_attach_status() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        session.apply_pane_output("pane-1", b"new output\n");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            wire::write_default_frame(
+                &mut stream,
+                &session.workspace_tree_frame("local-client", 1),
+            )
+            .expect("write workspace");
+            wire::write_default_frame(
+                &mut stream,
+                &session.presence_update_frame(
+                    "local-client",
+                    2,
+                    &Actor {
+                        id: "local-actor".to_owned(),
+                        user_id: "local-user".to_owned(),
+                        display_name: "local".to_owned(),
+                        mode: AttachMode::ReadOnly,
+                        focused_pane_id: Some("pane-1".to_owned()),
+                    },
+                ),
+            )
+            .expect("write presence");
+            wire::write_default_frame(
+                &mut stream,
+                &session.attach_status_frame(
+                    "local-client",
+                    3,
+                    "pane-1",
+                    protocol::AttachSurfaceState::Snapshot,
+                ),
+            )
+            .expect("write attach status");
+            wire::write_default_frame(
+                &mut stream,
+                &session.pane_surface_patch_frame("local-client", 4, 2),
+            )
+            .expect("write mismatched patch");
+        });
+
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        let err = attach_from_stream(&mut stream).expect_err("surface kind mismatch should fail");
+        server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("does not match surface update Patch"),
+            "unexpected error: {err}"
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn attach_from_stream_rejects_snapshot_frame_for_patch_status() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            wire::write_default_frame(
+                &mut stream,
+                &session.workspace_tree_frame("local-client", 1),
+            )
+            .expect("write workspace");
+            wire::write_default_frame(
+                &mut stream,
+                &session.presence_update_frame(
+                    "local-client",
+                    2,
+                    &Actor {
+                        id: "local-actor".to_owned(),
+                        user_id: "local-user".to_owned(),
+                        display_name: "local".to_owned(),
+                        mode: AttachMode::ReadOnly,
+                        focused_pane_id: Some("pane-1".to_owned()),
+                    },
+                ),
+            )
+            .expect("write presence");
+            wire::write_default_frame(
+                &mut stream,
+                &session.attach_status_frame(
+                    "local-client",
+                    3,
+                    "pane-1",
+                    protocol::AttachSurfaceState::Patch,
+                ),
+            )
+            .expect("write attach status");
+            wire::write_default_frame(&mut stream, &session.pane_surface_frame("local-client", 4))
+                .expect("write mismatched snapshot");
+        });
+
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        let err = attach_from_stream(&mut stream).expect_err("surface kind mismatch should fail");
+        server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("does not match surface update Snapshot"),
             "unexpected error: {err}"
         );
 

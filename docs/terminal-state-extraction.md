@@ -236,10 +236,11 @@ libghostty-vt current-surface application-keypad and application-cursor
 named-key forwarding,
 protocol-visible host input, live resize, and output polling failures,
 pane/input-attributed `Error` frames, `PaneNotFound` errors for unknown
-pane-scoped client intents, `AttachStatus.pane_id` as the authoritative
-current-surface cache and post-attach control target with exact cached
-surface-version validation, consistent 1-based public scrollback ranges, decoded
-scrollback row hash metadata, and
+pane-scoped client intents, `AttachStatus.pane_id`, `surface_version`, and
+`surface_state` as the authoritative current-surface cache and post-attach
+control target with exact cached surface-version validation and surface-frame
+kind validation, consistent 1-based public scrollback ranges, decoded scrollback
+row hash metadata, and
 feature-gated live CLI smoke paths, committed user-command live resize
 metadata, style-table full-refresh reattach, and restored
 alternate-screen scrollback omission. Client-side tests assert decoded surface
