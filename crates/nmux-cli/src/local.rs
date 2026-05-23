@@ -1710,6 +1710,7 @@ pub fn surface_update_from_frame(
             let patch = envelope
                 .body_as_pane_surface_patch()
                 .ok_or("missing pane surface patch body")?;
+            validate_patch_kind(patch.kind())?;
             let rows = patch
                 .row_updates()
                 .ok_or("pane surface patch has no rows")?;
@@ -2967,6 +2968,9 @@ impl ClientPaneSurface {
         if update.patch_kind == Some(protocol::PatchKind::FullRefreshRequired) {
             return Err("surface patch requires full refresh".into());
         }
+        if let Some(patch_kind) = update.patch_kind {
+            validate_patch_kind(patch_kind)?;
+        }
         if !update.hyperlinks.is_empty() {
             return Err("surface patch cannot change hyperlink table".into());
         }
@@ -3117,6 +3121,16 @@ fn validate_no_row_patch_payload(
         return Err(format!("{patch_kind:?} patch cannot carry row updates").into());
     }
     Ok(())
+}
+
+fn validate_patch_kind(
+    patch_kind: protocol::PatchKind,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if patch_kind.variant_name().is_some() {
+        Ok(())
+    } else {
+        Err(format!("unknown surface patch kind {}", patch_kind.0).into())
+    }
 }
 
 fn validate_row_update_indices(
@@ -5311,6 +5325,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_surface_patch_with_unknown_patch_kind_from_frame() {
+        let frame = pane_surface_patch_with_row_frame(protocol::PatchKind(99));
+        let err = surface_update_from_frame(&frame)
+            .expect_err("surface patch with unknown patch kind should be rejected");
+
+        assert!(err.to_string().contains("unknown surface patch kind"));
+    }
+
+    #[test]
     fn decodes_scrollback_chunk_hyperlink_table_from_frame() {
         let frame = scrollback_chunk_with_hyperlink_frame();
         let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
@@ -5574,6 +5597,27 @@ mod tests {
             assert!(err.to_string().contains("cannot carry row updates"));
             assert_eq!(surface, before);
         }
+    }
+
+    #[test]
+    fn client_surface_rejects_unknown_patch_kind_without_mutation() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top"), surface_row(1, "bottom")],
+        );
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let before = surface.clone();
+        let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        patch.patch_kind = Some(protocol::PatchKind(99));
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("unknown patch kind should be rejected");
+
+        assert!(err.to_string().contains("unknown surface patch kind"));
+        assert_eq!(surface, before);
     }
 
     #[test]
