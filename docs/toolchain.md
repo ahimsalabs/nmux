@@ -23,7 +23,7 @@ Use a broader target only when the change needs the extra evidence:
 | Source-fetch evidence | `nix develop . -c make source-fetch-provenance-sample` or `nix develop . -c make source-fetch-offline-probe` |
 | Packaging evidence | Choose the matching target in [packaging.md](packaging.md#local-packaging-sample); use `nix develop . -c make packaging-sample` for binary-build evidence and `nix develop . -c make packaging-archive-runtime-smoke` only for relocated runtime evidence. |
 
-The complete target inventory is:
+The common check and evidence target inventory is:
 
 ```sh
 nix develop . -c make check

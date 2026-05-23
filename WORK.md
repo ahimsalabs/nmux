@@ -569,7 +569,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   docs/default-engine-promotion.md tracks the native build, CI, toolchain, source-fetch, packaging, workflow, and state-sync evidence required before promotion
   the tracker now includes multiple warm local Darwin arm64 make check-all timing samples, including a post-info-flag run and a make promotion-sample run with toolchain-info output; this is useful evidence, not enough for promotion by itself
   docs/toolchain.md and docs/default-engine-promotion.md explicitly record that the Nix shell provisions flatc 25.12.19, while no non-Nix optional native-VT validation run has passed as promotion evidence yet
-  a local non-Nix make check-all attempt is recorded as failing during tool preflight because flatc is not on the host PATH outside the Nix shell, and Makefile preflight now reports missing or unsupported cargo/flatc/zig requirements with Nix fallback guidance
+  a local non-Nix make check-all attempt is recorded as failing during tool preflight because flatc is not on the host PATH outside the Nix shell, and Makefile preflight now reports missing cargo plus missing or unsupported flatc/zig requirements with Nix fallback guidance
   make toolchain-info prints cargo, rustc, flatc, Zig, GHOSTTY_SOURCE_DIR, explicit Ghostty source mode, and GIT_CONFIG_GLOBAL values for default-engine-promotion evidence records
   make promotion-sample prints toolchain-info and times make check-all for one-command local promotion evidence collection
   make promotion-cold-target-sample clears target/promotion-cold and times make check-all with a fresh Rust target directory, without clearing Cargo registry, Git source, or Nix store caches
