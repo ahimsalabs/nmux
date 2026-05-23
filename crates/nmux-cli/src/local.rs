@@ -3618,9 +3618,8 @@ impl ClientAttachState {
             let cols = parse_state_u32(cols)?;
             let rows = parse_state_u32(rows)?;
             let surface = surface
-                .map(parse_state_i8)
+                .map(parse_state_surface_kind)
                 .transpose()?
-                .map(protocol::SurfaceKind)
                 .unwrap_or(protocol::SurfaceKind::Main);
             let row_count = usize::try_from(rows).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "surface rows too large")
@@ -3658,7 +3657,7 @@ impl ClientAttachState {
                             row: parse_state_u32(row)?,
                             col: parse_state_u32(col)?,
                             visible: parse_state_bool(visible)?,
-                            shape: protocol::CursorShape(parse_state_i8(shape)?),
+                            shape: parse_state_cursor_shape(shape)?,
                             blinking: true,
                         });
                     }
@@ -3667,7 +3666,7 @@ impl ClientAttachState {
                             row: parse_state_u32(row)?,
                             col: parse_state_u32(col)?,
                             visible: parse_state_bool(visible)?,
-                            shape: protocol::CursorShape(parse_state_i8(shape)?),
+                            shape: parse_state_cursor_shape(shape)?,
                             blinking: parse_state_bool(blinking)?,
                         });
                     }
@@ -3800,7 +3799,7 @@ impl ClientAttachState {
                                 "client state row metadata index outside surface",
                             ));
                         };
-                        *target = protocol::RowSemanticPrompt(parse_state_i8(semantic_prompt)?);
+                        *target = parse_state_row_semantic_prompt(semantic_prompt)?;
                     }
                     ["rowmeta", row, semantic_prompt, dirty] => {
                         let row = parse_state_usize(row)?;
@@ -3816,8 +3815,7 @@ impl ClientAttachState {
                                 "client state row metadata index outside surface",
                             ));
                         };
-                        *semantic_target =
-                            protocol::RowSemanticPrompt(parse_state_i8(semantic_prompt)?);
+                        *semantic_target = parse_state_row_semantic_prompt(semantic_prompt)?;
                         *dirty_target = parse_state_bool(dirty)?;
                     }
                     ["rowmeta", row, semantic_prompt, dirty, kitty_placeholder] => {
@@ -3840,8 +3838,7 @@ impl ClientAttachState {
                                 "client state row metadata index outside surface",
                             ));
                         };
-                        *semantic_target =
-                            protocol::RowSemanticPrompt(parse_state_i8(semantic_prompt)?);
+                        *semantic_target = parse_state_row_semantic_prompt(semantic_prompt)?;
                         *dirty_target = parse_state_bool(dirty)?;
                         *kitty_target = parse_state_bool(kitty_placeholder)?;
                     }
@@ -3878,8 +3875,7 @@ impl ClientAttachState {
                                 "client state row metadata index outside surface",
                             ));
                         };
-                        *semantic_target =
-                            protocol::RowSemanticPrompt(parse_state_i8(semantic_prompt)?);
+                        *semantic_target = parse_state_row_semantic_prompt(semantic_prompt)?;
                         *dirty_target = parse_state_bool(dirty)?;
                         *kitty_target = parse_state_bool(kitty_placeholder)?;
                         *hash_target = parse_state_u64(row_state_hash)?;
@@ -3944,9 +3940,7 @@ impl ClientAttachState {
                             style_id: parse_state_u32(style_id)?,
                             flags: parse_state_u32(flags)?,
                             hyperlink_id: parse_state_u32(hyperlink_id)?,
-                            semantic_content: protocol::CellSemanticContent(parse_state_i8(
-                                semantic_content,
-                            )?),
+                            semantic_content: parse_state_cell_semantic_content(semantic_content)?,
                         });
                     }
                     _ => {
@@ -4014,6 +4008,54 @@ fn parse_state_i8(value: &str) -> io::Result<i8> {
     value
         .parse()
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn parse_state_surface_kind(value: &str) -> io::Result<protocol::SurfaceKind> {
+    let surface = protocol::SurfaceKind(parse_state_i8(value)?);
+    if surface.variant_name().is_some() {
+        Ok(surface)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid surface kind in client state",
+        ))
+    }
+}
+
+fn parse_state_cursor_shape(value: &str) -> io::Result<protocol::CursorShape> {
+    let shape = protocol::CursorShape(parse_state_i8(value)?);
+    if shape.variant_name().is_some() {
+        Ok(shape)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid cursor shape in client state",
+        ))
+    }
+}
+
+fn parse_state_row_semantic_prompt(value: &str) -> io::Result<protocol::RowSemanticPrompt> {
+    let prompt = protocol::RowSemanticPrompt(parse_state_i8(value)?);
+    if prompt.variant_name().is_some() {
+        Ok(prompt)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid row semantic prompt in client state",
+        ))
+    }
+}
+
+fn parse_state_cell_semantic_content(value: &str) -> io::Result<protocol::CellSemanticContent> {
+    let content = protocol::CellSemanticContent(parse_state_i8(value)?);
+    if content.variant_name().is_some() {
+        Ok(content)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid cell semantic content in client state",
+        ))
+    }
 }
 
 fn parse_state_mouse_tracking_mode(value: &str) -> io::Result<protocol::MouseTrackingMode> {
@@ -5552,6 +5594,46 @@ mod tests {
         assert!(decoded.surfaces[0].hyperlinks.is_empty());
         assert_eq!(decoded.surfaces[0].render_text(), "cached");
         assert!(decoded.scrollbacks.is_empty());
+    }
+
+    #[test]
+    fn client_attach_state_rejects_invalid_cached_surface_kind() {
+        let err = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 7\nsurface 70616e652d31 7 80 24 99\ncursor none\nrow 0 636163686564\nend\n",
+        )
+        .expect_err("invalid cached surface kind should be rejected");
+
+        assert!(err.to_string().contains("invalid surface kind"));
+    }
+
+    #[test]
+    fn client_attach_state_rejects_invalid_cached_cursor_shape() {
+        let err = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 7\nsurface 70616e652d31 7 80 24 0\ncursor 0 0 1 99 1\nrow 0 636163686564\nend\n",
+        )
+        .expect_err("invalid cached cursor shape should be rejected");
+
+        assert!(err.to_string().contains("invalid cursor shape"));
+    }
+
+    #[test]
+    fn client_attach_state_rejects_invalid_cached_row_semantic_prompt() {
+        let err = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 7\nsurface 70616e652d31 7 80 24 0\ncursor none\nrowmeta 0 99\nrow 0 636163686564\nend\n",
+        )
+        .expect_err("invalid cached row semantic prompt should be rejected");
+
+        assert!(err.to_string().contains("invalid row semantic prompt"));
+    }
+
+    #[test]
+    fn client_attach_state_rejects_invalid_cached_cell_semantic_content() {
+        let err = ClientAttachState::decode(
+            "NMUX_CLIENT_STATE 7\nsurface 70616e652d31 7 80 24 0\ncursor none\nrow 0 636163686564\nrun 0 636163686564 0101010101 0 0 0 99\nend\n",
+        )
+        .expect_err("invalid cached cell semantic content should be rejected");
+
+        assert!(err.to_string().contains("invalid cell semantic content"));
     }
 
     #[test]
