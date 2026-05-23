@@ -41,6 +41,34 @@ pub fn default_socket_path() -> PathBuf {
     )
 }
 
+pub fn socket_path_json(path: &Path) -> String {
+    format!(
+        "{{\"NMUX_SOCKET\":{}}}",
+        json_string(&path.display().to_string())
+    )
+}
+
+pub fn json_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            ch if ch.is_control() => {
+                use std::fmt::Write as _;
+                write!(&mut escaped, "\\u{:04x}", ch as u32).expect("write to string");
+            }
+            ch => escaped.push(ch),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
 fn default_socket_path_from(
     socket_path: Option<OsString>,
     runtime_dir: Option<OsString>,
@@ -5151,6 +5179,15 @@ mod tests {
                 1000,
             ),
             PathBuf::from("/tmp/project-nmux.sock")
+        );
+    }
+
+    #[test]
+    fn socket_path_json_escapes_path() {
+        assert_eq!(json_string("sock\"\\\n"), "\"sock\\\"\\\\\\n\"");
+        assert_eq!(
+            socket_path_json(Path::new("/tmp/nmux.sock")),
+            "{\"NMUX_SOCKET\":\"/tmp/nmux.sock\"}"
         );
     }
 

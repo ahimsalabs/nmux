@@ -41,8 +41,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if args.print_socket {
-        println!("{}", args.socket_path.display());
+    if args.print_socket || args.print_socket_json {
+        if args.print_socket_json {
+            println!("{}", local::socket_path_json(&args.socket_path));
+        } else {
+            println!("{}", args.socket_path.display());
+        }
         return Ok(());
     }
 
@@ -891,6 +895,7 @@ struct Args {
     print_context: bool,
     print_context_json: bool,
     print_socket: bool,
+    print_socket_json: bool,
     socket_path: PathBuf,
     input_text: Option<String>,
     key_name: Option<String>,
@@ -928,6 +933,7 @@ where
     let mut print_context = false;
     let mut print_context_json = false;
     let mut print_socket = false;
+    let mut print_socket_json = false;
     let mut socket_path = local::default_socket_path();
     let mut input_text = None;
     let mut key_name = None;
@@ -979,6 +985,9 @@ where
             }
             "--print-socket" => {
                 print_socket = true;
+            }
+            "--print-socket-json" => {
+                print_socket_json = true;
             }
             "--socket" => {
                 socket_path = args
@@ -1119,7 +1128,7 @@ where
         }
     }
     let exits_before_attach =
-        help || version || print_context || print_context_json || print_socket;
+        help || version || print_context || print_context_json || print_socket || print_socket_json;
     let live_resize = if exits_before_attach {
         match (live_cols, live_rows) {
             (Some(cols), Some(rows)) => Some((cols, rows)),
@@ -1187,6 +1196,7 @@ where
         print_context,
         print_context_json,
         print_socket,
+        print_socket_json,
         socket_path,
         input_text,
         key_name,
@@ -1239,32 +1249,11 @@ fn print_context(json: bool) -> Result<(), Box<dyn std::error::Error>> {
 fn format_context_json(session_id: &str, pane_id: &str, socket: &str, origin: &str) -> String {
     format!(
         "{{\"NMUX\":\"1\",\"NMUX_SESSION_ID\":{},\"NMUX_PANE_ID\":{},\"NMUX_SOCKET\":{},\"NMUX_ORIGIN\":{}}}",
-        json_string(session_id),
-        json_string(pane_id),
-        json_string(socket),
-        json_string(origin)
+        local::json_string(session_id),
+        local::json_string(pane_id),
+        local::json_string(socket),
+        local::json_string(origin)
     )
-}
-
-fn json_string(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len() + 2);
-    escaped.push('"');
-    for ch in value.chars() {
-        match ch {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            ch if ch.is_control() => {
-                use std::fmt::Write as _;
-                write!(&mut escaped, "\\u{:04x}", ch as u32).expect("write to string");
-            }
-            ch => escaped.push(ch),
-        }
-    }
-    escaped.push('"');
-    escaped
 }
 
 fn required_context_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -1498,6 +1487,7 @@ Options:
   --print-context            Print inherited nmux pane context and exit
   --print-context-json       Print inherited nmux pane context as JSON and exit
   --print-socket             Print the resolved socket path and exit
+  --print-socket-json        Print the resolved socket path as JSON and exit
   --connect-timeout-ms MS    Wait up to this long for the daemon socket
   --key TEXT                 Text input to send; opts into read-write attach
   --key-name NAME            Send a supported named key
@@ -1528,6 +1518,7 @@ Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
   --print-context prints inherited NMUX_* pane identity without connecting.
   --print-context-json prints the same inherited context as a JSON object.
+  --print-socket-json prints the resolved socket path as a JSON object.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
   Without an explicit input or resize flag, nmux attaches read-only.
@@ -1741,11 +1732,11 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 mod tests {
     use super::{
         FocusEvent, LiveUpdatePrintKind, LocalEcho, MouseEvent, args_from_iter,
-        format_context_json, interim_surface_fidelity_warning_needed, json_string,
-        live_update_print_kind, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        format_context_json, interim_surface_fidelity_warning_needed, live_update_print_kind,
+        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
+        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag,
+        raw_terminal_mode_needed, redraw_terminal_guard_needed, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args,
@@ -1827,6 +1818,7 @@ mod tests {
         assert!(!args.print_context);
         assert!(!args.print_context_json);
         assert!(!args.print_socket);
+        assert!(!args.print_socket_json);
     }
 
     #[test]
@@ -1837,11 +1829,17 @@ mod tests {
 
     #[test]
     fn context_json_escapes_values() {
-        assert_eq!(json_string("pane\"1\\x\n"), "\"pane\\\"1\\\\x\\n\"");
+        assert_eq!(local::json_string("pane\"1\\x\n"), "\"pane\\\"1\\\\x\\n\"");
         assert_eq!(
             format_context_json("session", "pane-1", "/tmp/nmux.sock", "root>child"),
             "{\"NMUX\":\"1\",\"NMUX_SESSION_ID\":\"session\",\"NMUX_PANE_ID\":\"pane-1\",\"NMUX_SOCKET\":\"/tmp/nmux.sock\",\"NMUX_ORIGIN\":\"root>child\"}"
         );
+    }
+
+    #[test]
+    fn print_socket_json_arg_exits_before_mode_validation() {
+        let args = args_from_iter(["--print-socket-json", "--cols", "80"]).expect("args");
+        assert!(args.print_socket_json);
     }
 
     #[test]
@@ -2518,6 +2516,7 @@ mod tests {
         assert!(usage.contains("--print-context"));
         assert!(usage.contains("--print-context-json"));
         assert!(usage.contains("--print-socket"));
+        assert!(usage.contains("--print-socket-json"));
         assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--connect-timeout-ms MS"));
         assert!(usage.contains("--local-echo off|tty"));

@@ -31,8 +31,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if args.print_socket {
-        println!("{}", args.socket_path.display());
+    if args.print_socket || args.print_socket_json {
+        if args.print_socket_json {
+            println!("{}", local::socket_path_json(&args.socket_path));
+        } else {
+            println!("{}", args.socket_path.display());
+        }
         return Ok(());
     }
 
@@ -155,6 +159,7 @@ struct Args {
     help: bool,
     version: bool,
     print_socket: bool,
+    print_socket_json: bool,
     socket_path: PathBuf,
     one_shot: bool,
     live: bool,
@@ -170,6 +175,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
     let mut help = false;
     let mut version = false;
     let mut print_socket = false;
+    let mut print_socket_json = false;
     let mut socket_path = local::default_socket_path();
     let mut one_shot = false;
     let mut live = false;
@@ -191,6 +197,9 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             }
             "--print-socket" => {
                 print_socket = true;
+            }
+            "--print-socket-json" => {
+                print_socket_json = true;
             }
             "--socket" => {
                 socket_path = args
@@ -234,7 +243,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
-    if !(help || version || print_socket) {
+    if !(help || version || print_socket || print_socket_json) {
         validate_mode_args(one_shot, live, live_forever, live_cycles, live_clients)?;
     }
 
@@ -242,6 +251,7 @@ fn args() -> Result<Args, Box<dyn std::error::Error>> {
         help,
         version,
         print_socket,
+        print_socket_json,
         socket_path,
         one_shot,
         live,
@@ -301,6 +311,7 @@ Usage:
 Options:
   --socket PATH                         Unix socket path
   --print-socket                        Print the resolved socket path and exit
+  --print-socket-json                   Print the resolved socket path as JSON
   --one-shot                            Serve one attach client
   --live                                Serve one live client until detach
   --live-forever                        Serve sequential live clients until stopped
@@ -416,6 +427,7 @@ mod tests {
         let usage = usage();
         assert!(usage.contains("--live"));
         assert!(usage.contains("--print-socket"));
+        assert!(usage.contains("--print-socket-json"));
         assert!(usage.contains("-V, --version"));
         assert!(usage.contains("--live-forever"));
         assert!(usage.contains("--live-cycles COUNT"));
