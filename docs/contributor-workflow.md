@@ -51,8 +51,10 @@ nix develop . -c make check-ghostty-vt
 ```
 
 `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package suites
-with `--features libghostty-vt`. It is intentionally broader than a filtered
-Ghostty smoke test.
+with `--features libghostty-vt` and `RUST_TEST_THREADS=1`. It is intentionally
+broader than a filtered Ghostty smoke test. The serial harness setting is part
+of the current native-VT evidence gate; do not replace it with filtered tests
+when changing terminal engine behavior.
 
 ## Promotion Evidence Work
 

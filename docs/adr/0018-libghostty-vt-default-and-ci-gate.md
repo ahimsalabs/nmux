@@ -37,7 +37,7 @@ the default `nmuxd --terminal-engine interim` path.
 Strengthen the opt-in verification gate instead:
 
 - `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
-  suites with `--features libghostty-vt`.
+  suites with `--features libghostty-vt` and `RUST_TEST_THREADS=1`.
 - The gate keeps `GIT_CONFIG_GLOBAL=/dev/null` so local Git URL rewrites do not
   break the pinned HTTPS Ghostty fetch.
 - M13 changes that touch terminal extraction, terminal modes, structured input

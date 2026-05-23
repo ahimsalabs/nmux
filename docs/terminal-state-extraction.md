@@ -250,8 +250,9 @@ alternate-screen scrollback omission. Client-side tests assert decoded surface
 patches and scrollback chunks preserve structured `CellRun` style IDs, cell
 widths, hyperlink-presence flags, and semantic content rather than collapsing
 to text-only fallback rows. `make check-ghostty-vt` runs the full `nmux-core`
-and `nmux-cli` test suites with `--features libghostty-vt`, so ordinary
-feature-sensitive tests are part of the opt-in gate. ADR 0018 keeps the default
+and `nmux-cli` test suites with `--features libghostty-vt` and
+`RUST_TEST_THREADS=1`, so ordinary feature-sensitive tests are part of the
+opt-in gate. ADR 0018 keeps the default
 engine `interim`, and ADR 0023 keeps `libghostty-vt` opt-in after M13 until a
 later decision explicitly accepts the native Ghostty/Zig build cost in normal
 development, CI, and packaging. `make check-all` is the explicit combined gate

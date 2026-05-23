@@ -101,12 +101,13 @@ feature-enabled package check when changing the optional path:
 nix develop . -c make check-ghostty-vt
 ```
 
-The target runs `nmux-core` and `nmux-cli` with `--features libghostty-vt`, not
-only name-filtered smoke tests. It sets `GIT_CONFIG_GLOBAL=/dev/null` to avoid
-local GitHub HTTPS-to-SSH rewrites while `libghostty-vt-sys` fetches its pinned
-Ghostty source. The Nix shell pins Zig 0.15 for that native build. Keep this
-path opt-in unless a later ADR explicitly makes the native Ghostty/Zig build
-part of regular CI, default development, and packaging.
+The target runs `nmux-core` and `nmux-cli` with `--features libghostty-vt` and
+`RUST_TEST_THREADS=1`, not only name-filtered smoke tests. It sets
+`GIT_CONFIG_GLOBAL=/dev/null` to avoid local GitHub HTTPS-to-SSH rewrites while
+`libghostty-vt-sys` fetches its pinned Ghostty source. The Nix shell pins Zig
+0.15 for that native build. Keep this path opt-in unless a later ADR explicitly
+makes the native Ghostty/Zig build part of regular CI, default development, and
+packaging.
 
 Use the explicit combined gate for release-style validation or
 default-engine-promotion evidence:

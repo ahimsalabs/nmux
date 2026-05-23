@@ -328,9 +328,11 @@ nix develop . -c make check-ghostty-vt
 ```
 
 The target runs full `nmux-core` and `nmux-cli` test suites with
-`--features libghostty-vt`, and sets `GIT_CONFIG_GLOBAL=/dev/null`. That Git
-setting is not logically required by nmux; it avoids a local Git configuration
-that rewrites GitHub HTTPS URLs to SSH. The
+`--features libghostty-vt`, sets `RUST_TEST_THREADS=1`, and sets
+`GIT_CONFIG_GLOBAL=/dev/null`. The serial test-harness setting is part of the
+current FFI-backed native-VT evidence gate. The Git setting is not logically
+required by nmux; it avoids a local Git configuration that rewrites GitHub
+HTTPS URLs to SSH. The
 `libghostty-vt-sys` build script fetches Ghostty from an HTTPS URL unless
 `GHOSTTY_SOURCE_DIR` points at an existing Ghostty checkout.
 This source-fetch path is acceptable for opt-in local validation, but packaged

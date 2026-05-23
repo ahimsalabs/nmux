@@ -12,8 +12,9 @@ a packaging baseline.
 - `libghostty-vt-sys` is pinned through `Cargo.lock` and fetches a pinned
   Ghostty source tree for the native VT library unless `GHOSTTY_SOURCE_DIR`
   points at an existing local Ghostty checkout.
-- `make check-ghostty-vt` sets `GIT_CONFIG_GLOBAL=/dev/null` so local Git URL
-  rewrite rules do not alter that HTTPS fetch.
+- `make check-ghostty-vt` sets `RUST_TEST_THREADS=1` for the current
+  FFI-backed native-VT evidence gate and `GIT_CONFIG_GLOBAL=/dev/null` so
+  local Git URL rewrite rules do not alter that HTTPS fetch.
 - `make check-ghostty-vt` also validates `GHOSTTY_SOURCE_DIR` before running the
   native build: when the variable is set, it must point at an existing readable
   source directory; when it is unset, the build uses the pinned

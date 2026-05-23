@@ -131,8 +131,8 @@ local-smoke: check-toolchain
 	printf 'local_smoke=passed\n'
 
 check-ghostty-vt: check-vt-toolchain
-	GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt
-	GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-cli --features libghostty-vt
+	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt
+	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-cli --features libghostty-vt
 
 promotion-sample: toolchain-info
 	time -p $(MAKE) check-all
@@ -252,8 +252,8 @@ promotion-cold-deps-verify:
 	require_exact "$$report" "check_all_sys_seconds=$$log_sys" 'sys timing matches log'; \
 	require_line "$$log" '^flatc --json --strict-json --no-warnings -o /tmp schema/nmux\.fbs$$' 'schema check ran'; \
 	require_line "$$log" '^cargo test --workspace$$' 'default workspace tests ran'; \
-	require_line "$$log" '^GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt$$' 'opt-in core tests ran'; \
-	require_line "$$log" '^GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-cli --features libghostty-vt$$' 'opt-in cli tests ran'; \
+	require_line "$$log" '^RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt$$' 'opt-in core tests ran serially'; \
+	require_line "$$log" '^RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-cli --features libghostty-vt$$' 'opt-in cli tests ran serially'; \
 	printf 'promotion_cold_deps_verified=%s\n' "$$report"
 
 promotion-local-sample:

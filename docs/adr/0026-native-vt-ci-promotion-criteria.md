@@ -12,8 +12,10 @@ Accepted.
 
 ADR 0018 keeps `libghostty-vt` out of regular `make check` and default CI while
 still requiring a full opt-in `make check-ghostty-vt` gate for feature-sensitive
-changes. ADR 0023 keeps the post-M13 default engine as `interim` until build,
-CI, source-fetch, packaging, and workflow costs are accepted deliberately.
+changes. That opt-in gate currently runs the native-VT feature suites with
+`RUST_TEST_THREADS=1`. ADR 0023 keeps the post-M13 default engine as `interim`
+until build, CI, source-fetch, packaging, and workflow costs are accepted
+deliberately.
 
 The repository now has a GitHub Actions default-engine job for pull requests and
 pushes to `main`, plus a manual `workflow_dispatch` promotion evidence job that

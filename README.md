@@ -69,9 +69,11 @@ daemon/client smoke over a temporary socket and state file, including persisted
 reattach, nested `nmux --print-context`, and same-path socket recreation to
 prove stale cached surfaces are not reused across a new daemon. `make
 check-ghostty-vt` is the opt-in full feature gate for
-backend `libghostty-vt` changes. `make check-all` runs both when validating
-release-style or default-engine-promotion work. `make promotion-sample` prints
-toolchain evidence and times `make check-all` in the same run.
+backend `libghostty-vt` changes. It runs the native-VT feature suites with
+`RUST_TEST_THREADS=1` because the current FFI-backed engine gate is validated
+serially on CI. `make check-all` runs both when validating release-style or
+default-engine-promotion work. `make promotion-sample` prints toolchain
+evidence and times `make check-all` in the same run.
 `make promotion-cold-target-sample` clears `target/promotion-cold` and times
 `make check-all` with that fresh Rust target directory.
 `make promotion-cold-deps-sample` clears `target/promotion-cold-deps` and

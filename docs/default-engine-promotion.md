@@ -173,7 +173,8 @@ engine or a regular CI requirement.
   native build starts, while unset `GHOSTTY_SOURCE_DIR` is recorded as the
   pinned-fetch source mode.
 - `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
-  suites with `--features libghostty-vt` and sets `GIT_CONFIG_GLOBAL=/dev/null`
+  suites with `--features libghostty-vt`, sets `RUST_TEST_THREADS=1` for the
+  current FFI-backed native engine gate, and sets `GIT_CONFIG_GLOBAL=/dev/null`
   to avoid local Git URL rewrite interference.
 - `make check-all` runs the regular default-engine gate plus the opt-in
   `libghostty-vt` gate for release-style validation.
@@ -320,7 +321,11 @@ result, outcome, and follow-up.
   isolates Cargo home and target dirs but not the Nix store, checkout, or
   network state.
 - Exercise the manual promotion evidence bundle and downloaded-artifact verifier
-  jobs in CI before making the opt-in VT gate required.
+  jobs in CI before making the opt-in VT gate required. A 2026-05-23
+  workflow-dispatch attempt passed the default-engine job but failed during
+  `promotion-evidence-bundle` when the parallel native-VT test harness
+  segfaulted on Ubuntu; the next CI attempt should prove the serialized
+  `RUST_TEST_THREADS=1` native-VT gate and downloaded-artifact verifier.
 - Validate the non-Nix toolchain checklist with platform-specific setup
   commands, `make promotion-sample` output, and timings; the current local
   non-Nix attempt failed before tests because `flatc` was absent from the host
