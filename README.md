@@ -107,18 +107,26 @@ nix develop . -c cargo run --bin nmuxd -- --version
 
 `nmux --help` also calls out the current renderer limitation: the default prototype uses an interim text surface, not a VT-correct terminal emulator. That is a sequencing device while the local state-sync/live workflow stays fast. Backend `libghostty-vt` extraction is available behind an opt-in Cargo feature, separate from the later question of hydrating a frontend Ghostty renderer from nmux-owned state.
 
+Manual daemon/client examples below use two shells: start the `nmuxd` command in
+shell 1 and leave it running, then run the matching `nmux` command in shell 2.
+Use `make local-smoke` for a single-command smoke.
+
 One-shot attach:
 
 ```sh
 rm -f /tmp/nmux.sock
+# shell 1
 nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --one-shot --command "printf 'hello from pty\n'; cat >/dev/null"
+# shell 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock
 ```
 
 Bounded live attach:
 
 ```sh
+# shell 1
 nix develop . -c cargo run --bin nmuxd -- --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+# shell 2
 nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' --scrollback-start 1 --scrollback-count 4 --interval-ms 500
 ```
 

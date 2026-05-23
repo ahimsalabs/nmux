@@ -23,7 +23,9 @@ For a persistent local workspace, start the daemon in one shell and attach from
 another:
 
 ```sh
+# shell 1
 nix develop . -c cargo run --bin nmuxd -- --live-forever
+# shell 2
 nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 ```
 
@@ -90,12 +92,14 @@ nix develop . -c cargo run --bin nmuxd -- --version
 Start a one-shot daemon with the default local shell:
 
 ```sh
+# shell 1
 nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --one-shot
 ```
 
 In another shell, attach a client:
 
 ```sh
+# shell 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock
 ```
 
@@ -132,18 +136,21 @@ server-owned terminal state
 To prove input-driven output across attaches, keep the daemon running with a command that echoes each submitted line:
 
 ```sh
+# shell 1
 nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done"
 ```
 
 Then send input from one client:
 
 ```sh
+# shell 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --key $'ping\n' --scrollback-start 3 --scrollback-count 3
 ```
 
 Attach a second passive client and fetch the same range plus the echoed line:
 
 ```sh
+# shell 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --no-input --scrollback-start 3 --scrollback-count 4
 ```
 
@@ -223,6 +230,7 @@ Use `--live` instead of `--live-cycles` to keep serving that one live client unt
 
 ```sh
 rm -f /tmp/nmux.sock
+# shell 1
 nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 ```
 
@@ -236,7 +244,9 @@ Use `--live-clients COUNT` to keep the same daemon-owned workspace and PTY alive
 
 ```sh
 rm -f /tmp/nmux.sock
+# shell 1
 nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-clients 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+# shell 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nmux-live.state --live --iterations 1 --key $'first\n'
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nmux-live.state --live --no-input --iterations 1 --scrollback-start 1 --scrollback-count 8
 ```
