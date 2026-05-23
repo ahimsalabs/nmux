@@ -2994,8 +2994,9 @@ impl ClientPaneSurface {
             let Some(colors) = update.colors.as_ref() else {
                 return Err("color-only patch is missing terminal colors".into());
             };
+            let colors = colors.materialize(&self.colors)?;
             self.cursor = update.cursor;
-            self.colors = colors.materialize(&self.colors)?;
+            self.colors = colors;
             self.modes = update.modes;
             self.title = update.title.clone();
             self.working_directory = update.working_directory.clone();
@@ -5347,6 +5348,61 @@ mod tests {
         assert_eq!(surface.colors.palette_diff_start, None);
         assert_eq!(surface.colors.palette_diff_rgba, Vec::<u32>::new());
         assert!(surface.modes.bracketed_paste);
+    }
+
+    #[test]
+    fn client_surface_rejects_invalid_color_only_palette_diff_without_mutation() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top")],
+        );
+        snapshot.cursor = Some(CursorSummary {
+            row: 0,
+            col: 0,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: true,
+        });
+        snapshot.colors = Some(TerminalColorSummary {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x111111ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: vec![0x000000ff],
+            palette_diff_start: None,
+            palette_diff_rgba: Vec::new(),
+        });
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let before = surface.clone();
+        let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        patch.patch_kind = Some(protocol::PatchKind::ColorOnly);
+        patch.cursor = Some(CursorSummary {
+            row: 0,
+            col: 3,
+            visible: true,
+            shape: protocol::CursorShape::Beam,
+            blinking: false,
+        });
+        patch.modes.bracketed_paste = true;
+        patch.title = "bad color patch".to_owned();
+        patch.colors = Some(TerminalColorSummary {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x222222ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: Vec::new(),
+            palette_diff_start: Some(2),
+            palette_diff_rgba: vec![0x112233ff],
+        });
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("invalid palette diff should be rejected");
+
+        assert!(err.to_string().contains("palette diff start"));
+        assert_eq!(surface, before);
     }
 
     #[test]
