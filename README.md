@@ -107,7 +107,7 @@ daemon/client smoke over a temporary socket and state file. `make
 check-ghostty-vt` is the opt-in full feature gate for backend `libghostty-vt`
 changes and currently runs serially with `RUST_TEST_THREADS=1`.
 
-For the complete target inventory, evidence bundle workflow, source-fetch
+For the broader target inventory, evidence bundle workflow, source-fetch
 reports, and packaging/archive verifiers, see [docs/toolchain.md](docs/toolchain.md).
 For choosing the right gate by change type, see
 [docs/contributor-workflow.md](docs/contributor-workflow.md). CI details and
