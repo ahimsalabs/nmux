@@ -333,6 +333,33 @@ impl Session {
         true
     }
 
+    pub fn set_pane_nmux_environment(
+        &mut self,
+        pane_id: &str,
+        socket_endpoint: impl Into<String>,
+    ) -> bool {
+        let session_id = self.id.clone();
+        let Some(pane) = self.pane_mut(pane_id) else {
+            return false;
+        };
+        let socket_endpoint = socket_endpoint.into();
+        let origin = pane.host.id.clone();
+        pane.host.command.env.retain(|(key, _)| {
+            !matches!(
+                key.as_str(),
+                "NMUX" | "NMUX_SESSION_ID" | "NMUX_PANE_ID" | "NMUX_SOCKET" | "NMUX_ORIGIN"
+            )
+        });
+        pane.host.command.env.extend([
+            ("NMUX".to_owned(), "1".to_owned()),
+            ("NMUX_SESSION_ID".to_owned(), session_id),
+            ("NMUX_PANE_ID".to_owned(), pane_id.to_owned()),
+            ("NMUX_SOCKET".to_owned(), socket_endpoint),
+            ("NMUX_ORIGIN".to_owned(), origin),
+        ]);
+        true
+    }
+
     pub fn resize_intent_allowed(
         policy: protocol::ResizePolicy,
         reason: protocol::ResizeReason,
@@ -1994,7 +2021,7 @@ fn build_cell_run<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::host::HostKind;
+    use crate::host::{CommandSpec, HostKind};
     use crate::terminal::{
         CellRun, PaneStyle, TerminalColors, TerminalCursor, TerminalEngine, TerminalInput,
         TerminalModes, TerminalUpdate,
@@ -2003,6 +2030,11 @@ mod tests {
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
     use super::{AttachMode, Cursor, Session};
+
+    fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        env.iter()
+            .find_map(|(env_key, value)| (env_key == key).then_some(value.as_str()))
+    }
 
     #[test]
     fn initial_session_has_one_fixed_size_pane() {
@@ -2114,6 +2146,26 @@ mod tests {
         let tabs = snapshot.tabs().expect("tabs");
         let pane = tabs.get(0).root().expect("pane");
         assert_eq!(pane.resize_policy(), protocol::ResizePolicy::Manual);
+    }
+
+    #[test]
+    fn pane_nmux_environment_replaces_existing_identity_keys() {
+        let mut session = Session::initial();
+        session.tabs[0].root.host.command = CommandSpec::new("sh").with_envs([
+            ("NMUX", "old"),
+            ("NMUX_SOCKET", "/tmp/old.sock"),
+            ("NMUX_EXTRA", "keep"),
+        ]);
+
+        assert!(session.set_pane_nmux_environment("pane-1", "/tmp/nmux.sock"));
+        let env = &session.tabs[0].root.host.command.env;
+
+        assert_eq!(env_value(env, "NMUX"), Some("1"));
+        assert_eq!(env_value(env, "NMUX_SESSION_ID"), Some("local"));
+        assert_eq!(env_value(env, "NMUX_PANE_ID"), Some("pane-1"));
+        assert_eq!(env_value(env, "NMUX_SOCKET"), Some("/tmp/nmux.sock"));
+        assert_eq!(env_value(env, "NMUX_ORIGIN"), Some("local"));
+        assert_eq!(env_value(env, "NMUX_EXTRA"), Some("keep"));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -46,7 +46,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     session.set_pane_resize_policy("pane-1", args.resize_policy);
     let pane_id = "pane-1";
-    inject_nmux_pane_env(&mut session, pane_id, &args.socket_path);
+    session.set_pane_nmux_environment(pane_id, args.socket_path.display().to_string());
     let host_spec = session.tabs[0].root.host.clone();
     let mut pty_host = LocalPtyHost::default();
     pty_host.start_pane(pane_id, &host_spec)?;
@@ -97,26 +97,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &mut terminal_engines,
         )?;
     }
-}
-
-fn inject_nmux_pane_env(session: &mut Session, pane_id: &str, socket_path: &Path) {
-    let session_id = session.id.clone();
-    let socket = socket_path.display().to_string();
-    let host_id = session.tabs[0].root.host.id.clone();
-    let command = &mut session.tabs[0].root.host.command;
-    command.env.retain(|(key, _)| {
-        !matches!(
-            key.as_str(),
-            "NMUX" | "NMUX_SESSION_ID" | "NMUX_PANE_ID" | "NMUX_SOCKET" | "NMUX_ORIGIN"
-        )
-    });
-    command.env.extend([
-        ("NMUX".to_owned(), "1".to_owned()),
-        ("NMUX_SESSION_ID".to_owned(), session_id),
-        ("NMUX_PANE_ID".to_owned(), pane_id.to_owned()),
-        ("NMUX_SOCKET".to_owned(), socket),
-        ("NMUX_ORIGIN".to_owned(), host_id),
-    ]);
 }
 
 struct SocketCleanup {
