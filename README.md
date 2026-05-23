@@ -31,6 +31,19 @@ The current implementation is a Rust workspace with:
   [docs/adr/0026-native-vt-ci-promotion-criteria.md](docs/adr/0026-native-vt-ci-promotion-criteria.md);
 - the implementation roadmap in [docs/roadmap.md](docs/roadmap.md), currently focused on post-M14 default-engine promotion evidence, frontend hydration tracking, future protocol-object decisions, and local usability.
 
+## Feature Status
+
+What works today: local `nmuxd`/`nmux` workflows over a Unix socket, one-shot
+attach, live attach, read-only reattach, explicit input and resize intents,
+persisted client render state, daemon-owned scrollback fetches, nested
+`NMUX_*` context reporting, default-engine CI, and an opt-in
+`libghostty-vt` correctness path with promotion evidence bundles.
+
+What is not default-ready: the default engine is still the interim text surface,
+not a full VT-correct renderer; `libghostty-vt` is still opt-in because native
+build cost, repeated CI evidence, non-Nix setup, source-fetch policy, packaging,
+and frontend Ghostty renderer hydration are not accepted yet.
+
 ## Check
 
 ```sh
