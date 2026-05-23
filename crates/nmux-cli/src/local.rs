@@ -1756,6 +1756,8 @@ pub fn surface_update_from_frame(
                 .unwrap_or_default();
             validate_terminal_mode_summary(modes)?;
             let text = render_decoded_rows(&row_updates);
+            let colors = decoded_terminal_colors(snapshot.colors());
+            validate_palette_diff_scope(SurfaceUpdateKind::Snapshot, None, colors.as_ref())?;
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Snapshot,
                 pane_id: required_string(snapshot.pane_id(), "surface snapshot pane_id")?,
@@ -1777,7 +1779,7 @@ pub fn surface_update_from_frame(
                     .and_then(|metadata| metadata.working_directory())
                     .unwrap_or_default()
                     .to_owned(),
-                colors: decoded_terminal_colors(snapshot.colors()),
+                colors,
                 row_updates,
                 styles,
                 hyperlinks,
@@ -1814,6 +1816,12 @@ pub fn surface_update_from_frame(
                 .unwrap_or_default();
             validate_terminal_mode_summary(modes)?;
             let text = render_decoded_rows(&row_updates);
+            let colors = decoded_terminal_colors(patch.colors());
+            validate_palette_diff_scope(
+                SurfaceUpdateKind::Patch,
+                Some(patch.kind()),
+                colors.as_ref(),
+            )?;
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Patch,
                 pane_id: required_string(patch.pane_id(), "surface patch pane_id")?,
@@ -1835,7 +1843,7 @@ pub fn surface_update_from_frame(
                     .and_then(|metadata| metadata.working_directory())
                     .unwrap_or_default()
                     .to_owned(),
-                colors: decoded_terminal_colors(patch.colors()),
+                colors,
                 row_updates,
                 styles: Vec::new(),
                 hyperlinks: Vec::new(),
@@ -1937,6 +1945,15 @@ fn decoded_terminal_colors(
     let Some(colors) = colors else {
         return None;
     };
+    let palette_diff_rgba: Vec<u32> = colors
+        .palette_diff_rgba()
+        .map(|palette| (0..palette.len()).map(|index| palette.get(index)).collect())
+        .unwrap_or_default();
+    let palette_diff_start = if palette_diff_rgba.is_empty() {
+        None
+    } else {
+        Some(colors.palette_diff_start())
+    };
     Some(TerminalColorSummary {
         default_fg_rgba: colors.default_fg_rgba(),
         default_bg_rgba: colors.default_bg_rgba(),
@@ -1946,14 +1963,31 @@ fn decoded_terminal_colors(
             .palette_rgba()
             .map(|palette| (0..palette.len()).map(|index| palette.get(index)).collect())
             .unwrap_or_default(),
-        palette_diff_start: colors
-            .palette_diff_rgba()
-            .map(|_| colors.palette_diff_start()),
-        palette_diff_rgba: colors
-            .palette_diff_rgba()
-            .map(|palette| (0..palette.len()).map(|index| palette.get(index)).collect())
-            .unwrap_or_default(),
+        palette_diff_start,
+        palette_diff_rgba,
     })
+}
+
+fn validate_palette_diff_scope(
+    kind: SurfaceUpdateKind,
+    patch_kind: Option<protocol::PatchKind>,
+    colors: Option<&TerminalColorSummary>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(colors) = colors else {
+        return Ok(());
+    };
+    if !terminal_colors_have_palette_diff(colors) {
+        return Ok(());
+    }
+    match kind {
+        SurfaceUpdateKind::Snapshot => Err("surface snapshot cannot carry palette diff".into()),
+        SurfaceUpdateKind::Patch if patch_kind == Some(protocol::PatchKind::ColorOnly) => Ok(()),
+        SurfaceUpdateKind::Patch => Err("non-color surface patch cannot carry palette diff".into()),
+    }
+}
+
+fn terminal_colors_have_palette_diff(colors: &TerminalColorSummary) -> bool {
+    colors.palette_diff_start.is_some() || !colors.palette_diff_rgba.is_empty()
 }
 
 fn required_string(value: Option<&str>, field: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -2485,6 +2519,9 @@ pub fn scrollback_chunk_from_frame(
         .transpose()?
         .unwrap_or_default();
     let colors = decoded_terminal_colors(chunk.colors()).unwrap_or_default();
+    if terminal_colors_have_palette_diff(&colors) {
+        return Err("scrollback chunk cannot carry palette diff".into());
+    }
     let rows = chunk.rows().ok_or("scrollback chunk has no rows")?;
     validate_scrollback_chunk_start_line(chunk.start_line())?;
     let mut lines = Vec::with_capacity(rows.len());
@@ -3117,6 +3154,7 @@ pub struct ClientPaneSurface {
 
 impl ClientPaneSurface {
     pub fn from_snapshot(update: &SurfaceUpdate) -> Result<Self, Box<dyn std::error::Error>> {
+        validate_palette_diff_scope(SurfaceUpdateKind::Snapshot, None, update.colors.as_ref())?;
         let mut surface = Self {
             pane_id: update.pane_id.clone(),
             version: update.version,
@@ -3196,6 +3234,7 @@ impl ClientPaneSurface {
         if let Some(patch_kind) = update.patch_kind {
             validate_patch_kind(patch_kind)?;
         }
+        validate_palette_diff_scope(update.kind, update.patch_kind, update.colors.as_ref())?;
         validate_cursor_summary(update.cursor)?;
         validate_terminal_mode_summary(update.modes)?;
         if !update.hyperlinks.is_empty() {
@@ -5066,6 +5105,25 @@ mod tests {
         )
     }
 
+    fn flatbuffer_terminal_colors_with_palette_diff<'a>(
+        builder: &mut FlatBufferBuilder<'a>,
+    ) -> flatbuffers::WIPOffset<protocol::TerminalColorState<'a>> {
+        let palette = builder.create_vector::<u32>(&[]);
+        let palette_diff = builder.create_vector(&[0x1122_33ff_u32]);
+        protocol::TerminalColorState::create(
+            builder,
+            &protocol::TerminalColorStateArgs {
+                default_fg_rgba: 0,
+                default_bg_rgba: 0,
+                cursor_rgba: 0,
+                cursor_rgba_set: false,
+                palette_rgba: Some(palette),
+                palette_diff_start: 0,
+                palette_diff_rgba: Some(palette_diff),
+            },
+        )
+    }
+
     fn flatbuffer_hyperlink<'a>(
         builder: &mut FlatBufferBuilder<'a>,
     ) -> flatbuffers::WIPOffset<protocol::Hyperlink<'a>> {
@@ -5771,6 +5829,56 @@ mod tests {
         )
     }
 
+    fn pane_surface_snapshot_with_palette_diff_frame() -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let run = flatbuffer_run_with_metadata(
+            &mut builder,
+            0,
+            0,
+            0,
+            protocol::CellSemanticContent::Output,
+        );
+        let runs = builder.create_vector(&[run]);
+        let row = protocol::SurfaceRow::create(
+            &mut builder,
+            &protocol::SurfaceRowArgs {
+                row: 0,
+                runs: Some(runs),
+                dirty_hash: 1,
+                semantic_prompt: protocol::RowSemanticPrompt::None,
+                dirty: false,
+                kitty_virtual_placeholder: false,
+                row_state_hash: 1,
+            },
+        );
+        let rows = builder.create_vector(&[row]);
+        let styles = builder.create_vector::<flatbuffers::WIPOffset<protocol::Style>>(&[]);
+        let colors = flatbuffer_terminal_colors_with_palette_diff(&mut builder);
+        let pane_id = builder.create_string("pane-1");
+        let snapshot = protocol::PaneSurfaceSnapshot::create(
+            &mut builder,
+            &protocol::PaneSurfaceSnapshotArgs {
+                pane_id: Some(pane_id),
+                version: 1,
+                surface: protocol::SurfaceKind::Main,
+                cols: 80,
+                rows: 1,
+                cursor: None,
+                modes: None,
+                metadata: None,
+                styles: Some(styles),
+                rows_data: Some(rows),
+                colors: Some(colors),
+                hyperlinks: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::PaneSurfaceSnapshot,
+            snapshot.as_union_value(),
+        )
+    }
+
     fn pane_surface_snapshot_with_pane_id(pane_id: Option<&str>) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
         let run = flatbuffer_run_with_metadata(
@@ -5909,6 +6017,52 @@ mod tests {
         )
     }
 
+    fn scrollback_chunk_with_palette_diff_frame() -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let run = flatbuffer_run_with_metadata(
+            &mut builder,
+            0,
+            0,
+            0,
+            protocol::CellSemanticContent::Output,
+        );
+        let runs = builder.create_vector(&[run]);
+        let row = protocol::ScrollbackRow::create(
+            &mut builder,
+            &protocol::ScrollbackRowArgs {
+                line: 1,
+                runs: Some(runs),
+                dirty_hash: 1,
+                semantic_prompt: protocol::RowSemanticPrompt::None,
+                dirty: false,
+                kitty_virtual_placeholder: false,
+                row_state_hash: 1,
+            },
+        );
+        let rows = builder.create_vector(&[row]);
+        let styles = builder.create_vector::<flatbuffers::WIPOffset<protocol::Style>>(&[]);
+        let colors = flatbuffer_terminal_colors_with_palette_diff(&mut builder);
+        let pane_id = builder.create_string("pane-1");
+        let chunk = protocol::ScrollbackChunk::create(
+            &mut builder,
+            &protocol::ScrollbackChunkArgs {
+                pane_id: Some(pane_id),
+                scrollback_version: 1,
+                start_line: 1,
+                total_lines: 1,
+                rows: Some(rows),
+                styles: Some(styles),
+                colors: Some(colors),
+                hyperlinks: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::ScrollbackChunk,
+            chunk.as_union_value(),
+        )
+    }
+
     fn pane_surface_patch_with_cursor_and_modes_frame(
         cursor_shape: protocol::CursorShape,
         mouse_tracking_mode: protocol::MouseTrackingMode,
@@ -5982,6 +6136,32 @@ mod tests {
                 modes: None,
                 metadata: None,
                 colors: None,
+            },
+        );
+        envelope_frame(
+            &mut builder,
+            protocol::EnvelopeBody::PaneSurfacePatch,
+            patch.as_union_value(),
+        )
+    }
+
+    fn pane_surface_patch_with_palette_diff_frame(kind: protocol::PatchKind) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let rows = builder.create_vector::<flatbuffers::WIPOffset<protocol::RowUpdate>>(&[]);
+        let colors = flatbuffer_terminal_colors_with_palette_diff(&mut builder);
+        let pane_id = builder.create_string("pane-1");
+        let patch = protocol::PaneSurfacePatch::create(
+            &mut builder,
+            &protocol::PaneSurfacePatchArgs {
+                pane_id: Some(pane_id),
+                base_version: 1,
+                version: 2,
+                kind,
+                row_updates: Some(rows),
+                cursor: None,
+                modes: None,
+                metadata: None,
+                colors: Some(colors),
             },
         );
         envelope_frame(
@@ -6349,6 +6529,40 @@ mod tests {
     }
 
     #[test]
+    fn rejects_surface_snapshot_with_palette_diff() {
+        let frame = pane_surface_snapshot_with_palette_diff_frame();
+        let err = surface_update_from_frame(&frame)
+            .expect_err("surface snapshot with palette diff should be rejected");
+
+        assert!(err.to_string().contains("cannot carry palette diff"));
+    }
+
+    #[test]
+    fn rejects_non_color_surface_patch_with_palette_diff() {
+        let frame = pane_surface_patch_with_palette_diff_frame(protocol::PatchKind::ModeOnly);
+        let err = surface_update_from_frame(&frame)
+            .expect_err("mode-only surface patch with palette diff should be rejected");
+
+        assert!(err.to_string().contains("cannot carry palette diff"));
+
+        let color_frame =
+            pane_surface_patch_with_palette_diff_frame(protocol::PatchKind::ColorOnly);
+        let color_update =
+            surface_update_from_frame(&color_frame).expect("color-only palette diff is valid");
+        assert_eq!(
+            color_update.patch_kind,
+            Some(protocol::PatchKind::ColorOnly)
+        );
+        assert_eq!(
+            color_update
+                .colors
+                .as_ref()
+                .and_then(|colors| colors.palette_diff_start),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn rejects_workspace_tree_with_missing_or_empty_ids() {
         for (frame, expected) in [
             (
@@ -6690,6 +6904,15 @@ mod tests {
         let content_err = scrollback_chunk_from_frame(&content_frame)
             .expect_err("scrollback run with unknown semantic content should be rejected");
         assert!(content_err.to_string().contains("unknown semantic content"));
+    }
+
+    #[test]
+    fn rejects_scrollback_chunk_with_palette_diff() {
+        let frame = scrollback_chunk_with_palette_diff_frame();
+        let err = scrollback_chunk_from_frame(&frame)
+            .expect_err("scrollback chunk with palette diff should be rejected");
+
+        assert!(err.to_string().contains("cannot carry palette diff"));
     }
 
     #[test]
@@ -7227,6 +7450,45 @@ mod tests {
             .expect_err("invalid palette diff should be rejected");
 
         assert!(err.to_string().contains("palette diff start"));
+        assert_eq!(surface, before);
+    }
+
+    #[test]
+    fn client_surface_rejects_non_color_patch_with_palette_diff_without_mutation() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top")],
+        );
+        snapshot.colors = Some(TerminalColorSummary {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x111111ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: vec![0x000000ff],
+            palette_diff_start: None,
+            palette_diff_rgba: Vec::new(),
+        });
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let before = surface.clone();
+        let mut patch = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        patch.patch_kind = Some(protocol::PatchKind::ModeOnly);
+        patch.colors = Some(TerminalColorSummary {
+            default_fg_rgba: 0xeeeeeeff,
+            default_bg_rgba: 0x111111ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: Vec::new(),
+            palette_diff_start: Some(0),
+            palette_diff_rgba: vec![0x112233ff],
+        });
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("non-color palette diff should be rejected");
+
+        assert!(err.to_string().contains("cannot carry palette diff"));
         assert_eq!(surface, before);
     }
 

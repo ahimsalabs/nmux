@@ -143,8 +143,9 @@ only after the backend extraction proves the exact shape needed.
   backend-observed default foreground/background colors, the active palette,
   palette overrides, and explicit cursor color state through surface snapshots,
   color-only surface patches, scrollback chunks, and cached client state. ADR
-  0019 scopes incremental palette diffs to color-only patches, while snapshots
-  and scrollback chunks remain self-contained with full palettes.
+  0019 scopes incremental palette diffs to color-only patches; clients reject
+  palette diffs on snapshots, scrollback chunks, and non-color patches so those
+  objects remain self-contained or row/state compatible.
   Palette overrides that alter existing row style-table entries force full
   surface refreshes because current style-table entries store resolved RGBA
   values.
@@ -211,9 +212,9 @@ application cursor mode, origin, and wraparound.
 The nmux state-sync path now has coverage for snapshot/patch cursor blink,
 libghostty-vt live cursor-only patch cache persistence through real `--state`
 reattach, terminal query PTY reply routing through a real live PTY, title and working-directory
-metadata, terminal color state, color-only palette diffs, live color-only patch
-cache persistence through real `--state` reattach including mixed no-row
-color/mode changes, row semantic prompt metadata, per-run semantic content,
+metadata, terminal color state, color-only palette diffs with client-side scope
+validation, live color-only patch cache persistence through real `--state`
+reattach including mixed no-row color/mode changes, row semantic prompt metadata, per-run semantic content,
 live ReplaceRows row-metadata cache persistence through real `--state` reattach,
 live ReplaceRows hyperlink run-flag cache persistence through real `--state`
 reattach, styled/wide row-run state persistence through real `--state`

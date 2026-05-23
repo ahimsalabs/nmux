@@ -78,10 +78,12 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
   optional explicit cursor color, and the active palette. Snapshots and
   scrollback chunks carry full palettes. Color-only patches may carry a
   palette diff using `palette_diff_start` and `palette_diff_rgba` against the
-  patch base version instead of a full `palette_rgba` vector. Row,
-  style-table, or surface-kind changes that also affect colors still require a
-  full surface refresh. All terminal color fields use the same `0xRRGGBBAA`
-  packing as style colors; `cursor_rgba_set` distinguishes an unset cursor
+  patch base version instead of a full `palette_rgba` vector. Clients reject
+  palette diffs on snapshots, scrollback chunks, and non-color patches because
+  those objects must be self-contained or row/state compatible. Row, style-table,
+  or surface-kind changes that also affect colors still require a full surface
+  refresh. All terminal color fields use the same `0xRRGGBBAA` packing as style
+  colors; `cursor_rgba_set` distinguishes an unset cursor
   color from an explicit transparent/zero value.
 - `RowSemanticPrompt` stores OSC 133 prompt-line metadata on surface rows,
   row updates, and scrollback rows. `CellSemanticContent` stores the

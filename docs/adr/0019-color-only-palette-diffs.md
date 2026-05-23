@@ -32,6 +32,9 @@ change as:
 The diff is valid only when applied to the patch base surface version. Clients
 materialize the new palette by truncating their cached palette at
 `palette_diff_start` and appending `palette_diff_rgba`.
+Clients reject palette diffs on snapshots, scrollback chunks, and non-color
+patches; those objects must carry self-contained full palettes or avoid terminal
+color changes entirely.
 
 Color-only patches with no palette change may omit both the full palette and the
 diff vector. Clients preserve their cached palette while applying scalar color
