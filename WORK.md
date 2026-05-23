@@ -369,7 +369,11 @@ client → nmux-proxy → nmuxd@machine-a (local PTY)
 
 The proxy assembles a synthetic workspace tree, namespaces pane IDs by upstream origin, routes input/scrollback to the owning upstream, and forwards surface state downstream. FlatBuffers pane state can be forwarded as raw bytes without deserialize/reserialize. Per-pane version streams are independent across upstreams.
 
-Chaining works because each proxy is just another nmux speaker. `nmuxd` sets `NMUX_*` environment variables in spawned PTYs; a client running inside an nmux pane reads those vars and sends chain/origin metadata in its `AttachRequest`. Each hop appends to the origin chain automatically.
+Chaining works because each proxy is just another nmux speaker. `nmuxd` sets
+`NMUX_*` environment variables in spawned PTYs through nmux-core session/host
+state. A client running inside an nmux pane can use those vars to find the
+parent socket today; sending chain/origin metadata in its `AttachRequest` and
+appending each hop to the origin chain remain future protocol/client work.
 
 ### Zero-overhead local path
 

@@ -99,7 +99,10 @@ The risk is divergence between paths: a bug in serialization could make remote c
 - `PaneNode` in the schema should gain an optional `HostOrigin` field (append-only, non-breaking) to carry origin metadata through the workspace tree. Old clients ignore the field. ADR 0005 anticipated this extension point.
 - `HostKind` in the Rust model should gain a `Remote` variant alongside Local, Container, and Sandbox.
 - The proxy daemon is a new component that speaks nmux protocol on both sides. It does not require protocol changes -- it operates on existing envelope types.
-- The `NMUX_*` environment variables should be set by the local PTY host implementation in `nmux-core`, not by `nmux-cli`, so that any daemon embedding (including Ghostty) gets them automatically.
+- The `NMUX_*` environment variables are assembled in nmux-core session state
+  and propagated through the core host command model. `nmuxd` supplies the
+  concrete local socket endpoint, while future in-process embedders can provide
+  their own endpoint without reimplementing the pane identity policy.
 - The Tailscale identity path depends only on HTTP calls to the tailscaled Unix socket, not on any Tailscale library or SDK in the Rust build.
 - The SSH bootstrap path depends on the `ssh` binary being available on the client machine, not on an SSH library in the Rust build.
 - No GPL or AGPL code is involved in any transport path.
