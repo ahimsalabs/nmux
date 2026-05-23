@@ -122,11 +122,11 @@ Nix store, source checkout, or network state.
 default plus opt-in test commands without rerunning the sample.
 
 `make promotion-local-sample` runs `make source-fetch-provenance-sample`,
-`make promotion-sample`, `make source-fetch-offline-probe`, and then
-`make packaging-archive-runtime-smoke` with clear section headers. Use it for a
-local evidence pass before updating the promotion tracker with
-source-provenance, cache-present offline probe, validation, and
-packaging/archive runtime results.
+`make promotion-sample`, `make local-smoke`, `make source-fetch-offline-probe`,
+and then `make packaging-archive-runtime-smoke` with clear section headers. Use
+it for a local evidence pass before updating the promotion tracker with
+source-provenance, default-engine workflow smoke, cache-present offline probe,
+validation, and packaging/archive runtime results.
 `make promotion-evidence-bundle` runs the local sample and gathers
 `RUN.log`, `TOOLCHAIN.txt`, `SOURCE_FETCH.txt`, `OFFLINE_PROBE.txt`,
 `PACKAGE_PROVENANCE.txt`, `CARGO_TREE.txt`, `PACKAGE_ARCHIVE.tar.gz`,
@@ -138,8 +138,9 @@ transcription into the promotion tracker or manual CI evidence records.
 archive path, so copied or downloaded bundles stay self-contained.
 `SUMMARY.txt` includes the extracted `time -p make check-all` values as
 `check_all_real_seconds`, `check_all_user_seconds`, and
-`check_all_sys_seconds`, plus `started_at_utc`, `completed_at_utc`, and
-`bundle_elapsed_seconds` for the bundle artifact generation and verifier pass
+`check_all_sys_seconds`, the `local_smoke=passed` result, plus
+`started_at_utc`, `completed_at_utc`, and `bundle_elapsed_seconds` for the
+bundle artifact generation and verifier pass
 before final console output. `CACHE_STATE.txt` records observed cache-related
 environment values and directory presence for Nix, Cargo, target, packaging,
 and source-fetch paths; classify cold, warm, restored, or unknown cache history

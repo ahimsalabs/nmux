@@ -153,14 +153,14 @@ dependency/source-fetch evidence, not full cold machine evidence.
 `promotion-cold-deps-verify` checks the existing cold-deps report and run log
 without rerunning the isolated dependency/source-fetch sample.
 `promotion-local-sample` runs `source-fetch-provenance-sample`,
-`promotion-sample`, `source-fetch-offline-probe`, and
+`promotion-sample`, `local-smoke`, `source-fetch-offline-probe`, and
 `packaging-archive-runtime-smoke` for one local evidence pass.
 `promotion-evidence-bundle` runs `promotion-local-sample` and gathers the log,
 toolchain output, bundle start/completion timestamps plus elapsed duration,
-extracted `make check-all` timing, source-fetch report, package provenance,
-cargo tree, package archive, archive checksum, observed cache-state report,
-offline probe report, VCS status report, open-work snapshot, and bundle
-artifact manifest under `target/promotion-evidence`.
+extracted `make check-all` timing, `local_smoke` result, source-fetch report,
+package provenance, cargo tree, package archive, archive checksum, observed
+cache-state report, offline probe report, VCS status report, open-work
+snapshot, and bundle artifact manifest under `target/promotion-evidence`.
 The bundled `ARCHIVE.sha256` must name `PACKAGE_ARCHIVE.tar.gz`, not the
 original build-tree archive path, so downloaded evidence stays self-contained.
 `promotion-evidence-verify` checks an existing bundle for required summary,

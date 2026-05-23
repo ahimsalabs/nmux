@@ -79,14 +79,16 @@ machine evidence because the Nix store, checkout, and network state may still
 be warm. `make promotion-cold-deps-verify` checks an existing
 `target/promotion-cold-deps` report and log without rerunning the sample.
 `make promotion-local-sample` runs source-fetch provenance, the timed validation
-sample, a cache-present offline source-fetch probe, and the package archive
-runtime smoke for one local evidence pass.
+sample, the default-engine local workflow smoke, a cache-present offline
+source-fetch probe, and the package archive runtime smoke for one local
+evidence pass.
 `make promotion-evidence-bundle` runs that local sample and gathers the log,
 toolchain output, bundle start/completion timestamps plus elapsed duration,
-extracted `make check-all` timing, source-fetch report, offline probe report,
-package provenance, cargo tree, package archive, archive checksum, observed
-cache-state report, VCS status report, open-work snapshot, and bundle artifact
-manifest under `target/promotion-evidence`, then runs the verifier.
+extracted `make check-all` timing, `local_smoke` result, source-fetch report,
+offline probe report, package provenance, cargo tree, package archive, archive
+checksum, observed cache-state report, VCS status report, open-work snapshot,
+and bundle artifact manifest under `target/promotion-evidence`, then runs the
+verifier.
 The bundled `ARCHIVE.sha256` uses the bundle-relative archive name
 `PACKAGE_ARCHIVE.tar.gz`, so copied or downloaded bundles do not refer back to
 the original build-tree archive path.

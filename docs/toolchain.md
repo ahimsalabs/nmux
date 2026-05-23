@@ -85,13 +85,14 @@ dependency/source-fetch evidence only: the Nix store, source checkout, and
 network state may still be warm.
 
 The local sample target runs `make source-fetch-provenance-sample`,
-`make promotion-sample`, `make source-fetch-offline-probe`, and then
-`make packaging-archive-runtime-smoke`. The bundle target runs the same local
-sample and gathers the run log, toolchain output, bundle start/completion
-timestamps plus elapsed duration, extracted `time -p make check-all` values,
-source-fetch report, offline probe report, package provenance, cargo tree,
-package archive, archive checksum, observed cache-state report, VCS status
-report, open-work snapshot, and bundle artifact manifest under
+`make promotion-sample`, `make local-smoke`, `make source-fetch-offline-probe`,
+and then `make packaging-archive-runtime-smoke`. The bundle target runs the
+same local sample and gathers the run log, toolchain output, bundle
+start/completion timestamps plus elapsed duration, extracted `time -p make
+check-all` values, `local_smoke` result, source-fetch report, offline probe
+report, package provenance, cargo tree, package archive, archive checksum,
+observed cache-state report, VCS status report, open-work snapshot, and bundle
+artifact manifest under
 `target/promotion-evidence`, then runs
 `make promotion-evidence-verify`. Run the verifier directly to check an
 existing bundle without rebuilding the native VT package; `ARCHIVE.sha256`

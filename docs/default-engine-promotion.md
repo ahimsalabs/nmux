@@ -96,28 +96,29 @@ engine or a regular CI requirement.
   passing result, and default plus opt-in test commands without rerunning the
   isolated dependency/source-fetch sample.
 - `make promotion-local-sample` runs source-fetch provenance, the timed
-  validation sample, the cache-present offline source-fetch probe, and package
-  archive runtime smoke in one local evidence pass.
+  validation sample, the default-engine local workflow smoke, the cache-present
+  offline source-fetch probe, and package archive runtime smoke in one local
+  evidence pass.
 - `make promotion-evidence-bundle` runs the local sample and gathers its log,
   toolchain output, bundle start/completion timestamps plus elapsed duration,
-  extracted `make check-all` timing, source-fetch report, offline probe report,
-  package provenance, cargo tree, package archive, archive checksum, observed
-  cache-state report, VCS status report, open-work snapshot, and bundle
-  artifact manifest under `target/promotion-evidence`. The bundled
+  extracted `make check-all` timing, `local_smoke` result, source-fetch report,
+  offline probe report, package provenance, cargo tree, package archive,
+  archive checksum, observed cache-state report, VCS status report, open-work
+  snapshot, and bundle artifact manifest under `target/promotion-evidence`. The bundled
   `ARCHIVE.sha256` uses the bundle-relative `PACKAGE_ARCHIVE.tar.gz` path.
 - `make promotion-evidence-verify` checks an existing bundle for required
   summary identity fields, bundle timing fields, `make check-all` timing
-  fields, artifact files, bundle-relative summary artifact names, cache-state
-  artifact, VCS status artifact, open-work snapshot, relocation-safe
-  `BUNDLE_MANIFEST.txt` hashes, source/provenance records, cache-present
-  offline probe result, package archive bytes, archive hash,
+  fields, `local_smoke` result, artifact files, bundle-relative summary
+  artifact names, cache-state artifact, VCS status artifact, open-work snapshot,
+  relocation-safe `BUNDLE_MANIFEST.txt` hashes, source/provenance records,
+  cache-present offline probe result, package archive bytes, archive hash,
   `packaging-provenance-manifest-verify` against the bundled package
   provenance, `packaging-archive-verify` output, run-log evidence that
   `packaging-provenance-verify` ran during bundle generation, packaged runtime
   smoke result, exact current open-work blocker lines, run-log evidence that
-  source-fetch provenance verification ran, and run-log evidence that the
-  cache-present offline probe compiled the opt-in native-VT test binary and ran
-  its verifier.
+  source-fetch provenance verification ran, run-log evidence that `local-smoke`
+  ran, and run-log evidence that the cache-present offline probe compiled the
+  opt-in native-VT test binary and ran its verifier.
   The bundle target runs it before printing the artifact list.
 - `make source-fetch-provenance-sample` writes the active source mode and
   locked `libghostty-vt` Cargo package records without inspecting Ghostty

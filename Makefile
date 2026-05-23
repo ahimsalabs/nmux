@@ -204,6 +204,8 @@ promotion-local-sample:
 	$(MAKE) source-fetch-provenance-sample
 	@echo "== promotion local sample: validation =="
 	$(MAKE) promotion-sample
+	@echo "== promotion local sample: local workflow smoke =="
+	$(MAKE) local-smoke
 	@echo "== promotion local sample: cache-present offline source-fetch probe =="
 	$(MAKE) source-fetch-offline-probe
 	@echo "== promotion local sample: packaging archive runtime smoke =="
@@ -235,6 +237,11 @@ promotion-evidence-bundle:
 	runtime_smoke="$$(grep -m1 '^packaged_runtime_smoke=' "$$run_log" | cut -d= -f2- || true)"; \
 	if [ -z "$$runtime_smoke" ]; then \
 		echo "missing packaged_runtime_smoke result in $$run_log" >&2; \
+		exit 1; \
+	fi; \
+	local_smoke="$$(grep -m1 '^local_smoke=' "$$run_log" | cut -d= -f2- || true)"; \
+	if [ -z "$$local_smoke" ]; then \
+		echo "missing local_smoke result in $$run_log" >&2; \
 		exit 1; \
 	fi; \
 	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
@@ -381,6 +388,7 @@ promotion-evidence-bundle:
 			printf 'check_all_real_seconds=%s\n' "$$check_all_real"; \
 			printf 'check_all_user_seconds=%s\n' "$$check_all_user"; \
 			printf 'check_all_sys_seconds=%s\n' "$$check_all_sys"; \
+			printf 'local_smoke=%s\n' "$$local_smoke"; \
 			printf 'archive_sha256=%s\n' "$$archive_sha"; \
 			printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
 		} > "$$bundle_dir/SUMMARY.txt"; \
@@ -567,6 +575,7 @@ promotion-evidence-verify:
 	require_line "$$summary" '^check_all_real_seconds=[0-9]+([.][0-9]+)?$$' 'check-all real timing'; \
 	require_line "$$summary" '^check_all_user_seconds=[0-9]+([.][0-9]+)?$$' 'check-all user timing'; \
 	require_line "$$summary" '^check_all_sys_seconds=[0-9]+([.][0-9]+)?$$' 'check-all sys timing'; \
+	require_exact "$$summary" 'local_smoke=passed' 'local workflow smoke'; \
 	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_sys="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^sys [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
@@ -613,6 +622,9 @@ promotion-evidence-verify:
 	require_exact "$$run_log" 'source_fetch_offline_probe_verified=target/source-fetch-offline/OFFLINE_PROBE.txt' 'offline probe verifier result'; \
 	require_exact "$$run_log" 'source_fetch_offline_probe=target/source-fetch-offline/OFFLINE_PROBE.txt' 'offline probe artifact path'; \
 	$(MAKE) --no-print-directory SOURCE_FETCH_OFFLINE_PROBE_REPORT="$$offline_probe" SOURCE_FETCH_OFFLINE_PROBE_LOG="$$run_log" source-fetch-offline-probe-verify; \
+	require_line "$$run_log" '^== promotion local sample: local workflow smoke ==$$' 'local smoke run-log section'; \
+	require_exact "$$run_log" 'running local nmux daemon/client smoke' 'local smoke ran'; \
+	require_exact "$$run_log" 'local_smoke=passed' 'local smoke result'; \
 	require_line "$$package_provenance" '^\[staged_files\]$$' 'packaging staged file hashes'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux wrapper hash'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmuxd bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmuxd wrapper hash'; \
