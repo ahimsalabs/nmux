@@ -134,7 +134,9 @@ corresponding style and hyperlink tables for that chunk.
 `ScrollbackRow.line` are 1-based public line numbers, so line 1 is the oldest
 retained row in the chunk's pane history. Clients and daemons reject zero
 scrollback start lines, zero fetch counts, and zero row line numbers instead of
-normalizing them to the oldest row.
+normalizing them to the oldest row. Non-empty chunks must carry a contiguous
+public range: row `i` has line `start_line + i`, and no row line may exceed
+`total_lines`.
 Out-of-range fetches may return a valid zero-row `ScrollbackChunk`; clients can
 render that empty result, but should not persist it as a cached range/version
 precondition because the original requested count is not represented in the

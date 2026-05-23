@@ -2533,6 +2533,12 @@ pub fn scrollback_chunk_from_frame(
         validate_cell_run_style_ids(&runs, &styles)?;
         validate_cell_run_hyperlink_ids(&runs, &hyperlinks)?;
         validate_scrollback_row_line(row.line())?;
+        validate_scrollback_row_public_range(
+            chunk.start_line(),
+            chunk.total_lines(),
+            index,
+            row.line(),
+        )?;
         lines.push(ScrollbackLine {
             line: row.line(),
             text: render_run_summaries(&runs),
@@ -3417,6 +3423,30 @@ fn validate_scrollback_chunk_start_line(start_line: u64) -> Result<(), Box<dyn s
 fn validate_scrollback_row_line(line: u64) -> Result<(), Box<dyn std::error::Error>> {
     if line == 0 {
         return Err("scrollback row line must be 1-based".into());
+    }
+    Ok(())
+}
+
+fn validate_scrollback_row_public_range(
+    start_line: u64,
+    total_lines: u64,
+    index: usize,
+    row_line: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let offset = u64::try_from(index).map_err(|_| "scrollback row index does not fit in u64")?;
+    let expected = start_line
+        .checked_add(offset)
+        .ok_or("scrollback row line overflow")?;
+    if row_line != expected {
+        return Err(format!(
+            "scrollback row line {row_line} does not match expected public line {expected}"
+        )
+        .into());
+    }
+    if row_line > total_lines {
+        return Err(
+            format!("scrollback row line {row_line} exceeds total_lines {total_lines}").into(),
+        );
     }
     Ok(())
 }
@@ -5970,6 +6000,24 @@ mod tests {
         start_line: u64,
         row_line: u64,
     ) -> Vec<u8> {
+        scrollback_chunk_with_public_lines_and_total(
+            pane_id,
+            semantic_prompt,
+            semantic_content,
+            start_line,
+            row_line,
+            1,
+        )
+    }
+
+    fn scrollback_chunk_with_public_lines_and_total(
+        pane_id: Option<&str>,
+        semantic_prompt: protocol::RowSemanticPrompt,
+        semantic_content: protocol::CellSemanticContent,
+        start_line: u64,
+        row_line: u64,
+        total_lines: u64,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
         let run = flatbuffer_run_with_metadata(
             &mut builder,
@@ -6003,7 +6051,7 @@ mod tests {
                 pane_id,
                 scrollback_version: 1,
                 start_line,
-                total_lines: 1,
+                total_lines,
                 rows: Some(rows),
                 styles: Some(styles),
                 colors: Some(colors),
@@ -13290,6 +13338,42 @@ mod tests {
                 known_scrollback_version: 1,
             }
         );
+    }
+
+    #[test]
+    fn rejects_scrollback_chunk_with_noncontiguous_public_line_numbers() {
+        let frame = scrollback_chunk_with_public_lines_and_total(
+            Some("pane-1"),
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent::Output,
+            1,
+            2,
+            2,
+        );
+        let err = scrollback_chunk_from_frame(&frame)
+            .expect_err("noncontiguous scrollback row line should be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("does not match expected public line 1"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_scrollback_chunk_rows_beyond_total_lines() {
+        let frame = scrollback_chunk_with_public_lines_and_total(
+            Some("pane-1"),
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent::Output,
+            2,
+            2,
+            1,
+        );
+        let err = scrollback_chunk_from_frame(&frame)
+            .expect_err("scrollback row beyond total_lines should be rejected");
+
+        assert!(err.to_string().contains("exceeds total_lines 1"), "{err}");
     }
 
     #[test]
