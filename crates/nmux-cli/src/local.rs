@@ -2922,6 +2922,7 @@ impl ClientPaneSurface {
         surface.row_dirty.resize(row_count, false);
         surface.row_kitty_placeholders.resize(row_count, false);
         surface.row_state_hashes.resize(row_count, 0);
+        validate_row_update_indices(&update.row_updates, row_count)?;
         validate_row_update_style_ids(&update.row_updates, &surface.styles)?;
         validate_row_update_hyperlink_ids(&update.row_updates, &surface.hyperlinks)?;
         surface.apply_rows(&update.row_updates)?;
@@ -3011,6 +3012,7 @@ impl ClientPaneSurface {
         {
             return Err("replace-rows patch changes terminal colors".into());
         }
+        validate_row_update_indices(&update.row_updates, self.row_text.len())?;
         validate_row_update_style_ids(&update.row_updates, &self.styles)?;
         validate_row_update_hyperlink_ids(&update.row_updates, &self.hyperlinks)?;
         self.apply_rows(&update.row_updates)?;
@@ -3089,6 +3091,27 @@ fn validate_row_update_hyperlink_ids(
 ) -> Result<(), Box<dyn std::error::Error>> {
     for row in rows {
         validate_cell_run_hyperlink_ids(&row.runs, hyperlinks)?;
+    }
+    Ok(())
+}
+
+fn validate_row_update_indices(
+    rows: &[SurfaceRowUpdate],
+    row_count: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut seen = vec![false; row_count];
+    for row in rows {
+        let index =
+            usize::try_from(row.row).map_err(|_| "surface row index does not fit in usize")?;
+        let Some(seen_row) = seen.get_mut(index) else {
+            return Err(
+                format!("surface row {} is outside {row_count} row surface", row.row).into(),
+            );
+        };
+        if *seen_row {
+            return Err(format!("surface row {} is repeated in one update", row.row).into());
+        }
+        *seen_row = true;
     }
     Ok(())
 }
@@ -5258,6 +5281,56 @@ mod tests {
         assert!(err.to_string().contains("unknown style_id"));
         assert_eq!(surface.version, 1);
         assert_eq!(surface.render_text(), "top");
+    }
+
+    #[test]
+    fn client_surface_rejects_patch_with_out_of_bounds_row_without_mutation() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top"), surface_row(1, "bottom")],
+        );
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let before = surface.clone();
+        let patch = surface_update(
+            SurfaceUpdateKind::Patch,
+            2,
+            Some(1),
+            vec![surface_row(0, "changed"), surface_row(3, "outside")],
+        );
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("out-of-bounds row should be rejected");
+
+        assert!(err.to_string().contains("outside 3 row surface"));
+        assert_eq!(surface, before);
+    }
+
+    #[test]
+    fn client_surface_rejects_patch_with_duplicate_row_without_mutation() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "top"), surface_row(1, "bottom")],
+        );
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let before = surface.clone();
+        let patch = surface_update(
+            SurfaceUpdateKind::Patch,
+            2,
+            Some(1),
+            vec![surface_row(0, "first"), surface_row(0, "second")],
+        );
+
+        let err = surface
+            .apply_patch(&patch)
+            .expect_err("duplicate row should be rejected");
+
+        assert!(err.to_string().contains("repeated"));
+        assert_eq!(surface, before);
     }
 
     #[test]
