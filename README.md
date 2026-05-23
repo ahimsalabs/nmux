@@ -44,6 +44,30 @@ not a full VT-correct renderer; `libghostty-vt` is still opt-in because native
 build cost, repeated CI evidence, non-Nix setup, source-fetch policy, packaging,
 and frontend Ghostty renderer hydration are not accepted yet.
 
+## First Run
+
+Run the default end-to-end smoke first:
+
+```sh
+nix develop . -c make local-smoke
+```
+
+That starts a temporary `nmuxd`, sends live input through `nmux`, reattaches
+read-only from persisted state, checks nested `nmux --print-context`, and proves
+the client does not reuse stale state after a socket path is recreated.
+
+For an interactive local workspace, start a daemon in one shell and attach from
+another:
+
+```sh
+nix develop . -c cargo run --bin nmuxd -- --live-forever
+nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
+```
+
+Detach the live client with Ctrl-]. See [docs/running.md](docs/running.md) for
+socket selection, one-shot attach, persisted reattach, scrollback, resize, and
+opt-in `libghostty-vt` examples.
+
 ## Check
 
 ```sh
