@@ -104,7 +104,9 @@ runtime results.
 `target/promotion-evidence` for easier transcription into the promotion
 tracker or manual CI evidence records. `SUMMARY.txt` includes the extracted
 `time -p make check-all` values as `check_all_real_seconds`,
-`check_all_user_seconds`, and `check_all_sys_seconds`.
+`check_all_user_seconds`, and `check_all_sys_seconds`, plus
+`started_at_utc`, `completed_at_utc`, and `bundle_elapsed_seconds` for the
+bundle artifact generation and verifier pass before final console output.
 It runs `make promotion-evidence-verify` before printing the artifact list.
 Run `make promotion-evidence-verify` directly when reviewing an existing bundle
 without regenerating the native build and packaging sample. Use

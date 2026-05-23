@@ -64,12 +64,14 @@ toolchain evidence and times `make check-all` in the same run.
 `make promotion-local-sample` runs source-fetch provenance, the timed validation
 sample, and the package archive runtime smoke for one local evidence pass.
 `make promotion-evidence-bundle` runs that local sample and gathers the log,
-toolchain output, extracted `make check-all` timing, source-fetch report,
-package provenance, cargo tree, and archive checksum under
-`target/promotion-evidence`, then runs the verifier.
+toolchain output, bundle start/completion timestamps plus elapsed duration,
+extracted `make check-all` timing, source-fetch report, package provenance,
+cargo tree, and archive checksum under `target/promotion-evidence`, then runs
+the verifier.
 `make promotion-evidence-verify` checks an existing bundle for the required
-summary fields, timing fields, artifact files, source/provenance records,
-archive hash, and packaged runtime smoke result.
+summary fields, bundle timing fields, `make check-all` timing fields, artifact
+files, source/provenance records, archive hash, and packaged runtime smoke
+result.
 `make source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `make packaging-sample` builds default and opt-in release binaries in separate

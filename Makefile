@@ -35,6 +35,8 @@ promotion-evidence-bundle:
 	@set -u; \
 	bundle_dir="$(PROMOTION_EVIDENCE_DIR)"; \
 	run_log="$$bundle_dir/RUN.log"; \
+	start_epoch="$$(date -u '+%s')"; \
+	start_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
 	rm -rf "$$bundle_dir"; \
 	mkdir -p "$$bundle_dir"; \
 	$(MAKE) --no-print-directory promotion-local-sample > "$$run_log" 2>&1; \
@@ -63,37 +65,51 @@ promotion-evidence-bundle:
 		echo "missing check-all time -p result in $$run_log" >&2; \
 		exit 1; \
 	fi; \
-	{ \
-		printf 'nmux promotion evidence bundle\n'; \
-		printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
-		printf 'host=%s\n' "$$(uname -a)"; \
-		printf 'git_revision=%s\n' "$$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"; \
-		printf 'github_actions=%s\n' "$${GITHUB_ACTIONS:-false}"; \
-		printf 'github_server_url=%s\n' "$${GITHUB_SERVER_URL:-unset}"; \
-		printf 'github_repository=%s\n' "$${GITHUB_REPOSITORY:-unset}"; \
-		printf 'github_run_id=%s\n' "$${GITHUB_RUN_ID:-unset}"; \
-		printf 'github_run_attempt=%s\n' "$${GITHUB_RUN_ATTEMPT:-unset}"; \
-		printf 'github_ref=%s\n' "$${GITHUB_REF:-unset}"; \
-		printf 'github_sha=%s\n' "$${GITHUB_SHA:-unset}"; \
-		printf 'runner_os=%s\n' "$${RUNNER_OS:-unset}"; \
-		printf 'runner_arch=%s\n' "$${RUNNER_ARCH:-unset}"; \
-		printf 'runner_name=%s\n' "$${RUNNER_NAME:-unset}"; \
-		printf 'ghostty_source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"; \
-		printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
-		printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
-		printf 'cache_state=%s\n' 'not captured; record Nix/Cargo/native cache context separately'; \
-		printf 'run_log=%s\n' "$$run_log"; \
-		printf 'toolchain=%s\n' "$$bundle_dir/TOOLCHAIN.txt"; \
-		printf 'source_fetch=%s\n' "$$bundle_dir/SOURCE_FETCH.txt"; \
-		printf 'package_provenance=%s\n' "$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
-		printf 'cargo_tree=%s\n' "$$bundle_dir/CARGO_TREE.txt"; \
-		printf 'check_all_real_seconds=%s\n' "$$check_all_real"; \
-		printf 'check_all_user_seconds=%s\n' "$$check_all_user"; \
-		printf 'check_all_sys_seconds=%s\n' "$$check_all_sys"; \
-		printf 'archive_sha256=%s\n' "$$archive_sha"; \
-		printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
-	} > "$$bundle_dir/SUMMARY.txt"; \
-	$(MAKE) --no-print-directory promotion-evidence-verify; \
+	write_summary() { \
+		completed_utc="$$1"; \
+		elapsed_seconds="$$2"; \
+		{ \
+			printf 'nmux promotion evidence bundle\n'; \
+			printf 'generated_at_utc=%s\n' "$$completed_utc"; \
+			printf 'started_at_utc=%s\n' "$$start_utc"; \
+			printf 'completed_at_utc=%s\n' "$$completed_utc"; \
+			printf 'bundle_elapsed_seconds=%s\n' "$$elapsed_seconds"; \
+			printf 'host=%s\n' "$$(uname -a)"; \
+			printf 'git_revision=%s\n' "$$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"; \
+			printf 'github_actions=%s\n' "$${GITHUB_ACTIONS:-false}"; \
+			printf 'github_server_url=%s\n' "$${GITHUB_SERVER_URL:-unset}"; \
+			printf 'github_repository=%s\n' "$${GITHUB_REPOSITORY:-unset}"; \
+			printf 'github_run_id=%s\n' "$${GITHUB_RUN_ID:-unset}"; \
+			printf 'github_run_attempt=%s\n' "$${GITHUB_RUN_ATTEMPT:-unset}"; \
+			printf 'github_ref=%s\n' "$${GITHUB_REF:-unset}"; \
+			printf 'github_sha=%s\n' "$${GITHUB_SHA:-unset}"; \
+			printf 'runner_os=%s\n' "$${RUNNER_OS:-unset}"; \
+			printf 'runner_arch=%s\n' "$${RUNNER_ARCH:-unset}"; \
+			printf 'runner_name=%s\n' "$${RUNNER_NAME:-unset}"; \
+			printf 'ghostty_source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"; \
+			printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
+			printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
+			printf 'cache_state=%s\n' 'not captured; record Nix/Cargo/native cache context separately'; \
+			printf 'run_log=%s\n' "$$run_log"; \
+			printf 'toolchain=%s\n' "$$bundle_dir/TOOLCHAIN.txt"; \
+			printf 'source_fetch=%s\n' "$$bundle_dir/SOURCE_FETCH.txt"; \
+			printf 'package_provenance=%s\n' "$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
+			printf 'cargo_tree=%s\n' "$$bundle_dir/CARGO_TREE.txt"; \
+			printf 'check_all_real_seconds=%s\n' "$$check_all_real"; \
+			printf 'check_all_user_seconds=%s\n' "$$check_all_user"; \
+			printf 'check_all_sys_seconds=%s\n' "$$check_all_sys"; \
+			printf 'archive_sha256=%s\n' "$$archive_sha"; \
+			printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
+		} > "$$bundle_dir/SUMMARY.txt"; \
+	}; \
+	end_epoch="$$(date -u '+%s')"; \
+	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+	write_summary "$$completed_utc" "$$((end_epoch - start_epoch))"; \
+	$(MAKE) --no-print-directory PROMOTION_EVIDENCE_DIR="$$bundle_dir" promotion-evidence-verify; \
+	end_epoch="$$(date -u '+%s')"; \
+	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+	write_summary "$$completed_utc" "$$((end_epoch - start_epoch))"; \
+	$(MAKE) --no-print-directory PROMOTION_EVIDENCE_DIR="$$bundle_dir" promotion-evidence-verify; \
 	cat "$$run_log"; \
 	printf 'promotion_evidence_bundle=%s\n' "$$bundle_dir"; \
 	find "$$bundle_dir" -type f | sort
@@ -142,6 +158,9 @@ promotion-evidence-verify:
 	require_file "$$archive_sha_file"; \
 	require_exact "$$summary" 'nmux promotion evidence bundle' 'summary title'; \
 	require_line "$$summary" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'generation timestamp'; \
+	require_line "$$summary" '^started_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'bundle start timestamp'; \
+	require_line "$$summary" '^completed_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'bundle completion timestamp'; \
+	require_line "$$summary" '^bundle_elapsed_seconds=[0-9]+$$' 'bundle elapsed seconds'; \
 	require_line "$$summary" '^host=.+$$' 'host identity'; \
 	require_line "$$summary" '^git_revision=(unknown|[0-9a-f]{40})$$' 'git revision'; \
 	require_line "$$summary" '^github_actions=(true|false)$$' 'GitHub Actions flag'; \
