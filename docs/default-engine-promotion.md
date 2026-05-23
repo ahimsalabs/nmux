@@ -73,6 +73,9 @@ engine or a regular CI requirement.
   `make check-all` with `time -p` for a single local evidence command.
 - `make promotion-local-sample` runs the timed validation sample and package
   archive sample in one local evidence pass.
+- `make source-fetch-provenance-sample` writes the active source mode and
+  locked `libghostty-vt` Cargo package records without inspecting Ghostty
+  source.
 - `make packaging-sample` prints that toolchain information, builds default and
   opt-in `libghostty-vt` release binaries in separate target directories, and
   reports artifact sizes plus binary versions for packaging evidence.
@@ -133,6 +136,15 @@ be recorded.
 | Date | Host | Command | Result |
 | --- | --- | --- | --- |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, repository caches present; host shell outside Nix; no `flatc` on PATH | `/usr/bin/time -p env GIT_CONFIG_GLOBAL=/dev/null make check-all` | Failed during tool preflight before schema or Rust tests; missing `flatc`; `real 0.01`, `user 0.00`, `sys 0.00` |
+
+## Source-Fetch Provenance Samples
+
+These samples record local source-fetch inputs. They do not choose the source
+policy for default or packaged builds.
+
+| Date | Host | Command | Result |
+| --- | --- | --- | --- |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make source-fetch-provenance-sample` | Passed. Wrote `target/source-fetch-provenance/SOURCE_FETCH.txt` with `Cargo.lock` SHA-256 `2e28c9036cf76971ebefb3f43a39bf3f3c122aeac89981cbf666105eb20d88c4`, `libghostty-vt` 0.1.1 checksum `d8afe5cc9ae303133220e530b28b7addbbf591160bb1564b88f7ee61387fee74`, and `libghostty-vt-sys` 0.1.1 checksum `aee97068da1692162c4523d54843bdcb43fecf086a9ee412a3375817e433faca`. |
 
 ## Packaging Samples
 

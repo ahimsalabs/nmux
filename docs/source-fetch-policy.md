@@ -29,6 +29,19 @@ For local opt-in validation, either allow the pinned upstream fetch or provide a
 local Ghostty checkout with `GHOSTTY_SOURCE_DIR`. Record which path was used
 when adding default-engine promotion evidence.
 
+Use this command to capture local source-fetch provenance without inspecting
+Ghostty source:
+
+```sh
+nix develop . -c make source-fetch-provenance-sample
+```
+
+The report is written to `target/source-fetch-provenance/SOURCE_FETCH.txt` and
+includes the active source mode, `GHOSTTY_SOURCE_DIR`, `GIT_CONFIG_GLOBAL`,
+`Cargo.lock` SHA-256, toolchain info, and the locked `Cargo.lock` records for
+`libghostty-vt` and `libghostty-vt-sys`. It is evidence for the current local
+source-fetch path, not a default or packaged-build source-policy decision.
+
 ## Promotion Blockers
 
 Before `libghostty-vt` can become the documented default engine, a regular CI

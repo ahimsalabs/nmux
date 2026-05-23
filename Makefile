@@ -3,7 +3,7 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-sample promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-sample packaging-layout-sample packaging-provenance-sample packaging-sample promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-provenance-sample toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -21,6 +21,45 @@ promotion-local-sample:
 	$(MAKE) promotion-sample
 	@echo "== promotion local sample: packaging archive =="
 	$(MAKE) packaging-archive-sample
+
+source-fetch-provenance-sample: toolchain-info
+	@echo "writing source-fetch provenance report"
+	@report_dir=target/source-fetch-provenance; \
+	report="$$report_dir/SOURCE_FETCH.txt"; \
+	hash_file() { \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			sha256sum "$$1" | awk '{print $$1}'; \
+		else \
+			shasum -a 256 "$$1" | awk '{print $$1}'; \
+		fi; \
+	}; \
+	cargo_lock_record() { \
+		awk -v package="$$1" '\
+			$$0 == "[[package]]" { block = $$0 ORS; in_block = 1; name = ""; next } \
+			in_block { block = block $$0 ORS } \
+			in_block && $$1 == "name" && $$3 == "\"" package "\"" { name = package } \
+			in_block && $$0 == "" { if (name == package) { printf "%s", block; found = 1 } in_block = 0; block = ""; name = "" } \
+			END { if (in_block && name == package) { printf "%s", block; found = 1 } if (!found) { exit 1 } }' Cargo.lock; \
+	}; \
+	rm -rf "$$report_dir"; \
+	mkdir -p "$$report_dir"; \
+	{ \
+		printf 'nmux source-fetch provenance sample\n'; \
+		printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+		printf 'ghostty_source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"; \
+		printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
+		printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
+		printf 'Cargo.lock sha256=%s\n' "$$(hash_file Cargo.lock)"; \
+		printf '\n[toolchain]\n'; \
+		$(MAKE) --no-print-directory toolchain-info; \
+		printf '\n[cargo_lock:libghostty-vt]\n'; \
+		cargo_lock_record libghostty-vt; \
+		printf '\n[cargo_lock:libghostty-vt-sys]\n'; \
+		cargo_lock_record libghostty-vt-sys; \
+		printf '\n[policy_note]\n'; \
+		printf '%s\n' 'This report records local source-fetch inputs for evidence. It does not choose the default or packaged-build source policy.'; \
+	} > "$$report"; \
+	printf 'source_fetch_provenance=%s\n' "$$report"
 
 packaging-sample: toolchain-info check-vt-toolchain
 	@echo "building default release binaries"

@@ -34,6 +34,7 @@ nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-local-sample
+nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -48,6 +49,8 @@ release-style or default-engine-promotion work. `make promotion-sample` prints
 toolchain evidence and times `make check-all` in the same run.
 `make promotion-local-sample` runs the timed validation sample plus the package
 archive sample for one local evidence pass.
+`make source-fetch-provenance-sample` records the active source mode and locked
+`libghostty-vt` Cargo package records without inspecting Ghostty source.
 `make packaging-sample` builds default and opt-in release binaries in separate
 target directories and prints artifact sizes plus binary versions.
 `make packaging-layout-sample` stages a local opt-in package layout with

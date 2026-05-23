@@ -60,6 +60,7 @@ Run:
 ```sh
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-local-sample
+nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -86,6 +87,11 @@ evidence.
 `make packaging-archive-sample` with clear section headers. Use it for a local
 evidence pass before updating the promotion tracker with both validation and
 packaging/archive results.
+
+`make source-fetch-provenance-sample` writes the active source mode and locked
+`libghostty-vt` Cargo package records without inspecting Ghostty source. Use it
+when updating source-fetch evidence or comparing pinned-fetch versus local
+`GHOSTTY_SOURCE_DIR` samples.
 
 `make packaging-sample` prints the same toolchain context, builds default and
 opt-in release binaries in separate target directories, and reports artifact

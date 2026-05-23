@@ -8,6 +8,7 @@ nix develop . -c make check-ghostty-vt
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-local-sample
+nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -51,6 +52,16 @@ nix develop . -c make promotion-local-sample
 ```
 
 That target runs `make promotion-sample` followed by `make packaging-archive-sample`.
+For source-fetch provenance evidence, use:
+
+```sh
+nix develop . -c make source-fetch-provenance-sample
+```
+
+That target writes `target/source-fetch-provenance/SOURCE_FETCH.txt` with the
+active source mode, `GHOSTTY_SOURCE_DIR`, `GIT_CONFIG_GLOBAL`, `Cargo.lock`
+SHA-256, toolchain info, and locked `Cargo.lock` records for `libghostty-vt`
+and `libghostty-vt-sys`.
 For local release-binary evidence, use:
 
 ```sh

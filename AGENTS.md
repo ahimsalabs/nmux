@@ -109,6 +109,7 @@ default-engine-promotion evidence:
 nix develop . -c make check-all
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-local-sample
+nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
@@ -121,6 +122,8 @@ nix develop . -c make packaging-archive-sample
 rows in `docs/default-engine-promotion.md`.
 `promotion-local-sample` runs `promotion-sample` plus `packaging-archive-sample`
 for one local evidence pass.
+`source-fetch-provenance-sample` records the active source mode and locked
+`libghostty-vt` Cargo package records without inspecting Ghostty source.
 `packaging-sample` builds default and opt-in release binaries in separate target
 directories and prints artifact sizes plus binary versions for packaging
 evidence rows.
