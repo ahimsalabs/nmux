@@ -272,7 +272,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
     }
-    print_live_rendered(rendered, args.redraw, scrollback);
+    if args.output_json {
+        rendered.scrollback = scrollback;
+        println!("{}", format_live_attach_json(&rendered));
+    } else {
+        print_live_rendered(rendered, args.redraw, scrollback);
+    }
     flush_stdout()?;
 
     let cycle_limit = args.iterations.or_else(|| {
@@ -404,7 +409,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             match local::read_live_surface_update_from_stream(&mut stream)? {
                 local::LiveSurfaceRead::Workspace(workspace) => {
                     current_workspace = workspace;
-                    if args.redraw {
+                    if args.output_json {
+                        println!("{}", format_live_workspace_json(&current_workspace));
+                    } else if args.redraw {
                         print_live_surface(
                             &current_workspace,
                             &current_surface_metadata,
@@ -423,14 +430,26 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         working_directory: update.working_directory.clone(),
                     };
                     current_surface_text = client_state.render_surface_update(&update)?;
-                    print_live_update(
-                        &current_workspace,
-                        &previous_metadata,
-                        &current_surface_metadata,
-                        &current_surface_text,
-                        &update,
-                        args.redraw,
-                    );
+                    if args.output_json {
+                        println!(
+                            "{}",
+                            format_live_surface_update_json(
+                                &current_workspace,
+                                &current_surface_metadata,
+                                &current_surface_text,
+                                &update,
+                            )
+                        );
+                    } else {
+                        print_live_update(
+                            &current_workspace,
+                            &previous_metadata,
+                            &current_surface_metadata,
+                            &current_surface_text,
+                            &update,
+                            args.redraw,
+                        );
+                    }
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::Error(error) => {
@@ -1484,6 +1503,46 @@ fn format_rendered_attach_json(rendered: &local::RenderedAttach) -> String {
     )
 }
 
+fn format_live_attach_json(rendered: &local::RenderedAttach) -> String {
+    format!(
+        "{{\"event\":\"attach\",\"attach\":{}}}",
+        format_rendered_attach_json(rendered)
+    )
+}
+
+fn format_live_workspace_json(workspace: &local::WorkspaceSummary) -> String {
+    format!(
+        "{{\"event\":\"workspace\",\"workspace\":{}}}",
+        format_workspace_json(workspace)
+    )
+}
+
+fn format_live_surface_update_json(
+    workspace: &local::WorkspaceSummary,
+    metadata: &local::TerminalMetadataSummary,
+    surface_text: &str,
+    update: &local::SurfaceUpdate,
+) -> String {
+    let base_version = update
+        .base_version
+        .map(|version| version.to_string())
+        .unwrap_or_else(|| "null".to_owned());
+    let patch_kind = update
+        .patch_kind
+        .map(patch_kind_name)
+        .map(local::json_string)
+        .unwrap_or_else(|| "null".to_owned());
+    format!(
+        "{{\"event\":\"surface\",\"workspace\":{},\"terminal\":{},\"surface_text\":{},\"update\":{{\"pane_id\":{},\"kind\":{},\"version\":{},\"base_version\":{base_version},\"patch_kind\":{patch_kind}}}}}",
+        format_workspace_json(workspace),
+        format_terminal_metadata_json(metadata),
+        local::json_string(surface_text),
+        local::json_string(&update.pane_id),
+        local::json_string(surface_update_kind_name(update.kind)),
+        update.version
+    )
+}
+
 fn format_workspace_json(workspace: &local::WorkspaceSummary) -> String {
     format!(
         "{{\"session_id\":{},\"tab_id\":{},\"pane_id\":{},\"cols\":{},\"rows\":{},\"resize_policy\":{}}}",
@@ -1532,6 +1591,23 @@ fn resize_policy_name(policy: protocol::ResizePolicy) -> &'static str {
         protocol::ResizePolicy::Leader => "leader",
         protocol::ResizePolicy::ActiveClient => "active-client",
         protocol::ResizePolicy::Manual => "manual",
+        _ => "unknown",
+    }
+}
+
+fn surface_update_kind_name(kind: local::SurfaceUpdateKind) -> &'static str {
+    match kind {
+        local::SurfaceUpdateKind::Snapshot => "snapshot",
+        local::SurfaceUpdateKind::Patch => "patch",
+    }
+}
+
+fn patch_kind_name(kind: protocol::PatchKind) -> &'static str {
+    match kind {
+        protocol::PatchKind::ReplaceRows => "replace-rows",
+        protocol::PatchKind::CursorOnly => "cursor-only",
+        protocol::PatchKind::ModeOnly => "mode-only",
+        protocol::PatchKind::ColorOnly => "color-only",
         _ => "unknown",
     }
 }
@@ -1759,11 +1835,11 @@ fn validate_mode_args(
     if live_resize.is_some() && !live {
         return Err("--cols and --rows require --live");
     }
-    if output_json && live {
-        return Err("--json cannot be combined with --live");
-    }
     if output_json && follow {
         return Err("--json cannot be combined with --follow");
+    }
+    if output_json && redraw {
+        return Err("--json cannot be combined with --redraw");
     }
     if key_modifiers_set && !key_name_set {
         return Err("--key-modifiers requires --key-name");
@@ -1802,7 +1878,7 @@ Options:
   --list-key-names           List supported --key-name values and aliases
   --list-key-names-json      List supported --key-name values as JSON
   --list-input-choices-json  List structured input choices as JSON
-  --json                     Print one-shot attach output as JSON
+  --json                     Print attach output as JSON; live uses JSON lines
   --key-modifiers MODS       Modifiers for --key-name: shift,ctrl,alt,super
   --paste TEXT               Paste UTF-8 text through PasteInput
   --focus gained|lost        Send focus input; daemon rejects if reporting is off
@@ -1832,7 +1908,7 @@ Notes:
   --print-context prints inherited NMUX_* pane identity without connecting.
   --print-context-json prints the same inherited context as a JSON object.
   --print-socket-json prints the resolved socket path and source as JSON.
-  --json is for one-shot attaches; live and follow output are text streams.
+  --json emits one object for one-shot attach, or newline-delimited live events.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
   Without an explicit input or resize flag, nmux attaches read-only.
@@ -2014,7 +2090,8 @@ mod tests {
     use super::{
         FocusEvent, KEY_NAME_ALIASES, LiveUpdatePrintKind, LocalEcho, MouseEvent,
         SUPPORTED_KEY_NAMES, args_from_iter, format_context_json, format_input_choices_json,
-        format_key_names_json, format_rendered_attach_json, format_scrollback,
+        format_key_names_json, format_live_attach_json, format_live_surface_update_json,
+        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
         interim_surface_fidelity_warning_needed, live_update_print_kind, parse_focus_event,
         parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
         parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
@@ -2217,6 +2294,45 @@ mod tests {
         assert!(json.contains("\"surface_text\":\"hello\\nworld\""));
         assert!(json.contains("\"scrollback_version\":9"));
         assert!(json.contains("{\"line\":1,\"text\":\"older row\"}"));
+    }
+
+    #[test]
+    fn live_json_events_report_attach_workspace_and_surface_updates() {
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+        };
+        let rendered = local::RenderedAttach {
+            workspace: workspace.clone(),
+            surface_metadata: local::TerminalMetadataSummary::default(),
+            surface_text: Some("initial".to_owned()),
+            scrollback: None,
+        };
+        let mut update = test_surface_update(
+            local::SurfaceUpdateKind::Patch,
+            Some(protocol::PatchKind::ModeOnly),
+        );
+        update.text = "updated".to_owned();
+
+        assert!(format_live_attach_json(&rendered).starts_with("{\"event\":\"attach\""));
+        assert_eq!(
+            format_live_workspace_json(&workspace),
+            "{\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":80,\"rows\":24,\"resize_policy\":\"fixed\"}}"
+        );
+        let update_json = format_live_surface_update_json(
+            &workspace,
+            &local::TerminalMetadataSummary::default(),
+            "updated",
+            &update,
+        );
+        assert!(update_json.contains("\"event\":\"surface\""));
+        assert!(update_json.contains("\"kind\":\"patch\""));
+        assert!(update_json.contains("\"base_version\":6"));
+        assert!(update_json.contains("\"patch_kind\":\"mode-only\""));
     }
 
     #[test]
@@ -2665,17 +2781,39 @@ mod tests {
         );
         assert_eq!(
             super_validate_mode_args(
-                true, false, false, false, false, false, None, None, true, false, false, false,
-                false, false, false, false, false
-            ),
-            Err("--json cannot be combined with --live")
-        );
-        assert_eq!(
-            super_validate_mode_args(
                 false, true, false, false, false, false, None, None, true, false, false, false,
                 false, false, false, false, false
             ),
             Err("--json cannot be combined with --follow")
+        );
+        assert_eq!(
+            super_validate_mode_args(
+                true, false, false, false, false, true, None, None, true, false, false, false,
+                false, false, false, false, false
+            ),
+            Err("--json cannot be combined with --redraw")
+        );
+        assert!(
+            super_validate_mode_args(
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                None,
+                Some(1),
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false
+            )
+            .is_ok()
         );
         assert!(
             validate_mode_args(

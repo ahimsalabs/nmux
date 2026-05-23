@@ -271,6 +271,67 @@ fn live_cli_streams_command_output_and_committed_resize() {
 }
 
 #[test]
+fn live_cli_can_stream_json_events() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'json-ready\n'; while IFS= read -r line; do printf 'json:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--json",
+            "--iterations",
+            "2",
+            "--key",
+            "ping\n",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux --live --json");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux --live --json failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    let mut lines = stdout.lines();
+    let first = lines.next().expect("initial json event");
+    assert!(
+        first.starts_with("{\"event\":\"attach\""),
+        "missing attach event:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"event\":\"surface\""),
+        "missing surface event:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("json:ping"),
+        "missing streamed output:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_cli_commits_explicit_resize_without_pane_input() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
