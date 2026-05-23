@@ -183,9 +183,9 @@ Done:
   the Nix shell; a cold-target-dir sample now clears only Rust build output,
   and an isolated cold-deps sample clears repo-owned Cargo home and target dirs
   without claiming cold Nix store or checkout state; remaining promotion
-  evidence still needs more local platforms, full cold-cache or cold-checkout
+  evidence still needs more local platforms, full cold-checkout or cold-machine
   behavior, CI behavior, a complete non-Nix workflow, source-fetch policy, and
-  packaging decisions.
+  packaging distribution decisions.
 - [Future protocol tracks](protocol-futures.md) split hyperlink identity, images,
   richer damage, command lifecycle metadata, and physical-key/text-event input
   into explicit pre-schema work.
@@ -205,7 +205,9 @@ Done:
 - [Packaging notes](packaging.md) record the current no-release-binary stance
   and the native-VT binary distribution questions that remain before promotion;
   `make packaging-sample` now provides local release-binary build evidence
-  without changing the default engine.
+  without changing the default engine, staged package layouts and archives have
+  no-rebuild verifiers, and runtime smoke proves the local archive layout can
+  serve a pane.
 - [Contributor workflow](contributor-workflow.md) records the default-engine,
   opt-in terminal-correctness, and promotion-evidence check paths.
 

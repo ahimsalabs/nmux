@@ -160,11 +160,11 @@ original build-tree archive path, so downloaded evidence stays self-contained.
 `promotion-evidence-verify` checks an existing bundle for required summary,
 bundle timing, `make check-all` timing, artifact files, cache-state report,
 artifact manifest hashes, source/provenance records, VCS status report,
-summary/VCS git revision agreement, package archive bytes, archive hash,
-open-work snapshot, and packaged runtime smoke output; CI-generated bundles
-must also carry concrete GitHub run/ref/SHA/runner fields with `github_sha`
-matching the bundled revision. The bundle target runs it before printing the
-artifact list.
+summary/VCS git revision agreement, package archive bytes, archive hash, exact
+open-work snapshot lines, package provenance verification, archive
+verification, and packaged runtime smoke output; CI-generated bundles must also
+carry concrete GitHub run/ref/SHA/runner fields with `github_sha` matching the
+bundled revision. The bundle target runs it before printing the artifact list.
 `source-fetch-provenance-sample` records the active source mode and locked
 `libghostty-vt` Cargo package records without inspecting Ghostty source.
 `source-fetch-provenance-verify` checks an existing source-fetch provenance
@@ -180,7 +180,8 @@ evidence rows.
 `packaging-layout-sample` stages a local opt-in package layout with wrappers
 that resolve `libghostty-vt` from `../lib`; it is packaging evidence, not a
 release format decision.
-`packaging-layout-verify` checks an existing staged layout without rebuilding.
+`packaging-layout-verify` checks an existing staged layout without rebuilding,
+and `packaging-archive-verify` reuses it against extracted archive layouts.
 `packaging-provenance-sample` writes a local manifest with staged file hashes,
 package metadata, toolchain/source mode, dependency tree, and dynamic dependency
 output.
