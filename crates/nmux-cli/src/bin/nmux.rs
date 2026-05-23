@@ -101,6 +101,7 @@ const FOCUS_EVENT_NAMES: &[&str] = &["gained", "lost"];
 const MOUSE_ACTION_NAMES: &[&str] = &["press", "release", "motion"];
 const MOUSE_BUTTON_NAMES: &[&str] = &["none", "left", "middle", "right", "wheel-up", "wheel-down"];
 const LOCAL_ECHO_NAMES: &[&str] = &["off", "tty"];
+const DETACH_KEY_NAMES: &[&str] = &["ctrl-]", "none"];
 const DEFAULT_MANAGED_STARTUP_TIMEOUT_MS: u64 = 5000;
 
 fn main() {
@@ -410,7 +411,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
                 match receiver.try_recv() {
                     Ok(StdinByteRead::Input(input)) => {
-                        let (input, detach) = split_stdin_bytes_for_detach(&input);
+                        let (input, detach) =
+                            split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
                             local::send_raw_input_with_sequence(
                                 &mut stream,
@@ -971,8 +973,11 @@ enum StdinByteRead {
     Error(String),
 }
 
-fn split_stdin_bytes_for_detach(input: &[u8]) -> (Option<Vec<u8>>, bool) {
-    let Some(index) = input.iter().position(|byte| *byte == STDIN_BYTES_DETACH) else {
+fn split_stdin_bytes_for_detach(input: &[u8], detach_byte: Option<u8>) -> (Option<Vec<u8>>, bool) {
+    let Some(detach_byte) = detach_byte else {
+        return (Some(input.to_vec()), false);
+    };
+    let Some(index) = input.iter().position(|byte| *byte == detach_byte) else {
         return (Some(input.to_vec()), false);
     };
 
@@ -1447,6 +1452,7 @@ struct Args {
     stdin_bytes: bool,
     no_input: bool,
     local_echo: LocalEcho,
+    detach_key: DetachKey,
     redraw: bool,
     live_resize: Option<(u32, u32)>,
     interval_ms: u64,
@@ -1567,6 +1573,12 @@ struct RawArgs {
         allow_hyphen_values = true
     )]
     local_echo: Option<String>,
+    #[arg(
+        long = "detach-key",
+        value_name = "ctrl-]|none",
+        allow_hyphen_values = true
+    )]
+    detach_key: Option<String>,
     #[arg(long = "redraw", action = ArgAction::SetTrue)]
     redraw: bool,
     #[arg(long = "cols", value_name = "COUNT")]
@@ -1607,6 +1619,7 @@ where
     let mouse_modifiers_set = raw.mouse_modifiers.is_some();
     let mouse_pixels_set = raw.mouse_pixels.is_some();
     let local_echo_set = raw.local_echo.is_some();
+    let detach_key_set = raw.detach_key.is_some();
     let start = raw.start || raw.shell;
     let live = raw.live || raw.shell;
     let stdin_bytes = raw.stdin_bytes || raw.shell;
@@ -1700,6 +1713,13 @@ where
         .transpose()
         .map_err(|err| format!("--local-echo {err}"))?
         .unwrap_or(LocalEcho::Off);
+    let detach_key = raw
+        .detach_key
+        .as_deref()
+        .map(parse_detach_key)
+        .transpose()
+        .map_err(|err| format!("--detach-key {err}"))?
+        .unwrap_or(DetachKey::CtrlRightBracket);
     let start_working_dir = match raw.start_working_dir {
         Some(value) if value.is_empty() => {
             return Err("--cwd requires a non-empty directory path".into());
@@ -1770,6 +1790,7 @@ where
             stdin_input: raw.stdin_input,
             stdin_bytes,
             local_echo_set,
+            detach_key_set,
             redraw,
             live_resize,
             iterations,
@@ -1836,6 +1857,7 @@ where
         stdin_bytes,
         no_input: raw.no_input,
         local_echo,
+        detach_key,
         redraw,
         live_resize,
         interval_ms,
@@ -1939,13 +1961,14 @@ fn format_key_names_json() -> String {
 
 fn format_input_choices_json() -> String {
     format!(
-        "{{\"key_names\":{},\"key_modifiers\":{},\"focus_events\":{},\"mouse_actions\":{},\"mouse_buttons\":{},\"local_echo\":{}}}",
+        "{{\"key_names\":{},\"key_modifiers\":{},\"focus_events\":{},\"mouse_actions\":{},\"mouse_buttons\":{},\"local_echo\":{},\"detach_keys\":{}}}",
         format_key_names_json(),
         format_json_string_array(KEY_MODIFIER_NAMES),
         format_json_string_array(FOCUS_EVENT_NAMES),
         format_json_string_array(MOUSE_ACTION_NAMES),
         format_json_string_array(MOUSE_BUTTON_NAMES),
-        format_json_string_array(LOCAL_ECHO_NAMES)
+        format_json_string_array(LOCAL_ECHO_NAMES),
+        format_json_string_array(DETACH_KEY_NAMES)
     )
 }
 
@@ -2779,6 +2802,7 @@ struct ClientModeArgs {
     stdin_input: bool,
     stdin_bytes: bool,
     local_echo_set: bool,
+    detach_key_set: bool,
     redraw: bool,
     live_resize: Option<(u32, u32)>,
     iterations: Option<usize>,
@@ -2840,6 +2864,9 @@ fn validate_mode_args(args: ClientModeArgs) -> Result<(), &'static str> {
     }
     if args.local_echo_set && !args.stdin_bytes {
         return Err("--local-echo requires --stdin-bytes");
+    }
+    if args.detach_key_set && !args.stdin_bytes {
+        return Err("--detach-key requires --stdin-bytes");
     }
     if args.redraw && !args.live {
         return Err("--redraw requires --live");
@@ -2916,6 +2943,7 @@ Options:
   --stdin                    Stream newline-delimited stdin in live mode
   --stdin-bytes              Stream raw stdin chunks in live mode
   --local-echo off|tty       Local TTY echo policy for --stdin-bytes
+  --detach-key ctrl-]|none   Local detach key for --stdin-bytes
   --redraw                   Repaint the current live surface in place
   --cols COUNT               Live ResizeIntent columns; both dimensions required
   --rows COUNT               Live ResizeIntent rows; both dimensions required
@@ -2935,6 +2963,7 @@ Notes:
   --start waits for nmuxd --ready-json and cleans up the private daemon on exit.
   --startup-timeout-ms controls that managed readiness wait and defaults to 5000.
   --shell is shorthand for --start --live --stdin-bytes --redraw using $SHELL or sh.
+  Ctrl-] detaches byte-streamed live sessions by default; --detach-key none passes it through.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
   Without an explicit input or resize flag, nmux attaches read-only.
@@ -2957,6 +2986,21 @@ Examples:
 enum LocalEcho {
     Off,
     Tty,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DetachKey {
+    CtrlRightBracket,
+    None,
+}
+
+impl DetachKey {
+    fn byte(self) -> Option<u8> {
+        match self {
+            Self::CtrlRightBracket => Some(STDIN_BYTES_DETACH),
+            Self::None => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2987,6 +3031,14 @@ fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
         "off" => Ok(LocalEcho::Off),
         "tty" => Ok(LocalEcho::Tty),
         _ => Err("requires off or tty"),
+    }
+}
+
+fn parse_detach_key(value: &str) -> Result<DetachKey, &'static str> {
+    match value {
+        "ctrl-]" => Ok(DetachKey::CtrlRightBracket),
+        "none" => Ok(DetachKey::None),
+        _ => Err("requires ctrl-] or none"),
     }
 }
 
@@ -3117,19 +3169,20 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientModeArgs, ExplicitInputModeArgs, FocusEvent, InterimSurfaceFidelityWarningContext,
-        KEY_NAME_ALIASES, LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent,
-        SUPPORTED_KEY_NAMES, ScrollbackSelectionArgFlags, SigwinchResizeContext,
-        StateInfoSocketSummary, args_from_iter, format_cli_error_json, format_context_json,
-        format_input_choices_json, format_key_names_json, format_live_attach_json,
-        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
-        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
-        format_scrollback, format_state_info_json, format_state_info_text,
-        interim_surface_fidelity_warning_needed, live_update_print_kind, parse_env_assignment,
-        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
-        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag,
-        raw_terminal_mode_needed, redraw_terminal_guard_needed, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        ClientModeArgs, DetachKey, ExplicitInputModeArgs, FocusEvent,
+        InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
+        LiveUpdatePrintKind, LocalEcho, MouseEvent, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES,
+        ScrollbackSelectionArgFlags, SigwinchResizeContext, StateInfoSocketSummary, args_from_iter,
+        format_cli_error_json, format_context_json, format_input_choices_json,
+        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
+        format_live_detach_json, format_live_error_json, format_live_surface_update_json,
+        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
+        format_state_info_json, format_state_info_text, interim_surface_fidelity_warning_needed,
+        live_update_print_kind, parse_detach_key, parse_env_assignment, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -3289,6 +3342,7 @@ mod tests {
             "\"mouse_buttons\":[\"none\",\"left\",\"middle\",\"right\",\"wheel-up\",\"wheel-down\"]"
         ));
         assert!(json.contains("\"local_echo\":[\"off\",\"tty\"]"));
+        assert!(json.contains("\"detach_keys\":[\"ctrl-]\",\"none\"]"));
     }
 
     #[test]
@@ -3904,6 +3958,13 @@ mod tests {
     }
 
     #[test]
+    fn detach_key_arg_accepts_explicit_choices() {
+        assert_eq!(parse_detach_key("ctrl-]"), Ok(DetachKey::CtrlRightBracket));
+        assert_eq!(parse_detach_key("none"), Ok(DetachKey::None));
+        assert!(parse_detach_key("ctrl-c").is_err());
+    }
+
+    #[test]
     fn focus_arg_accepts_explicit_choices() {
         assert_eq!(parse_focus_event("gained"), Ok(FocusEvent::Gained));
         assert_eq!(parse_focus_event("lost"), Ok(FocusEvent::Lost));
@@ -4108,6 +4169,14 @@ mod tests {
                 ..ClientModeArgs::default()
             }),
             Err("--local-echo requires --stdin-bytes")
+        );
+        assert_eq!(
+            super_validate_mode_args(ClientModeArgs {
+                live: true,
+                detach_key_set: true,
+                ..ClientModeArgs::default()
+            }),
+            Err("--detach-key requires --stdin-bytes")
         );
         assert_eq!(
             super_validate_mode_args(ClientModeArgs {
@@ -4711,14 +4780,21 @@ mod tests {
     #[test]
     fn stdin_bytes_detach_splits_before_ctrl_right_bracket() {
         assert_eq!(
-            split_stdin_bytes_for_detach(b"ping\n"),
+            split_stdin_bytes_for_detach(b"ping\n", Some(STDIN_BYTES_DETACH)),
             (Some(b"ping\n".to_vec()), false)
         );
         assert_eq!(
-            split_stdin_bytes_for_detach(b"ping\n\x1dignored"),
+            split_stdin_bytes_for_detach(b"ping\n\x1dignored", Some(STDIN_BYTES_DETACH)),
             (Some(b"ping\n".to_vec()), true)
         );
-        assert_eq!(split_stdin_bytes_for_detach(b"\x1d"), (None, true));
+        assert_eq!(
+            split_stdin_bytes_for_detach(b"\x1d", Some(STDIN_BYTES_DETACH)),
+            (None, true)
+        );
+        assert_eq!(
+            split_stdin_bytes_for_detach(b"ping\n\x1d", None),
+            (Some(b"ping\n\x1d".to_vec()), false)
+        );
     }
 
     fn scrollback_summary(

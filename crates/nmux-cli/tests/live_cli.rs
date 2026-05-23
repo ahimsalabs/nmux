@@ -5333,6 +5333,73 @@ fn live_stdin_bytes_ctrl_right_bracket_detaches() {
 }
 
 #[test]
+fn live_stdin_bytes_can_pass_ctrl_right_bracket_through() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "stty -icanon -echo min 6 time 20; printf 'ready\n'; bytes=$(dd bs=6 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'bytes:%s\n' \"$bytes\"",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--stdin-bytes",
+            "--detach-key",
+            "none",
+            "--iterations",
+            "2",
+            "--interval-ms",
+            "100",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
+
+    client
+        .stdin
+        .as_mut()
+        .expect("client stdin")
+        .write_all(b"ping\n\x1d")
+        .expect("write input");
+    drop(client.stdin.take());
+
+    let client = client.wait_with_output().expect("wait for nmux");
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        !stderr.contains("detached by local Ctrl-]"),
+        "unexpected local detach status:\n{stderr}"
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("bytes:70696e670a1d"),
+        "missing forwarded Ctrl-] byte:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_read_only_cli_observes_output_without_input() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

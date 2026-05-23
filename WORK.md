@@ -451,7 +451,7 @@ M10: live local interactive attach [done]
   live CLI can send stdin byte chunks as InputKind.RawBytes without blocking output polling on full lines
   interactive --stdin-bytes temporarily uses noncanonical stdin with local echo defaulting off and `--local-echo tty` available
   interactive --stdin-bytes listens for SIGWINCH and sends TTY-size resize intents unless explicit --cols/--rows are set
-  Ctrl-] detaches byte-streamed live clients
+  Ctrl-] detaches byte-streamed live clients by default, while --detach-key none forwards that byte to the pane
   --redraw clears and repaints the current client-side pane surface on each update
   CLI workspace summary displays daemon-published resize policy
   successful live resize intents commit pane size and republish workspace snapshot
@@ -621,7 +621,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   docs/adr/README.md now shows ADR status in the index so accepted decisions and older proposed records are visible without opening every file
   README and docs/running.md show the local-smoke success signature, including JSON informational and ready-json subchecks, so first-run users can recognize a completed default workflow through noisy build output
   README and docs/running.md label manual daemon/client examples by shell so first-run users do not mistake the long-running nmuxd side for a stuck single-shell command
-  README and docs/running.md explain that Ctrl-] detaches the live client while Ctrl-C in the daemon shell stops a --live-forever workspace, including both first-run and deeper live-workflow wording
+  README and docs/running.md explain that Ctrl-] detaches the live client by default, --detach-key none passes it through, and Ctrl-C in the daemon shell stops a --live-forever workspace, including both first-run and deeper live-workflow wording
   docs/running.md now describes live attach as the current CLI workspace path while keeping the limitation that it is not a full terminal-emulator UI
   docs/running.md now includes a manual opt-in libghostty-vt smoke example that shows both the Cargo feature gate and runtime --terminal-engine selection
   README and docs/toolchain.md now call out the Nix nix-command/flakes assumption and show the --extra-experimental-features fallback for fresh Nix installs

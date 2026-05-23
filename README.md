@@ -88,7 +88,8 @@ nix develop . -c cargo run --bin nmuxd -- --live-forever --ready-json
 nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 ```
 
-Detach the live client with Ctrl-]; stop the daemon in shell 1 with Ctrl-C when
+Detach the live client with Ctrl-] by default, or pass `--detach-key none` to
+forward that byte to the pane; stop the daemon in shell 1 with Ctrl-C when
 finished. `--ready-json` prints one JSON line after the socket is bound and the
 initial pane starts, or an `event:error` line if startup fails before readiness,
 so scripts do not need to poll the socket path. See
@@ -285,7 +286,8 @@ nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --comma
 printf 'ping\npong\n' | nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin-bytes --interval-ms 500
 ```
 
-For interactive `--stdin-bytes`, Ctrl-] detaches the client.
+For interactive `--stdin-bytes`, Ctrl-] detaches the client by default; add
+`--detach-key none` when the pane program should receive that byte instead.
 Add `--redraw` to repaint the workspace summary and current pane surface in place on each live update; when stdout is a TTY, redraw uses the alternate screen and restores it on exit. Interactive byte mode uses noncanonical stdin, defaults local echo off, can preserve the TTY echo setting with `--local-echo tty`, and sends TTY-size resize intents on `SIGWINCH` unless explicit `--cols` and `--rows` are provided. Explicit `--cols` and `--rows` are user-command resize intents, so they can commit a resize without sending pane input even when the daemon publishes `resize=manual`.
 Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set.
 

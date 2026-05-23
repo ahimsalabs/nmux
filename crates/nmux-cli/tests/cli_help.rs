@@ -39,6 +39,8 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("daemon rejects if reporting is off"));
     assert!(stdout.contains("--stdin-bytes"));
     assert!(stdout.contains("--local-echo off|tty"));
+    assert!(stdout.contains("--detach-key ctrl-]|none"));
+    assert!(stdout.contains("--detach-key none passes it through"));
     assert!(stdout.contains("--no-scrollback"));
     assert!(stdout.contains("--cols COUNT"));
     assert!(stdout.contains("Live ResizeIntent columns; both dimensions required"));
@@ -781,6 +783,10 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--local-echo", "tty"],
         "nmux: --local-echo requires --stdin-bytes",
+    );
+    assert_nmux_rejects(
+        &["--detach-key", "none"],
+        "nmux: --detach-key requires --stdin-bytes",
     );
     assert_nmux_rejects(
         &["--iterations", "1"],
