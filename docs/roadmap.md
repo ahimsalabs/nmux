@@ -16,7 +16,7 @@ Done:
 - ADR 0002 for Rust as the core runtime.
 - Initial M0 schema in [schema/nmux.fbs](../schema/nmux.fbs).
 - M0 protocol notes in [docs/protocol.md](protocol.md).
-- Reproducible schema validation through `nix develop path:$PWD -c make check-schema`.
+- Reproducible schema validation through `nix develop . -c make check-schema`.
 - Rust workspace and generated protocol crate for core implementation.
 - Bounded FlatBuffers envelope framing.
 - Initial Rust session model that encodes a `WorkspaceTreeSnapshot`.
@@ -305,7 +305,7 @@ Exit evidence:
 - Runnable docs and help output cover the expected live attach workflows.
 - Tests cover any changed user-visible terminal output behavior.
 
-Status: Done. M11 kept the local frontend prototype honest while making live attach easier to use. The client now flushes live and redraw output after render updates; reports Ctrl-] detach, stdin EOF, and live server close reasons on stderr; sends explicit live resize requests as user-command resize intents while leaving automatic terminal viewport changes policy-gated as frontend viewport intents; calls out interim text-surface and non-VT-correct renderer limitations in help and interactive byte mode; rejects live-only flags outside `--live`; renders requested initial scrollback context before streaming updates, including the initial redraw paint; uses the alternate screen for interactive TTY redraw and restores it on exit; keeps the current workspace summary visible in redraw mode; and includes runnable one-shot and live examples in help output. Unit and CLI integration tests cover the changed user-visible terminal output behavior, and `nix develop path:$PWD -c make check` is the full verification gate.
+Status: Done. M11 kept the local frontend prototype honest while making live attach easier to use. The client now flushes live and redraw output after render updates; reports Ctrl-] detach, stdin EOF, and live server close reasons on stderr; sends explicit live resize requests as user-command resize intents while leaving automatic terminal viewport changes policy-gated as frontend viewport intents; calls out interim text-surface and non-VT-correct renderer limitations in help and interactive byte mode; rejects live-only flags outside `--live`; renders requested initial scrollback context before streaming updates, including the initial redraw paint; uses the alternate screen for interactive TTY redraw and restores it on exit; keeps the current workspace summary visible in redraw mode; and includes runnable one-shot and live examples in help output. Unit and CLI integration tests cover the changed user-visible terminal output behavior, and `nix develop . -c make check` is the full verification gate.
 
 ### M12: Live Workspace Usability
 
@@ -314,7 +314,7 @@ Goal: continue moving the local prototype toward a usable live workspace while p
 Exit evidence:
 
 - The next live-workflow improvement is selected from current CLI behavior and documented before or as it lands.
-- Any user-visible behavior change is covered by focused tests and `nix develop path:$PWD -c make check`.
+- Any user-visible behavior change is covered by focused tests and `nix develop . -c make check`.
 - README, running docs, help output, and WORK.md stay aligned with the implemented behavior.
 - Interim renderer limitations remain explicit until a libghostty-backed state/render integration replaces the temporary text surface.
 

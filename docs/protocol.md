@@ -167,7 +167,7 @@ falling through to process host behavior.
 Validate the schema with:
 
 ```sh
-nix develop path:$PWD -c make check-schema
+nix develop . -c make check-schema
 ```
 
 The `check-schema` target runs `flatc` against [schema/nmux.fbs](../schema/nmux.fbs). Schema edits should stay append-friendly unless an ADR explicitly changes the compatibility posture.
@@ -175,7 +175,7 @@ The `check-schema` target runs `flatc` against [schema/nmux.fbs](../schema/nmux.
 Generate Rust protocol bindings with:
 
 ```sh
-nix develop path:$PWD -c make generate-schema
+nix develop . -c make generate-schema
 ```
 
 The Rust core consumes the generated bindings through the `nmux-proto` crate.

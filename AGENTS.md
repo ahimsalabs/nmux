@@ -53,22 +53,22 @@ The current implementation is a Rust workspace:
 Use the Nix development shell for repo checks:
 
 ```sh
-nix develop path:$PWD -c make check
+nix develop . -c make check
 ```
 
-`make check` runs FlatBuffers schema validation and `cargo test --workspace`. For narrower iteration, prefer targeted `cargo test` commands inside the same `nix develop path:$PWD -c ...` wrapper, then run full `make check` before committing implementation changes.
+`make check` runs FlatBuffers schema validation and `cargo test --workspace`. For narrower iteration, prefer targeted `cargo test` commands inside the same `nix develop . -c ...` wrapper, then run full `make check` before committing implementation changes.
 
 If `schema/nmux.fbs` changes, regenerate bindings with:
 
 ```sh
-nix develop path:$PWD -c make generate-schema
+nix develop . -c make generate-schema
 ```
 
 The experimental backend Ghostty VT engine is feature-gated. Use this full
 feature-enabled package check when changing the optional path:
 
 ```sh
-nix develop path:$PWD -c make check-ghostty-vt
+nix develop . -c make check-ghostty-vt
 ```
 
 The target runs `nmux-core` and `nmux-cli` with `--features libghostty-vt`, not

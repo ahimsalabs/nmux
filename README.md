@@ -20,8 +20,8 @@ The current implementation is a Rust workspace with:
 ## Check
 
 ```sh
-nix develop path:$PWD -c make check
-nix develop path:$PWD -c make check-ghostty-vt
+nix develop . -c make check
+nix develop . -c make check-ghostty-vt
 ```
 
 ## Quick Smoke
@@ -29,8 +29,8 @@ nix develop path:$PWD -c make check-ghostty-vt
 Inspect the current CLI flags:
 
 ```sh
-nix develop path:$PWD -c cargo run --bin nmux -- --help
-nix develop path:$PWD -c cargo run --bin nmuxd -- --help
+nix develop . -c cargo run --bin nmux -- --help
+nix develop . -c cargo run --bin nmuxd -- --help
 ```
 
 `nmux --help` also calls out the current renderer limitation: the default prototype uses an interim text surface, not a VT-correct terminal emulator. That is a sequencing device while the local state-sync/live workflow stays fast. Backend `libghostty-vt` extraction is available behind an opt-in Cargo feature, separate from the later question of hydrating a frontend Ghostty renderer from nmux-owned state.
@@ -39,15 +39,15 @@ One-shot attach:
 
 ```sh
 rm -f /tmp/nmux.sock
-nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --one-shot --command "printf 'hello from pty\n'; cat >/dev/null"
-nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock
+nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --one-shot --command "printf 'hello from pty\n'; cat >/dev/null"
+nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock
 ```
 
 Bounded live attach:
 
 ```sh
-nix develop path:$PWD -c cargo run --bin nmuxd -- --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
-nix develop path:$PWD -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' --scrollback-start 1 --scrollback-count 4 --interval-ms 500
+nix develop . -c cargo run --bin nmuxd -- --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' --scrollback-start 1 --scrollback-count 4 --interval-ms 500
 ```
 
 Both binaries share a stable default socket path for the current user. They use `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` only when `XDG_RUNTIME_DIR` is a valid absolute path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Pass `--socket` on both sides when you want an isolated smoke-test socket.
@@ -70,16 +70,16 @@ Line-streamed live input:
 
 ```sh
 rm -f /tmp/nmux.sock
-nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
-printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin --interval-ms 500
+nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+printf 'ping\npong\n' | nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin --interval-ms 500
 ```
 
 Byte-streamed live input:
 
 ```sh
 rm -f /tmp/nmux.sock
-nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
-printf 'ping\npong\n' | nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin-bytes --interval-ms 500
+nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+printf 'ping\npong\n' | nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --stdin-bytes --interval-ms 500
 ```
 
 For interactive `--stdin-bytes`, Ctrl-] detaches the client.
@@ -90,8 +90,8 @@ Resize policy smoke:
 
 ```sh
 rm -f /tmp/nmux.sock
-nix develop path:$PWD -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-cycles 1 --resize-policy active-client --command "printf 'ready\n'; sleep 1"
-nix develop path:$PWD -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --no-input --iterations 1
+nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-cycles 1 --resize-policy active-client --command "printf 'ready\n'; sleep 1"
+nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --no-input --iterations 1
 ```
 
 Expected output includes `resize=active-client`.
