@@ -906,7 +906,7 @@ fn nmux_rejects_conflicting_frontend_modes() {
     );
     assert_nmux_rejects(
         &["--live", "--focus", "blurred"],
-        "nmux: --focus requires gained or lost",
+        "nmux: invalid value 'blurred' for '--focus <gained|lost>'",
     );
     assert_nmux_rejects(
         &["--live", "--key", "ping", "--focus", "gained"],

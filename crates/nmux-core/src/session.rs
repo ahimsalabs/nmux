@@ -42,12 +42,35 @@ impl AttachMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorRetryability {
+    Retryable,
+    NotRetryable,
+}
+
+impl ErrorRetryability {
+    fn as_bool(self) -> bool {
+        matches!(self, Self::Retryable)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputFrameContext<'a> {
     pub connection_id: &'a str,
     pub seq: u64,
     pub actor_id: &'a str,
     pub pane_id: &'a str,
     pub input_seq: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PasteInputSpec<'a> {
+    pub text: &'a str,
+    pub bracketed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FocusInputSpec {
+    pub focused: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -639,37 +662,29 @@ impl Session {
             .enumerate()
         {
             let runs = build_cell_runs(&mut builder, line_runs);
+            let row_metadata = RowStateMetadata {
+                semantic_prompt: surface
+                    .semantic_prompts
+                    .get(row)
+                    .copied()
+                    .unwrap_or(protocol::RowSemanticPrompt::None),
+                dirty: surface.dirty_rows.get(row).copied().unwrap_or(false),
+                kitty_virtual_placeholder: surface
+                    .kitty_placeholders
+                    .get(row)
+                    .copied()
+                    .unwrap_or(false),
+            };
             let row = protocol::SurfaceRow::create(
                 &mut builder,
                 &protocol::SurfaceRowArgs {
                     row: row as u32,
                     runs: Some(runs),
                     dirty_hash: stable_row_hash(line),
-                    row_state_hash: row_state_hash(
-                        line_runs,
-                        surface
-                            .semantic_prompts
-                            .get(row)
-                            .copied()
-                            .unwrap_or(protocol::RowSemanticPrompt::None),
-                        surface.dirty_rows.get(row).copied().unwrap_or(false),
-                        surface
-                            .kitty_placeholders
-                            .get(row)
-                            .copied()
-                            .unwrap_or(false),
-                    ),
-                    semantic_prompt: surface
-                        .semantic_prompts
-                        .get(row)
-                        .copied()
-                        .unwrap_or(protocol::RowSemanticPrompt::None),
-                    dirty: surface.dirty_rows.get(row).copied().unwrap_or(false),
-                    kitty_virtual_placeholder: surface
-                        .kitty_placeholders
-                        .get(row)
-                        .copied()
-                        .unwrap_or(false),
+                    row_state_hash: row_state_hash(line_runs, row_metadata),
+                    semantic_prompt: row_metadata.semantic_prompt,
+                    dirty: row_metadata.dirty,
+                    kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
                 },
             );
             row_offsets.push(row);
@@ -783,37 +798,29 @@ impl Session {
                     continue;
                 };
                 let runs = build_cell_runs(&mut builder, line_runs);
+                let row_metadata = RowStateMetadata {
+                    semantic_prompt: surface
+                        .semantic_prompts
+                        .get(row)
+                        .copied()
+                        .unwrap_or(protocol::RowSemanticPrompt::None),
+                    dirty: surface.dirty_rows.get(row).copied().unwrap_or(false),
+                    kitty_virtual_placeholder: surface
+                        .kitty_placeholders
+                        .get(row)
+                        .copied()
+                        .unwrap_or(false),
+                };
                 let row_update = protocol::RowUpdate::create(
                     &mut builder,
                     &protocol::RowUpdateArgs {
                         row: row as u32,
                         runs: Some(runs),
                         dirty_hash: stable_row_hash(line),
-                        row_state_hash: row_state_hash(
-                            line_runs,
-                            surface
-                                .semantic_prompts
-                                .get(row)
-                                .copied()
-                                .unwrap_or(protocol::RowSemanticPrompt::None),
-                            surface.dirty_rows.get(row).copied().unwrap_or(false),
-                            surface
-                                .kitty_placeholders
-                                .get(row)
-                                .copied()
-                                .unwrap_or(false),
-                        ),
-                        semantic_prompt: surface
-                            .semantic_prompts
-                            .get(row)
-                            .copied()
-                            .unwrap_or(protocol::RowSemanticPrompt::None),
-                        dirty: surface.dirty_rows.get(row).copied().unwrap_or(false),
-                        kitty_virtual_placeholder: surface
-                            .kitty_placeholders
-                            .get(row)
-                            .copied()
-                            .unwrap_or(false),
+                        row_state_hash: row_state_hash(line_runs, row_metadata),
+                        semantic_prompt: row_metadata.semantic_prompt,
+                        dirty: row_metadata.dirty,
+                        kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
                     },
                 );
                 row_offsets.push(row_update);
@@ -916,49 +923,35 @@ impl Session {
 
         let mut row_offsets = Vec::with_capacity(selected.len());
         for (offset, line) in selected.iter().enumerate() {
-            let runs = build_cell_runs(
-                &mut builder,
-                &scrollback.row_runs[start.saturating_add(offset)],
-            );
+            let row_index = start.saturating_add(offset);
+            let runs = build_cell_runs(&mut builder, &scrollback.row_runs[row_index]);
+            let row_metadata = RowStateMetadata {
+                semantic_prompt: scrollback
+                    .semantic_prompts
+                    .get(row_index)
+                    .copied()
+                    .unwrap_or(protocol::RowSemanticPrompt::None),
+                dirty: scrollback
+                    .dirty_rows
+                    .get(row_index)
+                    .copied()
+                    .unwrap_or(false),
+                kitty_virtual_placeholder: scrollback
+                    .kitty_placeholders
+                    .get(row_index)
+                    .copied()
+                    .unwrap_or(false),
+            };
             let row = protocol::ScrollbackRow::create(
                 &mut builder,
                 &protocol::ScrollbackRowArgs {
                     line: start_line + offset as u64,
                     runs: Some(runs),
                     dirty_hash: stable_row_hash(line),
-                    row_state_hash: row_state_hash(
-                        &scrollback.row_runs[start.saturating_add(offset)],
-                        scrollback
-                            .semantic_prompts
-                            .get(start.saturating_add(offset))
-                            .copied()
-                            .unwrap_or(protocol::RowSemanticPrompt::None),
-                        scrollback
-                            .dirty_rows
-                            .get(start.saturating_add(offset))
-                            .copied()
-                            .unwrap_or(false),
-                        scrollback
-                            .kitty_placeholders
-                            .get(start.saturating_add(offset))
-                            .copied()
-                            .unwrap_or(false),
-                    ),
-                    semantic_prompt: scrollback
-                        .semantic_prompts
-                        .get(start.saturating_add(offset))
-                        .copied()
-                        .unwrap_or(protocol::RowSemanticPrompt::None),
-                    dirty: scrollback
-                        .dirty_rows
-                        .get(start.saturating_add(offset))
-                        .copied()
-                        .unwrap_or(false),
-                    kitty_virtual_placeholder: scrollback
-                        .kitty_placeholders
-                        .get(start.saturating_add(offset))
-                        .copied()
-                        .unwrap_or(false),
+                    row_state_hash: row_state_hash(&scrollback.row_runs[row_index], row_metadata),
+                    semantic_prompt: row_metadata.semantic_prompt,
+                    dirty: row_metadata.dirty,
+                    kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
                 },
             );
             row_offsets.push(row);
@@ -1142,9 +1135,9 @@ impl Session {
         seq: u64,
         code: protocol::ErrorCode,
         message: &str,
-        retryable: bool,
+        retryability: ErrorRetryability,
     ) -> Vec<u8> {
-        self.error_frame_with_context(connection_id, seq, code, message, retryable, None, 0)
+        self.error_frame_with_context(connection_id, seq, code, message, retryability, None, 0)
     }
 
     pub fn error_frame_with_context(
@@ -1153,7 +1146,7 @@ impl Session {
         seq: u64,
         code: protocol::ErrorCode,
         message: &str,
-        retryable: bool,
+        retryability: ErrorRetryability,
         pane_id: Option<&str>,
         input_seq: u64,
     ) -> Vec<u8> {
@@ -1166,7 +1159,7 @@ impl Session {
             &protocol::ErrorArgs {
                 code,
                 message: Some(message),
-                retryable,
+                retryable: retryability.as_bool(),
                 pane_id,
                 input_seq,
             },
@@ -1382,32 +1375,27 @@ impl Session {
 
     pub fn paste_input_frame(
         &self,
-        connection_id: &str,
-        seq: u64,
-        actor_id: &str,
-        pane_id: &str,
-        input_seq: u64,
-        text: &str,
-        bracketed: bool,
+        context: InputFrameContext<'_>,
+        paste_input: PasteInputSpec<'_>,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
 
-        let text = builder.create_string(text);
+        let text = builder.create_string(paste_input.text);
         let paste = protocol::PasteInput::create(
             &mut builder,
             &protocol::PasteInputArgs {
                 text_utf8: Some(text),
-                bracketed,
+                bracketed: paste_input.bracketed,
             },
         );
-        let pane_id = builder.create_string(pane_id);
-        let actor_id = builder.create_string(actor_id);
+        let pane_id = builder.create_string(context.pane_id);
+        let actor_id = builder.create_string(context.actor_id);
         let input = protocol::InputEvent::create(
             &mut builder,
             &protocol::InputEventArgs {
                 pane_id: Some(pane_id),
                 actor_id: Some(actor_id),
-                input_seq,
+                input_seq: context.input_seq,
                 kind: protocol::InputKind::Paste,
                 key: None,
                 mouse: None,
@@ -1418,14 +1406,14 @@ impl Session {
         );
 
         let envelope_session_id = builder.create_string(&self.id);
-        let connection_id = builder.create_string(connection_id);
+        let connection_id = builder.create_string(context.connection_id);
         let envelope = protocol::Envelope::create(
             &mut builder,
             &protocol::EnvelopeArgs {
                 protocol_version: PROTOCOL_VERSION,
                 session_id: Some(envelope_session_id),
                 connection_id: Some(connection_id),
-                seq,
+                seq: context.seq,
                 ack: 0,
                 sent_at_mono_ms: 0,
                 body_type: protocol::EnvelopeBody::InputEvent,
@@ -1439,25 +1427,25 @@ impl Session {
 
     pub fn focus_input_frame(
         &self,
-        connection_id: &str,
-        seq: u64,
-        actor_id: &str,
-        pane_id: &str,
-        input_seq: u64,
-        focused: bool,
+        context: InputFrameContext<'_>,
+        focus_input: FocusInputSpec,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
 
-        let focus =
-            protocol::FocusInput::create(&mut builder, &protocol::FocusInputArgs { focused });
-        let pane_id = builder.create_string(pane_id);
-        let actor_id = builder.create_string(actor_id);
+        let focus = protocol::FocusInput::create(
+            &mut builder,
+            &protocol::FocusInputArgs {
+                focused: focus_input.focused,
+            },
+        );
+        let pane_id = builder.create_string(context.pane_id);
+        let actor_id = builder.create_string(context.actor_id);
         let input = protocol::InputEvent::create(
             &mut builder,
             &protocol::InputEventArgs {
                 pane_id: Some(pane_id),
                 actor_id: Some(actor_id),
-                input_seq,
+                input_seq: context.input_seq,
                 kind: protocol::InputKind::Focus,
                 key: None,
                 mouse: None,
@@ -1468,14 +1456,14 @@ impl Session {
         );
 
         let envelope_session_id = builder.create_string(&self.id);
-        let connection_id = builder.create_string(connection_id);
+        let connection_id = builder.create_string(context.connection_id);
         let envelope = protocol::Envelope::create(
             &mut builder,
             &protocol::EnvelopeArgs {
                 protocol_version: PROTOCOL_VERSION,
                 session_id: Some(envelope_session_id),
                 connection_id: Some(connection_id),
-                seq,
+                seq: context.seq,
                 ack: 0,
                 sent_at_mono_ms: 0,
                 body_type: protocol::EnvelopeBody::InputEvent,
@@ -1897,12 +1885,14 @@ fn stable_row_hash(line: &str) -> u64 {
     hash
 }
 
-fn row_state_hash(
-    runs: &[CellRun],
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RowStateMetadata {
     semantic_prompt: protocol::RowSemanticPrompt,
     dirty: bool,
     kitty_virtual_placeholder: bool,
-) -> u64 {
+}
+
+fn row_state_hash(runs: &[CellRun], metadata: RowStateMetadata) -> u64 {
     let mut hasher = StableHasher::new();
     for run in runs {
         run.text.hash(&mut hasher);
@@ -1912,9 +1902,9 @@ fn row_state_hash(
         run.hyperlink_id.hash(&mut hasher);
         run.semantic_content.0.hash(&mut hasher);
     }
-    semantic_prompt.0.hash(&mut hasher);
-    dirty.hash(&mut hasher);
-    kitty_virtual_placeholder.hash(&mut hasher);
+    metadata.semantic_prompt.0.hash(&mut hasher);
+    metadata.dirty.hash(&mut hasher);
+    metadata.kitty_virtual_placeholder.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -2029,8 +2019,8 @@ mod tests {
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
     use super::{
-        AttachMode, Cursor, InputFrameContext, MouseInputSpec, ScrollbackFetchSpec,
-        ScrollbackRange, Session,
+        AttachMode, Cursor, FocusInputSpec, InputFrameContext, MouseInputSpec, PasteInputSpec,
+        ScrollbackFetchSpec, ScrollbackRange, Session,
     };
 
     fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -3075,8 +3065,19 @@ mod tests {
 
     #[test]
     fn paste_input_frame_decodes_to_input_event() {
-        let frame = Session::initial()
-            .paste_input_frame("conn-1", 9, "actor-1", "pane-1", 3, "hello\n", true);
+        let frame = Session::initial().paste_input_frame(
+            InputFrameContext {
+                connection_id: "conn-1",
+                seq: 9,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 3,
+            },
+            PasteInputSpec {
+                text: "hello\n",
+                bracketed: true,
+            },
+        );
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
 
         assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);
@@ -3098,7 +3099,16 @@ mod tests {
 
     #[test]
     fn focus_input_frame_decodes_to_input_event() {
-        let frame = Session::initial().focus_input_frame("conn-1", 9, "actor-1", "pane-1", 3, true);
+        let frame = Session::initial().focus_input_frame(
+            InputFrameContext {
+                connection_id: "conn-1",
+                seq: 9,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 3,
+            },
+            FocusInputSpec { focused: true },
+        );
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
 
         assert_eq!(envelope.protocol_version(), PROTOCOL_VERSION);

@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use clap::{ArgAction, Parser};
+use clap::{ArgAction, Parser, ValueEnum};
 use nmux_cli::local;
 use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
@@ -1579,12 +1579,7 @@ struct RawArgs {
     key_modifiers: Option<u32>,
     #[arg(long = "paste", value_name = "TEXT", allow_hyphen_values = true)]
     paste_text: Option<String>,
-    #[arg(
-        long = "focus",
-        value_name = "gained|lost",
-        value_parser = parse_focus_event,
-        allow_hyphen_values = true
-    )]
+    #[arg(long = "focus", value_name = "gained|lost", allow_hyphen_values = true)]
     focus_event: Option<FocusEvent>,
     #[arg(
         long = "mouse",
@@ -1664,14 +1659,12 @@ struct RawArgs {
     #[arg(
         long = "local-echo",
         value_name = "off|tty",
-        value_parser = parse_local_echo,
         allow_hyphen_values = true
     )]
     local_echo: Option<LocalEcho>,
     #[arg(
         long = "detach-key",
         value_name = "ctrl-]|none",
-        value_parser = parse_detach_key,
         allow_hyphen_values = true
     )]
     detach_key: Option<DetachKey>,
@@ -3088,14 +3081,15 @@ Examples:
 "
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum LocalEcho {
     Off,
     Tty,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum DetachKey {
+    #[value(name = "ctrl-]")]
     CtrlRightBracket,
     None,
 }
@@ -3109,7 +3103,7 @@ impl DetachKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum FocusEvent {
     Gained,
     Lost,
@@ -3132,6 +3126,7 @@ struct MouseEvent {
     modifiers: u32,
 }
 
+#[cfg(test)]
 fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
     match value {
         "off" => Ok(LocalEcho::Off),
@@ -3140,6 +3135,7 @@ fn parse_local_echo(value: &str) -> Result<LocalEcho, &'static str> {
     }
 }
 
+#[cfg(test)]
 fn parse_detach_key(value: &str) -> Result<DetachKey, &'static str> {
     match value {
         "ctrl-]" => Ok(DetachKey::CtrlRightBracket),
@@ -3148,6 +3144,7 @@ fn parse_detach_key(value: &str) -> Result<DetachKey, &'static str> {
     }
 }
 
+#[cfg(test)]
 fn parse_focus_event(value: &str) -> Result<FocusEvent, &'static str> {
     match value {
         "gained" => Ok(FocusEvent::Gained),

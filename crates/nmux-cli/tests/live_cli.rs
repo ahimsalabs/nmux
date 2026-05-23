@@ -5881,14 +5881,19 @@ fn assert_styled_wide_state(state: &str, label: &str) {
     let styled_row = state_row_index(state, "72656420706c61696e")
         .unwrap_or_else(|| panic!("{label} state missing styled row:\n{state}"));
     assert!(
-        state_contains_run_with_style_and_width(state, styled_row, "726564", "010101", true)
-            && state_contains_run_with_style_and_width(
-                state,
-                styled_row,
-                "20706c61696e",
-                "010101010101",
-                false,
-            ),
+        state_contains_run_with_style_and_width(
+            state,
+            styled_row,
+            "726564",
+            "010101",
+            StyleExpectation::Styled,
+        ) && state_contains_run_with_style_and_width(
+            state,
+            styled_row,
+            "20706c61696e",
+            "010101010101",
+            StyleExpectation::Default,
+        ),
         "{label} state missing styled/default run split:\n{state}"
     );
 
@@ -5900,7 +5905,7 @@ fn assert_styled_wide_state(state: &str, label: &str) {
             wide_row,
             "776964653ae4b8ad",
             "010101010102",
-            false,
+            StyleExpectation::Default,
         ),
         "{label} state missing wide-cell width bytes:\n{state}"
     );
@@ -5943,12 +5948,19 @@ fn state_row_index<'a>(state: &'a str, text_hex: &str) -> Option<&'a str> {
 }
 
 #[cfg(feature = "libghostty-vt")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StyleExpectation {
+    Styled,
+    Default,
+}
+
+#[cfg(feature = "libghostty-vt")]
 fn state_contains_run_with_style_and_width(
     state: &str,
     row: &str,
     text_hex: &str,
     width_hex: &str,
-    styled: bool,
+    style: StyleExpectation,
 ) -> bool {
     state.lines().any(|line| {
         let parts = line.split_whitespace().collect::<Vec<_>>();
@@ -5963,7 +5975,10 @@ fn state_contains_run_with_style_and_width(
         let Ok(style_id) = parts[4].parse::<u32>() else {
             return false;
         };
-        (styled && style_id != 0) || (!styled && style_id == 0)
+        match style {
+            StyleExpectation::Styled => style_id != 0,
+            StyleExpectation::Default => style_id == 0,
+        }
     })
 }
 

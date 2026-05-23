@@ -13,8 +13,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{
-    Actor, AttachMode, InputFrameContext, MouseInputSpec, ScrollbackFetchSpec, ScrollbackRange,
-    Session,
+    Actor, AttachMode, ErrorRetryability, FocusInputSpec, InputFrameContext, MouseInputSpec,
+    PasteInputSpec, ScrollbackFetchSpec, ScrollbackRange, Session,
 };
 use nmux_core::terminal::{
     KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines,
@@ -1098,7 +1098,7 @@ fn write_protocol_error(
         *seq,
         code,
         message,
-        false,
+        ErrorRetryability::NotRetryable,
         pane_id,
         input_seq,
     );
@@ -1560,13 +1560,17 @@ pub fn send_paste_input_with_sequence(
     text: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().paste_input_frame(
-        "local-client",
-        sequence.next_envelope_seq(),
-        "local-actor",
-        pane_id,
-        sequence.next_input_seq(),
-        text,
-        false,
+        InputFrameContext {
+            connection_id: "local-client",
+            seq: sequence.next_envelope_seq(),
+            actor_id: "local-actor",
+            pane_id,
+            input_seq: sequence.next_input_seq(),
+        },
+        PasteInputSpec {
+            text,
+            bracketed: false,
+        },
     );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
@@ -1588,12 +1592,14 @@ pub fn send_focus_input_with_sequence(
     focused: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame = Session::initial().focus_input_frame(
-        "local-client",
-        sequence.next_envelope_seq(),
-        "local-actor",
-        pane_id,
-        sequence.next_input_seq(),
-        focused,
+        InputFrameContext {
+            connection_id: "local-client",
+            seq: sequence.next_envelope_seq(),
+            actor_id: "local-actor",
+            pane_id,
+            input_seq: sequence.next_input_seq(),
+        },
+        FocusInputSpec { focused },
     );
     wire::write_default_frame(stream, &frame)?;
     Ok(())
@@ -6877,9 +6883,11 @@ mod tests {
             dirty_hash: stable_test_row_hash(text),
             row_state_hash: test_row_state_hash(
                 &[CellRunSummary::plain(text)],
-                protocol::RowSemanticPrompt::None,
-                false,
-                false,
+                TestRowStateMetadata {
+                    semantic_prompt: protocol::RowSemanticPrompt::None,
+                    dirty: false,
+                    kitty_virtual_placeholder: false,
+                },
             ),
             semantic_prompt: protocol::RowSemanticPrompt::None,
             dirty: false,
@@ -6896,12 +6904,14 @@ mod tests {
         hash
     }
 
-    fn test_row_state_hash(
-        runs: &[CellRunSummary],
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct TestRowStateMetadata {
         semantic_prompt: protocol::RowSemanticPrompt,
         dirty: bool,
         kitty_virtual_placeholder: bool,
-    ) -> u64 {
+    }
+
+    fn test_row_state_hash(runs: &[CellRunSummary], metadata: TestRowStateMetadata) -> u64 {
         let mut hasher = TestStableHasher::new();
         for run in runs {
             run.text.hash(&mut hasher);
@@ -6911,9 +6921,9 @@ mod tests {
             run.hyperlink_id.hash(&mut hasher);
             run.semantic_content.0.hash(&mut hasher);
         }
-        semantic_prompt.0.hash(&mut hasher);
-        dirty.hash(&mut hasher);
-        kitty_virtual_placeholder.hash(&mut hasher);
+        metadata.semantic_prompt.0.hash(&mut hasher);
+        metadata.dirty.hash(&mut hasher);
+        metadata.kitty_virtual_placeholder.hash(&mut hasher);
         hasher.finish()
     }
 
@@ -13365,7 +13375,7 @@ mod tests {
             3,
             protocol::ErrorCode::Unknown,
             "unsupported input",
-            false,
+            ErrorRetryability::NotRetryable,
         );
         let error = error_summary_from_frame(&frame).expect("error summary");
 
@@ -14071,13 +14081,17 @@ mod tests {
     #[test]
     fn decodes_plain_paste_input_from_client_frame() {
         let frame = Session::initial().paste_input_frame(
-            "local-client",
-            3,
-            "actor-1",
-            "pane-1",
-            2,
-            "hello\n",
-            false,
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 3,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 2,
+            },
+            PasteInputSpec {
+                text: "hello\n",
+                bracketed: false,
+            },
         );
         let input = input_summary_from_frame(&frame).expect("input summary");
 
@@ -14102,13 +14116,17 @@ mod tests {
     #[test]
     fn decodes_bracketed_paste_input_from_client_frame() {
         let frame = Session::initial().paste_input_frame(
-            "local-client",
-            3,
-            "actor-1",
-            "pane-1",
-            2,
-            "hello\n",
-            true,
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 3,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 2,
+            },
+            PasteInputSpec {
+                text: "hello\n",
+                bracketed: true,
+            },
         );
         let input = input_summary_from_frame(&frame).expect("input summary");
 
@@ -14121,13 +14139,17 @@ mod tests {
     fn paste_input_wrapping_uses_daemon_owned_mode() {
         let mut session = Session::initial();
         let bracketed_client_frame = Session::initial().paste_input_frame(
-            "local-client",
-            3,
-            "actor-1",
-            "pane-1",
-            2,
-            "hello\n",
-            true,
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 3,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 2,
+            },
+            PasteInputSpec {
+                text: "hello\n",
+                bracketed: true,
+            },
         );
         let input =
             input_summary_from_frame(&bracketed_client_frame).expect("bracketed input summary");
@@ -14150,14 +14172,30 @@ mod tests {
 
     #[test]
     fn decodes_focus_input_from_client_frame() {
-        let gained =
-            Session::initial().focus_input_frame("local-client", 3, "actor-1", "pane-1", 2, true);
+        let gained = Session::initial().focus_input_frame(
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 3,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 2,
+            },
+            FocusInputSpec { focused: true },
+        );
         let gained = input_summary_from_frame(&gained).expect("focus gained summary");
         assert_eq!(gained.bytes, b"\x1b[I".to_vec());
         assert!(gained.requires_focus_reporting);
 
-        let lost =
-            Session::initial().focus_input_frame("local-client", 3, "actor-1", "pane-1", 3, false);
+        let lost = Session::initial().focus_input_frame(
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 3,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 3,
+            },
+            FocusInputSpec { focused: false },
+        );
         let lost = input_summary_from_frame(&lost).expect("focus lost summary");
         assert_eq!(lost.bytes, b"\x1b[O".to_vec());
         assert!(lost.requires_focus_reporting);
@@ -14486,13 +14524,17 @@ mod tests {
     #[test]
     fn rejects_bracketed_paste_terminator_in_paste_text() {
         let frame = Session::initial().paste_input_frame(
-            "local-client",
-            3,
-            "actor-1",
-            "pane-1",
-            2,
-            "bad\x1b[201~paste",
-            false,
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 3,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 2,
+            },
+            PasteInputSpec {
+                text: "bad\x1b[201~paste",
+                bracketed: false,
+            },
         );
         let input = input_summary_from_frame(&frame).expect("input summary");
         let err = input
@@ -14666,9 +14708,11 @@ mod tests {
                     dirty_hash: stable_test_row_hash("styled字"),
                     row_state_hash: test_row_state_hash(
                         &styled_runs,
-                        protocol::RowSemanticPrompt::None,
-                        false,
-                        false,
+                        TestRowStateMetadata {
+                            semantic_prompt: protocol::RowSemanticPrompt::None,
+                            dirty: false,
+                            kitty_virtual_placeholder: false,
+                        },
                     ),
                     runs: styled_runs,
                     semantic_prompt: protocol::RowSemanticPrompt::None,
