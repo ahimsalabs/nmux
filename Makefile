@@ -151,6 +151,23 @@ promotion-evidence-bundle:
 		} > "$$vcs_status"; \
 		rm -f "$$git_status_file"; \
 	}; \
+	write_promotion_open_work() { \
+		promotion_open_work="$$bundle_dir/PROMOTION_OPEN_WORK.txt"; \
+		{ \
+			printf 'nmux native VT promotion open work\n'; \
+			printf 'generated_at_utc=%s\n' "$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+			printf 'promotion_decision=not-promoted\n'; \
+			printf 'default_terminal_engine=interim-text\n'; \
+			printf 'libghostty_vt_status=opt-in\n'; \
+			printf 'open_work_scope=%s\n' 'known blockers that must be resolved before libghostty-vt can become the default engine or a regular required CI gate'; \
+			printf 'open_work_ci=%s\n' 'manual promotion evidence bundle and downloaded-artifact verifier jobs still need recorded CI runs'; \
+			printf 'open_work_platforms=%s\n' 'more supported local systems and at least one full cold-checkout or dependency-fetch run still need timing evidence'; \
+			printf 'open_work_non_nix=%s\n' 'non-Nix toolchain checklist still needs a successful platform-specific validation run'; \
+			printf 'open_work_source_policy=%s\n' 'packaged/default build source policy still needs a decision and evidence'; \
+			printf 'open_work_packaging=%s\n' 'native VT binary distribution expectations still need supported-target, runtime-library, signing, provenance, and release-check decisions'; \
+			printf 'open_work_frontend=%s\n' 'frontend Ghostty renderer hydration remains separate from backend terminal-state extraction'; \
+		} > "$$promotion_open_work"; \
+	}; \
 	write_summary() { \
 		completed_utc="$$1"; \
 		elapsed_seconds="$$2"; \
@@ -177,6 +194,7 @@ promotion-evidence-bundle:
 			printf 'GIT_CONFIG_GLOBAL=%s\n' "$${GIT_CONFIG_GLOBAL:-unset}"; \
 			printf 'working_tree_status=%s\n' "$$vcs_worktree_status"; \
 			printf 'vcs_status=%s\n' 'VCS_STATUS.txt'; \
+			printf 'promotion_open_work=%s\n' 'PROMOTION_OPEN_WORK.txt'; \
 			printf 'cache_state=%s\n' 'CACHE_STATE.txt'; \
 			printf 'run_log=%s\n' 'RUN.log'; \
 			printf 'toolchain=%s\n' 'TOOLCHAIN.txt'; \
@@ -203,6 +221,7 @@ promotion-evidence-bundle:
 				OFFLINE_PROBE.txt \
 				PACKAGE_ARCHIVE.tar.gz \
 				PACKAGE_PROVENANCE.txt \
+				PROMOTION_OPEN_WORK.txt \
 				RUN.log \
 				SOURCE_FETCH.txt \
 				SUMMARY.txt \
@@ -216,6 +235,7 @@ promotion-evidence-bundle:
 	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
 	write_cache_state; \
 	write_vcs_status; \
+	write_promotion_open_work; \
 	write_summary "$$completed_utc" "$$((end_epoch - start_epoch))"; \
 	write_manifest; \
 	$(MAKE) --no-print-directory PROMOTION_EVIDENCE_DIR="$$bundle_dir" promotion-evidence-verify; \
@@ -223,6 +243,7 @@ promotion-evidence-bundle:
 	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
 	write_cache_state; \
 	write_vcs_status; \
+	write_promotion_open_work; \
 	write_summary "$$completed_utc" "$$((end_epoch - start_epoch))"; \
 	write_manifest; \
 	$(MAKE) --no-print-directory PROMOTION_EVIDENCE_DIR="$$bundle_dir" promotion-evidence-verify; \
@@ -239,6 +260,7 @@ promotion-evidence-verify:
 	source_fetch="$$bundle_dir/SOURCE_FETCH.txt"; \
 	offline_probe="$$bundle_dir/OFFLINE_PROBE.txt"; \
 	package_provenance="$$bundle_dir/PACKAGE_PROVENANCE.txt"; \
+	promotion_open_work="$$bundle_dir/PROMOTION_OPEN_WORK.txt"; \
 	cargo_tree="$$bundle_dir/CARGO_TREE.txt"; \
 	archive_file="$$bundle_dir/PACKAGE_ARCHIVE.tar.gz"; \
 	archive_sha_file="$$bundle_dir/ARCHIVE.sha256"; \
@@ -283,6 +305,7 @@ promotion-evidence-verify:
 	require_file "$$source_fetch"; \
 	require_file "$$offline_probe"; \
 	require_file "$$package_provenance"; \
+	require_file "$$promotion_open_work"; \
 	require_file "$$cargo_tree"; \
 	require_file "$$archive_file"; \
 	require_file "$$archive_sha_file"; \
@@ -299,6 +322,7 @@ promotion-evidence-verify:
 			OFFLINE_PROBE.txt \
 			PACKAGE_ARCHIVE.tar.gz \
 			PACKAGE_PROVENANCE.txt \
+			PROMOTION_OPEN_WORK.txt \
 			RUN.log \
 			SOURCE_FETCH.txt \
 			SUMMARY.txt \
@@ -335,6 +359,7 @@ promotion-evidence-verify:
 	require_line "$$summary" '^GIT_CONFIG_GLOBAL=.+$$' 'GIT_CONFIG_GLOBAL field'; \
 	require_line "$$summary" '^working_tree_status=(clean|dirty|unknown)$$' 'working tree status'; \
 	require_exact "$$summary" 'vcs_status=VCS_STATUS.txt' 'VCS status path'; \
+	require_exact "$$summary" 'promotion_open_work=PROMOTION_OPEN_WORK.txt' 'promotion open work path'; \
 	require_exact "$$summary" 'cache_state=CACHE_STATE.txt' 'cache state path'; \
 	require_exact "$$summary" 'run_log=RUN.log' 'run log path'; \
 	require_exact "$$summary" 'toolchain=TOOLCHAIN.txt' 'toolchain path'; \
@@ -421,6 +446,18 @@ promotion-evidence-verify:
 	require_exact "$$vcs_status" '[jj_status]' 'VCS jj status section'; \
 	vcs_worktree_status="$$(awk -F= '/^git_status_porcelain=/{print $$2; exit}' "$$vcs_status")"; \
 	require_exact "$$summary" "working_tree_status=$$vcs_worktree_status" 'summary working tree status matches VCS artifact'; \
+	require_exact "$$promotion_open_work" 'nmux native VT promotion open work' 'promotion open work title'; \
+	require_line "$$promotion_open_work" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'promotion open work timestamp'; \
+	require_exact "$$promotion_open_work" 'promotion_decision=not-promoted' 'promotion decision'; \
+	require_exact "$$promotion_open_work" 'default_terminal_engine=interim-text' 'default terminal engine'; \
+	require_exact "$$promotion_open_work" 'libghostty_vt_status=opt-in' 'libghostty-vt opt-in status'; \
+	require_line "$$promotion_open_work" '^open_work_scope=.+$$' 'promotion open work scope'; \
+	require_line "$$promotion_open_work" '^open_work_ci=.+$$' 'promotion open work CI gap'; \
+	require_line "$$promotion_open_work" '^open_work_platforms=.+$$' 'promotion open work platform gap'; \
+	require_line "$$promotion_open_work" '^open_work_non_nix=.+$$' 'promotion open work non-Nix gap'; \
+	require_line "$$promotion_open_work" '^open_work_source_policy=.+$$' 'promotion open work source-policy gap'; \
+	require_line "$$promotion_open_work" '^open_work_packaging=.+$$' 'promotion open work packaging gap'; \
+	require_line "$$promotion_open_work" '^open_work_frontend=.+$$' 'promotion open work frontend gap'; \
 	printf 'promotion_evidence_verified=%s\n' "$$summary"
 
 source-fetch-provenance-sample: toolchain-info

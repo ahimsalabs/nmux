@@ -106,8 +106,9 @@ packaging/archive runtime results.
 `make promotion-evidence-bundle` runs the local sample and gathers
 `RUN.log`, `TOOLCHAIN.txt`, `SOURCE_FETCH.txt`, `OFFLINE_PROBE.txt`,
 `PACKAGE_PROVENANCE.txt`, `CARGO_TREE.txt`, `PACKAGE_ARCHIVE.tar.gz`,
-`ARCHIVE.sha256`, `CACHE_STATE.txt`, `VCS_STATUS.txt`, `SUMMARY.txt`, and
-`BUNDLE_MANIFEST.txt` under `target/promotion-evidence` for easier
+`ARCHIVE.sha256`, `CACHE_STATE.txt`, `VCS_STATUS.txt`,
+`PROMOTION_OPEN_WORK.txt`, `SUMMARY.txt`, and `BUNDLE_MANIFEST.txt` under
+`target/promotion-evidence` for easier
 transcription into the promotion tracker or manual CI evidence records.
 `ARCHIVE.sha256` names `PACKAGE_ARCHIVE.tar.gz`, not the original build-tree
 archive path, so copied or downloaded bundles stay self-contained.
@@ -120,10 +121,11 @@ environment values and directory presence for Nix, Cargo, target, packaging,
 and source-fetch paths; classify cold, warm, restored, or unknown cache history
 from that artifact plus CI/cache setup context. `VCS_STATUS.txt` records the
 Git revision, Git working-tree status, and optional `jj status` output observed
-when the bundle was generated. `BUNDLE_MANIFEST.txt` records SHA-256 hashes for
-the evidence files in the bundle using stable relative artifact names, and
-`SUMMARY.txt` records bundle artifacts by those same relative names so copied or
-downloaded bundles remain verifiable.
+when the bundle was generated. `PROMOTION_OPEN_WORK.txt` records the known
+blockers that still keep `libghostty-vt` opt-in. `BUNDLE_MANIFEST.txt` records
+SHA-256 hashes for the evidence files in the bundle using stable relative
+artifact names, and `SUMMARY.txt` records bundle artifacts by those same
+relative names so copied or downloaded bundles remain verifiable.
 It runs `make promotion-evidence-verify` before printing the artifact list.
 Run `make promotion-evidence-verify` directly when reviewing an existing bundle
 without regenerating the native build and packaging sample; it validates the

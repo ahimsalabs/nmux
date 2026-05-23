@@ -78,12 +78,14 @@ sample and gathers the run log, toolchain output, bundle start/completion
 timestamps plus elapsed duration, extracted `time -p make check-all` values,
 source-fetch report, offline probe report, package provenance, cargo tree,
 package archive, archive checksum, observed cache-state report, VCS status
-report, and bundle artifact manifest under `target/promotion-evidence`, then runs
+report, open-work snapshot, and bundle artifact manifest under
+`target/promotion-evidence`, then runs
 `make promotion-evidence-verify`. Run the verifier directly to check an
 existing bundle without rebuilding the native VT package; `ARCHIVE.sha256`
 names `PACKAGE_ARCHIVE.tar.gz`, and the verifier validates those bundled
 archive bytes through `make packaging-archive-verify`. The verifier also checks
-that `SUMMARY.txt` matches the recorded `VCS_STATUS.txt` working-tree status.
+that `SUMMARY.txt` matches the recorded `VCS_STATUS.txt` working-tree status
+and names the bundled `PROMOTION_OPEN_WORK.txt` snapshot.
 Pass
 `PROMOTION_EVIDENCE_DIR=/path/to/artifact` for a downloaded bundle outside the
 default `target/promotion-evidence` path.
