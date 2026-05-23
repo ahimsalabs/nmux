@@ -41,3 +41,10 @@ jobs:
             experimental-features = nix-command flakes
       - name: Promotion evidence bundle
         run: nix develop . -c make promotion-evidence-bundle
+      - name: Upload promotion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmux-promotion-evidence
+          path: target/promotion-evidence
+          if-no-files-found: warn

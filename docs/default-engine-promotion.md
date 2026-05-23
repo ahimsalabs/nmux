@@ -64,8 +64,9 @@ engine or a regular CI requirement.
   should use the default gate, the opt-in terminal-correctness gate, and the
   combined promotion-evidence gate.
 - [CI notes](ci.md) document the required GitHub Actions default-engine gate,
-  the manual promotion evidence bundle job, and the fields required when
-  recording CI promotion evidence here.
+  the manual promotion evidence bundle job, the uploaded
+  `nmux-promotion-evidence` artifact, and the fields required when recording CI
+  promotion evidence here.
 - [ADR 0026](adr/0026-native-vt-ci-promotion-criteria.md) defines the criteria
   a later decision must satisfy before native VT becomes regular or required CI.
 - The Makefile performs local tool preflight checks for `cargo`, `flatc`
@@ -121,8 +122,9 @@ engine or a regular CI requirement.
   promotion evidence. A cold-target sample clears only the Rust target
   directory and is not full cold-checkout evidence.
 - A GitHub Actions workflow now runs `make check` for pull requests and pushes
-  to `main`; the `make promotion-evidence-bundle` job is manual and must be run
-  before any CI promotion evidence is recorded here.
+  to `main`; the `make promotion-evidence-bundle` job is manual, uploads the
+  `nmux-promotion-evidence` artifact, and must be run before any CI promotion
+  evidence is recorded here.
 - ADR 0018 and ADR 0023 keep the native build out of the default development
   loop until the remaining evidence in this tracker is gathered.
 
@@ -200,8 +202,8 @@ multi-platform evidence.
 No manual GitHub Actions promotion evidence bundle run has been recorded yet. When
 one is run, record it here with the field set in [CI notes](ci.md): workflow
 run, git revision, runner, toolchain, source mode, cache state, timings,
-source-fetch provenance, packaging/archive SHA-256, runtime smoke result,
-outcome, and follow-up.
+source-fetch provenance, uploaded artifact, packaging/archive SHA-256, runtime
+smoke result, outcome, and follow-up.
 
 | Date | Workflow Run | Runner | Command | Result |
 | --- | --- | --- | --- | --- |
