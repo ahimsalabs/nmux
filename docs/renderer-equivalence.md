@@ -1,0 +1,66 @@
+# Renderer Equivalence Milestone
+
+Status: Tracking.
+
+Last reviewed: 2026-05-23.
+
+This milestone gates stronger user-facing renderer claims. It sits between the
+M13 opt-in `libghostty-vt` backend extraction milestone and any later claim that
+nmux has a default-ready VT-correct renderer or frontend Ghostty hydration path.
+
+## Current Decision
+
+- The default user-visible renderer remains the interim text surface.
+- The opt-in `libghostty-vt` engine is terminal-state extraction evidence, not
+  renderer equivalence evidence by itself.
+- Frontend Ghostty hydration remains an upstream/API question and must not use
+  client-side raw PTY replay as its source of truth.
+- Default-engine promotion evidence must not be described as renderer
+  equivalence until this milestone has passing evidence.
+
+## Goal
+
+Prove that nmux can render server-owned terminal state with user-visible
+fidelity close enough to justify changing default-renderer or frontend claims.
+The proof must compare nmux-rendered state against a trusted terminal rendering
+path for realistic terminal workloads, while keeping the daemon as the owner of
+terminal state.
+
+## Required Evidence
+
+- Fixture corpus: representative terminal workloads covering shell prompts,
+  command output, cursor movement, alternate screen programs, color/style
+  regions, wide and combining graphemes, hyperlinks, bracketed paste mode,
+  mouse/focus modes, resize/reflow, scrollback, and metadata-only changes.
+- Oracle renderer: a documented trusted rendering path for the same workloads,
+  such as Ghostty/libghostty render output or another explicitly accepted
+  reference. The oracle must not be copied into nmux if its license is
+  incompatible.
+- Comparison harness: a repeatable command that runs the corpus through nmux
+  server-owned state and the oracle renderer, then reports structured diffs.
+- Tolerance policy: explicit rules for accepted differences, including font
+  shaping, ambiguous-width policy, terminal theme defaults, cursor blink timing,
+  image protocol omissions, and withheld protocol objects.
+- Regression gate: a focused local check that can run before default-renderer
+  or frontend claim changes, plus guidance for when the heavier renderer
+  equivalence corpus is required.
+- User-facing claim map: documented wording for what nmux can and cannot claim
+  after the evidence passes.
+
+## Open Questions
+
+- Which renderer is the first oracle: Ghostty/libghostty, a screenshot-based
+  Ghostty run, a serialized libghostty render-state comparison, or a smaller
+  purpose-built reference harness?
+- Which scenarios are hard blockers for "VT-correct renderer" wording versus
+  known limitations that can remain explicit?
+- How should screenshot or pixel comparisons account for platform fonts,
+  antialiasing, terminal theme configuration, and DPI?
+- Where should image protocols and hyperlink identity land: this milestone, the
+  future protocol-object tracks, or a later renderer-specific milestone?
+
+## Acceptance Rule
+
+Do not promote default-renderer or frontend Ghostty hydration claims until an
+ADR accepts the renderer equivalence evidence plan and the repository records a
+passing corpus run with clear residual limitations.

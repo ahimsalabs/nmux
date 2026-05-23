@@ -4,15 +4,18 @@ This roadmap promotes the build targets from [WORK.md](../WORK.md) into a tracke
 
 ## Current Target
 
-Post-M14 work should execute the product split from ADR 0023: keep the usable
-local attach/reconnect/live spine stable, keep backend `libghostty-vt`
-extraction opt-in, and choose future work from explicit default-engine
-promotion, frontend hydration, or protocol-object tracks. The default engine
-remains `interim` until a later decision deliberately accepts the native
-Ghostty/Zig build cost, regular CI, non-Nix/toolchain provisioning,
-source-fetch policy, packaging, and developer workflow costs; promotion
+Post-M14 work should execute the product split from ADR 0023 while adding an
+explicit renderer-equivalence milestone before stronger default-renderer or
+frontend claims. Keep the usable local attach/reconnect/live spine stable, keep
+backend `libghostty-vt` extraction opt-in, and choose future work from renderer
+equivalence, explicit default-engine promotion, frontend hydration, or
+protocol-object tracks. The default engine remains `interim` until a later
+decision deliberately accepts the native Ghostty/Zig build cost, regular CI,
+non-Nix/toolchain provisioning, source-fetch policy, packaging, developer
+workflow costs, and any renderer-equivalence claims being made; promotion
 evidence is tracked in
-[docs/default-engine-promotion.md](default-engine-promotion.md).
+[docs/default-engine-promotion.md](default-engine-promotion.md), while renderer
+claim evidence is tracked in [renderer-equivalence.md](renderer-equivalence.md).
 
 Current post-M14 state:
 
@@ -25,6 +28,8 @@ Current post-M14 state:
   backend-owned terminal-state extraction, but remains outside the normal
   default engine, regular CI gate, and release baseline.
 - Next evidence work: choose a row from
+  [renderer-equivalence.md](renderer-equivalence.md) before making stronger
+  default-renderer or frontend claims, or choose a row from
   [contributor-workflow.md](contributor-workflow.md#promotion-evidence-work)
   and record the result in
   [default-engine-promotion.md](default-engine-promotion.md); default-engine

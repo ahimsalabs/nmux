@@ -35,6 +35,10 @@ engine or a regular CI requirement.
 - State-sync safety: `make check-all` remains green while preserving attach,
   reconnect, live streaming, scrollback fetches, cached state, and daemon-owned
   structured input semantics.
+- Renderer-equivalence boundary: any claim that nmux is default-renderer ready,
+  VT-correct from a user's perspective, or ready for frontend Ghostty hydration
+  is blocked on the separate
+  [renderer equivalence milestone](renderer-equivalence.md).
 
 ## Current Evidence
 
@@ -331,17 +335,22 @@ Resolve each blocker with evidence, not intent:
 | Non-Nix setup | Platform-specific setup commands, exact tool versions, `make promotion-sample` output, and timings. The current local non-Nix attempt failed before tests because `flatc` was absent from the host PATH outside the Nix shell, while the supported Nix shell has already provisioned the required `flatc`. | Non-Nix local attempts |
 | Packaged/default source policy | A decision for pinned network fetch with CI/cache controls, vendored or mirrored source, `GHOSTTY_SOURCE_DIR` prefetching, or a native-library package/artifact cache. | [Source fetch policy](source-fetch-policy.md) and a follow-up ADR |
 | Native-VT package distribution | Supported targets, static/dynamic linkage, artifact provenance, signing/notarization where relevant, release checks, and recorded packaging target results. The current Darwin packaging samples show the opt-in release binaries can run with an explicit runtime library path, staged wrapper layout, package provenance, archive verification, and relocated archive runtime smoke, but packaged binaries still need supported-target, signing, update, and platform distribution strategy. | [Packaging notes](packaging.md) and a follow-up ADR |
+| Renderer-equivalence claims | A fixture corpus, trusted oracle renderer, repeatable comparison harness, tolerance policy, regression gate, and user-facing claim map before saying nmux has a default-ready VT-correct renderer or frontend Ghostty hydration path. | [Renderer equivalence milestone](renderer-equivalence.md) and a follow-up ADR |
 | Contributor workflow drift | Updated guidance whenever default-engine, opt-in terminal-correctness, or promotion-evidence responsibilities change. | [Contributor workflow](contributor-workflow.md), README, and AGENTS |
 
 ## Promotion Rule
 
 Do not make `libghostty-vt` the default engine, a regular CI requirement, or the
 documented normal path until the open work above is resolved and a new ADR
-accepts the resulting build, CI, packaging, and workflow consequences.
+accepts the resulting build, CI, packaging, workflow, and renderer-claim
+consequences.
 
 ## Non-Goals
 
 - This tracker does not expand the nmux protocol.
-- This tracker does not cover frontend Ghostty renderer hydration; use
-  [the hydration tracker](upstream/ghostty-surface-hydration.md) for that.
+- This tracker does not prove renderer equivalence or frontend Ghostty renderer
+  hydration; use [renderer-equivalence.md](renderer-equivalence.md) before
+  making stronger renderer claims, and
+  [the hydration tracker](upstream/ghostty-surface-hydration.md) for the
+  upstream/API question.
 - This tracker does not justify copying GPL or AGPL code into nmux.

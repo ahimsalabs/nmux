@@ -3,7 +3,9 @@
 M13 proves the opt-in path from the interim text engine toward daemon-owned
 backend `libghostty-vt` state extraction. This file records the mapping work
 already proven by the opt-in backend and the remaining terminal-state protocol
-decisions that must stay separate from default-engine promotion evidence. The
+decisions that must stay separate from default-engine promotion and
+renderer-equivalence evidence. The renderer-equivalence milestone lives in
+[Renderer Equivalence Milestone](renderer-equivalence.md), and the
 cross-cutting pre-schema protocol tracks live in
 [Future Protocol Tracks](protocol-futures.md).
 

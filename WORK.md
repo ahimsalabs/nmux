@@ -580,6 +580,7 @@ M13: backend libghostty-vt extraction [done for opt-in correctness milestone]
 M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   libghostty-vt remains opt-in after M13 until a later decision accepts concrete native build cost, regular CI, non-Nix/toolchain provisioning, source-fetch policy, packaging, and developer-workflow evidence
   docs/default-engine-promotion.md tracks the native build, CI, toolchain, source-fetch, packaging, workflow, and state-sync evidence required before promotion
+  docs/renderer-equivalence.md now tracks the separate evidence required before stronger default-renderer, VT-correct user-facing, or frontend Ghostty hydration claims
   the tracker now includes multiple warm local Darwin arm64 make check-all timing samples, including a post-info-flag run and a make promotion-sample run with toolchain-info output; this is useful evidence, not enough for promotion by itself
   docs/toolchain.md and docs/default-engine-promotion.md explicitly record that the Nix shell provisions flatc 25.12.19, while no non-Nix optional native-VT validation run has passed as promotion evidence yet
   a local non-Nix make check-all attempt is recorded as failing during tool preflight because flatc is not on the host PATH outside the Nix shell, and Makefile preflight now reports missing cargo plus missing or unsupported flatc/zig requirements with Nix fallback guidance
@@ -611,6 +612,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   ADR 0026 defines acceptance criteria for any future native-VT CI promotion decision, including runner matrix, cache/fetch behavior, runtime evidence, packaging claims, and failure-triage expectations
   make check-ghostty-vt runs the opt-in libghostty-vt feature suites serially with RUST_TEST_THREADS=1, and the libghostty-vt terminal is heap-stabilized before callback registration after manual Ubuntu promotion-evidence attempts exposed a terminal-generated PTY-write callback segfault
   make check-all is the explicit combined default-plus-libghostty-vt validation gate for release-style checks and promotion evidence without changing regular make check
+  renderer-equivalence work should come before more default-renderer or frontend claim promotion: define the fixture corpus, trusted oracle renderer, comparison harness, tolerance policy, regression gate, and user-facing claim map before changing those claims
   keep frontend Ghostty renderer hydration separate from backend terminal-state extraction until upstream can render externally supplied nmux state without client-side PTY replay
   split future protocol expansion into explicit tracks before schema changes: wired hyperlink IDs, image placement/pixel data, richer damage objects, semantic command lifecycle metadata, and physical-key/text-event forwarding
   docs/protocol-futures.md now tracks those withheld protocol objects, summarizes the current protocol surface versus ADR-required fields, and requires ADR-backed object lifetime, snapshot/patch, compatibility, reconnect, and test plans before schema changes
