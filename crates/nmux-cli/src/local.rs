@@ -2424,7 +2424,7 @@ pub fn attach_status_from_frame(
         .body_as_attach_status()
         .ok_or("missing attach status body")?;
     Ok(AttachStatusSummary {
-        pane_id: status.pane_id().unwrap_or_default().to_owned(),
+        pane_id: required_string(status.pane_id(), "attach status pane_id")?,
         surface_version: status.surface_version(),
         surface_state: validate_attach_surface_state(status.surface_state())?,
     })
@@ -2490,7 +2490,7 @@ pub fn scrollback_chunk_from_frame(
     }
 
     Ok(ScrollbackChunkSummary {
-        pane_id: chunk.pane_id().unwrap_or_default().to_owned(),
+        pane_id: required_string(chunk.pane_id(), "scrollback chunk pane_id")?,
         scrollback_version: chunk.scrollback_version(),
         start_line: chunk.start_line(),
         total_lines: chunk.total_lines(),
@@ -5495,12 +5495,19 @@ mod tests {
     }
 
     fn attach_status_frame_with_surface_state(state: protocol::AttachSurfaceState) -> Vec<u8> {
+        attach_status_frame_with_pane_id_and_surface_state(Some("pane-1"), state)
+    }
+
+    fn attach_status_frame_with_pane_id_and_surface_state(
+        pane_id: Option<&str>,
+        state: protocol::AttachSurfaceState,
+    ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let pane_id = builder.create_string("pane-1");
+        let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
         let status = protocol::AttachStatus::create(
             &mut builder,
             &protocol::AttachStatusArgs {
-                pane_id: Some(pane_id),
+                pane_id,
                 surface_version: 2,
                 surface_state: state,
             },
@@ -5720,7 +5727,27 @@ mod tests {
         )
     }
 
+    fn scrollback_chunk_with_pane_id(pane_id: Option<&str>) -> Vec<u8> {
+        scrollback_chunk_with_pane_id_and_run_metadata(
+            pane_id,
+            protocol::RowSemanticPrompt::None,
+            protocol::CellSemanticContent::Output,
+        )
+    }
+
     fn scrollback_chunk_with_run_metadata_frame(
+        semantic_prompt: protocol::RowSemanticPrompt,
+        semantic_content: protocol::CellSemanticContent,
+    ) -> Vec<u8> {
+        scrollback_chunk_with_pane_id_and_run_metadata(
+            Some("pane-1"),
+            semantic_prompt,
+            semantic_content,
+        )
+    }
+
+    fn scrollback_chunk_with_pane_id_and_run_metadata(
+        pane_id: Option<&str>,
         semantic_prompt: protocol::RowSemanticPrompt,
         semantic_content: protocol::CellSemanticContent,
     ) -> Vec<u8> {
@@ -5750,11 +5777,11 @@ mod tests {
         let hyperlink = flatbuffer_hyperlink(&mut builder);
         let hyperlinks = builder.create_vector(&[hyperlink]);
         let colors = flatbuffer_terminal_colors(&mut builder);
-        let pane_id = builder.create_string("pane-1");
+        let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
         let chunk = protocol::ScrollbackChunk::create(
             &mut builder,
             &protocol::ScrollbackChunkArgs {
-                pane_id: Some(pane_id),
+                pane_id,
                 scrollback_version: 1,
                 start_line: 1,
                 total_lines: 1,
@@ -6377,6 +6404,50 @@ mod tests {
         ] {
             let err =
                 surface_update_from_frame(&frame).expect_err("surface pane ID should be required");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_attach_status_and_scrollback_chunk_with_missing_or_empty_pane_id() {
+        for (frame, expected) in [
+            (
+                attach_status_frame_with_pane_id_and_surface_state(
+                    None,
+                    protocol::AttachSurfaceState::Snapshot,
+                ),
+                "missing attach status pane_id",
+            ),
+            (
+                attach_status_frame_with_pane_id_and_surface_state(
+                    Some(""),
+                    protocol::AttachSurfaceState::Snapshot,
+                ),
+                "empty attach status pane_id",
+            ),
+        ] {
+            let err = attach_status_from_frame(&frame).expect_err("attach status pane ID required");
+            assert!(
+                err.to_string().contains(expected),
+                "expected {expected:?}, got {err}"
+            );
+        }
+
+        for (frame, expected) in [
+            (
+                scrollback_chunk_with_pane_id(None),
+                "missing scrollback chunk pane_id",
+            ),
+            (
+                scrollback_chunk_with_pane_id(Some("")),
+                "empty scrollback chunk pane_id",
+            ),
+        ] {
+            let err =
+                scrollback_chunk_from_frame(&frame).expect_err("scrollback chunk pane ID required");
             assert!(
                 err.to_string().contains(expected),
                 "expected {expected:?}, got {err}"
