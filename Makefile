@@ -6,7 +6,7 @@ PROMOTION_EVIDENCE_DIR ?= target/promotion-evidence
 PACKAGING_ARCHIVE ?= target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz
 PACKAGING_ARCHIVE_SHA256 ?= $(PACKAGING_ARCHIVE).sha256
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-offline-probe source-fetch-provenance-sample toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-offline-probe source-fetch-provenance-sample toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -23,6 +23,56 @@ promotion-cold-target-sample: toolchain-info
 	@echo "clearing target/promotion-cold for cold target-dir validation"
 	rm -rf target/promotion-cold
 	time -p env CARGO_TARGET_DIR=target/promotion-cold $(MAKE) check-all
+
+promotion-cold-deps-sample: toolchain-info
+	@echo "clearing target/promotion-cold-deps for isolated Cargo dependency/source-fetch validation"
+	@set -u; \
+	report_dir="target/promotion-cold-deps"; \
+	report="$$report_dir/REPORT.txt"; \
+	log="$$report_dir/RUN.log"; \
+	rm -rf "$$report_dir"; \
+	mkdir -p "$$report_dir"; \
+	report_dir_abs="$$(cd "$$report_dir" && pwd)"; \
+	cargo_home="$$report_dir_abs/cargo-home"; \
+	cargo_target_dir="$$report_dir_abs/target"; \
+	start_epoch="$$(date -u '+%s')"; \
+	start_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+	{ \
+		printf 'nmux isolated Cargo dependency/source-fetch sample\n'; \
+		printf 'started_at_utc=%s\n' "$$start_utc"; \
+		printf 'sample_scope=%s\n' 'isolated repo-owned CARGO_HOME and CARGO_TARGET_DIR; Nix store, source checkout, and network state may still be warm'; \
+		printf 'CARGO_HOME=%s\n' "$$cargo_home"; \
+		printf 'CARGO_TARGET_DIR=%s\n' "$$cargo_target_dir"; \
+		printf 'GHOSTTY_SOURCE_DIR=unset\n'; \
+		printf 'GIT_CONFIG_GLOBAL=/dev/null\n'; \
+		printf 'command=make check-all\n'; \
+	} > "$$report"; \
+	if env -u GHOSTTY_SOURCE_DIR CARGO_HOME="$$cargo_home" CARGO_TARGET_DIR="$$cargo_target_dir" GIT_CONFIG_GLOBAL=/dev/null time -p $(MAKE) check-all > "$$log" 2>&1; then \
+		result=passed; \
+	else \
+		status="$$?"; \
+		result=failed; \
+	fi; \
+	completed_utc="$$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; \
+	end_epoch="$$(date -u '+%s')"; \
+	real_seconds="$$(awk '/^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$log")"; \
+	user_seconds="$$(awk '/^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$log")"; \
+	sys_seconds="$$(awk '/^sys [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$log")"; \
+	{ \
+		printf 'completed_at_utc=%s\n' "$$completed_utc"; \
+		printf 'elapsed_seconds=%s\n' "$$((end_epoch - start_epoch))"; \
+		printf 'check_all_real_seconds=%s\n' "$$real_seconds"; \
+		printf 'check_all_user_seconds=%s\n' "$$user_seconds"; \
+		printf 'check_all_sys_seconds=%s\n' "$$sys_seconds"; \
+		printf 'result=%s\n' "$$result"; \
+		printf 'log=%s\n' "$$log"; \
+	} >> "$$report"; \
+	cat "$$report"; \
+	if [ "$$result" != passed ]; then \
+		cat "$$log"; \
+		exit "$$status"; \
+	fi; \
+	printf 'promotion_cold_deps_sample=%s\n' "$$report"
 
 promotion-local-sample:
 	@echo "== promotion local sample: source-fetch provenance =="

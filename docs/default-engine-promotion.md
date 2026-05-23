@@ -81,6 +81,12 @@ engine or a regular CI requirement.
 - `make promotion-cold-target-sample` clears `target/promotion-cold` and times
   `make check-all` with that fresh Rust target directory. It does not clear
   Cargo registry, Git source, or Nix store caches.
+- `make promotion-cold-deps-sample` clears `target/promotion-cold-deps` and
+  times `make check-all` with isolated repo-owned `CARGO_HOME` and
+  `CARGO_TARGET_DIR`, `GHOSTTY_SOURCE_DIR` unset, and
+  `GIT_CONFIG_GLOBAL=/dev/null`. It is dependency/source-fetch evidence, not
+  full cold machine evidence because the Nix store, checkout, and network state
+  may still be warm.
 - `make promotion-local-sample` runs source-fetch provenance, the timed
   validation sample, the cache-present offline source-fetch probe, and package
   archive runtime smoke in one local evidence pass.
@@ -142,7 +148,9 @@ engine or a regular CI requirement.
 - Multiple warm local Darwin arm64 `make check-all` samples are recorded below,
   including a post-info-flag run; these are useful trend evidence, not CI
   promotion evidence. A cold-target sample clears only the Rust target
-  directory and is not full cold-checkout evidence.
+  directory and is not full cold-checkout evidence. An isolated cold-deps
+  sample clears repo-owned Cargo home and target directories, but still does
+  not prove cold Nix store, source checkout, or network state.
 - A GitHub Actions workflow now runs `make check` for pull requests and pushes
   to `main`; the `make promotion-evidence-bundle` job is manual, uploads the
   `nmux-promotion-evidence` artifact, and a dependent job downloads that
@@ -176,6 +184,7 @@ evidence or measurements from every supported platform.
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout after local usability/info-flag changes; existing Nix/Cargo/native build caches; opt-in source fetch path already available locally; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `/usr/bin/time -p nix --extra-experimental-features 'nix-command flakes' develop . -c make check-all` | Passed; `real 34.42`, `user 10.95`, `sys 11.09` |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout after promotion-sample target addition; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset`; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-sample` | Passed; timed inner `make check-all`: `real 16.13`, `user 2.64`, `sys 3.20` |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout with existing Cargo registry, Git source, and Nix store caches; `target/promotion-cold` removed before the run; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset`; feature gate used `GIT_CONFIG_GLOBAL=/dev/null` through `make check-ghostty-vt` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-cold-target-sample` | Passed; cleared `target/promotion-cold` and timed inner `CARGO_TARGET_DIR=target/promotion-cold make check-all`: `real 39.67`, `user 50.58`, `sys 13.85`. This is cold Rust target-dir evidence, not a full cold checkout or dependency-fetch run. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout and Nix store; `target/promotion-cold-deps` removed before the run; isolated repo-owned `CARGO_HOME=target/promotion-cold-deps/cargo-home` and `CARGO_TARGET_DIR=target/promotion-cold-deps/target`; `GHOSTTY_SOURCE_DIR=unset`; `GIT_CONFIG_GLOBAL=/dev/null`; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2 | `nix --extra-experimental-features 'nix-command flakes' develop . -c make promotion-cold-deps-sample` | Passed; wrote `target/promotion-cold-deps/REPORT.txt` and `RUN.log`; `RUN.log` showed `Updating crates.io index`, dependency downloads, and downloads of `libghostty-vt-sys v0.1.1` plus `libghostty-vt v0.1.1`; timed inner `make check-all`: `real 40.54`, `user 50.70`, `sys 14.58`, `elapsed_seconds=41`. This is isolated Cargo dependency/source-fetch evidence, not full cold machine evidence because the checkout, Nix store, and network state may still be warm. An earlier same-target attempt during implementation failed once in `live_cli_persists_rendered_surface_state`, so keep watching live CLI flake rate in cold-deps runs. |
 
 ## Non-Nix Local Attempts
 
@@ -256,8 +265,10 @@ result, outcome, and follow-up.
 ## Open Work
 
 - Measure and record `make check-all` timing on more supported local systems,
-  including a full cold-checkout or dependency-fetch run. Current cold-target
-  evidence clears only `target/promotion-cold`.
+  including a full cold-checkout or cold-machine run. Current cold-target
+  evidence clears only `target/promotion-cold`, and current cold-deps evidence
+  isolates Cargo home and target dirs but not the Nix store, checkout, or
+  network state.
 - Exercise the manual promotion evidence bundle and downloaded-artifact verifier
   jobs in CI before making the opt-in VT gate required.
 - Validate the non-Nix toolchain checklist with platform-specific setup

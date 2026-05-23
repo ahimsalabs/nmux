@@ -62,6 +62,7 @@ Run:
 ```sh
 nix develop . -c make promotion-sample
 nix develop . -c make promotion-cold-target-sample
+nix develop . -c make promotion-cold-deps-sample
 nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
 nix develop . -c make promotion-evidence-verify
@@ -96,6 +97,12 @@ evidence.
 `make check-all` with that fresh Rust target directory. Use it for local
 cold-target evidence, and record that it does not clear Cargo registry, Git
 source, or Nix store caches.
+
+`make promotion-cold-deps-sample` clears `target/promotion-cold-deps` and times
+`make check-all` with isolated repo-owned `CARGO_HOME` and `CARGO_TARGET_DIR`,
+`GHOSTTY_SOURCE_DIR` unset, and `GIT_CONFIG_GLOBAL=/dev/null`. Use it for
+dependency/source-fetch evidence, and record that it still does not prove cold
+Nix store, source checkout, or network state.
 
 `make promotion-local-sample` runs `make source-fetch-provenance-sample`,
 `make promotion-sample`, `make source-fetch-offline-probe`, and then

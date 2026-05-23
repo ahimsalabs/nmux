@@ -66,10 +66,18 @@ For a combined local source-provenance, validation, and packaging/archive
 evidence pass, use:
 
 ```sh
+nix develop . -c make promotion-cold-deps-sample
 nix develop . -c make promotion-local-sample
 nix develop . -c make promotion-evidence-bundle
 nix develop . -c make promotion-evidence-verify
 ```
+
+`make promotion-cold-deps-sample` clears `target/promotion-cold-deps` and
+runs `make check-all` with isolated repo-owned `CARGO_HOME` and
+`CARGO_TARGET_DIR`, `GHOSTTY_SOURCE_DIR` unset, and `GIT_CONFIG_GLOBAL=/dev/null`.
+It records `target/promotion-cold-deps/REPORT.txt` plus `RUN.log`. Treat it as
+dependency/source-fetch evidence only: the Nix store, source checkout, and
+network state may still be warm.
 
 The local sample target runs `make source-fetch-provenance-sample`,
 `make promotion-sample`, `make source-fetch-offline-probe`, and then
