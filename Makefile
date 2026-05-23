@@ -539,6 +539,13 @@ promotion-evidence-verify:
 	require_exact "$$offline_probe" 'features=libghostty-vt' 'offline probe features'; \
 	require_line "$$offline_probe" '^elapsed_seconds=[0-9]+$$' 'offline probe elapsed seconds'; \
 	require_exact "$$offline_probe" 'source_fetch_offline_probe=passed' 'offline probe result'; \
+	require_line "$$run_log" '^== promotion local sample: cache-present offline source-fetch probe ==$$' 'offline probe run-log section'; \
+	require_line "$$run_log" '^running cache-present source-fetch offline probe$$' 'offline probe command ran'; \
+	require_line "$$run_log" '^   Compiling libghostty-vt-sys v0\.1\.1$$|^    Checking libghostty-vt-sys v0\.1\.1$$|^    Finished `test` profile ' 'offline probe native VT build activity'; \
+	require_line "$$run_log" '^  Executable unittests src/lib\.rs \(target/source-fetch-offline/debug/deps/nmux_core-.+\)$$' 'offline probe nmux-core test binary'; \
+	require_exact "$$run_log" 'verifying source-fetch offline probe report' 'offline probe verifier ran'; \
+	require_exact "$$run_log" 'source_fetch_offline_probe_verified=target/source-fetch-offline/OFFLINE_PROBE.txt' 'offline probe verifier result'; \
+	require_exact "$$run_log" 'source_fetch_offline_probe=target/source-fetch-offline/OFFLINE_PROBE.txt' 'offline probe artifact path'; \
 	require_line "$$package_provenance" '^\[staged_files\]$$' 'packaging staged file hashes'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux wrapper hash'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmuxd bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmuxd wrapper hash'; \
