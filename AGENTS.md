@@ -126,6 +126,7 @@ nix develop . -c make source-fetch-offline-probe
 nix develop . -c make source-fetch-offline-probe-verify
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
+nix develop . -c make packaging-layout-verify
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
@@ -179,6 +180,7 @@ evidence rows.
 `packaging-layout-sample` stages a local opt-in package layout with wrappers
 that resolve `libghostty-vt` from `../lib`; it is packaging evidence, not a
 release format decision.
+`packaging-layout-verify` checks an existing staged layout without rebuilding.
 `packaging-provenance-sample` writes a local manifest with staged file hashes,
 package metadata, toolchain/source mode, dependency tree, and dynamic dependency
 output.

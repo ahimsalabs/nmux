@@ -132,6 +132,9 @@ engine or a regular CI requirement.
 - `make packaging-layout-sample` stages opt-in release binaries, wrapper
   scripts, and `libghostty-vt` runtime-library artifacts in a local package
   layout and verifies the wrapped binaries run from that layout.
+- `make packaging-layout-verify` validates an existing staged opt-in native-VT
+  package layout without rebuilding, including required files, wrapper scripts,
+  layout metadata, runtime-library presence, and wrapped binary version checks.
 - `make packaging-provenance-sample` writes a provenance manifest for the
   staged layout, including file hashes, package metadata, toolchain/source
   mode, locked `libghostty-vt` package records, dependency tree, native
@@ -238,6 +241,7 @@ support, or native-library provenance by themselves.
 | --- | --- | --- | --- |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; `toolchain-info`: cargo 1.94.0, rustc 1.94.1, flatc 25.12.19, Zig 0.15.2, `GHOSTTY_SOURCE_DIR=unset`, source mode pinned fetch, `GIT_CONFIG_GLOBAL=unset` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-sample` | Passed. Default binaries ran `--version`; sizes: `nmux` 1065296 bytes, `nmuxd` 1182352 bytes. Opt-in `libghostty-vt` binaries built; sizes: `nmux` 1065424 bytes, `nmuxd` 1251648 bytes; `--version` passed with `DYLD_LIBRARY_PATH`/`LD_LIBRARY_PATH` set to the produced `ghostty-install/lib` runtime-library directory. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-layout-sample` | Passed. Staged opt-in package layout at `target/packaging-libghostty-vt/package` with `bin/nmux`, `bin/nmuxd`, `libexec/nmux`, `libexec/nmuxd`, and `lib/libghostty-vt*`; wrapped `nmux --version` and `nmuxd --version` both reported 0.1.0 from the staged layout. |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above; working copy included standalone `packaging-layout-verify` | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-layout-sample` | Passed. Staged the opt-in package layout and then verified the existing layout without rebuilding provenance or archive artifacts; required wrapper scripts, libexec binaries, `PACKAGE_METADATA.txt`, bundled `libghostty-vt` runtime libraries, wrapper-managed `../lib` and `../libexec` handoff, layout metadata, and wrapped `nmux --version`/`nmuxd --version` with library-path environment variables unset. A copied layout at `/tmp/nmux-package-layout-copy` also passed `make PACKAGING_LAYOUT=/tmp/nmux-package-layout-copy packaging-layout-verify`. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-provenance-sample` | Passed. Wrote `target/packaging-libghostty-vt/package/PROVENANCE.txt` with package metadata, toolchain/source mode, `Cargo.lock` SHA-256 `2e28c9036cf76971ebefb3f43a39bf3f3c122aeac89981cbf666105eb20d88c4`, locked `libghostty-vt` and `libghostty-vt-sys` records, staged file sizes and hashes, native runtime-library artifacts, `otool -L` output, and locked dependency tree. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-provenance-verify` | Passed. Regenerated `target/packaging-libghostty-vt/package/PROVENANCE.txt` and verified required toolchain, source-mode, `Cargo.lock`, locked `libghostty-vt` and `libghostty-vt-sys`, staged-file hash, runtime-library, per-binary `libghostty-vt` dynamic-dependency, and cargo-tree records. |
 | 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout; existing Nix/Cargo/native build caches; same toolchain/source mode as packaging sample above | `nix --extra-experimental-features 'nix-command flakes' develop . -c make packaging-archive-sample` | Passed. Wrote `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`, SHA-256 `1f824cdc7634e5f85e092d72fe20635cce8be834bbae33c000ac3a522fba8bdd`, extracted it under `target/packaging-libghostty-vt/archive/check`, and verified wrapped `nmux --version` and `nmuxd --version` from the extracted layout. |
@@ -301,12 +305,13 @@ result, outcome, and follow-up.
   dependency, including supported targets, static/dynamic linkage, artifact
   provenance, signing/notarization where relevant, release checks, and recorded
   `make packaging-sample`, `make packaging-layout-sample`,
-  `make packaging-provenance-sample`, `make packaging-provenance-verify`,
-  `make packaging-archive-sample`, `make packaging-archive-verify`, and
-  `make packaging-archive-runtime-smoke` results. The current Darwin packaging
-  samples show the opt-in release binaries can run with an explicit runtime
-  library path and staged wrapper layout, but packaged binaries still need
-  signing and platform distribution strategy.
+  `make packaging-layout-verify`, `make packaging-provenance-sample`,
+  `make packaging-provenance-verify`, `make packaging-archive-sample`,
+  `make packaging-archive-verify`, and `make packaging-archive-runtime-smoke`
+  results. The current Darwin packaging samples show the opt-in release
+  binaries can run with an explicit runtime library path and staged wrapper
+  layout, and the staged layout now has a no-rebuild verifier, but packaged
+  binaries still need signing and platform distribution strategy.
 - Keep contributor workflow guidance current as default-engine, opt-in
   terminal-correctness, and promotion-evidence responsibilities change.
 

@@ -52,6 +52,7 @@ nix develop . -c make source-fetch-offline-probe
 nix develop . -c make source-fetch-offline-probe-verify
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
+nix develop . -c make packaging-layout-verify
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
@@ -106,6 +107,9 @@ and log without rerunning the probe.
 target directories and prints artifact sizes plus binary versions.
 `make packaging-layout-sample` stages a local opt-in package layout with
 wrappers that resolve the native VT library from `../lib`.
+`make packaging-layout-verify` checks an existing staged package layout,
+wrapper scripts, metadata, runtime-library presence, and wrapped binary version
+commands without rebuilding.
 `make packaging-provenance-sample` writes a manifest with staged file hashes,
 package metadata, toolchain/source mode, dependency tree, and dynamic dependency
 output.

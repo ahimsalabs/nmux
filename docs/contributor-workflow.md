@@ -73,6 +73,7 @@ nix develop . -c make source-fetch-offline-probe
 nix develop . -c make source-fetch-offline-probe-verify
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
+nix develop . -c make packaging-layout-verify
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
@@ -172,6 +173,10 @@ sizes plus binary versions for packaging evidence.
 `make packaging-layout-sample` stages the opt-in binaries, wrapper scripts, and
 `libghostty-vt` runtime libraries under `target/packaging-libghostty-vt/package`
 and verifies the wrapped binaries can run from that local layout.
+`make packaging-layout-verify` checks an existing staged layout without
+rebuilding: required files, wrapper scripts, package metadata, native runtime
+library presence, and wrapped binary version commands. Override
+`PACKAGING_LAYOUT` when checking a copied or alternate staged layout.
 `make packaging-provenance-sample` writes a manifest for that staged layout with
 file hashes, package metadata, toolchain/source mode, dependency tree, native
 runtime-library artifacts, and dynamic dependency output.

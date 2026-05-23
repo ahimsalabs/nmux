@@ -3,10 +3,11 @@ GEN_DIR := crates/nmux-proto/src/generated
 FLATC_VERSION := 25.12.19
 ZIG_VERSION_PREFIX := 0.15.
 PROMOTION_EVIDENCE_DIR ?= target/promotion-evidence
+PACKAGING_LAYOUT ?= target/packaging-libghostty-vt/package
 PACKAGING_ARCHIVE ?= target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz
 PACKAGING_ARCHIVE_SHA256 ?= $(PACKAGING_ARCHIVE).sha256
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample require-cargo require-flatc require-ghostty-source require-zig rust-test source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -927,7 +928,89 @@ packaging-layout-sample: packaging-sample
 	printf 'packaged libghostty-vt nmux version: '; \
 	"$$pkg_dir/bin/nmux" --version; \
 	printf 'packaged libghostty-vt nmuxd version: '; \
-	"$$pkg_dir/bin/nmuxd" --version
+	"$$pkg_dir/bin/nmuxd" --version; \
+	$(MAKE) --no-print-directory PACKAGING_LAYOUT="$$pkg_dir" packaging-layout-verify
+
+packaging-layout-verify:
+	@echo "verifying existing opt-in libghostty-vt package layout"
+	@pkg_dir="$(PACKAGING_LAYOUT)"; \
+	metadata="$$pkg_dir/PACKAGE_METADATA.txt"; \
+	require_file() { \
+		path="$$1"; \
+		if [ ! -s "$$path" ]; then \
+			echo "missing or empty package layout artifact: $$path" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_executable() { \
+		path="$$1"; \
+		require_file "$$path"; \
+		if [ ! -x "$$path" ]; then \
+			echo "package layout artifact is not executable: $$path" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_line() { \
+		file="$$1"; \
+		pattern="$$2"; \
+		description="$$3"; \
+		if ! grep -Eq "$$pattern" "$$file"; then \
+			echo "missing package layout record in $$file: $$description" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_wrapper_line() { \
+		wrapper="$$1"; \
+		line="$$2"; \
+		description="$$3"; \
+		if ! grep -Fxq "$$line" "$$wrapper"; then \
+			echo "missing wrapper record in $$wrapper: $$description" >&2; \
+			exit 1; \
+		fi; \
+	}; \
+	require_executable "$$pkg_dir/bin/nmux"; \
+	require_executable "$$pkg_dir/bin/nmuxd"; \
+	require_executable "$$pkg_dir/libexec/nmux"; \
+	require_executable "$$pkg_dir/libexec/nmuxd"; \
+	require_file "$$metadata"; \
+	found_runtime_library=0; \
+	for lib in "$$pkg_dir"/lib/libghostty-vt*; do \
+		if [ -f "$$lib" ]; then \
+			require_file "$$lib"; \
+			found_runtime_library=1; \
+		fi; \
+	done; \
+	if [ "$$found_runtime_library" -ne 1 ]; then \
+		echo "missing libghostty-vt runtime library in package layout: $$pkg_dir/lib" >&2; \
+		exit 1; \
+	fi; \
+	require_line "$$metadata" '^nmux opt-in native VT package metadata$$' 'metadata title'; \
+	require_line "$$metadata" '^generated_at_utc=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$$' 'metadata timestamp'; \
+	require_line "$$metadata" '^package_format=local-tar-archive-layout$$' 'package format'; \
+	require_line "$$metadata" '^release_status=local evidence artifact; not a signed, notarized, installed, or published release package$$' 'release status'; \
+	require_line "$$metadata" '^target_host=.+$$' 'target host'; \
+	require_line "$$metadata" '^terminal_engine=libghostty-vt$$' 'terminal engine'; \
+	require_line "$$metadata" '^terminal_engine_status=opt-in$$' 'terminal engine status'; \
+	require_line "$$metadata" '^binaries=nmux,nmuxd$$' 'binary list'; \
+	require_line "$$metadata" '^runtime_library_strategy=bundled dynamic libghostty-vt libraries loaded by wrapper-managed DYLD_LIBRARY_PATH/LD_LIBRARY_PATH$$' 'runtime-library strategy'; \
+	require_line "$$metadata" '^source_mode=(pinned-fetch|local)$$' 'source mode'; \
+	require_line "$$metadata" '^GHOSTTY_SOURCE_DIR=.+$$' 'GHOSTTY_SOURCE_DIR'; \
+	for bin in nmux nmuxd; do \
+		wrapper="$$pkg_dir/bin/$$bin"; \
+		require_wrapper_line "$$wrapper" '#!/bin/sh' 'shell shebang'; \
+		require_wrapper_line "$$wrapper" 'set -eu' 'strict shell mode'; \
+		require_wrapper_line "$$wrapper" 'bin_dir=$$(CDPATH= cd "$$(dirname "$$0")" && pwd)' 'relative wrapper directory'; \
+		require_wrapper_line "$$wrapper" 'lib_dir=$$bin_dir/../lib' 'relative library directory'; \
+		require_wrapper_line "$$wrapper" 'DYLD_LIBRARY_PATH=$$lib_dir$${DYLD_LIBRARY_PATH:+:$$DYLD_LIBRARY_PATH}' 'DYLD library path'; \
+		require_wrapper_line "$$wrapper" 'LD_LIBRARY_PATH=$$lib_dir$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}' 'LD library path'; \
+		require_wrapper_line "$$wrapper" 'export DYLD_LIBRARY_PATH LD_LIBRARY_PATH' 'library path export'; \
+		require_wrapper_line "$$wrapper" "exec \"\$$bin_dir/../libexec/$$bin\" \"\$$@\"" 'relative libexec handoff'; \
+	done; \
+	printf 'packaged libghostty-vt nmux version: '; \
+	env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmux" --version; \
+	printf 'packaged libghostty-vt nmuxd version: '; \
+	env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmuxd" --version; \
+	printf 'packaging_layout_verified=%s\n' "$$pkg_dir"
 
 packaging-provenance-sample: packaging-layout-sample
 	@echo "writing opt-in libghostty-vt package provenance manifest"

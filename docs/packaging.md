@@ -22,9 +22,11 @@ default engine:
 ```sh
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
+nix develop . -c make packaging-layout-verify
 nix develop . -c make packaging-provenance-sample
 nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
+nix develop . -c make packaging-archive-verify
 nix develop . -c make packaging-archive-runtime-smoke
 ```
 
@@ -59,6 +61,16 @@ The wrappers resolve their own directory, set `DYLD_LIBRARY_PATH` and
 `../libexec`. This proves a relocatable local layout shape for the opt-in
 native VT build, but it is still not a signed, installed, notarized, or
 platform-native package.
+
+`make packaging-layout-verify` is the no-rebuild staged-layout verifier. By
+default it checks `target/packaging-libghostty-vt/package`, but
+`PACKAGING_LAYOUT=/path/to/package` can point it at an existing or copied staged
+layout. The verifier requires the wrapper scripts, libexec binaries, package
+metadata, and at least one bundled `libghostty-vt` runtime library; checks the
+wrapper-managed `../lib` and `../libexec` shape; validates layout-level
+metadata; and runs wrapped `nmux --version` and `nmuxd --version` with
+library-path environment variables unset. It does not validate provenance
+hashes, archive bytes, or daemon/client runtime behavior.
 
 `make packaging-provenance-sample` writes
 `target/packaging-libghostty-vt/package/PROVENANCE.txt` for that staged layout.
