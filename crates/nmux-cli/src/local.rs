@@ -2457,82 +2457,55 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
     let input = envelope
         .body_as_input_event()
         .ok_or("missing input event body")?;
-    let (
-        bytes,
-        paste_text,
-        key_name,
-        key_modifiers,
-        mouse,
-        requires_focus_reporting,
-        requires_mouse_tracking,
-    ) = match input.kind() {
+    let parts = match input.kind() {
         protocol::InputKind::Key => {
             let key = input.key().ok_or("missing key input")?;
             let modifiers = validate_input_modifiers(key.modifiers())?;
-            (
-                key.text_utf8().unwrap_or_default().as_bytes().to_vec(),
-                None,
-                key.key_name().map(ToOwned::to_owned),
-                modifiers,
-                None,
-                false,
-                false,
-            )
+            InputSummaryParts {
+                bytes: key.text_utf8().unwrap_or_default().as_bytes().to_vec(),
+                key_name: key.key_name().map(ToOwned::to_owned),
+                key_modifiers: modifiers,
+                ..InputSummaryParts::default()
+            }
         }
         protocol::InputKind::RawBytes => {
             let raw = input.raw().ok_or("missing raw input")?;
-            (
-                raw.bytes()
+            InputSummaryParts {
+                bytes: raw
+                    .bytes()
                     .map(|bytes| bytes.iter().collect())
                     .unwrap_or_default(),
-                None,
-                None,
-                0,
-                None,
-                false,
-                false,
-            )
+                ..InputSummaryParts::default()
+            }
         }
         protocol::InputKind::Paste => {
             let paste = input.paste().ok_or("missing paste input")?;
             let paste_text = paste.text_utf8().unwrap_or_default().to_owned();
-            (
-                paste_text.as_bytes().to_vec(),
-                Some(paste_text),
-                None,
-                0,
-                None,
-                false,
-                false,
-            )
+            InputSummaryParts {
+                bytes: paste_text.as_bytes().to_vec(),
+                paste_text: Some(paste_text),
+                ..InputSummaryParts::default()
+            }
         }
         protocol::InputKind::Focus => {
             let focus = input.focus().ok_or("missing focus input")?;
-            (
-                if focus.focused() {
+            InputSummaryParts {
+                bytes: if focus.focused() {
                     b"\x1b[I".to_vec()
                 } else {
                     b"\x1b[O".to_vec()
                 },
-                None,
-                None,
-                0,
-                None,
-                true,
-                false,
-            )
+                requires_focus_reporting: true,
+                ..InputSummaryParts::default()
+            }
         }
         protocol::InputKind::Mouse => {
             let mouse = input.mouse().ok_or("missing mouse input")?;
             let button = mouse_button_from_protocol(mouse.button())?;
             let action = mouse_action_from_protocol(mouse.action())?;
             let modifiers = validate_input_modifiers(mouse.modifiers())?;
-            (
-                Vec::new(),
-                None,
-                None,
-                0,
-                Some(MouseSummary {
+            InputSummaryParts {
+                mouse: Some(MouseSummary {
                     row: mouse.row(),
                     col: mouse.col(),
                     pixel_x: mouse.has_pixels().then_some(mouse.pixel_x()),
@@ -2541,9 +2514,9 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
                     action,
                     modifiers,
                 }),
-                false,
-                true,
-            )
+                requires_mouse_tracking: true,
+                ..InputSummaryParts::default()
+            }
         }
         other => return Err(format!("unexpected input kind: {other:?}").into()),
     };
@@ -2551,15 +2524,26 @@ pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn st
         pane_id: required_string(input.pane_id(), "input pane_id")?,
         actor_id: required_string(input.actor_id(), "input actor_id")?,
         input_seq: input.input_seq(),
-        text: String::from_utf8_lossy(&bytes).into_owned(),
-        bytes,
-        paste_text,
-        key_name,
-        key_modifiers,
-        mouse,
-        requires_focus_reporting,
-        requires_mouse_tracking,
+        text: String::from_utf8_lossy(&parts.bytes).into_owned(),
+        bytes: parts.bytes,
+        paste_text: parts.paste_text,
+        key_name: parts.key_name,
+        key_modifiers: parts.key_modifiers,
+        mouse: parts.mouse,
+        requires_focus_reporting: parts.requires_focus_reporting,
+        requires_mouse_tracking: parts.requires_mouse_tracking,
     })
+}
+
+#[derive(Debug, Default)]
+struct InputSummaryParts {
+    bytes: Vec<u8>,
+    paste_text: Option<String>,
+    key_name: Option<String>,
+    key_modifiers: u32,
+    mouse: Option<MouseSummary>,
+    requires_focus_reporting: bool,
+    requires_mouse_tracking: bool,
 }
 
 fn validate_input_modifiers(modifiers: u32) -> Result<u32, Box<dyn std::error::Error>> {
