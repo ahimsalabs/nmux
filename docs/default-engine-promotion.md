@@ -38,7 +38,8 @@ engine or a regular CI requirement.
 ## Current Evidence
 
 - The Nix development shell pins the required toolchain components for the repo,
-  including `flatbuffers` and Zig 0.15.
+  including `flatbuffers`; on 2026-05-23, `nix develop . -c flatc --version`
+  resolved FlatBuffers 25.12.19.
 - `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
   suites with `--features libghostty-vt` and sets `GIT_CONFIG_GLOBAL=/dev/null`
   to avoid local Git URL rewrite interference.
@@ -47,9 +48,19 @@ engine or a regular CI requirement.
 - ADR 0018 and ADR 0023 keep the native build out of the default development
   loop until the remaining evidence in this tracker is gathered.
 
+## Local Timing Samples
+
+These samples are useful for trend tracking, but they do not replace CI
+evidence or measurements from every supported platform.
+
+| Date | Host | Command | Result |
+| --- | --- | --- | --- |
+| 2026-05-23 | Darwin arm64, Apple M5 Max, 128 GiB RAM, warm checkout | `/usr/bin/time -p nix --extra-experimental-features 'nix-command flakes' develop . -c make check-all` | Passed; `real 17.01`, `user 2.83`, `sys 2.98` |
+
 ## Open Work
 
-- Measure and record `make check-all` timing on supported local systems.
+- Measure and record `make check-all` timing on more supported local systems,
+  including at least one cold-checkout or cold-cache run.
 - Exercise the same gate in CI before making it a required check.
 - Write non-Nix toolchain setup notes, or explicitly decide that Nix remains the
   only supported native-build workflow for now.

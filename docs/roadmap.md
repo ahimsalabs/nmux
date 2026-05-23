@@ -165,10 +165,11 @@ Done:
 - Feature-gated live CLI coverage now proves a persisted `libghostty-vt` live client can reattach with a known surface version, trigger a style-table change, and recover through a full surface refresh without leaking raw ANSI controls.
 - ADR 0023 closes M13 as the opt-in backend extraction milestone, keeps `libghostty-vt` out of the default path, and splits post-M13 work into default-engine promotion readiness, frontend hydration, future protocol objects, and local usability tracks.
 - [The default-engine promotion evidence tracker](default-engine-promotion.md) records the native build, CI, toolchain, source-fetch, packaging, workflow, and state-sync evidence required before promotion.
+- The tracker includes a first warm local Darwin arm64 `make check-all` sample and confirms the Nix shell provides `flatc`; remaining promotion evidence still needs more local platforms, CI behavior, non-Nix workflow, source-fetch policy, and packaging decisions.
 
 Next:
 
-- Use `nix develop . -c make check-all` for release-style validation while updating [the default-engine promotion evidence tracker](default-engine-promotion.md) with native build, CI, non-Nix toolchain, source-fetch, and packaging evidence before proposing `libghostty-vt` as the default engine or a regular CI requirement.
+- Keep adding supported-platform and CI results to [the default-engine promotion evidence tracker](default-engine-promotion.md) before proposing `libghostty-vt` as the default engine or a regular CI requirement.
 - Use [the terminal state extraction checklist](terminal-state-extraction.md) and focused ADRs as the gate for expanding terminal-state protocol fields.
 - Keep client attach, reconnect, live streaming, and scrollback fetch semantics on nmux state objects.
 - Keep [the Ghostty/libghostty surface hydration tracker](upstream/ghostty-surface-hydration.md) current as upstream APIs change.
