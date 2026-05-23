@@ -70,13 +70,14 @@ local_smoke_socket_recreation=passed
 local_smoke_print_context=passed
 local_smoke_json_info=passed
 local_smoke_ready_json=passed
+local_smoke_managed_start=passed
 local_smoke=passed
 ```
 
 That starts a temporary `nmuxd`, sends live input through `nmux`, reattaches
 read-only from persisted state, checks nested context, JSON informational flags,
-and daemon readiness JSON, and proves the client does not reuse stale state
-after a socket path is recreated.
+daemon readiness JSON, and managed `nmux --start --json`, and proves the client
+does not reuse stale state after a socket path is recreated.
 
 For an interactive local workspace, start a daemon in one shell and attach from
 another:
@@ -122,7 +123,7 @@ The Nix shell provides `flatc` through `pkgs.flatbuffers`; no separate
 FlatBuffers install is needed for the schema check. `make check` is the regular
 default-engine gate. `make local-smoke` runs a real local `nmuxd`/`nmux` live
 daemon/client smoke over a temporary socket and state file, including the
-daemon ready-json startup event. `make
+daemon ready-json startup event and managed `nmux --start --json`. `make
 check-ghostty-vt` is the opt-in full feature gate for backend `libghostty-vt`
 changes and currently runs serially with `RUST_TEST_THREADS=1`.
 

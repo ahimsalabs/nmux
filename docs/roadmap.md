@@ -157,8 +157,9 @@ Done:
   a temporary socket and persisted state file, verifies piped live stdin output,
   verifies a sequential read-only reattach sees that output, verifies nested
   `nmux --print-context` sees the pane identity environment, verifies JSON
-  informational flags and daemon ready-json output, and verifies a fresh daemon
-  on the same socket path does not render stale cached state.
+  informational flags, daemon ready-json output, and managed
+  `nmux --start --json`, and verifies a fresh daemon on the same socket path
+  does not render stale cached state.
 - Numeric `nmux` flags report the failing flag name for invalid-number errors before connecting.
 - ADR 0012 documents the backend terminal engine boundary.
 - `nmux-core` routes pane output and cursor ownership through a terminal engine trait, with the interim text engine as the current implementation.

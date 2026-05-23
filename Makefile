@@ -45,6 +45,8 @@ local-smoke: check-toolchain
 	client4_err="$$tmp_dir/client4.err"; \
 	client5_out="$$tmp_dir/client5.out"; \
 	client5_err="$$tmp_dir/client5.err"; \
+	client6_out="$$tmp_dir/client6.out"; \
+	client6_err="$$tmp_dir/client6.err"; \
 	info_nmux_version_json="$$tmp_dir/info-nmux-version.json"; \
 	info_nmuxd_version_json="$$tmp_dir/info-nmuxd-version.json"; \
 	info_nmux_socket_json="$$tmp_dir/info-nmux-socket.json"; \
@@ -130,13 +132,17 @@ local-smoke: check-toolchain
 		exit 1; \
 	fi; \
 	daemon_pid=""; \
+	if ! cargo run --quiet --bin nmux -- --start --json --startup-timeout-ms 5000 --command "printf 'managed-json-ready\n'; cat >/dev/null" >"$$client6_out" 2>"$$client6_err"; then \
+		cat "$$client6_err" >&2; \
+		exit 1; \
+	fi; \
 	require_output() { \
 		file="$$1"; \
 		text="$$2"; \
 		description="$$3"; \
 		if ! grep -Fq "$$text" "$$file"; then \
 			echo "missing local smoke output: $$description" >&2; \
-			cat "$$daemon_err" "$$client1_err" "$$client2_err" "$$client3_err" "$$client4_err" "$$client5_err" >&2; \
+			cat "$$daemon_err" "$$client1_err" "$$client2_err" "$$client3_err" "$$client4_err" "$$client5_err" "$$client6_err" >&2; \
 			echo "--- $$file ---" >&2; \
 			cat "$$file" >&2; \
 			exit 1; \
@@ -148,7 +154,7 @@ local-smoke: check-toolchain
 		description="$$3"; \
 		if grep -Fq "$$text" "$$file"; then \
 			echo "unexpected local smoke output: $$description" >&2; \
-			cat "$$daemon_err" "$$client1_err" "$$client2_err" "$$client3_err" "$$client4_err" "$$client5_err" >&2; \
+			cat "$$daemon_err" "$$client1_err" "$$client2_err" "$$client3_err" "$$client4_err" "$$client5_err" "$$client6_err" >&2; \
 			echo "--- $$file ---" >&2; \
 			cat "$$file" >&2; \
 			exit 1; \
@@ -169,6 +175,8 @@ local-smoke: check-toolchain
 	require_output "$$client5_out" '"NMUX_PANE_ID":"pane-1"' 'nested print-context-json pane id'; \
 	require_output "$$client5_out" "\"NMUX_SOCKET\":\"$$socket\"" 'nested print-context-json socket path'; \
 	require_output "$$client5_out" '"NMUX_ORIGIN":"local"' 'nested print-context-json origin'; \
+	require_output "$$client6_out" '{"workspace":{' 'managed start JSON workspace'; \
+	require_output "$$client6_out" 'managed-json-ready' 'managed start JSON command output'; \
 	require_output "$$info_nmux_version_json" '"binary":"nmux"' 'nmux version-json binary'; \
 	require_output "$$info_nmux_version_json" '"version":"' 'nmux version-json version'; \
 	require_output "$$info_nmuxd_version_json" '"binary":"nmuxd"' 'nmuxd version-json binary'; \
@@ -183,6 +191,7 @@ local-smoke: check-toolchain
 	printf 'local_smoke_print_context=passed\n'; \
 	printf 'local_smoke_json_info=passed\n'; \
 	printf 'local_smoke_ready_json=passed\n'; \
+	printf 'local_smoke_managed_start=passed\n'; \
 	printf 'local_smoke=passed\n'
 
 check-ghostty-vt: check-vt-toolchain
@@ -381,6 +390,11 @@ promotion-evidence-bundle:
 		echo "missing local_smoke_ready_json result in $$run_log" >&2; \
 		exit 1; \
 	fi; \
+	local_smoke_managed_start="$$(grep -m1 '^local_smoke_managed_start=' "$$run_log" | cut -d= -f2- || true)"; \
+	if [ -z "$$local_smoke_managed_start" ]; then \
+		echo "missing local_smoke_managed_start result in $$run_log" >&2; \
+		exit 1; \
+	fi; \
 	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_sys="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^sys [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
@@ -530,6 +544,7 @@ promotion-evidence-bundle:
 			printf 'local_smoke_print_context=%s\n' "$$local_smoke_print_context"; \
 			printf 'local_smoke_json_info=%s\n' "$$local_smoke_json_info"; \
 			printf 'local_smoke_ready_json=%s\n' "$$local_smoke_ready_json"; \
+			printf 'local_smoke_managed_start=%s\n' "$$local_smoke_managed_start"; \
 			printf 'local_smoke=%s\n' "$$local_smoke"; \
 			printf 'archive_sha256=%s\n' "$$archive_sha"; \
 			printf 'packaged_runtime_smoke=%s\n' "$$runtime_smoke"; \
@@ -722,6 +737,7 @@ promotion-evidence-verify:
 	require_exact "$$summary" 'local_smoke_print_context=passed' 'local workflow print-context smoke'; \
 	require_exact "$$summary" 'local_smoke_json_info=passed' 'local workflow JSON informational smoke'; \
 	require_exact "$$summary" 'local_smoke_ready_json=passed' 'local workflow ready-json smoke'; \
+	require_exact "$$summary" 'local_smoke_managed_start=passed' 'local workflow managed start smoke'; \
 	require_exact "$$summary" 'local_smoke=passed' 'local workflow smoke'; \
 	check_all_real="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^real [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
 	check_all_user="$$(awk '/^== promotion local sample: packaging archive runtime smoke ==/ { exit } /^user [0-9]+([.][0-9]+)?$$/ { value = $$2 } END { if (value != "") print value }' "$$run_log")"; \
@@ -776,6 +792,7 @@ promotion-evidence-verify:
 	require_exact "$$run_log" 'local_smoke_print_context=passed' 'local smoke print-context result'; \
 	require_exact "$$run_log" 'local_smoke_json_info=passed' 'local smoke JSON informational result'; \
 	require_exact "$$run_log" 'local_smoke_ready_json=passed' 'local smoke ready-json result'; \
+	require_exact "$$run_log" 'local_smoke_managed_start=passed' 'local smoke managed start result'; \
 	require_exact "$$run_log" 'local_smoke=passed' 'local smoke result'; \
 	require_line "$$package_provenance" '^\[staged_files\]$$' 'packaging staged file hashes'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux wrapper hash'; \
