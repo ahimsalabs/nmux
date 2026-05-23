@@ -610,6 +610,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   README and docs/running.md label manual daemon/client examples by shell so first-run users do not mistake the long-running nmuxd side for a stuck single-shell command
   README and docs/running.md explain that Ctrl-] detaches the live client while Ctrl-C in the daemon shell stops a --live-forever workspace
   docs/running.md now describes live attach as the current CLI workspace path while keeping the limitation that it is not a full terminal-emulator UI
+  docs/running.md now includes a manual opt-in libghostty-vt smoke example that shows both the Cargo feature gate and runtime --terminal-engine selection
   docs/toolchain.md now documents the supported Nix path, opens with the normal check/local-smoke path plus a quick target chooser, splits promotion-cold-deps, promotion-local-sample, and promotion-evidence-bundle by evidence question, points packaging readers to the narrow packaging target table, and keeps the non-Nix requirements checklist from counting as default-engine promotion evidence
   docs/toolchain.md now includes a required field template for future non-Nix promotion attempts, covering setup commands, exact tool versions, source mode, cache state, timing, packaging follow-up, and gaps
   docs/source-fetch-policy.md now records current opt-in libghostty-vt-sys fetch behavior, gives question-to-command guidance for provenance and cache-present offline evidence targets, and keeps packaged/default-build source policy as explicit promotion work
