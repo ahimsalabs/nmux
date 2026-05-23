@@ -135,17 +135,18 @@ Done:
 - `nmux --start` starts a private managed `nmuxd --one-shot --ready-json`, or
   `nmuxd --live-forever --ready-json` when paired with `--live`, waits for
   readiness internally, attaches over a short temporary socket path, and cleans
-  up the managed daemon when the client exits; managed `--cwd DIR` and
-  repeatable `--env KEY=VALUE` are forwarded to the private daemon, and
-  `--startup-timeout-ms MS` controls the managed readiness wait. `nmux --shell`
-  provides the common interactive private shell shorthand over that same
-  managed path.
+  up the managed daemon when the client exits; managed `--cwd DIR` is validated
+  as an existing directory, repeatable `--env KEY=VALUE` is forwarded to the
+  private daemon, and `--startup-timeout-ms MS` controls the managed readiness
+  wait. `nmux --shell` provides the common interactive private shell shorthand
+  over that same managed path.
 - Local PTY commands receive `NMUX_*` pane identity variables for nested nmux
   tooling without changing the current local socket protocol; nested local
   daemons append inherited `NMUX_ORIGIN` values as a local hop-chain hint.
-- `nmuxd --cwd DIR` and repeatable `nmuxd --env KEY=VALUE` pass explicit launch
-  working directories and environment variables to local pane commands while
-  preserving daemon-injected `NMUX_*` pane identity.
+- `nmuxd --cwd DIR` validates and passes explicit existing launch working
+  directories, and repeatable `nmuxd --env KEY=VALUE` passes environment
+  variables to local pane commands while preserving daemon-injected `NMUX_*`
+  pane identity.
 - `nmux --print-context` reports inherited `NMUX_*` pane identity without
   connecting, prints the exact inherited key/value names, fails clearly outside
   a complete nmux pane context, `--print-context-json` reports missing context

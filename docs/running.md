@@ -59,9 +59,9 @@ With `--live`, it runs a managed `nmuxd --live-forever --ready-json`. Both
 forms use a short temporary socket path by default, wait for the daemon
 readiness event internally, attach through the normal nmux protocol, and stop
 the managed daemon when the client exits. If `--command SHELL` is omitted, the
-managed daemon runs `$SHELL` and falls back to `sh`. Managed `--cwd DIR` and
-repeatable `--env KEY=VALUE` are passed to the private daemon before
-daemon-owned `NMUX_*` identity variables are injected.
+managed daemon runs `$SHELL` and falls back to `sh`. Managed `--cwd DIR` must
+name an existing directory; it and repeatable `--env KEY=VALUE` are passed to
+the private daemon before daemon-owned `NMUX_*` identity variables are injected.
 `--startup-timeout-ms MS` controls the managed readiness wait before the client
 kills the private daemon and reports setup failure. `nmux --shell` expands to
 the common interactive private shell path: `--start --live --stdin-bytes
@@ -175,8 +175,8 @@ For a deterministic PTY-output smoke test, run the daemon with an explicit shell
 nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --one-shot --command "printf 'hello from pty\n'; cat >/dev/null"
 ```
 
-Use `--cwd DIR` and repeatable `--env KEY=VALUE` when the pane command needs a
-specific launch directory or environment. nmux still injects authoritative
+Use `--cwd DIR` and repeatable `--env KEY=VALUE` when the pane command needs an
+existing launch directory or explicit environment. nmux still injects authoritative
 `NMUX_*` pane identity variables after user-provided env values:
 
 ```sh
@@ -258,10 +258,11 @@ fail before the client tries to connect.
 `nmux --start` is the single-command form for a private managed daemon; it uses
 an isolated temporary socket and state path unless `--socket` or `--state` is
 supplied explicitly. Add `--live` when the managed daemon should remain
-attached after the initial one-shot response. Add `--cwd DIR` or repeatable
-`--env KEY=VALUE` when the managed pane command needs launch context without a
-separate `nmuxd` shell. Add `--startup-timeout-ms MS` when slow local startup
-needs a longer private-daemon readiness window than the default 5000 ms.
+attached after the initial one-shot response. Add `--cwd DIR` for an existing
+working directory or repeatable `--env KEY=VALUE` when the managed pane command
+needs launch context without a separate `nmuxd` shell. Add
+`--startup-timeout-ms MS` when slow local startup needs a longer private-daemon
+readiness window than the default 5000 ms.
 Use `nmux --shell` for the common local interactive form without spelling the
 managed daemon, live attach, byte input, and redraw flags separately.
 

@@ -164,7 +164,7 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --json
 ```
 
-Pane commands can be launched from an explicit working directory and receive
+Pane commands can be launched from an existing working directory and receive
 additional environment variables:
 
 ```sh
@@ -241,11 +241,12 @@ with `--live`, it starts `nmuxd --live-forever --ready-json`. Both forms use a
 short temporary socket path by default, wait for readiness, attach through the
 normal nmux protocol, and stop the managed daemon when the client exits. Pass
 `--command SHELL` to choose the pane command; otherwise the client uses `$SHELL`
-and falls back to `sh`. Managed `--cwd DIR` and repeatable `--env KEY=VALUE`
-are forwarded to the private daemon before daemon-owned `NMUX_*` identity
-variables are injected. `--startup-timeout-ms MS` controls how long the client
-waits for the private daemon readiness event before killing it and reporting a
-setup error. `nmux --shell` is the shorthand for the interactive private shell
+and falls back to `sh`. Managed `--cwd DIR` must name an existing directory;
+it and repeatable `--env KEY=VALUE` are forwarded to the private daemon before
+daemon-owned `NMUX_*` identity variables are injected.
+`--startup-timeout-ms MS` controls how long the client waits for the private
+daemon readiness event before killing it and reporting a setup error.
+`nmux --shell` is the shorthand for the interactive private shell
 form: `--start --live --stdin-bytes --redraw`, using `$SHELL` and falling back
 to `sh`.
 Add `--ready-json` to have `nmuxd` print a single readiness object after bind

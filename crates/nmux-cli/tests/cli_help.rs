@@ -51,6 +51,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--shell"));
     assert!(stdout.contains("--command SHELL"));
     assert!(stdout.contains("--cwd DIR"));
+    assert!(stdout.contains("Existing pane working directory"));
     assert!(stdout.contains("--env KEY=VALUE"));
     assert!(stdout.contains("--start waits for nmuxd --ready-json"));
     assert!(stdout.contains("--startup-timeout-ms controls that managed readiness wait"));
@@ -98,6 +99,7 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("--resize-policy fixed|leader|active-client|manual"));
     assert!(stdout.contains("--terminal-engine interim|libghostty-vt"));
     assert!(stdout.contains("--command SHELL"));
+    assert!(stdout.contains("Run the pane command from existing DIR"));
     assert!(stdout.contains("Default socket: --socket, else valid absolute $NMUX_SOCKET"));
     assert!(stdout.contains("valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock"));
     assert!(stdout.contains("else /tmp/nmux-$UID/nmuxd.sock"));
@@ -732,6 +734,7 @@ fn print_socket_json_reports_resolved_socket_source_without_side_effects() {
 
 #[test]
 fn nmux_rejects_live_only_flags_outside_live_mode() {
+    let missing_cwd = test_socket_path();
     assert_nmux_rejects(&["--stdin"], "nmux: --stdin requires --live");
     assert_nmux_rejects(&["--stdin-bytes"], "nmux: --stdin-bytes requires --live");
     assert_nmux_rejects(&["--redraw"], "nmux: --redraw requires --live");
@@ -744,6 +747,14 @@ fn nmux_rejects_live_only_flags_outside_live_mode() {
     assert_nmux_rejects(
         &["--startup-timeout-ms", "100"],
         "nmux: --startup-timeout-ms requires --start",
+    );
+    assert_nmux_rejects(
+        &[
+            "--start",
+            "--cwd",
+            missing_cwd.to_str().expect("missing cwd path"),
+        ],
+        "nmux: --cwd must be an existing directory",
     );
     assert_nmux_rejects(
         &["--cols", "100", "--rows", "30"],
@@ -925,6 +936,7 @@ fn nmux_rejects_conflicting_frontend_modes() {
 
 #[test]
 fn nmuxd_rejects_conflicting_server_modes() {
+    let missing_cwd = test_socket_path();
     assert_nmuxd_rejects(
         &["--one-shot", "--live-clients", "2"],
         "nmuxd: --one-shot cannot be combined with live daemon modes",
@@ -960,6 +972,14 @@ fn nmuxd_rejects_conflicting_server_modes() {
     assert_nmuxd_rejects(
         &["--live-clients", "many"],
         "nmuxd: --live-clients requires a valid number",
+    );
+    assert_nmuxd_rejects(
+        &[
+            "--cwd",
+            missing_cwd.to_str().expect("missing cwd path"),
+            "--one-shot",
+        ],
+        "nmuxd: --cwd must be an existing directory",
     );
     #[cfg(not(feature = "libghostty-vt"))]
     {

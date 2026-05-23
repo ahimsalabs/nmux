@@ -338,6 +338,7 @@ where
             live_cycles,
             live_clients,
         })?;
+        validate_working_dir_arg(working_dir.as_deref())?;
     }
 
     Ok(Args {
@@ -497,6 +498,18 @@ fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
     Ok((key.to_owned(), value.to_owned()))
 }
 
+fn validate_working_dir_arg(path: Option<&str>) -> Result<(), String> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    let metadata =
+        fs::metadata(path).map_err(|err| format!("--cwd must be an existing directory: {err}"))?;
+    if !metadata.is_dir() {
+        return Err("--cwd must be an existing directory".to_owned());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct DaemonModeArgs {
     one_shot: bool,
@@ -552,7 +565,7 @@ Options:
   --live-cycles COUNT                   Serve a bounded live client
   --live-clients COUNT                  Serve bounded sequential live clients
   --command SHELL                       Run a shell command in the pane PTY
-  --cwd DIR                             Run the pane command from DIR
+  --cwd DIR                             Run the pane command from existing DIR
   --env KEY=VALUE                       Add an environment variable to the pane command
   --resize-policy fixed|leader|active-client|manual
                                          Publish and enforce pane resize policy

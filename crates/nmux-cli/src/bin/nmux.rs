@@ -1776,6 +1776,9 @@ where
             start_env_set: !raw.start_env.is_empty(),
             startup_timeout_set,
         })?;
+        if start {
+            validate_working_dir_arg(start_working_dir.as_deref())?;
+        }
     }
     if let Some(mouse_event) = mouse_event.as_mut() {
         mouse_event.modifiers = mouse_modifiers;
@@ -2633,6 +2636,18 @@ fn parse_env_assignment(value: &str) -> Result<(String, String), String> {
     Ok((key.to_owned(), value.to_owned()))
 }
 
+fn validate_working_dir_arg(path: Option<&str>) -> Result<(), String> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    let metadata =
+        fs::metadata(path).map_err(|err| format!("--cwd must be an existing directory: {err}"))?;
+    if !metadata.is_dir() {
+        return Err("--cwd must be an existing directory".to_owned());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct NoInputResizeArgs {
     no_input_set: bool,
@@ -2950,7 +2965,7 @@ Options:
   --start                    Start a private local nmuxd before attaching
   --shell                    Start a private live shell with stdin-bytes redraw
   --command SHELL            Managed nmuxd pane command for --start
-  --cwd DIR                  Managed nmuxd pane working directory for --start
+  --cwd DIR                  Existing pane working directory for --start
   --env KEY=VALUE            Managed nmuxd pane environment for --start
   --stdin                    Stream newline-delimited stdin in live mode
   --stdin-bytes              Stream raw stdin chunks in live mode
