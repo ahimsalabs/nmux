@@ -30,32 +30,26 @@ For local opt-in validation, either allow the pinned upstream fetch or provide a
 local Ghostty checkout with `GHOSTTY_SOURCE_DIR`. Record which path was used
 when adding default-engine promotion evidence.
 
-Use this command to capture local source-fetch provenance without inspecting
-Ghostty source:
+Use the narrowest source-fetch evidence target that matches the question:
 
-```sh
-nix develop . -c make source-fetch-provenance-sample
-```
+| Question | Command |
+| --- | --- |
+| Which source mode and locked packages are active? | `nix develop . -c make source-fetch-provenance-sample` |
+| Can an existing copied or bundled provenance report be checked without regenerating it? | `nix develop . -c make SOURCE_FETCH_REPORT=/path/to/SOURCE_FETCH.txt source-fetch-provenance-verify` |
+| Can current caches compile opt-in native VT offline? | `nix develop . -c make source-fetch-offline-probe` |
+| Can an existing copied or bundled offline probe be checked without rerunning it? | `nix develop . -c make SOURCE_FETCH_OFFLINE_PROBE_REPORT=/path/to/OFFLINE_PROBE.txt SOURCE_FETCH_OFFLINE_PROBE_LOG=/path/to/OFFLINE_PROBE.log source-fetch-offline-probe-verify` |
 
-The report is written to `target/source-fetch-provenance/SOURCE_FETCH.txt` and
-includes the active source mode, `GHOSTTY_SOURCE_DIR`, `GIT_CONFIG_GLOBAL`,
-`Cargo.lock` SHA-256, toolchain info, and the locked `Cargo.lock` records for
-`libghostty-vt` and `libghostty-vt-sys`. It is evidence for the current local
-source-fetch path, not a default or packaged-build source-policy decision.
-Run `make SOURCE_FETCH_REPORT=/path/to/SOURCE_FETCH.txt
-source-fetch-provenance-verify` when checking a copied or bundled provenance
-report against the current `Cargo.lock`.
+The provenance report is written to
+`target/source-fetch-provenance/SOURCE_FETCH.txt` and includes the active source
+mode, `GHOSTTY_SOURCE_DIR`, `GIT_CONFIG_GLOBAL`, `Cargo.lock` SHA-256,
+toolchain info, and the locked `Cargo.lock` records for `libghostty-vt` and
+`libghostty-vt-sys`. It is evidence for the current local source-fetch path,
+not a default or packaged-build source-policy decision.
 
-Use this command to run the cache-present offline probe without inspecting
-Ghostty source:
-
-```sh
-nix develop . -c make source-fetch-offline-probe
-```
-
-The report is written to `target/source-fetch-offline/OFFLINE_PROBE.txt` and
-the command log to `target/source-fetch-offline/OFFLINE_PROBE.log`. The target
-clears that Rust target directory, then runs:
+The offline probe report is written to
+`target/source-fetch-offline/OFFLINE_PROBE.txt` and the command log to
+`target/source-fetch-offline/OFFLINE_PROBE.log`. The target clears that Rust
+target directory, then runs:
 
 ```sh
 env CARGO_NET_OFFLINE=true GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/source-fetch-offline cargo test -p nmux-core --features libghostty-vt --no-run
@@ -66,9 +60,6 @@ Cargo/Ghostty caches. It is useful evidence that the current pinned-fetch path
 can reuse cache state after a normal opt-in build has populated it, but it does
 not prove cold-checkout behavior, CI cache-miss behavior, network-failure
 behavior, or a packaged/default source policy.
-Run `make SOURCE_FETCH_OFFLINE_PROBE_REPORT=/path/to/OFFLINE_PROBE.txt
-SOURCE_FETCH_OFFLINE_PROBE_LOG=/path/to/RUN.log source-fetch-offline-probe-verify`
-when checking copied or bundled probe evidence.
 
 ## Promotion Blockers
 
