@@ -599,7 +599,7 @@ M14: post-M13 promotion and product split [decision accepted in ADR 0023]
   make check-all is the explicit combined default-plus-libghostty-vt validation gate for release-style checks and promotion evidence without changing regular make check
   keep frontend Ghostty renderer hydration separate from backend terminal-state extraction until upstream can render externally supplied nmux state without client-side PTY replay
   split future protocol expansion into explicit tracks before schema changes: wired hyperlink IDs, image placement/pixel data, richer damage objects, semantic command lifecycle metadata, and physical-key/text-event forwarding
-  docs/protocol-futures.md now tracks those withheld protocol objects and requires ADR-backed object lifetime, snapshot/patch, compatibility, reconnect, and test plans before schema changes
+  docs/protocol-futures.md now tracks those withheld protocol objects, summarizes the current protocol surface versus ADR-required fields, and requires ADR-backed object lifetime, snapshot/patch, compatibility, reconnect, and test plans before schema changes
   keep local attach, reconnect, live streaming, scrollback fetch, cached state, and daemon-owned structured-input behavior stable while the default-engine decision is made
   use docs/upstream trackers for upstream-blocked work instead of treating it as local implementation debt
   README, running docs, and the terminal extraction checklist now use post-M14 language instead of treating M13 extraction as the active roadmap target or assuming pane-1/fixed scrollback behavior
