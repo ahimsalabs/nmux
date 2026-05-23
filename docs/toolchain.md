@@ -13,6 +13,7 @@ nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
+nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
 nix develop . -c make packaging-archive-runtime-smoke
 ```
@@ -101,12 +102,16 @@ For local package provenance evidence, use:
 
 ```sh
 nix develop . -c make packaging-provenance-sample
+nix develop . -c make packaging-provenance-verify
 ```
 
-That target writes `target/packaging-libghostty-vt/package/PROVENANCE.txt` with
-staged file sizes and SHA-256 hashes, `Cargo.lock` hash, toolchain/source mode,
-dependency tree, native runtime-library artifacts, and best-effort dynamic
-dependency output.
+The sample target writes `target/packaging-libghostty-vt/package/PROVENANCE.txt`
+with staged file sizes and SHA-256 hashes, `Cargo.lock` hash,
+toolchain/source mode, dependency tree, native runtime-library artifacts, and
+best-effort dynamic dependency output. The verifier regenerates that manifest
+and asserts the required toolchain, source-mode, locked native-VT package,
+staged-file, runtime-library, dynamic-dependency, and cargo-tree records are
+present before archive packaging continues.
 For local archive evidence, use:
 
 ```sh

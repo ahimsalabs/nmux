@@ -23,6 +23,7 @@ default engine:
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
+nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
 nix develop . -c make packaging-archive-runtime-smoke
 ```
@@ -67,6 +68,13 @@ byte sizes and SHA-256 hashes, native runtime-library artifacts, best-effort
 dynamic dependency output from `otool -L` or `ldd`, and a locked `cargo tree`
 for `nmux-cli --features libghostty-vt`. This is local provenance evidence,
 not a release signing or supply-chain attestation format.
+
+`make packaging-provenance-verify` regenerates that manifest and fails if the
+required toolchain, source-mode, locked native-VT package, staged-file,
+runtime-library, dynamic-dependency, or cargo-tree records are missing. Archive
+packaging depends on this verifier, so `make packaging-archive-sample` and
+`make packaging-archive-runtime-smoke` cannot pass with a structurally
+incomplete local provenance manifest.
 
 `make packaging-archive-sample` writes
 `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` and

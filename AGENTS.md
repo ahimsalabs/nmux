@@ -120,6 +120,7 @@ nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
+nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
 nix develop . -c make packaging-archive-runtime-smoke
 ```
@@ -144,6 +145,9 @@ that resolve `libghostty-vt` from `../lib`; it is packaging evidence, not a
 release format decision.
 `packaging-provenance-sample` writes a local manifest with staged file hashes,
 toolchain/source mode, dependency tree, and dynamic dependency output.
+`packaging-provenance-verify` regenerates that manifest and asserts the
+required toolchain, source-mode, locked native-VT package, staged-file,
+runtime-library, dynamic-dependency, and cargo-tree records are present.
 `packaging-archive-sample` archives the staged layout, writes a SHA-256 file,
 extracts it, and verifies the wrapped binaries from the archive.
 `packaging-archive-runtime-smoke` starts the extracted opt-in `libghostty-vt`

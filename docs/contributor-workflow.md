@@ -65,6 +65,7 @@ nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
+nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
 nix develop . -c make packaging-archive-runtime-smoke
 ```
@@ -110,6 +111,9 @@ and verifies the wrapped binaries can run from that local layout.
 `make packaging-provenance-sample` writes a manifest for that staged layout with
 file hashes, toolchain/source mode, dependency tree, native runtime-library
 artifacts, and dynamic dependency output.
+`make packaging-provenance-verify` regenerates that manifest and asserts the
+required toolchain, source-mode, locked native-VT package, staged-file,
+runtime-library, dynamic-dependency, and cargo-tree records are present.
 `make packaging-archive-sample` archives the staged layout, writes an archive
 SHA-256 file, extracts it, and verifies the wrapped binaries from the extracted
 layout.

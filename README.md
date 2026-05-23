@@ -46,6 +46,7 @@ nix develop . -c make source-fetch-provenance-sample
 nix develop . -c make packaging-sample
 nix develop . -c make packaging-layout-sample
 nix develop . -c make packaging-provenance-sample
+nix develop . -c make packaging-provenance-verify
 nix develop . -c make packaging-archive-sample
 nix develop . -c make packaging-archive-runtime-smoke
 ```
@@ -68,6 +69,9 @@ target directories and prints artifact sizes plus binary versions.
 wrappers that resolve the native VT library from `../lib`.
 `make packaging-provenance-sample` writes a manifest with staged file hashes,
 toolchain/source mode, dependency tree, and dynamic dependency output.
+`make packaging-provenance-verify` regenerates that manifest and asserts the
+required toolchain, source-mode, locked native-VT package, staged-file,
+runtime-library, dynamic-dependency, and cargo-tree records are present.
 `make packaging-archive-sample` archives the staged layout, writes a SHA-256
 file, extracts it, and verifies the wrapped binaries from the archive.
 `make packaging-archive-runtime-smoke` starts the extracted opt-in
