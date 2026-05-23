@@ -13,7 +13,8 @@ engine or a regular CI requirement.
 - Default local engine: `interim`.
 - Optional correctness engine: `libghostty-vt`, available in builds compiled
   with `--features libghostty-vt`.
-- Regular development gate: `nix develop . -c make check`.
+- Regular default-engine/local workflow gate: `nix develop . -c make check`
+  plus `nix develop . -c make local-smoke`.
 - Explicit combined validation gate: `nix develop . -c make check-all`.
 - Promotion status: not accepted.
 
@@ -250,9 +251,11 @@ policy for default or packaged builds.
 
 ## Packaging Samples
 
-These samples prove release binary build behavior in a specific environment.
-They do not answer install paths, signing/notarization, update channels, target
-support, or native-library provenance by themselves.
+These samples cover local release binary builds, staged wrapper layouts,
+package provenance manifests, archive verification, and relocated archive
+runtime smoke in specific environments. They do not answer final supported
+targets, install/update shape, signing/notarization, release provenance policy,
+or static/dynamic/runtime-library policy by themselves.
 
 | Date | Host | Command | Result |
 | --- | --- | --- | --- |
@@ -269,10 +272,11 @@ support, or native-library provenance by themselves.
 
 ## Local Combined Samples
 
-These samples run source-fetch provenance, validation, and archive packaging
-runtime evidence together. They are useful before updating separate provenance,
-timing, and packaging rows, but they do not replace CI, cold-cache, or
-multi-platform evidence.
+These samples run source-fetch provenance, timed `make check-all` validation,
+`make local-smoke`, cache-present offline source-fetch probing, and package
+archive runtime smoke together. They are useful before updating separate
+provenance, timing, smoke, and packaging rows, but they do not replace CI,
+cold-cache, or multi-platform evidence.
 
 | Date | Host | Command | Result |
 | --- | --- | --- | --- |
