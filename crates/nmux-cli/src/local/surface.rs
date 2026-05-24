@@ -89,9 +89,7 @@ pub(super) fn decoded_hyperlinks(
 pub(super) fn decoded_terminal_colors(
     colors: Option<protocol::TerminalColorState<'_>>,
 ) -> Option<TerminalColorSummary> {
-    let Some(colors) = colors else {
-        return None;
-    };
+    let colors = colors?;
     let palette_diff_rgba: Vec<u32> = colors
         .palette_diff_rgba()
         .map(|palette| (0..palette.len()).map(|index| palette.get(index)).collect())

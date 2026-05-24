@@ -1281,6 +1281,7 @@ impl Session {
         self.error_frame_with_context(connection_id, seq, code, message, retryability, None, 0)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn error_frame_with_context(
         &self,
         connection_id: &str,
@@ -1403,6 +1404,7 @@ impl Session {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn named_key_input_frame_with_modifiers(
         &self,
         connection_id: &str,
@@ -1674,6 +1676,7 @@ impl Session {
         builder.finished_data().to_vec()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn resize_intent_frame(
         &self,
         connection_id: &str,
@@ -2099,8 +2102,8 @@ fn apply_terminal_update(
 
     if surface_changed {
         pane.surface_version = pane.surface_version.saturating_add(1);
-        let patch_kind = terminal_patch_kind(
-            update.patch_kind,
+        let patch_kind = terminal_patch_kind(TerminalPatchChanges {
+            requested: update.patch_kind,
             row_count_changed,
             rows_changed,
             row_runs_changed,
@@ -2114,7 +2117,7 @@ fn apply_terminal_update(
             title_changed,
             working_directory_changed,
             colors_changed,
-        );
+        });
         pane.last_patch_kind = patch_kind;
         pane.last_palette_diff = if patch_kind == protocol::PatchKind::ColorOnly {
             palette_diff
@@ -2151,7 +2154,8 @@ fn palette_diff(old: &[u32], new: &[u32]) -> Option<PaletteDiff> {
     })
 }
 
-fn terminal_patch_kind(
+#[derive(Debug, Clone, Copy)]
+struct TerminalPatchChanges {
     requested: protocol::PatchKind,
     row_count_changed: bool,
     rows_changed: bool,
@@ -2166,28 +2170,30 @@ fn terminal_patch_kind(
     title_changed: bool,
     working_directory_changed: bool,
     colors_changed: bool,
-) -> protocol::PatchKind {
-    let rows_or_row_metadata_changed = rows_changed
-        || row_runs_changed
-        || semantic_prompts_changed
-        || dirty_rows_changed
-        || kitty_placeholders_changed;
-    if row_count_changed
-        || surface_kind_changed
-        || styles_changed
-        || (colors_changed && rows_or_row_metadata_changed)
+}
+
+fn terminal_patch_kind(changes: TerminalPatchChanges) -> protocol::PatchKind {
+    let rows_or_row_metadata_changed = changes.rows_changed
+        || changes.row_runs_changed
+        || changes.semantic_prompts_changed
+        || changes.dirty_rows_changed
+        || changes.kitty_placeholders_changed;
+    if changes.row_count_changed
+        || changes.surface_kind_changed
+        || changes.styles_changed
+        || (changes.colors_changed && rows_or_row_metadata_changed)
     {
         protocol::PatchKind::FullRefreshRequired
     } else if rows_or_row_metadata_changed {
         protocol::PatchKind::ReplaceRows
-    } else if colors_changed {
+    } else if changes.colors_changed {
         protocol::PatchKind::ColorOnly
-    } else if modes_changed {
+    } else if changes.modes_changed {
         protocol::PatchKind::ModeOnly
-    } else if cursor_changed || title_changed || working_directory_changed {
+    } else if changes.cursor_changed || changes.title_changed || changes.working_directory_changed {
         protocol::PatchKind::CursorOnly
     } else {
-        requested
+        changes.requested
     }
 }
 

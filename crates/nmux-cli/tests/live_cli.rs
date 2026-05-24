@@ -108,9 +108,7 @@ impl PtyCommand {
 fn one_shot_cli_receives_nmux_pane_environment() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
-    let command = format!(
-        "printf 'env:%s:%s:%s:%s:%s\\n' \"$NMUX\" \"$NMUX_SESSION_ID\" \"$NMUX_PANE_ID\" \"$NMUX_SOCKET\" \"$NMUX_ORIGIN\"; cat >/dev/null"
-    );
+    let command = "printf 'env:%s:%s:%s:%s:%s\\n' \"$NMUX\" \"$NMUX_SESSION_ID\" \"$NMUX_PANE_ID\" \"$NMUX_SOCKET\" \"$NMUX_ORIGIN\"; cat >/dev/null".to_string();
 
     let mut server = daemon_command()
         .args([

@@ -225,9 +225,8 @@ fn run_default(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn attach_for_listing(args: &Args) -> Result<local::RenderedAttach, Box<dyn std::error::Error>> {
-    let mut client_state = load_client_state(args.state_path.as_deref()).map_err(|err| {
+    let mut client_state = load_client_state(args.state_path.as_deref()).inspect_err(|err| {
         report_cli_error(args, err.as_ref()).ok();
-        err
     })?;
     attach_once(args, &mut client_state).inspect_err(|err| {
         report_cli_error(args, err.as_ref()).ok();
@@ -355,9 +354,8 @@ fn run_builtin_subcommand(
 }
 
 fn run_pane_send(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client_state = load_client_state(args.state_path.as_deref()).map_err(|err| {
+    let mut client_state = load_client_state(args.state_path.as_deref()).inspect_err(|err| {
         report_cli_error(args, err.as_ref()).ok();
-        err
     })?;
     match attach_once(args, &mut client_state) {
         Ok(_) => save_client_state(args.state_path.as_deref(), &client_state),
@@ -462,7 +460,7 @@ fn run_attach_loop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut client_state = match load_client_state(args.state_path.as_deref()) {
         Ok(state) => state,
         Err(err) => {
-            report_cli_error(&args, err.as_ref())?;
+            report_cli_error(args, err.as_ref())?;
             return Err(err);
         }
     };
@@ -474,7 +472,7 @@ fn run_attach_loop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     for iteration in 0..iterations {
-        let rendered = match attach_once(&args, &mut client_state) {
+        let rendered = match attach_once(args, &mut client_state) {
             Ok(rendered) => rendered,
             Err(err) => {
                 if args.output_json {
@@ -485,7 +483,7 @@ fn run_attach_loop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
         if let Err(err) = save_client_state(args.state_path.as_deref(), &client_state) {
-            report_cli_error(&args, err.as_ref())?;
+            report_cli_error(args, err.as_ref())?;
             return Err(err);
         }
         if args.output_json {
@@ -1399,6 +1397,7 @@ impl LiveRecorder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn repaint_speculative_echo(
     args: &Args,
     client_state: &local::ClientAttachState,
@@ -2048,6 +2047,7 @@ fn print_live_surface(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_live_update(
     workspace: &local::WorkspaceSummary,
     previous_metadata: &local::TerminalMetadataSummary,
@@ -2977,10 +2977,9 @@ where
     let input_args = args.into_iter().map(Into::into).collect::<Vec<_>>();
     let auto_default = input_args.is_empty();
     let args = preprocess_args(input_args)?;
-    let mut raw = RawArgs::try_parse_from(
-        std::iter::once(std::ffi::OsString::from("nmux")).chain(args.into_iter().map(Into::into)),
-    )
-    .map_err(clap_error_message)?;
+    let mut raw =
+        RawArgs::try_parse_from(std::iter::once(std::ffi::OsString::from("nmux")).chain(args))
+            .map_err(clap_error_message)?;
     let script = normalize_script_command(&mut raw)?;
     let script_command = script.command;
     let replay_path = script.replay_path;
@@ -4319,10 +4318,10 @@ fn clap_error_message(error: clap::Error) -> String {
         .unwrap_or("invalid command line")
         .trim_start_matches("error: ")
         .to_owned();
-    if let Some((_, reason)) = first_line.rsplit_once(": ") {
-        if reason.starts_with("--") {
-            return reason.to_owned();
-        }
+    if let Some((_, reason)) = first_line.rsplit_once(": ")
+        && reason.starts_with("--")
+    {
+        return reason.to_owned();
     }
     first_line
 }

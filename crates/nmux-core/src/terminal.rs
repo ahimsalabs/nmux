@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use nmux_proto::protocol;
 
 #[derive(Debug, Clone)]
@@ -46,25 +48,13 @@ pub struct TerminalModes {
     pub mouse_format: protocol::MouseFormat,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TerminalColors {
     pub default_fg_rgba: u32,
     pub default_bg_rgba: u32,
     pub cursor_rgba: u32,
     pub cursor_rgba_set: bool,
     pub palette_rgba: Vec<u32>,
-}
-
-impl Default for TerminalColors {
-    fn default() -> Self {
-        Self {
-            default_fg_rgba: 0,
-            default_bg_rgba: 0,
-            cursor_rgba: 0,
-            cursor_rgba_set: false,
-            palette_rgba: Vec::new(),
-        }
-    }
 }
 
 impl Default for TerminalModes {
@@ -269,6 +259,7 @@ impl PaneTerminalEngines {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for TerminalEngineKind {
     fn default() -> Self {
         #[cfg(feature = "libghostty-vt")]
@@ -303,17 +294,17 @@ impl TerminalEngine for InterimTextTerminalEngine {
         let (scrollback_lines, cursor_col) =
             merge_interim_pty_output(input.scrollback_lines, input.cursor.col > 0, output);
 
-        Some(interim_text_update(
-            input.surface,
-            input.cursor,
-            input.modes,
-            input.title,
-            input.working_directory,
-            input.colors,
-            input.rows,
+        Some(interim_text_update(InterimTextUpdateInput {
+            surface: input.surface,
+            previous_cursor: input.cursor,
+            modes: input.modes,
+            title: input.title,
+            working_directory: input.working_directory,
+            colors: input.colors,
+            rows: input.rows,
             scrollback_lines,
             cursor_col,
-        ))
+        }))
     }
 
     fn resize(
@@ -322,17 +313,17 @@ impl TerminalEngine for InterimTextTerminalEngine {
         _cols: u32,
         rows: u32,
     ) -> Option<TerminalUpdate> {
-        Some(interim_text_update(
-            input.surface,
-            input.cursor,
-            input.modes,
-            input.title,
-            input.working_directory,
-            input.colors,
+        Some(interim_text_update(InterimTextUpdateInput {
+            surface: input.surface,
+            previous_cursor: input.cursor,
+            modes: input.modes,
+            title: input.title,
+            working_directory: input.working_directory,
+            colors: input.colors,
             rows,
-            input.scrollback_lines.to_vec(),
-            input.cursor.col,
-        ))
+            scrollback_lines: input.scrollback_lines.to_vec(),
+            cursor_col: input.cursor.col,
+        }))
     }
 
     fn encode_key_input(&mut self, input: KeyTerminalInput<'_>) -> Option<Vec<u8>> {
@@ -490,38 +481,43 @@ fn encode_sgr_mouse_input(input: MouseTerminalInput) -> Option<Vec<u8>> {
     Some(format!("\x1b[<{code};{x};{y}{final_byte}").into_bytes())
 }
 
-fn interim_text_update(
+struct InterimTextUpdateInput<'a> {
     surface: protocol::SurfaceKind,
     previous_cursor: TerminalCursor,
     modes: TerminalModes,
-    title: &str,
-    working_directory: &str,
+    title: &'a str,
+    working_directory: &'a str,
     colors: TerminalColors,
     rows: u32,
     scrollback_lines: Vec<String>,
     cursor_col: u32,
-) -> TerminalUpdate {
-    let visible_start = scrollback_lines.len().saturating_sub(rows as usize);
-    let surface_lines = scrollback_lines[visible_start..].to_vec();
+}
+
+fn interim_text_update(input: InterimTextUpdateInput<'_>) -> TerminalUpdate {
+    let visible_start = input
+        .scrollback_lines
+        .len()
+        .saturating_sub(input.rows as usize);
+    let surface_lines = input.scrollback_lines[visible_start..].to_vec();
     let cursor = TerminalCursor {
         row: surface_lines.len().saturating_sub(1) as u32,
-        col: cursor_col,
-        visible: previous_cursor.visible,
-        shape: previous_cursor.shape,
-        blinking: previous_cursor.blinking,
+        col: input.cursor_col,
+        visible: input.previous_cursor.visible,
+        shape: input.previous_cursor.shape,
+        blinking: input.previous_cursor.blinking,
     };
 
     let mut update = TerminalUpdate::plain(
         protocol::PatchKind::ReplaceRows,
-        surface,
+        input.surface,
         cursor,
         surface_lines,
-        scrollback_lines,
+        input.scrollback_lines,
     );
-    update.modes = modes;
-    update.title = title.to_owned();
-    update.working_directory = working_directory.to_owned();
-    update.colors = colors;
+    update.modes = input.modes;
+    update.title = input.title.to_owned();
+    update.working_directory = input.working_directory.to_owned();
+    update.colors = input.colors;
     update
 }
 
@@ -817,9 +813,7 @@ mod ghostty_vt {
             force_rows: bool,
         ) -> Option<TerminalUpdate> {
             let surface = surface_kind(&self.terminal)?;
-            let mut styles = if surface == protocol::SurfaceKind::Main {
-                vec![PaneStyle::default()]
-            } else if input.styles.is_empty() {
+            let mut styles = if surface == protocol::SurfaceKind::Main || input.styles.is_empty() {
                 vec![PaneStyle::default()]
             } else {
                 input.styles.to_vec()
@@ -2953,12 +2947,13 @@ mod tests {
         let mut render_state = RenderState::new().expect("render state");
         let mut rows = RowIterator::new().expect("row iterator");
 
-        let clean_snapshot = render_state.update(&terminal).expect("initial snapshot");
-        let mut clean_row_iter = rows.update(&clean_snapshot).expect("clean row iteration");
-        while let Some(row) = clean_row_iter.next() {
-            row.set_dirty(false).expect("mark row clean");
+        {
+            let clean_snapshot = render_state.update(&terminal).expect("initial snapshot");
+            let mut clean_row_iter = rows.update(&clean_snapshot).expect("clean row iteration");
+            while let Some(row) = clean_row_iter.next() {
+                row.set_dirty(false).expect("mark row clean");
+            }
         }
-        drop(clean_snapshot);
 
         terminal.vt_write(b"dirty row");
         let dirty_snapshot = render_state.update(&terminal).expect("dirty snapshot");
@@ -4079,9 +4074,10 @@ mod tests {
         let mut render_state = RenderState::new().expect("render state");
 
         terminal.vt_write(b"\x1b[?12l");
-        let snapshot = render_state.update(&terminal).expect("snapshot");
-        assert!(!snapshot.cursor_blinking().expect("cursor blink off"));
-        drop(snapshot);
+        {
+            let snapshot = render_state.update(&terminal).expect("snapshot");
+            assert!(!snapshot.cursor_blinking().expect("cursor blink off"));
+        }
 
         terminal.vt_write(b"\x1b[?12h");
         let snapshot = render_state.update(&terminal).expect("snapshot");
@@ -4361,4 +4357,3 @@ mod tests {
         );
     }
 }
-use std::collections::HashMap;

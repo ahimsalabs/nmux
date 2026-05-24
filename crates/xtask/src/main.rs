@@ -115,13 +115,13 @@ fn source_fetch_provenance_verify() -> Result<()> {
 
 fn source_fetch_provenance_verify_at(report_path: &Path) -> Result<()> {
     println!("verifying source-fetch provenance report");
-    let report_text = read_required_text(&report_path, "source-fetch provenance artifact")?;
+    let report_text = read_required_text(report_path, "source-fetch provenance artifact")?;
 
     require_exact(
         &report_text,
         "nmux source-fetch provenance sample",
         "report title",
-        &report_path,
+        report_path,
     )?;
     require_line_where(
         &report_text,
@@ -130,7 +130,7 @@ fn source_fetch_provenance_verify_at(report_path: &Path) -> Result<()> {
                 .is_some_and(is_utc_timestamp)
         },
         "generation timestamp",
-        &report_path,
+        report_path,
     )?;
     require_line_where(
         &report_text,
@@ -141,19 +141,19 @@ fn source_fetch_provenance_verify_at(report_path: &Path) -> Result<()> {
             )
         },
         "Ghostty source mode",
-        &report_path,
+        report_path,
     )?;
     require_line_where(
         &report_text,
         |line| field_has_value(line, "GHOSTTY_SOURCE_DIR="),
         "GHOSTTY_SOURCE_DIR field",
-        &report_path,
+        report_path,
     )?;
     require_line_where(
         &report_text,
         |line| field_has_value(line, "GIT_CONFIG_GLOBAL="),
         "GIT_CONFIG_GLOBAL field",
-        &report_path,
+        report_path,
     )?;
     require_exact(
         &report_text,
@@ -162,37 +162,37 @@ fn source_fetch_provenance_verify_at(report_path: &Path) -> Result<()> {
             sha256_file(Path::new("Cargo.lock"))?
         ),
         "Cargo.lock hash",
-        &report_path,
+        report_path,
     )?;
     require_exact(
         &report_text,
         "[toolchain]",
         "toolchain section",
-        &report_path,
+        report_path,
     )?;
     require_line_where(
         &report_text,
         |line| line.starts_with("cargo=cargo "),
         "cargo version",
-        &report_path,
+        report_path,
     )?;
     require_line_where(
         &report_text,
         |line| line.starts_with("rustc=rustc "),
         "rustc version",
-        &report_path,
+        report_path,
     )?;
     require_exact(
         &report_text,
         "flatc=flatc version 25.12.19",
         "flatc version",
-        &report_path,
+        report_path,
     )?;
     require_line_where(
         &report_text,
         |line| line.starts_with("zig=0.15."),
         "Zig 0.15 version",
-        &report_path,
+        report_path,
     )?;
     require_line_where(
         &report_text,
@@ -205,54 +205,54 @@ fn source_fetch_provenance_verify_at(report_path: &Path) -> Result<()> {
             )
         },
         "Ghostty source dir status",
-        &report_path,
+        report_path,
     )?;
 
     require_exact(
         &report_text,
         "[cargo_lock:libghostty-vt]",
         "libghostty-vt section",
-        &report_path,
+        report_path,
     )?;
     require_exact(
         &report_text,
         r#"name = "libghostty-vt""#,
         "libghostty-vt package name",
-        &report_path,
+        report_path,
     )?;
     require_exact(
         &report_text,
         LIBGHOSTTY_VT_SOURCE,
         "libghostty-vt pinned revision",
-        &report_path,
+        report_path,
     )?;
-    require_lock_section(&report_text, "libghostty-vt", &report_path)?;
+    require_lock_section(&report_text, "libghostty-vt", report_path)?;
 
     require_exact(
         &report_text,
         "[cargo_lock:libghostty-vt-sys]",
         "libghostty-vt-sys section",
-        &report_path,
+        report_path,
     )?;
     require_exact(
         &report_text,
         r#"name = "libghostty-vt-sys""#,
         "libghostty-vt-sys package name",
-        &report_path,
+        report_path,
     )?;
-    require_lock_section(&report_text, "libghostty-vt-sys", &report_path)?;
+    require_lock_section(&report_text, "libghostty-vt-sys", report_path)?;
 
     require_exact(
         &report_text,
         "[policy_note]",
         "policy note section",
-        &report_path,
+        report_path,
     )?;
     require_exact(
         &report_text,
         "This report records local source-fetch inputs for evidence. It does not choose the default or packaged-build source policy.",
         "policy note",
-        &report_path,
+        report_path,
     )?;
     println!("source_fetch_provenance_verified={}", report_path.display());
     Ok(())
@@ -360,7 +360,7 @@ fn packaging_provenance_manifest_verify() -> Result<()> {
 
 fn packaging_provenance_manifest_verify_at(manifest_path: &Path) -> Result<()> {
     println!("verifying opt-in libghostty-vt package provenance manifest");
-    let manifest_text = read_required_text(&manifest_path, "provenance manifest")?;
+    let manifest_text = read_required_text(manifest_path, "provenance manifest")?;
     let pkg_dir = Path::new(PACKAGING_LAYOUT_DEFAULT);
 
     require_line_where(
@@ -372,55 +372,55 @@ fn packaging_provenance_manifest_verify_at(manifest_path: &Path) -> Result<()> {
             )
         },
         "Ghostty source mode",
-        &manifest_path,
+        manifest_path,
     )?;
     require_line_where(
         &manifest_text,
         |line| field_has_value(line, "GHOSTTY_SOURCE_DIR="),
         "GHOSTTY_SOURCE_DIR",
-        &manifest_path,
+        manifest_path,
     )?;
     require_line_where(
         &manifest_text,
         |line| field_has_value(line, "GIT_CONFIG_GLOBAL="),
         "GIT_CONFIG_GLOBAL",
-        &manifest_path,
+        manifest_path,
     )?;
     require_exact(
         &manifest_text,
         "[toolchain]",
         "toolchain section",
-        &manifest_path,
+        manifest_path,
     )?;
     require_line_where(
         &manifest_text,
         |line| line.starts_with("cargo=cargo "),
         "cargo version",
-        &manifest_path,
+        manifest_path,
     )?;
     require_line_where(
         &manifest_text,
         |line| line.starts_with("rustc=rustc "),
         "rustc version",
-        &manifest_path,
+        manifest_path,
     )?;
     require_exact(
         &manifest_text,
         "flatc=flatc version 25.12.19",
         "flatc version",
-        &manifest_path,
+        manifest_path,
     )?;
     require_line_where(
         &manifest_text,
         |line| line.starts_with("zig=0.15."),
         "Zig 0.15 version",
-        &manifest_path,
+        manifest_path,
     )?;
     require_exact(
         &manifest_text,
         "[cargo_lock]",
         "Cargo.lock section",
-        &manifest_path,
+        manifest_path,
     )?;
     require_exact(
         &manifest_text,
@@ -429,83 +429,79 @@ fn packaging_provenance_manifest_verify_at(manifest_path: &Path) -> Result<()> {
             sha256_file(Path::new("Cargo.lock"))?
         ),
         "Cargo.lock hash",
-        &manifest_path,
+        manifest_path,
     )?;
     require_exact(
         &manifest_text,
         "[cargo_lock:libghostty-vt]",
         "locked libghostty-vt package section",
-        &manifest_path,
+        manifest_path,
     )?;
-    require_lock_section(&manifest_text, "libghostty-vt", &manifest_path)?;
+    require_lock_section(&manifest_text, "libghostty-vt", manifest_path)?;
     require_exact(
         &manifest_text,
         "[cargo_lock:libghostty-vt-sys]",
         "locked libghostty-vt-sys package section",
-        &manifest_path,
+        manifest_path,
     )?;
-    require_lock_section(&manifest_text, "libghostty-vt-sys", &manifest_path)?;
+    require_lock_section(&manifest_text, "libghostty-vt-sys", manifest_path)?;
 
     require_exact(
         &manifest_text,
         "[package_metadata]",
         "package metadata section",
-        &manifest_path,
+        manifest_path,
     )?;
     require_exact(
         &manifest_text,
         "package_format=local-tar-archive-layout",
         "package metadata format",
-        &manifest_path,
+        manifest_path,
     )?;
     require_line_where(
         &manifest_text,
         |line| field_has_value(line, "target_host="),
         "package metadata target host",
-        &manifest_path,
+        manifest_path,
     )?;
     require_exact(
         &manifest_text,
         "terminal_engine=libghostty-vt",
         "package metadata terminal engine",
-        &manifest_path,
+        manifest_path,
     )?;
     require_exact(
         &manifest_text,
         "terminal_engine_status=opt-in",
         "package metadata terminal engine status",
-        &manifest_path,
+        manifest_path,
     )?;
     require_exact(
         &manifest_text,
         RUNTIME_LIBRARY_STRATEGY,
         "package metadata runtime-library strategy",
-        &manifest_path,
+        manifest_path,
     )?;
     require_line_where(
         &manifest_text,
         |line| matches!(line, "source_mode=pinned-fetch" | "source_mode=local"),
         "package metadata source mode",
-        &manifest_path,
+        manifest_path,
     )?;
 
     require_exact(
         &manifest_text,
         "[staged_files]",
         "staged file section",
-        &manifest_path,
+        manifest_path,
     )?;
-    require_file_record(&manifest_text, &pkg_dir.join("bin/nmux"), &manifest_path)?;
+    require_file_record(&manifest_text, &pkg_dir.join("bin/nmux"), manifest_path)?;
     require_file_record(
         &manifest_text,
         &pkg_dir.join("PACKAGE_METADATA.txt"),
-        &manifest_path,
+        manifest_path,
     )?;
-    require_file_record(
-        &manifest_text,
-        &pkg_dir.join("libexec/nmux"),
-        &manifest_path,
-    )?;
+    require_file_record(&manifest_text, &pkg_dir.join("libexec/nmux"), manifest_path)?;
     require_line_where(
         &manifest_text,
         |line| {
@@ -515,46 +511,46 @@ fn packaging_provenance_manifest_verify_at(manifest_path: &Path) -> Result<()> {
             )
         },
         "libghostty-vt runtime library hash",
-        &manifest_path,
+        manifest_path,
     )?;
 
     require_exact(
         &manifest_text,
         "[native_runtime_libraries]",
         "native runtime library section",
-        &manifest_path,
+        manifest_path,
     )?;
     require_line_where(
         &manifest_text,
         |line| line.starts_with("target/packaging-libghostty-vt/package/lib/libghostty-vt"),
         "native runtime library path",
-        &manifest_path,
+        manifest_path,
     )?;
     require_exact(
         &manifest_text,
         "[dynamic_dependencies]",
         "dynamic dependencies section",
-        &manifest_path,
+        manifest_path,
     )?;
     let nmux_bin = "target/packaging-libghostty-vt/package/libexec/nmux";
     require_exact(
         &manifest_text,
         nmux_bin,
         "nmux dynamic dependency heading",
-        &manifest_path,
+        manifest_path,
     )?;
-    forbid_dynamic_dependency(&manifest_text, nmux_bin, "libghostty-vt", &manifest_path)?;
+    forbid_dynamic_dependency(&manifest_text, nmux_bin, "libghostty-vt", manifest_path)?;
     require_exact(
         &manifest_text,
         "[cargo_tree]",
         "cargo tree section",
-        &manifest_path,
+        manifest_path,
     )?;
     require_line_where(
         &manifest_text,
         |line| line.starts_with("nmux-cli v"),
         "nmux-cli cargo tree root",
-        &manifest_path,
+        manifest_path,
     )?;
     println!("provenance_manifest_verified={}", manifest_path.display());
     Ok(())
@@ -576,10 +572,10 @@ fn packaging_archive_verify() -> Result<()> {
 
 fn packaging_archive_verify_at(archive: &Path, archive_sha_file: &Path) -> Result<()> {
     println!("verifying existing opt-in libghostty-vt package archive");
-    require_file(&archive, "archive artifact")?;
-    require_file(&archive_sha_file, "archive SHA-256 artifact")?;
+    require_file(archive, "archive artifact")?;
+    require_file(archive_sha_file, "archive SHA-256 artifact")?;
 
-    let expected_sha = fs::read_to_string(&archive_sha_file)?
+    let expected_sha = fs::read_to_string(archive_sha_file)?
         .split_whitespace()
         .next()
         .ok_or_else(|| {
@@ -596,7 +592,7 @@ fn packaging_archive_verify_at(archive: &Path, archive_sha_file: &Path) -> Resul
         )
         .into());
     }
-    let actual_sha = sha256_file(&archive)?;
+    let actual_sha = sha256_file(archive)?;
     if actual_sha != expected_sha {
         return Err(format!(
             "archive SHA-256 mismatch: {}\nexpected {expected_sha}\nactual   {actual_sha}",
@@ -604,10 +600,10 @@ fn packaging_archive_verify_at(archive: &Path, archive_sha_file: &Path) -> Resul
         )
         .into());
     }
-    verify_tar_paths_are_safe(&archive)?;
+    verify_tar_paths_are_safe(archive)?;
 
     let work_dir = TempDir::new("nmuxpkg-verify")?;
-    extract_tar_gz(&archive, work_dir.path())?;
+    extract_tar_gz(archive, work_dir.path())?;
     let pkg_dir = work_dir.path().join("package");
     let metadata = pkg_dir.join("PACKAGE_METADATA.txt");
     let provenance = pkg_dir.join("PROVENANCE.txt");
@@ -1411,10 +1407,10 @@ fn require_time_p_value(run_log: &str, field: &str, path: &Path) -> Result<Strin
         if line == "== promotion local sample: packaging archive runtime smoke ==" {
             break;
         }
-        if let Some(candidate) = line.strip_prefix(&format!("{field} ")) {
-            if is_decimal(candidate) {
-                value = Some(candidate.to_owned());
-            }
+        if let Some(candidate) = line.strip_prefix(&format!("{field} "))
+            && is_decimal(candidate)
+        {
+            value = Some(candidate.to_owned());
         }
     }
     value.ok_or_else(|| {

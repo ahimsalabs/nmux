@@ -1,4 +1,6 @@
 #![allow(
+    clippy::extra_unused_lifetimes,
+    clippy::missing_safety_doc,
     dead_code,
     deprecated,
     non_camel_case_types,

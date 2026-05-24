@@ -914,7 +914,7 @@ fn serve_next(
 fn serve_next_with_output(
     listener: &UnixListener,
     session: &mut Session,
-    mut output: Option<&mut dyn ProcessOutput>,
+    output: Option<&mut dyn ProcessOutput>,
     engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut stream, _) = listener.accept()?;
@@ -927,7 +927,7 @@ fn serve_next_with_output(
             };
         }
     };
-    if let Some(output) = output.as_deref_mut() {
+    if let Some(output) = output {
         let Some(pane_id) = attach_target_pane_id(session, &request) else {
             let mut seq = 1;
             write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
@@ -1033,11 +1033,11 @@ fn serve_live_attached_client(
     );
     wire::write_default_frame(stream, &status_frame)?;
     seq += 1;
-    if let Some(response) = response {
-        if let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq) {
-            wire::write_default_frame(stream, &surface_frame)?;
-            seq += 1;
-        }
+    if let Some(response) = response
+        && let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq)
+    {
+        wire::write_default_frame(stream, &surface_frame)?;
+        seq += 1;
     }
     let mut known_surface_versions = known_surface_versions_from_request(&request);
     if let Some(current) = session.surface_version(&pane_id) {
@@ -1483,11 +1483,11 @@ fn serve_attached_client(
     );
     wire::write_default_frame(stream, &status_frame)?;
     seq += 1;
-    if let Some(response) = response {
-        if let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq) {
-            wire::write_default_frame(stream, &surface_frame)?;
-            seq += 1;
-        }
+    if let Some(response) = response
+        && let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq)
+    {
+        wire::write_default_frame(stream, &surface_frame)?;
+        seq += 1;
     }
     let mut wait_for_more = true;
     loop {
@@ -1516,10 +1516,10 @@ fn serve_attached_client(
                     )?;
                     return Ok(());
                 }
-                if let Some(host) = host.as_deref_mut() {
-                    if !process_one_shot_input(stream, session, engines, host, input)? {
-                        return Ok(());
-                    }
+                if let Some(host) = host.as_deref_mut()
+                    && !process_one_shot_input(stream, session, engines, host, input)?
+                {
+                    return Ok(());
                 }
             }
             AttachedClientFrame::Scrollback(fetch) => {
@@ -1588,7 +1588,7 @@ fn write_attach_target_not_found_error(
     }
 }
 
-fn active_tab<'a>(session: &'a Session) -> Option<&'a nmux_core::session::Tab> {
+fn active_tab(session: &Session) -> Option<&nmux_core::session::Tab> {
     session
         .tabs
         .iter()
@@ -1839,11 +1839,11 @@ fn write_changed_surface_frames(
             }
             None => Some(SurfaceResponse::Snapshot),
         };
-        if let Some(response) = response {
-            if let Some(surface_frame) = surface_response_frame(session, pane_id, response, *seq) {
-                wire::write_default_frame(stream, &surface_frame)?;
-                *seq += 1;
-            }
+        if let Some(response) = response
+            && let Some(surface_frame) = surface_response_frame(session, pane_id, response, *seq)
+        {
+            wire::write_default_frame(stream, &surface_frame)?;
+            *seq += 1;
         }
         known_versions.insert(pane_id.clone(), current);
     }
@@ -2915,7 +2915,7 @@ fn read_scrollback_chunk_with_stale_retry_and_pending_updates(
                     known_scrollback_version: 0,
                 },
             )?;
-            match read_scrollback_response_from_stream(stream, pending_updates.as_deref_mut())? {
+            match read_scrollback_response_from_stream(stream, pending_updates)? {
                 ScrollbackRead::Chunk(chunk) => Ok(chunk),
                 ScrollbackRead::Error(error) => Err(server_error(error)),
             }
@@ -2945,6 +2945,7 @@ pub fn fetch_scrollback_chunk_with_selection(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn fetch_scrollback_chunk_with_selection_and_pending_updates(
     stream: &mut UnixStream,
     sequence: &mut ClientFrameSequence,
@@ -3004,7 +3005,7 @@ pub fn fetch_scrollback_chunk_with_selection_and_pending_updates(
         pane_id,
         start_line,
         line_count,
-        pending_updates.as_deref_mut(),
+        pending_updates,
     )
 }
 
@@ -3821,9 +3822,7 @@ impl AttachRequest {
     }
 
     fn surface_response(&self, session: &Session, pane_id: &str) -> Option<SurfaceResponse> {
-        let Some(current) = session.surface_version(pane_id) else {
-            return None;
-        };
+        let current = session.surface_version(pane_id)?;
 
         let Some(known) = self
             .known_surfaces
@@ -4193,9 +4192,7 @@ impl InputSummary {
         if mode == protocol::MouseTrackingMode::None {
             return Some(InputRejection::MouseTrackingDisabled);
         }
-        let Some((cols, rows)) = session.pane_size(&self.pane_id) else {
-            return None;
-        };
+        let (cols, rows) = session.pane_size(&self.pane_id)?;
         if mouse.row >= rows || mouse.col >= cols {
             return Some(InputRejection::MouseCoordinatesOutOfBounds);
         }
@@ -7095,7 +7092,7 @@ mod tests {
             );
             let mismatch = surface_update(
                 SurfaceUpdateKind::Patch,
-                u64::from(input_seq + 1),
+                input_seq + 1,
                 Some(1),
                 vec![surface_row(0, "abX")],
             );
@@ -14267,10 +14264,10 @@ mod tests {
                     pane_id: pane_id.to_owned(),
                 });
             }
-            if self.pending.is_empty() {
-                if let Some(next) = self.output.pop_front() {
-                    self.pending.extend(next);
-                }
+            if self.pending.is_empty()
+                && let Some(next) = self.output.pop_front()
+            {
+                self.pending.extend(next);
             }
 
             let count = bytes.len().min(self.pending.len());

@@ -126,8 +126,7 @@ impl SpeculativeEchoOverlay {
                     PredictionDecoration::Underlined => {
                         rendered_row.push_str(&format!("{}", SetAttribute(Attribute::Underlined)));
                         rendered_row.push_str(&prediction.text);
-                        rendered_row
-                            .push_str(&format!("{}", SetAttribute(Attribute::NoUnderline)));
+                        rendered_row.push_str(&format!("{}", SetAttribute(Attribute::NoUnderline)));
                     }
                 }
             }

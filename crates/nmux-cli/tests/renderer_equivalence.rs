@@ -288,7 +288,7 @@ fn load_fixtures() -> Vec<RendererFixture> {
 }
 
 fn load_fixture_path(path: &Path) -> RendererFixture {
-    let json = fs::read_to_string(&path)
+    let json = fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("read renderer fixture {}: {error}", path.display()));
     let decoded: Value = serde_json::from_str(&json)
         .unwrap_or_else(|error| panic!("decode renderer fixture {}: {error}", path.display()));

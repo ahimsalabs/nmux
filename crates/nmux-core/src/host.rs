@@ -514,12 +514,12 @@ impl ProcessOutput for LocalPtyHost {
 
 impl ProcessHost for LocalPtyHost {
     fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
-        if let Some(process) = self.processes.get(pane_id) {
-            if process.process.status == ProcessStatus::Running {
-                return Err(HostError::AlreadyRunning {
-                    pane_id: pane_id.to_owned(),
-                });
-            }
+        if let Some(process) = self.processes.get(pane_id)
+            && process.process.status == ProcessStatus::Running
+        {
+            return Err(HostError::AlreadyRunning {
+                pane_id: pane_id.to_owned(),
+            });
         }
 
         let pty_system = native_pty_system();
@@ -669,12 +669,12 @@ impl ProcessHost for LocalPtyHost {
 
 impl ProcessHost for LocalProcessHost {
     fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
-        if let Some(process) = self.processes.get(pane_id) {
-            if process.process.status == ProcessStatus::Running {
-                return Err(HostError::AlreadyRunning {
-                    pane_id: pane_id.to_owned(),
-                });
-            }
+        if let Some(process) = self.processes.get(pane_id)
+            && process.process.status == ProcessStatus::Running
+        {
+            return Err(HostError::AlreadyRunning {
+                pane_id: pane_id.to_owned(),
+            });
         }
 
         let spawn_command = spawn_command_for_host(spec, false, pane_id)?;
@@ -783,12 +783,12 @@ impl PlanningHost {
 
 impl ProcessHost for PlanningHost {
     fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
-        if let Some(process) = self.processes.get(pane_id) {
-            if process.status == ProcessStatus::Running {
-                return Err(HostError::AlreadyRunning {
-                    pane_id: pane_id.to_owned(),
-                });
-            }
+        if let Some(process) = self.processes.get(pane_id)
+            && process.status == ProcessStatus::Running
+        {
+            return Err(HostError::AlreadyRunning {
+                pane_id: pane_id.to_owned(),
+            });
         }
 
         let process = PaneProcess {

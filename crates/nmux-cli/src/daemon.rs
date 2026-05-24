@@ -89,7 +89,7 @@ where
     let mut session = Session::initial();
     session.id.clone_from(&args.session_id);
     if let Some(command) = args.command.as_deref() {
-        session.tabs[0].root.host.command = CommandSpec::new("sh").with_args(["-lc", &command]);
+        session.tabs[0].root.host.command = CommandSpec::new("sh").with_args(["-lc", command]);
     }
     if let Some((cols, rows)) = args.initial_size {
         session.tabs[0].root.cols = cols;
@@ -119,10 +119,11 @@ where
             return Err(format!("failed to create initial tab {tab_number}").into());
         }
     }
-    if let Some(tab_id) = args.active_tab_id.as_deref() {
-        if !session.switch_tab(tab_id) && session.active_tab_id != tab_id {
-            return Err(format!("failed to switch to initial tab {tab_id}").into());
-        }
+    if let Some(tab_id) = args.active_tab_id.as_deref()
+        && !session.switch_tab(tab_id)
+        && session.active_tab_id != tab_id
+    {
+        return Err(format!("failed to switch to initial tab {tab_id}").into());
     }
     if let Some(axis) = args.initial_split {
         let active_pane_id = session
