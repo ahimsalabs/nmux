@@ -541,6 +541,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     &current_workspace,
                     &current_surface_metadata,
                     &mut current_surface_text,
+                    redraw_state.as_mut(),
                 )?;
             }
         }
@@ -929,6 +930,7 @@ fn repaint_speculative_echo(
     workspace: &local::WorkspaceSummary,
     metadata: &local::TerminalMetadataSummary,
     current_surface_text: &mut String,
+    redraw_state: Option<&mut RedrawState>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !args.speculative_echo {
         return Ok(());
@@ -938,7 +940,13 @@ fn repaint_speculative_echo(
         return Ok(());
     };
     *current_surface_text = predicted;
-    print_live_surface(workspace, metadata, current_surface_text, true, None);
+    print_live_surface(
+        workspace,
+        metadata,
+        current_surface_text,
+        true,
+        redraw_state,
+    );
     flush_stdout()?;
     Ok(())
 }
