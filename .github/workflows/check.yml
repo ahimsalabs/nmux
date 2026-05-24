@@ -108,7 +108,7 @@ jobs:
             ~/.cargo/git
             ~/.cargo/registry
             target
-          key: nmux-${{ runner.os }}-cargo-ghostty-default-v2-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'justfile', 'scripts/static-link-verify.sh', '.github/workflows/check.yml') }}
+          key: nmux-${{ runner.os }}-cargo-ghostty-default-v2-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/xtask/**', 'justfile', '.github/workflows/check.yml') }}
           restore-keys: |
             nmux-${{ runner.os }}-cargo-ghostty-default-v2-
             nmux-${{ runner.os }}-cargo-

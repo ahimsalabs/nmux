@@ -111,7 +111,7 @@ local-smoke: check-toolchain
     @scripts/local-smoke.sh
 
 static-link-verify: check-vt-toolchain
-    @scripts/static-link-verify.sh
+    cargo run -p xtask -- static-link-verify
 
 # --- Renderer equivalence ---
 
@@ -173,7 +173,7 @@ source-fetch-provenance-sample: toolchain-info
     @scripts/source-fetch-provenance-sample.sh
 
 source-fetch-provenance-verify:
-    @scripts/source-fetch-provenance-verify.sh
+    cargo run -p xtask -- source-fetch-provenance-verify
 
 source-fetch-offline-probe: check-vt-toolchain
     @scripts/source-fetch-offline-probe.sh

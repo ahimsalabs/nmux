@@ -73,9 +73,11 @@ nix develop . -c just packaging-archive-runtime-smoke
 - `flatc` through `pkgs.flatbuffers` for schema validation and generated Rust
   bindings;
 - `just` for the repository check targets;
+- the workspace `xtask` crate for typed repository maintenance commands that
+  are too structured for shell;
 - `nixfmt` as both the `nix fmt` formatter and a dev-shell tool;
-- Zig 0.15 for the optional native Ghostty VT build.
-- a crane-built `packages.default` derivation for the default interim-engine
+- Zig 0.15 for the default native Ghostty VT build;
+- a crane-built `packages.default` derivation for the default Ghostty-backed
   `nmux` binary;
 - `checks.default` / `checks.nmux-tests`, which validate the schema and compile
   workspace Rust test targets with `cargo test --no-run`;
@@ -87,13 +89,11 @@ nix develop . -c just packaging-archive-runtime-smoke
 
 The regular contributor path is `just check`, which validates
 [schema/nmux.fbs](../schema/nmux.fbs) and runs `cargo test --workspace` against
-the default `interim` terminal engine. `just check-ghostty-vt` and
-`just check-all` are explicit opt-in gates for changes that touch backend
-`libghostty-vt` extraction, feature-sensitive attach/reconnect behavior, cached
-state, daemon-owned structured input, or default-engine promotion evidence.
+the default Ghostty terminal engine. `just check-interim` and `just check-all`
+cover the no-default-features interim fallback and broader release-style
+validation.
 `just local-smoke` is a default-engine user workflow smoke for the local
-daemon/client path; it does not enable the native VT feature or replace the
-test suite.
+daemon/client path; it complements the test suite but does not replace it.
 The crane `checks.default` target is deliberately a Nix build/compile check, not
 a live PTY workflow runner. Use `nix develop . -c just check` and `nix develop
 . -c just local-smoke` for runtime validation because those tests exercise local
