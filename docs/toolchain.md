@@ -74,6 +74,7 @@ nix develop . -c make packaging-archive-runtime-smoke
 - `flatc` through `pkgs.flatbuffers` for schema validation and generated Rust
   bindings;
 - GNU Make for the repository check targets;
+- `nixfmt` as both the `nix fmt` formatter and a dev-shell tool;
 - Zig 0.15 for the optional native Ghostty VT build.
 - a crane-built `packages.default` derivation for default interim-engine
   `nmux` and `nmuxd` binaries;

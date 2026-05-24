@@ -23,6 +23,21 @@
 
       packageVersion = "0.1.0";
 
+      nixFormatterFor =
+        pkgs:
+        pkgs.writeShellApplication {
+          name = "nmux-nixfmt";
+          runtimeInputs = [
+            pkgs.nixfmt
+          ];
+          text = ''
+            if [ "$#" -eq 0 ]; then
+              exec nixfmt flake.nix
+            fi
+            exec nixfmt "$@"
+          '';
+        };
+
       cleanSrc =
         pkgs:
         pkgs.lib.cleanSourceWith {
@@ -42,21 +57,18 @@
             && pkgs.lib.cleanSourceFilter path type;
         };
 
-      defaultNativeBuildInputs =
-        pkgs: [
-          pkgs.flatbuffers
-        ];
+      defaultNativeBuildInputs = pkgs: [
+        pkgs.flatbuffers
+      ];
 
-      defaultBuildArgs =
-        pkgs:
-        {
-          pname = "nmux";
-          version = packageVersion;
-          src = cleanSrc pkgs;
-          strictDeps = true;
-          cargoExtraArgs = "-p nmux-cli --bins";
-          nativeBuildInputs = defaultNativeBuildInputs pkgs;
-        };
+      defaultBuildArgs = pkgs: {
+        pname = "nmux";
+        version = packageVersion;
+        src = cleanSrc pkgs;
+        strictDeps = true;
+        cargoExtraArgs = "-p nmux-cli --bins";
+        nativeBuildInputs = defaultNativeBuildInputs pkgs;
+      };
 
       defaultPackageFor =
         pkgs:
@@ -108,59 +120,59 @@
             maxFlakeSourceKiB = 64 * 1024;
           }
           ''
-          if [ -e "$flakeSrc/target" ]; then
-            echo "flake input source unexpectedly contains target/" >&2
-            exit 1
-          fi
+            if [ -e "$flakeSrc/target" ]; then
+              echo "flake input source unexpectedly contains target/" >&2
+              exit 1
+            fi
 
-          if [ -e "$flakeSrc/result" ] || find "$flakeSrc" -maxdepth 1 -name 'result-*' -print -quit | grep -q .; then
-            echo "flake input source unexpectedly contains Nix result symlinks" >&2
-            exit 1
-          fi
+            if [ -e "$flakeSrc/result" ] || find "$flakeSrc" -maxdepth 1 -name 'result-*' -print -quit | grep -q .; then
+              echo "flake input source unexpectedly contains Nix result symlinks" >&2
+              exit 1
+            fi
 
-          if [ -e "$flakeSrc/.git" ] || [ -e "$flakeSrc/.jj" ]; then
-            echo "flake input source unexpectedly contains VCS metadata" >&2
-            exit 1
-          fi
+            if [ -e "$flakeSrc/.git" ] || [ -e "$flakeSrc/.jj" ]; then
+              echo "flake input source unexpectedly contains VCS metadata" >&2
+              exit 1
+            fi
 
-          if [ -e "$src/target" ]; then
-            echo "flake source unexpectedly contains target/" >&2
-            exit 1
-          fi
+            if [ -e "$src/target" ]; then
+              echo "flake source unexpectedly contains target/" >&2
+              exit 1
+            fi
 
-          if [ -e "$src/result" ] || find "$src" -maxdepth 1 -name 'result-*' -print -quit | grep -q .; then
-            echo "flake source unexpectedly contains Nix result symlinks" >&2
-            exit 1
-          fi
+            if [ -e "$src/result" ] || find "$src" -maxdepth 1 -name 'result-*' -print -quit | grep -q .; then
+              echo "flake source unexpectedly contains Nix result symlinks" >&2
+              exit 1
+            fi
 
-          if [ -e "$src/.git" ] || [ -e "$src/.jj" ]; then
-            echo "flake source unexpectedly contains VCS metadata" >&2
-            exit 1
-          fi
+            if [ -e "$src/.git" ] || [ -e "$src/.jj" ]; then
+              echo "flake source unexpectedly contains VCS metadata" >&2
+              exit 1
+            fi
 
-          source_kib="$(du -sk "$src" | cut -f1)"
-          if [ "$source_kib" -gt "$maxSourceKiB" ]; then
-            echo "flake source is unexpectedly large: ''${source_kib} KiB > ''${maxSourceKiB} KiB" >&2
-            exit 1
-          fi
+            source_kib="$(du -sk "$src" | cut -f1)"
+            if [ "$source_kib" -gt "$maxSourceKiB" ]; then
+              echo "flake source is unexpectedly large: ''${source_kib} KiB > ''${maxSourceKiB} KiB" >&2
+              exit 1
+            fi
 
-          flake_source_kib="$(du -sk "$flakeSrc" | cut -f1)"
-          if [ "$flake_source_kib" -gt "$maxFlakeSourceKiB" ]; then
-            echo "flake input source is unexpectedly large: ''${flake_source_kib} KiB > ''${maxFlakeSourceKiB} KiB" >&2
-            exit 1
-          fi
+            flake_source_kib="$(du -sk "$flakeSrc" | cut -f1)"
+            if [ "$flake_source_kib" -gt "$maxFlakeSourceKiB" ]; then
+              echo "flake input source is unexpectedly large: ''${flake_source_kib} KiB > ''${maxFlakeSourceKiB} KiB" >&2
+              exit 1
+            fi
 
-          mkdir -p "$out"
-          {
-            printf 'flake_input_source_excludes_build_output=passed\n'
-            printf 'flake_input_source_excludes_result_links=passed\n'
-            printf 'flake_input_source_size_kib=%s\n' "$flake_source_kib"
-            printf 'flake_input_source_max_kib=%s\n' "$maxFlakeSourceKiB"
-            printf 'flake_source_excludes_build_output=passed\n'
-            printf 'flake_source_excludes_result_links=passed\n'
-            printf 'flake_source_size_kib=%s\n' "$source_kib"
-            printf 'flake_source_max_kib=%s\n' "$maxSourceKiB"
-          } > "$out/source-audit.txt"
+            mkdir -p "$out"
+            {
+              printf 'flake_input_source_excludes_build_output=passed\n'
+              printf 'flake_input_source_excludes_result_links=passed\n'
+              printf 'flake_input_source_size_kib=%s\n' "$flake_source_kib"
+              printf 'flake_input_source_max_kib=%s\n' "$maxFlakeSourceKiB"
+              printf 'flake_source_excludes_build_output=passed\n'
+              printf 'flake_source_excludes_result_links=passed\n'
+              printf 'flake_source_size_kib=%s\n' "$source_kib"
+              printf 'flake_source_max_kib=%s\n' "$maxSourceKiB"
+            } > "$out/source-audit.txt"
           '';
 
       packageSmokeFor =
@@ -189,6 +201,14 @@
         }
       );
 
+      formatter = forEachSystem (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        nixFormatterFor pkgs
+      );
+
       devShells = forEachSystem (
         system:
         let
@@ -203,6 +223,7 @@
               pkgs.cargo
               pkgs.flatbuffers
               pkgs.gnumake
+              pkgs.nixfmt
               pkgs.rustc
               pkgs.rustfmt
               pkgs.zig_0_15
