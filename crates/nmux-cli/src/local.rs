@@ -3652,24 +3652,26 @@ impl ClientPaneSurface {
             if row_index > 0 {
                 output.push('\n');
             }
-            let runs = &self.row_runs[row_index];
-            if runs.is_empty() {
-                output.push_str(&self.row_text[row_index]);
-                continue;
+            output.push_str(&self.render_styled_row(row_index));
+        }
+        output
+    }
+
+    fn render_styled_row(&self, row_index: usize) -> String {
+        let runs = &self.row_runs[row_index];
+        if runs.is_empty() {
+            return self.row_text[row_index].clone();
+        }
+        let mut output = String::new();
+        for run in runs {
+            let style = self.styles.get(run.style_id as usize);
+            let needs_sgr = style.is_some_and(|s| s.fg_rgba != 0 || s.bg_rgba != 0 || s.flags != 0);
+            if needs_sgr && let Some(style) = style {
+                output.push_str(&style_to_sgr(style));
             }
-            for run in runs {
-                let style = self.styles.get(run.style_id as usize);
-                let needs_sgr =
-                    style.is_some_and(|s| s.fg_rgba != 0 || s.bg_rgba != 0 || s.flags != 0);
-                if needs_sgr {
-                    if let Some(style) = style {
-                        output.push_str(&style_to_sgr(style));
-                    }
-                }
-                output.push_str(&run.text);
-                if needs_sgr {
-                    output.push_str("\x1b[0m");
-                }
+            output.push_str(&run.text);
+            if needs_sgr {
+                output.push_str("\x1b[0m");
             }
         }
         output
@@ -3819,41 +3821,66 @@ impl SpeculativeEchoOverlay {
     }
 
     pub fn render(&self, surface: &ClientPaneSurface) -> Option<String> {
-        self.render_with_speculative_style(surface, false)
+        self.render_with_speculative_style(surface, false, false)
     }
 
     pub fn render_underlined(&self, surface: &ClientPaneSurface) -> Option<String> {
-        self.render_with_speculative_style(surface, true)
+        self.render_with_speculative_style(surface, true, false)
+    }
+
+    pub fn render_underlined_styled(&self, surface: &ClientPaneSurface) -> Option<String> {
+        self.render_with_speculative_style(surface, true, true)
     }
 
     fn render_with_speculative_style(
         &self,
         surface: &ClientPaneSurface,
         underline_prediction: bool,
+        structured_styles: bool,
     ) -> Option<String> {
         let prediction = self.prediction.as_ref()?;
         if prediction.pane_id != surface.pane_id || prediction.base_version != surface.version {
             return None;
         }
         let row_index = usize::try_from(prediction.row).ok()?;
-        let mut rows = surface.row_text.clone();
-        let row = rows.get_mut(row_index)?;
+        let row = surface.row_text.get(row_index)?;
         if prediction.col as usize != row.chars().count() {
             return None;
         }
-        if underline_prediction {
-            row.push_str(Self::UNDERLINE_START);
-            row.push_str(&prediction.text);
-            row.push_str(Self::UNDERLINE_END);
-        } else {
-            row.push_str(&prediction.text);
+        let visible_rows = surface.visible_row_count().max(row_index + 1);
+        let mut rows = Vec::with_capacity(visible_rows);
+        for current_row in 0..visible_rows {
+            let mut rendered_row = if structured_styles {
+                surface.render_styled_row(current_row)
+            } else {
+                surface.row_text[current_row].clone()
+            };
+            if current_row == row_index {
+                if underline_prediction {
+                    rendered_row.push_str(Self::UNDERLINE_START);
+                    rendered_row.push_str(&prediction.text);
+                    rendered_row.push_str(Self::UNDERLINE_END);
+                } else {
+                    rendered_row.push_str(&prediction.text);
+                }
+            }
+            rows.push(rendered_row);
         }
-        let visible_rows = rows
-            .iter()
-            .rposition(|row| !row.is_empty())
-            .map(|index| index + 1)
-            .unwrap_or(0);
-        Some(rows[..visible_rows].join("\n"))
+        Some(rows.join("\n"))
+    }
+
+    fn rebase_pending_prediction(&mut self, update: &SurfaceUpdate) -> SpeculativeEchoReconcile {
+        if let Some(prediction) = self.prediction.as_mut() {
+            prediction.base_version = update.version;
+        }
+        SpeculativeEchoReconcile::Pending
+    }
+
+    fn clear_confirmed(&mut self) -> SpeculativeEchoReconcile {
+        self.prediction = None;
+        self.consecutive_misses = 0;
+        self.suppressed_predictable_keys = 0;
+        SpeculativeEchoReconcile::Confirmed
     }
 
     pub fn reconcile_update(&mut self, update: &SurfaceUpdate) -> SpeculativeEchoReconcile {
@@ -3884,7 +3911,7 @@ impl SpeculativeEchoOverlay {
             .iter()
             .find(|row| row.row == prediction.row)
         else {
-            return SpeculativeEchoReconcile::Pending;
+            return self.rebase_pending_prediction(update);
         };
         let confirmed = row
             .text
@@ -3892,10 +3919,7 @@ impl SpeculativeEchoOverlay {
             .nth(prediction.col as usize)
             .is_some_and(|ch| ch.to_string() == prediction.text);
         if confirmed {
-            self.prediction = None;
-            self.consecutive_misses = 0;
-            self.suppressed_predictable_keys = 0;
-            SpeculativeEchoReconcile::Confirmed
+            self.clear_confirmed()
         } else {
             self.clear_mismatched()
         }
@@ -4434,13 +4458,18 @@ impl ClientAttachState {
         pane_id: &str,
         input_seq: u64,
         text: &str,
+        styled: bool,
     ) -> Option<String> {
         let surface = self
             .surfaces
             .iter()
             .find(|surface| surface.pane_id == pane_id)?;
         overlay.predict_printable_key(surface, input_seq, text)?;
-        overlay.render_underlined(surface)
+        if styled {
+            overlay.render_underlined_styled(surface)
+        } else {
+            overlay.render_underlined(surface)
+        }
     }
 
     /// Render a surface update with optional ANSI SGR styling from structured
@@ -8553,6 +8582,52 @@ mod tests {
     }
 
     #[test]
+    fn speculative_echo_rebases_after_same_pane_no_row_patch() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "ab")],
+        );
+        snapshot.cursor = Some(CursorSummary {
+            row: 0,
+            col: 2,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: false,
+        });
+        let mut surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut overlay = SpeculativeEchoOverlay::default();
+        assert_eq!(
+            overlay.predict_printable_key(&surface, 1, "c").as_deref(),
+            Some("abc")
+        );
+
+        let mut mode_only = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        mode_only.patch_kind = Some(protocol::PatchKind::ModeOnly);
+        mode_only.cursor = snapshot.cursor;
+
+        assert_eq!(
+            overlay.reconcile_update(&mode_only),
+            SpeculativeEchoReconcile::Pending
+        );
+        surface
+            .apply_update(&mode_only)
+            .expect("apply mode-only patch");
+        assert_eq!(
+            overlay.render_underlined(&surface).as_deref(),
+            Some("ab\x1b[4mc\x1b[24m")
+        );
+        assert_eq!(
+            overlay
+                .prediction
+                .as_ref()
+                .map(|prediction| prediction.base_version),
+            Some(2)
+        );
+    }
+
+    #[test]
     fn speculative_echo_backs_off_after_repeated_misses() {
         let mut snapshot = surface_update(
             SurfaceUpdateKind::Snapshot,
@@ -8645,6 +8720,54 @@ mod tests {
             "\x1b[38;2;255;0;0mred\x1b[0m plain \x1b[1;48;2;0;17;34mbold\x1b[0m"
         );
         assert_eq!(surface.render_text(), "red plain bold");
+    }
+
+    #[test]
+    fn speculative_echo_preserves_styled_rows_when_underlining_prediction() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![SurfaceRowUpdate {
+                runs: vec![
+                    styled_run("red", 1, vec![1, 1, 1]),
+                    CellRunSummary::plain(" plain"),
+                ],
+                ..surface_row(0, "red plain")
+            }],
+        );
+        snapshot.cursor = Some(CursorSummary {
+            row: 0,
+            col: 9,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: false,
+        });
+        snapshot.styles = vec![
+            StyleSummary {
+                fg_rgba: 0,
+                bg_rgba: 0,
+                underline_rgba: 0,
+                flags: 0,
+            },
+            StyleSummary {
+                fg_rgba: 0xff0000ff,
+                bg_rgba: 0,
+                underline_rgba: 0,
+                flags: 1 << 1,
+            },
+        ];
+        let surface = ClientPaneSurface::from_snapshot(&snapshot).expect("styled surface");
+        let mut overlay = SpeculativeEchoOverlay::default();
+        overlay
+            .predict_printable_key(&surface, 7, "!")
+            .expect("predict styled row");
+
+        assert_eq!(
+            overlay.render_underlined_styled(&surface).as_deref(),
+            Some("\x1b[3;38;2;255;0;0mred\x1b[0m plain\x1b[4m!\x1b[24m")
+        );
+        assert_eq!(surface.render_text(), "red plain");
     }
 
     #[test]

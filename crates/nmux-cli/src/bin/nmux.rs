@@ -542,6 +542,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     &current_surface_metadata,
                     &mut current_surface_text,
                     redraw_state.as_mut(),
+                    use_styled,
                 )?;
             }
         }
@@ -935,11 +936,13 @@ fn repaint_speculative_echo(
     metadata: &local::TerminalMetadataSummary,
     current_surface_text: &mut String,
     redraw_state: Option<&mut RedrawState>,
+    use_styled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !args.speculative_echo {
         return Ok(());
     }
-    let Some(predicted) = client_state.render_speculative_echo(overlay, pane_id, input_seq, text)
+    let Some(predicted) =
+        client_state.render_speculative_echo(overlay, pane_id, input_seq, text, use_styled)
     else {
         return Ok(());
     };
