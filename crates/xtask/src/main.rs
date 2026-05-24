@@ -6,6 +6,8 @@ use std::process::Command;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const SOURCE_FETCH_REPORT_DEFAULT: &str = "target/source-fetch-provenance/SOURCE_FETCH.txt";
+const SOURCE_FETCH_OFFLINE_PROBE_REPORT_DEFAULT: &str =
+    "target/source-fetch-offline/OFFLINE_PROBE.txt";
 const PACKAGING_PROVENANCE_MANIFEST_DEFAULT: &str =
     "target/packaging-libghostty-vt/package/PROVENANCE.txt";
 const PACKAGING_LAYOUT_DEFAULT: &str = "target/packaging-libghostty-vt/package";
@@ -36,13 +38,14 @@ fn run() -> Result<()> {
         "packaging-provenance-manifest-verify" => packaging_provenance_manifest_verify(),
         "promotion-evidence-verify" => promotion_evidence_verify(),
         "static-link-verify" => static_link_verify(),
+        "source-fetch-offline-probe-verify" => source_fetch_offline_probe_verify(),
         "source-fetch-provenance-verify" => source_fetch_provenance_verify(),
         _ => usage_error(),
     }
 }
 
 fn usage_error() -> Result<()> {
-    Err("usage: xtask <packaging-archive-verify|packaging-provenance-manifest-verify|promotion-evidence-verify|static-link-verify|source-fetch-provenance-verify>".into())
+    Err("usage: xtask <packaging-archive-verify|packaging-provenance-manifest-verify|promotion-evidence-verify|static-link-verify|source-fetch-offline-probe-verify|source-fetch-provenance-verify>".into())
 }
 
 fn static_link_verify() -> Result<()> {
@@ -252,6 +255,100 @@ fn source_fetch_provenance_verify_at(report_path: &Path) -> Result<()> {
         &report_path,
     )?;
     println!("source_fetch_provenance_verified={}", report_path.display());
+    Ok(())
+}
+
+fn source_fetch_offline_probe_verify() -> Result<()> {
+    let report = env::var("SOURCE_FETCH_OFFLINE_PROBE_REPORT")
+        .unwrap_or_else(|_| SOURCE_FETCH_OFFLINE_PROBE_REPORT_DEFAULT.into());
+    let report_path = PathBuf::from(report);
+    let report_text = read_required_text(&report_path, "source-fetch offline probe artifact")?;
+    let log_path = match env::var("SOURCE_FETCH_OFFLINE_PROBE_LOG") {
+        Ok(value) if !value.is_empty() => PathBuf::from(value),
+        _ => PathBuf::from(
+            field_value(&report_text, "log=")
+                .ok_or_else(|| format!("missing record in {}: log path", report_path.display()))?,
+        ),
+    };
+    source_fetch_offline_probe_verify_at(&report_path, &log_path)
+}
+
+fn source_fetch_offline_probe_verify_at(report_path: &Path, log_path: &Path) -> Result<()> {
+    println!("verifying source-fetch offline probe report");
+    let report_text = read_required_text(report_path, "source-fetch offline probe artifact")?;
+    let log_text = read_required_text(log_path, "source-fetch offline probe log")?;
+
+    require_exact(
+        &report_text,
+        "nmux source-fetch offline probe",
+        "report title",
+        report_path,
+    )?;
+    for (prefix, description) in [
+        ("generated_at_utc=", "generation timestamp"),
+        ("started_at_utc=", "start timestamp"),
+        ("completed_at_utc=", "completion timestamp"),
+    ] {
+        require_line_where(
+            &report_text,
+            |line| line.strip_prefix(prefix).is_some_and(is_utc_timestamp),
+            description,
+            report_path,
+        )?;
+    }
+    require_line_where(
+        &report_text,
+        |line| {
+            line.strip_prefix("elapsed_seconds=")
+                .is_some_and(is_decimal)
+        },
+        "elapsed seconds",
+        report_path,
+    )?;
+    for (line, description) in [
+        (
+            "probe_scope=cache-present opt-in native VT build only; not cold checkout, CI cache miss, network-failure, or default/package source policy evidence",
+            "probe scope",
+        ),
+        ("CARGO_NET_OFFLINE=true", "Cargo offline mode"),
+        ("GIT_CONFIG_GLOBAL=/dev/null", "Git config isolation"),
+        ("CARGO_TARGET_DIR=target/source-fetch-offline", "target dir"),
+        ("package=nmux-core", "package"),
+        ("features=libghostty-vt", "features"),
+        (
+            "command=cargo test -p nmux-core --features libghostty-vt --no-run",
+            "command",
+        ),
+        (
+            "log=target/source-fetch-offline/OFFLINE_PROBE.log",
+            "log path",
+        ),
+        ("source_fetch_offline_probe=passed", "probe result"),
+    ] {
+        require_exact(&report_text, line, description, report_path)?;
+    }
+    require_line_where(
+        &report_text,
+        |line| {
+            matches!(
+                line,
+                "ghostty_source_mode=pinned-fetch" | "ghostty_source_mode=local"
+            )
+        },
+        "Ghostty source mode",
+        report_path,
+    )?;
+    require_line_where(
+        &report_text,
+        |line| field_has_value(line, "GHOSTTY_SOURCE_DIR="),
+        "GHOSTTY_SOURCE_DIR field",
+        report_path,
+    )?;
+    require_offline_probe_build_log(&log_text, log_path)?;
+    println!(
+        "source_fetch_offline_probe_verified={}",
+        report_path.display()
+    );
     Ok(())
 }
 
@@ -1387,31 +1484,28 @@ fn verify_offline_probe(offline_probe: &Path, run_log: &Path, run_log_text: &str
         "offline probe command ran",
         run_log,
     )?;
+    source_fetch_offline_probe_verify_at(offline_probe, run_log)
+}
+
+fn require_offline_probe_build_log(log_text: &str, log_path: &Path) -> Result<()> {
     require_line_where(
-        run_log_text,
+        log_text,
         |line| {
             line == "   Compiling libghostty-vt-sys v0.1.1"
                 || line == "    Checking libghostty-vt-sys v0.1.1"
                 || line.starts_with("    Finished `test` profile ")
         },
         "offline probe native VT build activity",
-        run_log,
+        log_path,
     )?;
     require_line_where(
-        run_log_text,
+        log_text,
         |line| {
             line.starts_with("  Executable unittests src/lib.rs (target/source-fetch-offline/debug/deps/nmux_core-")
                 && line.ends_with(')')
         },
         "offline probe nmux-core test binary",
-        run_log,
-    )?;
-    run_just_with_env(
-        "source-fetch-offline-probe-verify",
-        &[
-            ("SOURCE_FETCH_OFFLINE_PROBE_REPORT", offline_probe),
-            ("SOURCE_FETCH_OFFLINE_PROBE_LOG", run_log),
-        ],
+        log_path,
     )
 }
 
@@ -1719,19 +1813,6 @@ fn verify_promotion_open_work(promotion_open_work: &Path) -> Result<()> {
         "promotion open work timestamp",
         promotion_open_work,
     )
-}
-
-fn run_just_with_env(recipe: &str, envs: &[(&str, &Path)]) -> Result<()> {
-    let mut command = Command::new("just");
-    command.arg(recipe);
-    for (name, value) in envs {
-        command.env(name, value);
-    }
-    let status = command.status()?;
-    if !status.success() {
-        return Err(format!("just {recipe} failed with status {status}").into());
-    }
-    Ok(())
 }
 
 struct TempDir {

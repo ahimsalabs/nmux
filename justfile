@@ -179,7 +179,7 @@ source-fetch-offline-probe: check-vt-toolchain
     @scripts/source-fetch-offline-probe.sh
 
 source-fetch-offline-probe-verify:
-    @scripts/source-fetch-offline-probe-verify.sh
+    cargo run -p xtask -- source-fetch-offline-probe-verify
 
 # --- Packaging ---
 
