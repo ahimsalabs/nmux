@@ -1518,6 +1518,9 @@ struct RedrawState {
     last_frame_time: Instant,
     /// Most recent measured frame latency.
     last_latency: Duration,
+    /// Previous latency overlay column and width so row 1 can be restored
+    /// before drawing the next overlay.
+    previous_latency_overlay: Option<(u32, usize)>,
 }
 
 impl RedrawState {
@@ -1527,6 +1530,7 @@ impl RedrawState {
             terminal_cols: 80,
             last_frame_time: Instant::now(),
             last_latency: Duration::ZERO,
+            previous_latency_overlay: None,
         }
     }
 
@@ -1539,6 +1543,10 @@ impl RedrawState {
     /// Render the full surface text differentially: only write rows that changed.
     /// Uses cursor addressing to update individual rows without clearing the screen.
     fn render_diff(&mut self, surface_text: &str) {
+        print!("{}", self.render_diff_text(surface_text));
+    }
+
+    fn render_diff_text(&mut self, surface_text: &str) -> String {
         let now = Instant::now();
         self.last_latency = now.duration_since(self.last_frame_time);
         self.last_frame_time = now;
@@ -1550,11 +1558,15 @@ impl RedrawState {
         // Hide cursor during update to avoid flicker.
         output.push_str("\x1b[?25l");
 
-        let max_rows = new_rows.len().max(self.previous_rows.len());
+        let max_rows = new_rows
+            .len()
+            .max(self.previous_rows.len())
+            .max(usize::from(self.previous_latency_overlay.is_some()));
         for i in 0..max_rows {
             let new_row = new_rows.get(i).map(String::as_str).unwrap_or("");
             let old_row = self.previous_rows.get(i).map(String::as_str).unwrap_or("");
-            if new_row != old_row {
+            let latency_overlay_was_on_row = i == 0 && self.previous_latency_overlay.is_some();
+            if new_row != old_row || latency_overlay_was_on_row {
                 // Move cursor to row i+1 (1-based), column 1.
                 output.push_str(&format!("\x1b[{};1H\x1b[2K{}", i + 1, new_row));
             }
@@ -1562,7 +1574,7 @@ impl RedrawState {
 
         // Draw latency overlay in top-right corner.
         let latency_text = format_latency(self.last_latency);
-        let latency_col = self.terminal_cols.saturating_sub(latency_text.len() as u32) + 1;
+        let latency_col = latency_overlay_column(self.terminal_cols, &latency_text);
         output.push_str(&format!(
             "\x1b[1;{}H\x1b[7m{}\x1b[27m",
             latency_col, latency_text
@@ -1572,32 +1584,49 @@ impl RedrawState {
         let park_row = new_rows.len().max(1);
         output.push_str(&format!("\x1b[{};1H", park_row));
 
-        print!("{output}");
-
         self.previous_rows = new_rows;
+        self.previous_latency_overlay = Some((latency_col, latency_text.len()));
+
+        output
     }
 
     /// Full repaint for initial frame (no previous state to diff against).
     fn render_initial(&mut self, surface_text: &str) {
+        print!("{}", self.render_initial_text(surface_text));
+    }
+
+    fn render_initial_text(&mut self, surface_text: &str) -> String {
         self.last_frame_time = Instant::now();
         self.last_latency = Duration::ZERO;
         self.update_terminal_size();
 
+        let mut output = String::new();
+
         // Clear screen and render everything.
-        print!("\x1b[2J\x1b[H{surface_text}");
+        output.push_str(&format!("\x1b[2J\x1b[H{surface_text}"));
 
         let new_rows: Vec<String> = surface_text.lines().map(String::from).collect();
 
         // Draw latency overlay.
         let latency_text = format_latency(self.last_latency);
-        let latency_col = self.terminal_cols.saturating_sub(latency_text.len() as u32) + 1;
-        print!("\x1b[1;{}H\x1b[7m{}\x1b[27m", latency_col, latency_text);
+        let latency_col = latency_overlay_column(self.terminal_cols, &latency_text);
+        output.push_str(&format!(
+            "\x1b[1;{}H\x1b[7m{}\x1b[27m",
+            latency_col, latency_text
+        ));
 
         let park_row = new_rows.len().max(1);
-        print!("\x1b[{};1H", park_row);
+        output.push_str(&format!("\x1b[{};1H", park_row));
 
         self.previous_rows = new_rows;
+        self.previous_latency_overlay = Some((latency_col, latency_text.len()));
+
+        output
     }
+}
+
+fn latency_overlay_column(terminal_cols: u32, latency_text: &str) -> u32 {
+    terminal_cols.saturating_sub(latency_text.len() as u32) + 1
 }
 
 fn format_latency(latency: Duration) -> String {
@@ -3496,18 +3525,19 @@ mod tests {
         ClientModeArgs, DetachKey, ExplicitInputModeArgs, FocusEvent,
         InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
         LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
-        RawTerminalModeContext, RedrawTerminalContext, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES,
-        ScrollbackSelectionArgFlags, SigwinchResizeContext, StateInfoSocketSummary, args_from_iter,
-        format_cli_error_json, format_context_json, format_input_choices_json,
-        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
-        format_live_detach_json, format_live_error_json, format_live_surface_update_json,
-        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        format_state_info_json, format_state_info_text, interim_surface_fidelity_warning_needed,
-        live_update_print_kind, managed_ready_error_message, parse_detach_key,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        raw_terminal_lflag, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
+        SUPPORTED_KEY_NAMES, ScrollbackSelectionArgFlags, SigwinchResizeContext,
+        StateInfoSocketSummary, args_from_iter, format_cli_error_json, format_context_json,
+        format_input_choices_json, format_key_names_json, format_live_attach_json,
+        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
+        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
+        format_scrollback, format_state_info_json, format_state_info_text,
+        interim_surface_fidelity_warning_needed, live_update_print_kind,
+        managed_ready_error_message, parse_detach_key, parse_env_assignment, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -4326,6 +4356,26 @@ mod tests {
         size.ws_col = 80;
         size.ws_row = 0;
         assert_eq!(terminal_size_from_winsize(size), None);
+    }
+
+    #[test]
+    fn redraw_state_restores_first_row_before_latency_overlay_update() {
+        let mut state = RedrawState::new();
+        state.terminal_cols = 20;
+
+        let initial = state.render_initial_text("session=local\npane output");
+        assert!(initial.contains("\x1b[2J\x1b[Hsession=local\npane output"));
+        assert!(initial.contains("\x1b[1;16H\x1b[7m 0ms \x1b[27m"));
+
+        let update = state.render_diff_text("session=local\npane output changed");
+        assert!(
+            update.contains("\x1b[1;1H\x1b[2Ksession=local"),
+            "redraw diff did not restore first row before replacing latency overlay: {update:?}"
+        );
+        assert!(
+            update.contains("\x1b[2;1H\x1b[2Kpane output changed"),
+            "redraw diff did not update changed surface row: {update:?}"
+        );
     }
 
     #[test]
