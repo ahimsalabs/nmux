@@ -1,3 +1,4 @@
+use crossterm::style::{Attribute, SetAttribute};
 use nmux_proto::protocol;
 
 use crate::local::{ClientPaneSurface, SurfaceUpdate, SurfaceUpdateKind};
@@ -30,8 +31,6 @@ pub enum SpeculativeEchoReconcile {
 impl SpeculativeEchoOverlay {
     const MAX_CONSECUTIVE_MISSES: u8 = 2;
     const RECOVERY_PREDICTABLE_KEYS: u8 = 3;
-    const UNDERLINE_START: &'static str = "\x1b[4m";
-    const UNDERLINE_END: &'static str = "\x1b[24m";
 
     pub fn predict_printable_key(
         &mut self,
@@ -125,9 +124,10 @@ impl SpeculativeEchoOverlay {
                 match decoration {
                     PredictionDecoration::Plain => rendered_row.push_str(&prediction.text),
                     PredictionDecoration::Underlined => {
-                        rendered_row.push_str(Self::UNDERLINE_START);
+                        rendered_row.push_str(&format!("{}", SetAttribute(Attribute::Underlined)));
                         rendered_row.push_str(&prediction.text);
-                        rendered_row.push_str(Self::UNDERLINE_END);
+                        rendered_row
+                            .push_str(&format!("{}", SetAttribute(Attribute::NoUnderline)));
                     }
                 }
             }
