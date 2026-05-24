@@ -1262,10 +1262,18 @@ fn sigwinch_resize_needed(context: SigwinchResizeContext) -> bool {
 }
 
 fn stdin_terminal_size() -> io::Result<Option<(u32, u32)>> {
+    fd_terminal_size(libc::STDIN_FILENO)
+}
+
+fn stdout_terminal_size() -> io::Result<Option<(u32, u32)>> {
+    fd_terminal_size(libc::STDOUT_FILENO)
+}
+
+fn fd_terminal_size(fd: libc::c_int) -> io::Result<Option<(u32, u32)>> {
     let mut size = empty_winsize();
-    // Safety: STDIN_FILENO is a process file descriptor and size points to
-    // valid writable storage for TIOCGWINSZ.
-    if unsafe { libc::ioctl(libc::STDIN_FILENO, libc::TIOCGWINSZ, &mut size) } != 0 {
+    // Safety: fd is a process file descriptor and size points to valid
+    // writable storage for TIOCGWINSZ.
+    if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut size) } != 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(terminal_size_from_winsize(size))
@@ -1515,7 +1523,7 @@ impl RedrawState {
     }
 
     fn update_terminal_size(&mut self) {
-        if let Ok(Some((cols, _))) = stdin_terminal_size() {
+        if let Ok(Some((cols, _))) = stdout_terminal_size() {
             self.terminal_cols = cols;
         }
     }
