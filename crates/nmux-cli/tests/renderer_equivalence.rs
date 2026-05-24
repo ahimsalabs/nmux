@@ -5,7 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::{collections::BTreeSet, fmt::Write as _};
+use std::{
+    collections::BTreeSet,
+    fmt::Write as _,
+    hash::{Hash, Hasher},
+};
 
 use serde_json::{Value, json};
 
@@ -231,7 +235,10 @@ struct CanonicalStyle {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct CanonicalRow {
+    index: u64,
     text: String,
+    dirty_hash: u64,
+    row_state_hash: u64,
     semantic_prompt: String,
     dirty: bool,
     kitty_virtual_placeholder: bool,
@@ -244,6 +251,7 @@ struct CanonicalRun {
     cell_widths: Vec<u8>,
     style_id: u64,
     flags: u64,
+    hyperlink_id: u64,
     semantic_content: String,
 }
 
@@ -299,7 +307,8 @@ fn load_fixture_path(path: &Path) -> RendererFixture {
             .and_then(Value::as_array)
             .expect("expected scrollback rows")
             .iter()
-            .map(materialize_row)
+            .enumerate()
+            .map(|(index, row)| materialize_row(row, "line", index as u64 + 1))
             .collect(),
         absent_substrings: decoded
             .get("absent_substrings")
@@ -357,7 +366,8 @@ fn materialize_surface(decoded: &Value) -> CanonicalSurface {
             .and_then(Value::as_array)
             .expect("surface row updates")
             .iter()
-            .map(materialize_row)
+            .enumerate()
+            .map(|(index, row)| materialize_row(row, "row", index as u64))
             .collect(),
     }
 }
@@ -432,23 +442,35 @@ fn materialize_scrollback(decoded: &Value) -> Vec<CanonicalRow> {
         .expect("scrollback lines")
         .iter()
         .filter(|row| !string_field(row, "text").is_empty())
-        .map(materialize_row)
+        .enumerate()
+        .map(|(index, row)| materialize_row(row, "line", index as u64 + 1))
         .collect()
 }
 
-fn materialize_row(row: &Value) -> CanonicalRow {
+fn materialize_row(row: &Value, index_field: &str, fallback_index: u64) -> CanonicalRow {
+    let text = string_field(row, "text");
+    let semantic_prompt = string_field(row, "semantic_prompt");
+    let dirty = bool_field(row, "dirty");
+    let kitty_virtual_placeholder = bool_field(row, "kitty_virtual_placeholder");
+    let runs = row
+        .get("runs")
+        .and_then(Value::as_array)
+        .expect("row runs")
+        .iter()
+        .map(materialize_run)
+        .collect::<Vec<_>>();
     CanonicalRow {
-        text: string_field(row, "text"),
-        semantic_prompt: string_field(row, "semantic_prompt"),
-        dirty: bool_field(row, "dirty"),
-        kitty_virtual_placeholder: bool_field(row, "kitty_virtual_placeholder"),
-        runs: row
-            .get("runs")
-            .and_then(Value::as_array)
-            .expect("row runs")
-            .iter()
-            .map(materialize_run)
-            .collect(),
+        index: optional_numeric_field(row, index_field).unwrap_or(fallback_index),
+        dirty_hash: optional_numeric_field(row, "dirty_hash")
+            .unwrap_or_else(|| stable_row_hash(&text)),
+        row_state_hash: optional_numeric_field(row, "row_state_hash").unwrap_or_else(|| {
+            row_state_hash(&runs, &semantic_prompt, dirty, kitty_virtual_placeholder)
+        }),
+        text,
+        semantic_prompt,
+        dirty,
+        kitty_virtual_placeholder,
+        runs,
     }
 }
 
@@ -469,6 +491,7 @@ fn materialize_run(run: &Value) -> CanonicalRun {
             .collect(),
         style_id: numeric_field(run, "style_id"),
         flags: numeric_field(run, "flags"),
+        hyperlink_id: optional_numeric_field(run, "hyperlink_id").unwrap_or(0),
         semantic_content: string_field(run, "semantic_content"),
     }
 }
@@ -489,10 +512,78 @@ fn bool_field(value: &Value, name: &str) -> bool {
 }
 
 fn numeric_field(value: &Value, name: &str) -> u64 {
-    value
-        .get(name)
-        .and_then(Value::as_u64)
+    optional_numeric_field(value, name)
         .unwrap_or_else(|| panic!("missing numeric field {name} in {value:?}"))
+}
+
+fn optional_numeric_field(value: &Value, name: &str) -> Option<u64> {
+    value.get(name).and_then(Value::as_u64)
+}
+
+fn stable_row_hash(line: &str) -> u64 {
+    let mut hasher = StableHasher::new();
+    hasher.write(line.as_bytes());
+    hasher.finish()
+}
+
+fn row_state_hash(
+    runs: &[CanonicalRun],
+    semantic_prompt: &str,
+    dirty: bool,
+    kitty_virtual_placeholder: bool,
+) -> u64 {
+    let mut hasher = StableHasher::new();
+    for run in runs {
+        run.text.hash(&mut hasher);
+        run.cell_widths.hash(&mut hasher);
+        (run.style_id as u32).hash(&mut hasher);
+        (run.flags as u32).hash(&mut hasher);
+        (run.hyperlink_id as u32).hash(&mut hasher);
+        cell_semantic_content_value(&run.semantic_content).hash(&mut hasher);
+    }
+    row_semantic_prompt_value(semantic_prompt).hash(&mut hasher);
+    dirty.hash(&mut hasher);
+    kitty_virtual_placeholder.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn row_semantic_prompt_value(name: &str) -> u8 {
+    match name {
+        "none" => 0,
+        "prompt" => 1,
+        "continuation" => 2,
+        _ => panic!("unknown row semantic prompt {name}"),
+    }
+}
+
+fn cell_semantic_content_value(name: &str) -> u8 {
+    match name {
+        "output" => 0,
+        "input" => 1,
+        "prompt" => 2,
+        _ => panic!("unknown cell semantic content {name}"),
+    }
+}
+
+struct StableHasher(u64);
+
+impl StableHasher {
+    fn new() -> Self {
+        Self(0xcbf2_9ce4_8422_2325_u64)
+    }
+}
+
+impl Hasher for StableHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
 }
 
 fn test_socket_path() -> PathBuf {
@@ -635,7 +726,7 @@ fn canonical_artifact_json(
         "workspace": canonical_workspace_json(workspace),
         "terminal": canonical_terminal_json(surface),
         "surface": canonical_surface_json(surface),
-        "scrollback": canonical_rows_json(scrollback),
+        "scrollback": canonical_rows_json(scrollback, "line"),
     })
 }
 
@@ -684,7 +775,7 @@ fn canonical_surface_json(surface: &CanonicalSurface) -> Value {
             .iter()
             .map(canonical_style_json)
             .collect::<Vec<_>>(),
-        "row_updates": canonical_rows_json(&surface.rows),
+        "row_updates": canonical_rows_json(&surface.rows, "row"),
     })
 }
 
@@ -708,18 +799,29 @@ fn canonical_style_json(style: &CanonicalStyle) -> Value {
     })
 }
 
-fn canonical_rows_json(rows: &[CanonicalRow]) -> Value {
-    Value::Array(rows.iter().map(canonical_row_json).collect())
+fn canonical_rows_json(rows: &[CanonicalRow], index_field: &str) -> Value {
+    Value::Array(
+        rows.iter()
+            .map(|row| canonical_row_json(row, index_field))
+            .collect(),
+    )
 }
 
-fn canonical_row_json(row: &CanonicalRow) -> Value {
-    json!({
+fn canonical_row_json(row: &CanonicalRow, index_field: &str) -> Value {
+    let mut row_json = json!({
         "text": row.text,
+        "dirty_hash": row.dirty_hash,
+        "row_state_hash": row.row_state_hash,
         "semantic_prompt": row.semantic_prompt,
         "dirty": row.dirty,
         "kitty_virtual_placeholder": row.kitty_virtual_placeholder,
         "runs": row.runs.iter().map(canonical_run_json).collect::<Vec<_>>(),
-    })
+    });
+    row_json
+        .as_object_mut()
+        .expect("canonical row json object")
+        .insert(index_field.to_owned(), json!(row.index));
+    row_json
 }
 
 fn canonical_run_json(run: &CanonicalRun) -> Value {
@@ -728,6 +830,7 @@ fn canonical_run_json(run: &CanonicalRun) -> Value {
         "cell_widths": run.cell_widths,
         "style_id": run.style_id,
         "flags": run.flags,
+        "hyperlink_id": run.hyperlink_id,
         "semantic_content": run.semantic_content,
     })
 }

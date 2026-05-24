@@ -13,43 +13,49 @@
     "\r\n"
   ],
   "expected": {
-    "workspace": {
-      "session_id": "local",
-      "tab_id": "tab-1",
-      "pane_id": "pane-1",
-      "cols": 15,
-      "rows": 5,
-      "resize_policy": "fixed"
-    },
-    "terminal": {
-      "title": "",
-      "working_directory": "",
-      "surface_kind": "main",
-      "cursor": {
-        "row": 1,
-        "col": 0,
-        "visible": true,
-        "shape": "block",
-        "blinking": false
-      },
-      "modes": {
-        "bracketed_paste": false,
-        "mouse_tracking": false,
-        "focus_reporting": false,
-        "application_keypad": false,
-        "application_cursor": false,
-        "origin": false,
-        "wraparound": true,
-        "mouse_tracking_mode": "none",
-        "mouse_format": "x10"
+    "scrollback": [
+      {
+        "dirty": true,
+        "dirty_hash": 2097920640736127530,
+        "kitty_virtual_placeholder": false,
+        "line": 1,
+        "row_state_hash": 9989176901271439880,
+        "runs": [
+          {
+            "cell_widths": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "flags": 0,
+            "hyperlink_id": 0,
+            "semantic_content": "output",
+            "style_id": 0,
+            "text": "wrap-test-12345"
+          }
+        ],
+        "semantic_prompt": "none",
+        "text": "wrap-test-12345"
       }
-    },
+    ],
     "surface": {
       "colors": {
-        "default_fg_rgba": 4294967295,
-        "default_bg_rgba": 255,
         "cursor_rgba": 0,
         "cursor_rgba_set": false,
+        "default_bg_rgba": 255,
+        "default_fg_rgba": 4294967295,
         "palette_len": 256,
         "palette_prefix": [
           488579583,
@@ -70,49 +76,83 @@
           3941264127
         ]
       },
-      "styles": [
-        {
-          "fg_rgba": 0,
-          "bg_rgba": 0,
-          "underline_rgba": 0,
-          "flags": 0
-        }
-      ],
       "row_updates": [
         {
-          "text": "wrap-test-12345",
-          "semantic_prompt": "none",
           "dirty": true,
+          "dirty_hash": 2097920640736127530,
           "kitty_virtual_placeholder": false,
+          "row": 0,
+          "row_state_hash": 9989176901271439880,
           "runs": [
             {
-              "text": "wrap-test-12345",
-              "cell_widths": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-              "style_id": 0,
+              "cell_widths": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ],
               "flags": 0,
-              "semantic_content": "output"
+              "hyperlink_id": 0,
+              "semantic_content": "output",
+              "style_id": 0,
+              "text": "wrap-test-12345"
             }
-          ]
+          ],
+          "semantic_prompt": "none",
+          "text": "wrap-test-12345"
+        }
+      ],
+      "styles": [
+        {
+          "bg_rgba": 0,
+          "fg_rgba": 0,
+          "flags": 0,
+          "underline_rgba": 0
         }
       ]
     },
-    "scrollback": [
-      {
-        "text": "wrap-test-12345",
-        "semantic_prompt": "none",
-        "dirty": true,
-        "kitty_virtual_placeholder": false,
-        "runs": [
-          {
-            "text": "wrap-test-12345",
-            "cell_widths": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-            "style_id": 0,
-            "flags": 0,
-            "semantic_content": "output"
-          }
-        ]
-      }
-    ]
+    "terminal": {
+      "cursor": {
+        "blinking": false,
+        "col": 0,
+        "row": 1,
+        "shape": "block",
+        "visible": true
+      },
+      "modes": {
+        "application_cursor": false,
+        "application_keypad": false,
+        "bracketed_paste": false,
+        "focus_reporting": false,
+        "mouse_format": "x10",
+        "mouse_tracking": false,
+        "mouse_tracking_mode": "none",
+        "origin": false,
+        "wraparound": true
+      },
+      "surface_kind": "main",
+      "title": "",
+      "working_directory": ""
+    },
+    "workspace": {
+      "cols": 15,
+      "pane_id": "pane-1",
+      "resize_policy": "fixed",
+      "rows": 5,
+      "session_id": "local",
+      "tab_id": "tab-1"
+    }
   },
   "absent_substrings": []
 }

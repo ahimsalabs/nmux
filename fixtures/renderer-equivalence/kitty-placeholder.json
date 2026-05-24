@@ -74,7 +74,10 @@
       ],
       "row_updates": [
         {
+          "row": 0,
           "text": "\udbfb\udeee",
+          "dirty_hash": 8262027360263143038,
+          "row_state_hash": 7478835664087732531,
           "semantic_prompt": "none",
           "dirty": true,
           "kitty_virtual_placeholder": true,
@@ -84,6 +87,7 @@
               "cell_widths": [1],
               "style_id": 0,
               "flags": 0,
+              "hyperlink_id": 0,
               "semantic_content": "output"
             }
           ]
@@ -92,7 +96,10 @@
     },
     "scrollback": [
       {
+        "line": 1,
         "text": "\udbfb\udeee",
+        "dirty_hash": 8262027360263143038,
+        "row_state_hash": 7478835664087732531,
         "semantic_prompt": "none",
         "dirty": true,
         "kitty_virtual_placeholder": true,
@@ -102,6 +109,7 @@
             "cell_widths": [1],
             "style_id": 0,
             "flags": 0,
+            "hyperlink_id": 0,
             "semantic_content": "output"
           }
         ]

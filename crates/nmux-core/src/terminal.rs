@@ -1348,6 +1348,8 @@ mod tests {
     #[cfg(feature = "libghostty-vt")]
     use std::fs;
     #[cfg(feature = "libghostty-vt")]
+    use std::hash::{Hash, Hasher};
+    #[cfg(feature = "libghostty-vt")]
     use std::path::{Path, PathBuf};
 
     use super::{
@@ -1675,6 +1677,8 @@ mod tests {
                 .map(renderer_style_json)
                 .collect::<Vec<_>>(),
             "row_updates": renderer_rows_json(
+                "row",
+                0,
                 &update.surface_lines,
                 &update.surface_row_runs,
                 &update.surface_semantic_prompts,
@@ -1687,6 +1691,8 @@ mod tests {
     #[cfg(feature = "libghostty-vt")]
     fn renderer_scrollback_json(update: &super::TerminalUpdate) -> Value {
         renderer_rows_json(
+            "line",
+            1,
             &update.scrollback_lines,
             &update.scrollback_row_runs,
             &update.scrollback_semantic_prompts,
@@ -1724,6 +1730,8 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     fn renderer_rows_json(
+        index_field: &str,
+        index_base: usize,
         lines: &[String],
         row_runs: &[Vec<super::CellRun>],
         semantic_prompts: &[protocol::RowSemanticPrompt],
@@ -1736,26 +1744,40 @@ mod tests {
                 .enumerate()
                 .filter(|(_, text)| !text.is_empty())
                 .map(|(row, text)| {
-                    json!({
+                    let semantic_prompt = semantic_prompts
+                        .get(row)
+                        .copied()
+                        .unwrap_or(protocol::RowSemanticPrompt::None);
+                    let dirty = dirty_rows.get(row).copied().unwrap_or(false);
+                    let kitty_virtual_placeholder =
+                        kitty_placeholders.get(row).copied().unwrap_or(false);
+                    let runs = row_runs
+                        .get(row)
+                        .unwrap_or_else(|| panic!("missing row runs for row {row}"));
+                    let mut row_json = json!({
                         "text": text,
-                        "semantic_prompt": row_semantic_prompt_name(
-                            semantic_prompts
-                                .get(row)
-                                .copied()
-                                .unwrap_or(protocol::RowSemanticPrompt::None),
+                        "dirty_hash": stable_row_hash(text),
+                        "row_state_hash": row_state_hash(
+                            runs,
+                            semantic_prompt,
+                            dirty,
+                            kitty_virtual_placeholder
                         ),
-                        "dirty": dirty_rows.get(row).copied().unwrap_or(false),
-                        "kitty_virtual_placeholder": kitty_placeholders
-                            .get(row)
-                            .copied()
-                            .unwrap_or(false),
+                        "semantic_prompt": row_semantic_prompt_name(semantic_prompt),
+                        "dirty": dirty,
+                        "kitty_virtual_placeholder": kitty_virtual_placeholder,
                         "runs": row_runs
                             .get(row)
                             .unwrap_or_else(|| panic!("missing row runs for row {row}"))
                             .iter()
                             .map(renderer_run_json)
                             .collect::<Vec<_>>(),
-                    })
+                    });
+                    row_json
+                        .as_object_mut()
+                        .expect("renderer row json object")
+                        .insert(index_field.to_owned(), json!(row + index_base));
+                    row_json
                 })
                 .collect(),
         )
@@ -1768,8 +1790,62 @@ mod tests {
             "cell_widths": run.cell_widths,
             "style_id": run.style_id,
             "flags": run.flags,
+            "hyperlink_id": run.hyperlink_id,
             "semantic_content": cell_semantic_content_name(run.semantic_content),
         })
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn stable_row_hash(line: &str) -> u64 {
+        let mut hasher = StableHasher::new();
+        hasher.write(line.as_bytes());
+        hasher.finish()
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn row_state_hash(
+        runs: &[super::CellRun],
+        semantic_prompt: protocol::RowSemanticPrompt,
+        dirty: bool,
+        kitty_virtual_placeholder: bool,
+    ) -> u64 {
+        let mut hasher = StableHasher::new();
+        for run in runs {
+            run.text.hash(&mut hasher);
+            run.cell_widths.hash(&mut hasher);
+            run.style_id.hash(&mut hasher);
+            run.flags.hash(&mut hasher);
+            run.hyperlink_id.hash(&mut hasher);
+            run.semantic_content.0.hash(&mut hasher);
+        }
+        semantic_prompt.0.hash(&mut hasher);
+        dirty.hash(&mut hasher);
+        kitty_virtual_placeholder.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    struct StableHasher(u64);
+
+    #[cfg(feature = "libghostty-vt")]
+    impl StableHasher {
+        fn new() -> Self {
+            Self(0xcbf2_9ce4_8422_2325_u64)
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    impl Hasher for StableHasher {
+        fn finish(&self) -> u64 {
+            self.0
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            for byte in bytes {
+                self.0 ^= u64::from(*byte);
+                self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
     }
 
     #[cfg(feature = "libghostty-vt")]
