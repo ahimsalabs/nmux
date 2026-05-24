@@ -266,6 +266,82 @@ fn live_redraw_split_daemon_renders_pane_layout() {
 }
 
 #[test]
+fn live_redraw_split_reattach_restores_cached_inactive_pane() {
+    let socket_path = test_socket_path();
+    let state_path = test_state_path();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+    let command = "printf 'split-env:%s\\n' \"$NMUX_PANE_ID\"; sleep 3";
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "2",
+            "--split",
+            "vertical",
+            "--command",
+            command,
+        ])
+        .spawn()
+        .expect("spawn split nmuxd");
+
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(150));
+
+    for label in ["first", "second"] {
+        let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+            .args([
+                "--socket",
+                socket_path.to_str().expect("socket path"),
+                "--state",
+                state_path.to_str().expect("state path"),
+                "--live",
+                "--redraw",
+                "--no-scrollback",
+                "--iterations",
+                "1",
+                "--interval-ms",
+                "1000",
+            ])
+            .output()
+            .unwrap_or_else(|err| panic!("run {label} nmux --live --redraw: {err}"));
+
+        assert!(
+            client.status.success(),
+            "{label} nmux --live --redraw failed: {}",
+            String::from_utf8_lossy(&client.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&client.stdout);
+        assert!(
+            stdout.contains("[pane-1]") && stdout.contains("[pane-2 active]"),
+            "{label} redraw should label both split panes:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("split-env:pane-1"),
+            "{label} redraw should render cached inactive pane output:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("split-env:pane-2"),
+            "{label} redraw should render active pane output:\n{stdout}"
+        );
+        if label == "second" {
+            assert!(
+                !stdout.contains("(surface not cached)"),
+                "{label} redraw should not lose cached split surfaces:\n{stdout}"
+            );
+        }
+    }
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&state_path);
+
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+}
+
+#[test]
 fn one_shot_split_daemon_can_attach_requested_pane() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

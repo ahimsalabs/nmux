@@ -441,6 +441,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| current_workspace.display_line());
     let mut current_pane_surfaces = BTreeMap::new();
     current_pane_surfaces.insert(attached_pane_id.clone(), current_surface_text.clone());
+    seed_cached_pane_surfaces(
+        &mut current_pane_surfaces,
+        &current_workspace,
+        &client_state,
+        use_styled,
+    );
     let mut current_modes = rendered.modes;
     let scrollback = match initial_live_scrollback(
         args,
@@ -2126,6 +2132,41 @@ fn join_redraw_blocks_vertical(blocks: &[Vec<String>]) -> Vec<String> {
 
 fn visible_width(line: &str) -> usize {
     line.chars().count()
+}
+
+fn seed_cached_pane_surfaces(
+    surfaces: &mut BTreeMap<String, String>,
+    workspace: &local::WorkspaceSummary,
+    client_state: &local::ClientAttachState,
+    styled: bool,
+) {
+    if let Some(root) = workspace.pane_tree.as_ref() {
+        seed_cached_pane_surfaces_from_node(surfaces, root, client_state, styled);
+    } else if !surfaces.contains_key(&workspace.pane_id)
+        && let Some(text) = client_state.cached_surface_text_styled(&workspace.pane_id, styled)
+    {
+        surfaces.insert(workspace.pane_id.clone(), text);
+    }
+}
+
+fn seed_cached_pane_surfaces_from_node(
+    surfaces: &mut BTreeMap<String, String>,
+    pane: &local::WorkspacePaneSummary,
+    client_state: &local::ClientAttachState,
+    styled: bool,
+) {
+    if pane.children.is_empty() {
+        if !surfaces.contains_key(&pane.pane_id)
+            && let Some(text) = client_state.cached_surface_text_styled(&pane.pane_id, styled)
+        {
+            surfaces.insert(pane.pane_id.clone(), text);
+        }
+        return;
+    }
+
+    for child in &pane.children {
+        seed_cached_pane_surfaces_from_node(surfaces, child, client_state, styled);
+    }
 }
 
 fn print_terminal_metadata(metadata: &local::TerminalMetadataSummary) {
