@@ -40,3 +40,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0030: Live Session Recording Format](0030-live-session-recording-format.md) | Accepted |
 | [0031: Container And Sandbox Host Execution](0031-container-and-sandbox-host-execution.md) | Accepted |
 | [0032: Single Binary CLI Boundary](0032-single-binary-cli-boundary.md) | Accepted |
+| [0033: Remove nmuxd Shim](0033-remove-nmuxd-shim.md) | Accepted |

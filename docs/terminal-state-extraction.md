@@ -12,7 +12,7 @@ cross-cutting pre-schema protocol tracks live in
 `libghostty-vt` is now present as an optional Cargo feature and compiles through
 the `libghostty-vt-sys` pinned-source native build path, or a
 `GHOSTTY_SOURCE_DIR` checkout when supplied. ADR 0018 keeps the default
-`nmuxd` engine as `interim` while requiring the full feature-enabled
+`nmux daemon` engine as `interim` while requiring the full feature-enabled
 `make check-ghostty-vt` gate for related changes.
 
 ## Current nmux Surface
@@ -184,7 +184,7 @@ only after the backend extraction proves the exact shape needed.
 ## Initial Opt-In Acceptance Gate
 
 The repository has passed the initial gate for the feature-enabled
-`nmuxd --terminal-engine libghostty-vt` path. That opt-in path is expected to
+`nmux daemon --terminal-engine libghostty-vt` path. That opt-in path is expected to
 keep tests proving:
 
 - the engine is stateful per pane across multiple PTY output reads;

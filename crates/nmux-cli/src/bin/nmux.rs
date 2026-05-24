@@ -1063,7 +1063,7 @@ impl ManagedWorkspacePaths {
         ));
         fs::create_dir_all(&root)?;
         Ok(Self {
-            socket_path: root.join("nmuxd.sock"),
+            socket_path: root.join("nmux.sock"),
             state_path: root.join("state.nmux"),
             root,
         })
@@ -1105,11 +1105,12 @@ impl ManagedDaemon {
         env: &[(String, String)],
         startup_timeout: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let nmuxd = nmuxd_binary_path()?;
+        let nmux = nmux_binary_path()?;
         let socket_path = socket_path
             .to_str()
             .ok_or("managed socket path is not UTF-8")?;
         let mut command_args = vec![
+            "daemon".to_owned(),
             "--socket".to_owned(),
             socket_path.to_owned(),
             "--ready-json".to_owned(),
@@ -1129,15 +1130,15 @@ impl ManagedDaemon {
             command_args.push("--env".to_owned());
             command_args.push(format!("{key}={value}"));
         }
-        let mut child = Command::new(nmuxd)
+        let mut child = Command::new(nmux)
             .args(command_args)
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|err| format!("failed to start managed nmuxd: {err}"))?;
+            .map_err(|err| format!("failed to start managed daemon: {err}"))?;
         let stdout = child
             .stdout
             .take()
-            .ok_or("managed nmuxd stdout was not captured")?;
+            .ok_or("managed daemon stdout was not captured")?;
         let (ready_tx, ready_rx) = mpsc::channel();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
@@ -1145,7 +1146,7 @@ impl ManagedDaemon {
             let result = match reader.read_line(&mut line) {
                 Ok(0) => Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "managed nmuxd exited before readiness",
+                    "managed daemon exited before readiness",
                 )),
                 Ok(_) => Ok(line),
                 Err(err) => Err(err),
@@ -1157,18 +1158,18 @@ impl ManagedDaemon {
             Ok(Ok(line)) => line,
             Ok(Err(err)) if err.kind() == io::ErrorKind::UnexpectedEof => {
                 let _ = child.wait();
-                return Err("managed nmuxd exited before readiness".into());
+                return Err("managed daemon exited before readiness".into());
             }
             Ok(Err(err)) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("failed to read managed nmuxd readiness: {err}").into());
+                return Err(format!("failed to read managed daemon readiness: {err}").into());
             }
             Err(RecvTimeoutError::Timeout) => {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(format!(
-                    "managed nmuxd did not become ready within {} ms",
+                    "managed daemon did not become ready within {} ms",
                     startup_timeout.as_millis()
                 )
                 .into());
@@ -1176,7 +1177,7 @@ impl ManagedDaemon {
             Err(RecvTimeoutError::Disconnected) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("managed nmuxd readiness reader stopped unexpectedly".into());
+                return Err("managed daemon readiness reader stopped unexpectedly".into());
             }
         };
         if line.contains("\"event\":\"ready\"") {
@@ -1184,9 +1185,9 @@ impl ManagedDaemon {
         }
         let _ = child.wait();
         if let Some(message) = managed_ready_error_message(&line) {
-            return Err(format!("managed nmuxd startup failed: {message}").into());
+            return Err(format!("managed daemon startup failed: {message}").into());
         }
-        Err(format!("managed nmuxd startup failed: {}", line.trim()).into())
+        Err(format!("managed daemon startup failed: {}", line.trim()).into())
     }
 }
 
@@ -1197,13 +1198,11 @@ impl Drop for ManagedDaemon {
     }
 }
 
-fn nmuxd_binary_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_nmuxd") {
+fn nmux_binary_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_nmux") {
         return Ok(PathBuf::from(path));
     }
-    let mut path = std::env::current_exe()?;
-    path.set_file_name("nmuxd");
-    Ok(path)
+    Ok(std::env::current_exe()?)
 }
 
 fn managed_ready_error_message(line: &str) -> Option<String> {
@@ -4645,7 +4644,7 @@ Options:
   --print-socket             Print the resolved socket path and exit
   --print-socket-json        Print the resolved socket path as JSON and exit
   --connect-timeout-ms MS    Wait up to this long for the daemon transport
-  --startup-timeout-ms MS    Wait up to this long for managed nmuxd readiness
+  --startup-timeout-ms MS    Wait up to this long for managed daemon readiness
   --state-info               Inspect --state cache without connecting
   --state-info-json          Inspect --state cache as JSON without connecting
   --key TEXT                 Text input to send; opts into read-write attach
@@ -4669,11 +4668,11 @@ Options:
   --record PATH              Write timestamped live JSON events to PATH
   --follow                   Reconnect in a polling loop
   --live                     Keep one attach connection open
-  --start                    Start a private local nmuxd before attaching
+  --start                    Start a private local daemon before attaching
   --shell                    Start a private live shell with stdin-bytes redraw
-  --command SHELL            Managed nmuxd pane command for --start
+  --command SHELL            Managed daemon pane command for --start
   --cwd DIR                  Existing pane working directory for --start
-  --env KEY=VALUE            Managed nmuxd pane environment for --start
+  --env KEY=VALUE            Managed daemon pane environment for --start
   --stdin                    Stream newline-delimited stdin in live mode
   --stdin-bytes              Stream raw stdin chunks in live mode
   --local-echo off|tty       Local TTY echo policy for --stdin-bytes
@@ -4707,7 +4706,7 @@ Subcommands:
   version [--json]                Print client version information
 
 Notes:
-  Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+  Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmux.sock, else /tmp/nmux-$UID/nmux.sock.
   [user@]HOST[:PORT] is direct TCP today; host without a port uses 7007.
   Remote TCP requires --token, --tcp-token, or NMUX_TOKEN.
   --tcp cannot be combined with --socket, --start, or --shell.
@@ -4717,7 +4716,7 @@ Notes:
   --state-info and --state-info-json require --state PATH and do not connect.
   --json emits one object per one-shot/follow attach, or newline-delimited live events.
   --record writes newline-delimited live events with elapsed_ms timestamps for replay/export tooling.
-  --start waits for nmuxd --ready-json and cleans up the private daemon on exit.
+  --start waits for nmux daemon --ready-json and cleans up the private daemon on exit.
   --startup-timeout-ms controls that managed readiness wait and defaults to 5000.
   --shell is shorthand for --start --live --stdin-bytes --redraw using $SHELL or sh.
   --speculative-echo is experimental and predicts only simple printable --key input in redraw mode.
@@ -7063,7 +7062,7 @@ mod tests {
         assert!(usage.contains("tab close [TAB_ID]"));
         assert!(usage.contains("send-keys [-t PANE_ID] KEYS..."));
         assert!(usage.contains("version [--json]"));
-        assert!(usage.contains("--start waits for nmuxd --ready-json"));
+        assert!(usage.contains("--start waits for nmux daemon --ready-json"));
         assert!(usage.contains("interim text surface"));
     }
 

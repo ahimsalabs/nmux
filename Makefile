@@ -50,9 +50,9 @@ local-smoke: check-toolchain
 	client6_out="$$tmp_dir/client6.out"; \
 	client6_err="$$tmp_dir/client6.err"; \
 	info_nmux_version_json="$$tmp_dir/info-nmux-version.json"; \
-	info_nmuxd_version_json="$$tmp_dir/info-nmuxd-version.json"; \
+	info_daemon_version_json="$$tmp_dir/info-daemon-version.json"; \
 	info_nmux_socket_json="$$tmp_dir/info-nmux-socket.json"; \
-	info_nmuxd_socket_json="$$tmp_dir/info-nmuxd-socket.json"; \
+	info_daemon_socket_json="$$tmp_dir/info-daemon-socket.json"; \
 	cleanup() { \
 		status="$$?"; \
 		if [ -n "$${daemon_pid:-}" ] && kill -0 "$$daemon_pid" >/dev/null 2>&1; then \
@@ -64,11 +64,11 @@ local-smoke: check-toolchain
 	}; \
 	trap cleanup EXIT INT TERM; \
 	cargo run --quiet --bin nmux -- --version-json >"$$info_nmux_version_json"; \
-	cargo run --quiet --bin nmuxd -- --version-json >"$$info_nmuxd_version_json"; \
+	cargo run --quiet --bin nmux -- daemon --version-json >"$$info_daemon_version_json"; \
 	cargo run --quiet --bin nmux -- --socket "$$socket" --print-socket-json >"$$info_nmux_socket_json"; \
-	cargo run --quiet --bin nmuxd -- --socket "$$socket" --print-socket-json >"$$info_nmuxd_socket_json"; \
+	cargo run --quiet --bin nmux -- daemon --socket "$$socket" --print-socket-json >"$$info_daemon_socket_json"; \
 	command_text="printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$$line\"; done"; \
-	cargo run --quiet --bin nmuxd -- --socket "$$socket" --ready-json --live-clients 2 --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
+	cargo run --quiet --bin nmux -- daemon --socket "$$socket" --ready-json --live-clients 2 --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
 	daemon_pid="$$!"; \
 	if ! printf 'ping\n' | cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --state "$$state" --live --iterations 1 --stdin --scrollback-start 1 --scrollback-count 8 >"$$client1_out" 2>"$$client1_err"; then \
 		cat "$$daemon_err" "$$client1_err" >&2; \
@@ -92,7 +92,7 @@ local-smoke: check-toolchain
 	: >"$$daemon_out"; \
 	: >"$$daemon_err"; \
 	command_text="printf 'fresh daemon\n'; sleep 1"; \
-	cargo run --quiet --bin nmuxd -- --socket "$$socket" --live-clients 1 --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
+	cargo run --quiet --bin nmux -- daemon --socket "$$socket" --live-clients 1 --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
 	daemon_pid="$$!"; \
 	if ! cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --state "$$state" --live --no-input --iterations 1 --scrollback-start 1 --scrollback-count 8 >"$$client3_out" 2>"$$client3_err"; then \
 		cat "$$daemon_err" "$$client3_err" >&2; \
@@ -107,7 +107,7 @@ local-smoke: check-toolchain
 	: >"$$daemon_out"; \
 	: >"$$daemon_err"; \
 	command_text="\"$$nmux_bin\" --print-context; cat >/dev/null"; \
-	cargo run --quiet --bin nmuxd -- --socket "$$socket" --one-shot --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
+	cargo run --quiet --bin nmux -- daemon --socket "$$socket" --one-shot --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
 	daemon_pid="$$!"; \
 	if ! cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --scrollback-start 1 --scrollback-count 24 >"$$client4_out" 2>"$$client4_err"; then \
 		cat "$$daemon_err" "$$client4_err" >&2; \
@@ -122,7 +122,7 @@ local-smoke: check-toolchain
 	: >"$$daemon_out"; \
 	: >"$$daemon_err"; \
 	command_text="\"$$nmux_bin\" --print-context-json; cat >/dev/null"; \
-	cargo run --quiet --bin nmuxd -- --socket "$$socket" --one-shot --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
+	cargo run --quiet --bin nmux -- daemon --socket "$$socket" --one-shot --command "$$command_text" >"$$daemon_out" 2>"$$daemon_err" & \
 	daemon_pid="$$!"; \
 	if ! cargo run --quiet --bin nmux -- --socket "$$socket" --connect-timeout-ms 5000 --scrollback-start 1 --scrollback-count 24 >"$$client5_out" 2>"$$client5_err"; then \
 		cat "$$daemon_err" "$$client5_err" >&2; \
@@ -181,12 +181,12 @@ local-smoke: check-toolchain
 	require_output "$$client6_out" 'managed-json-ready' 'managed start JSON command output'; \
 	require_output "$$info_nmux_version_json" '"binary":"nmux"' 'nmux version-json binary'; \
 	require_output "$$info_nmux_version_json" '"version":"' 'nmux version-json version'; \
-	require_output "$$info_nmuxd_version_json" '"binary":"nmuxd"' 'nmuxd version-json binary'; \
-	require_output "$$info_nmuxd_version_json" '"version":"' 'nmuxd version-json version'; \
+	require_output "$$info_daemon_version_json" '"binary":"nmux"' 'daemon version-json binary'; \
+	require_output "$$info_daemon_version_json" '"version":"' 'daemon version-json version'; \
 	require_output "$$info_nmux_socket_json" "\"NMUX_SOCKET\":\"$$socket\"" 'nmux print-socket-json socket path'; \
 	require_output "$$info_nmux_socket_json" '"source":"--socket"' 'nmux print-socket-json source'; \
-	require_output "$$info_nmuxd_socket_json" "\"NMUX_SOCKET\":\"$$socket\"" 'nmuxd print-socket-json socket path'; \
-	require_output "$$info_nmuxd_socket_json" '"source":"--socket"' 'nmuxd print-socket-json source'; \
+	require_output "$$info_daemon_socket_json" "\"NMUX_SOCKET\":\"$$socket\"" 'daemon print-socket-json socket path'; \
+	require_output "$$info_daemon_socket_json" '"source":"--socket"' 'daemon print-socket-json source'; \
 	test -s "$$state" || { echo "missing local smoke state file: $$state" >&2; exit 1; }; \
 	printf 'local_smoke_reattach=passed\n'; \
 	printf 'local_smoke_socket_recreation=passed\n'; \
@@ -810,10 +810,8 @@ promotion-evidence-verify:
 	require_exact "$$run_log" 'local_smoke=passed' 'local smoke result'; \
 	require_line "$$package_provenance" '^\[staged_files\]$$' 'packaging staged file hashes'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux wrapper hash'; \
-	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/bin/nmuxd bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmuxd wrapper hash'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/PACKAGE_METADATA\.txt bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'package metadata hash'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/libexec/nmux bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmux binary hash'; \
-	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/libexec/nmuxd bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged nmuxd binary hash'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/lib/libghostty-vt.* bytes=[0-9]+ sha256=[0-9a-f]{64}$$' 'packaged native runtime library hash'; \
 	require_line "$$package_provenance" '^\[native_runtime_libraries\]$$' 'packaging runtime libraries'; \
 	require_line "$$package_provenance" '^target/packaging-libghostty-vt/package/lib/libghostty-vt' 'packaging runtime library path'; \
@@ -1114,7 +1112,7 @@ packaging-sample: toolchain-info check-vt-toolchain
 	@echo "building default release binaries"
 	CARGO_TARGET_DIR=target/packaging-default cargo build -p nmux-cli --release --bins
 	@echo "default release artifacts"
-	@for bin in target/packaging-default/release/nmux target/packaging-default/release/nmuxd; do \
+	@for bin in target/packaging-default/release/nmux; do \
 		printf '%s bytes=%s\n' "$$bin" "$$(wc -c < "$$bin" | tr -d ' ')"; \
 	done
 	@printf 'default nmux version: '
@@ -1122,15 +1120,10 @@ packaging-sample: toolchain-info check-vt-toolchain
 		echo "default nmux version check failed" >&2; \
 		exit 1; \
 	fi
-	@printf 'default nmuxd version: '
-	@if ! target/packaging-default/release/nmuxd --version; then \
-		echo "default nmuxd version check failed" >&2; \
-		exit 1; \
-	fi
 	@echo "building opt-in libghostty-vt release binaries"
 	GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/packaging-libghostty-vt cargo build -p nmux-cli --release --bins --features libghostty-vt
 	@echo "opt-in libghostty-vt release artifacts"
-	@for bin in target/packaging-libghostty-vt/release/nmux target/packaging-libghostty-vt/release/nmuxd; do \
+	@for bin in target/packaging-libghostty-vt/release/nmux; do \
 		printf '%s bytes=%s\n' "$$bin" "$$(wc -c < "$$bin" | tr -d ' ')"; \
 	done
 	@echo "opt-in libghostty-vt dynamic library artifacts"
@@ -1146,11 +1139,6 @@ packaging-sample: toolchain-info check-vt-toolchain
 	printf 'libghostty-vt nmux version: '; \
 	if ! DYLD_LIBRARY_PATH="$$lib_dir" LD_LIBRARY_PATH="$$lib_dir" target/packaging-libghostty-vt/release/nmux --version; then \
 		echo "libghostty-vt nmux version check failed" >&2; \
-		status=1; \
-	fi; \
-	printf 'libghostty-vt nmuxd version: '; \
-	if ! DYLD_LIBRARY_PATH="$$lib_dir" LD_LIBRARY_PATH="$$lib_dir" target/packaging-libghostty-vt/release/nmuxd --version; then \
-		echo "libghostty-vt nmuxd version check failed" >&2; \
 		status=1; \
 	fi; \
 	if [ "$$status" -ne 0 ]; then \
@@ -1170,7 +1158,6 @@ packaging-layout-sample: packaging-sample
 	rm -rf "$$pkg_dir"; \
 	mkdir -p "$$pkg_dir/bin" "$$pkg_dir/lib" "$$pkg_dir/libexec"; \
 	cp target/packaging-libghostty-vt/release/nmux "$$pkg_dir/libexec/nmux"; \
-	cp target/packaging-libghostty-vt/release/nmuxd "$$pkg_dir/libexec/nmuxd"; \
 	cp "$$lib_dir"/libghostty-vt* "$$pkg_dir/lib/"; \
 	{ \
 		printf 'nmux opt-in native VT package metadata\n'; \
@@ -1180,12 +1167,12 @@ packaging-layout-sample: packaging-sample
 		printf 'target_host=%s\n' "$$(rustc -vV | awk '/^host: / { print $$2 }')"; \
 		printf 'terminal_engine=%s\n' 'libghostty-vt'; \
 		printf 'terminal_engine_status=%s\n' 'opt-in'; \
-		printf 'binaries=%s\n' 'nmux,nmuxd'; \
+		printf 'binaries=%s\n' 'nmux'; \
 		printf 'runtime_library_strategy=%s\n' 'bundled dynamic libghostty-vt libraries loaded by wrapper-managed DYLD_LIBRARY_PATH/LD_LIBRARY_PATH'; \
 		printf 'source_mode=%s\n' "$$([ -n "$${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"; \
 		printf 'GHOSTTY_SOURCE_DIR=%s\n' "$${GHOSTTY_SOURCE_DIR:-unset}"; \
 	} > "$$pkg_dir/PACKAGE_METADATA.txt"; \
-	for bin in nmux nmuxd; do \
+	for bin in nmux; do \
 		{ \
 			printf '%s\n' '#!/bin/sh'; \
 			printf '%s\n' 'set -eu'; \
@@ -1202,8 +1189,6 @@ packaging-layout-sample: packaging-sample
 	find "$$pkg_dir" -type f | sort; \
 	printf 'packaged libghostty-vt nmux version: '; \
 	"$$pkg_dir/bin/nmux" --version; \
-	printf 'packaged libghostty-vt nmuxd version: '; \
-	"$$pkg_dir/bin/nmuxd" --version; \
 	$(MAKE) --no-print-directory PACKAGING_LAYOUT="$$pkg_dir" packaging-layout-verify
 
 packaging-layout-verify:
@@ -1244,9 +1229,7 @@ packaging-layout-verify:
 		fi; \
 	}; \
 	require_executable "$$pkg_dir/bin/nmux"; \
-	require_executable "$$pkg_dir/bin/nmuxd"; \
 	require_executable "$$pkg_dir/libexec/nmux"; \
-	require_executable "$$pkg_dir/libexec/nmuxd"; \
 	require_file "$$metadata"; \
 	found_runtime_library=0; \
 	for lib in "$$pkg_dir"/lib/libghostty-vt*; do \
@@ -1266,11 +1249,11 @@ packaging-layout-verify:
 	require_line "$$metadata" '^target_host=.+$$' 'target host'; \
 	require_line "$$metadata" '^terminal_engine=libghostty-vt$$' 'terminal engine'; \
 	require_line "$$metadata" '^terminal_engine_status=opt-in$$' 'terminal engine status'; \
-	require_line "$$metadata" '^binaries=nmux,nmuxd$$' 'binary list'; \
+	require_line "$$metadata" '^binaries=nmux$$' 'binary list'; \
 	require_line "$$metadata" '^runtime_library_strategy=bundled dynamic libghostty-vt libraries loaded by wrapper-managed DYLD_LIBRARY_PATH/LD_LIBRARY_PATH$$' 'runtime-library strategy'; \
 	require_line "$$metadata" '^source_mode=(pinned-fetch|local)$$' 'source mode'; \
 	require_line "$$metadata" '^GHOSTTY_SOURCE_DIR=.+$$' 'GHOSTTY_SOURCE_DIR'; \
-	for bin in nmux nmuxd; do \
+	for bin in nmux; do \
 		wrapper="$$pkg_dir/bin/$$bin"; \
 		require_wrapper_line "$$wrapper" '#!/bin/sh' 'shell shebang'; \
 		require_wrapper_line "$$wrapper" 'set -eu' 'strict shell mode'; \
@@ -1283,8 +1266,6 @@ packaging-layout-verify:
 	done; \
 	printf 'packaged libghostty-vt nmux version: '; \
 	env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmux" --version; \
-	printf 'packaged libghostty-vt nmuxd version: '; \
-	env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmuxd" --version; \
 	printf 'packaging_layout_verified=%s\n' "$$pkg_dir"
 
 packaging-provenance-sample: packaging-layout-sample
@@ -1333,12 +1314,12 @@ packaging-provenance-sample: packaging-layout-sample
 		find "$$pkg_dir/lib" -type f | sort; \
 		printf '\n[dynamic_dependencies]\n'; \
 		if command -v otool >/dev/null 2>&1; then \
-			for bin in "$$pkg_dir/libexec/nmux" "$$pkg_dir/libexec/nmuxd"; do \
+			for bin in "$$pkg_dir/libexec/nmux"; do \
 				printf '%s\n' "$$bin"; \
 				otool -L "$$bin"; \
 			done; \
 		elif command -v ldd >/dev/null 2>&1; then \
-			for bin in "$$pkg_dir/libexec/nmux" "$$pkg_dir/libexec/nmuxd"; do \
+			for bin in "$$pkg_dir/libexec/nmux"; do \
 				printf '%s\n' "$$bin"; \
 				ldd "$$bin"; \
 			done; \
@@ -1378,7 +1359,7 @@ packaging-provenance-manifest-verify:
 		description="$$3"; \
 		if ! awk -v bin="$$bin" -v dependency="$$dependency" '\
 			$$0 == bin || $$0 == bin ":" { in_bin = 1; next } \
-			in_bin && $$0 ~ /^target\/packaging-libghostty-vt\/package\/libexec\/nmuxd?:?$$/ { exit } \
+			in_bin && $$0 ~ /^target\/packaging-libghostty-vt\/package\/libexec\/nmux:?$$/ { exit } \
 			in_bin && index($$0, dependency) { found = 1; exit } \
 			END { exit(found ? 0 : 1) }' "$$manifest"; then \
 			echo "missing dynamic dependency record for $$description" >&2; \
@@ -1440,18 +1421,14 @@ packaging-provenance-manifest-verify:
 	require_line '^source_mode=(pinned-fetch|local)$$' 'package metadata source mode'; \
 	require_line '^\[staged_files\]$$' 'staged file section'; \
 	require_file_record "$$pkg_dir/bin/nmux"; \
-	require_file_record "$$pkg_dir/bin/nmuxd"; \
 	require_file_record "$$pkg_dir/PACKAGE_METADATA.txt"; \
 	require_file_record "$$pkg_dir/libexec/nmux"; \
-	require_file_record "$$pkg_dir/libexec/nmuxd"; \
 	require_line "^$$pkg_dir/lib/libghostty-vt.* bytes=[0-9]+ sha256=[0-9a-f]{64}$$" 'libghostty-vt runtime library hash'; \
 	require_line '^\[native_runtime_libraries\]$$' 'native runtime library section'; \
 	require_line "^$$pkg_dir/lib/libghostty-vt" 'native runtime library path'; \
 	require_line '^\[dynamic_dependencies\]$$' 'dynamic dependencies section'; \
 	require_line "^$$pkg_dir/libexec/nmux$$" 'nmux dynamic dependency heading'; \
-	require_line "^$$pkg_dir/libexec/nmuxd$$" 'nmuxd dynamic dependency heading'; \
 	require_dynamic_dependency "$$pkg_dir/libexec/nmux" 'libghostty-vt' 'nmux libghostty-vt runtime library'; \
-	require_dynamic_dependency "$$pkg_dir/libexec/nmuxd" 'libghostty-vt' 'nmuxd libghostty-vt runtime library'; \
 	require_line '^\[cargo_tree\]$$' 'cargo tree section'; \
 	require_line '^nmux-cli v' 'nmux-cli cargo tree root'; \
 	printf 'provenance_manifest_verified=%s\n' "$$manifest"
@@ -1479,8 +1456,6 @@ packaging-archive-sample: packaging-provenance-verify
 	find "$$check_dir/package" -type f | sort; \
 	printf 'archived libghostty-vt nmux version: '; \
 	"$$check_dir/package/bin/nmux" --version; \
-	printf 'archived libghostty-vt nmuxd version: '; \
-	"$$check_dir/package/bin/nmuxd" --version; \
 	$(MAKE) --no-print-directory PACKAGING_ARCHIVE="$$archive" PACKAGING_ARCHIVE_SHA256="$$archive.sha256" packaging-archive-verify
 
 packaging-archive-verify:
@@ -1551,11 +1526,9 @@ packaging-archive-verify:
 	require_file "$$provenance"; \
 	require_file "$$cargo_tree"; \
 	require_file_record "bin/nmux"; \
-	require_file_record "bin/nmuxd"; \
 	require_file_record "PACKAGE_METADATA.txt"; \
 	require_file_record "CARGO_TREE.txt"; \
 	require_file_record "libexec/nmux"; \
-	require_file_record "libexec/nmuxd"; \
 	found_runtime_library=0; \
 	for lib in "$$pkg_dir"/lib/libghostty-vt*; do \
 		if [ -f "$$lib" ]; then \
@@ -1577,13 +1550,10 @@ packaging-archive-verify:
 	require_line "$$provenance" '^\[dynamic_dependencies\]$$' 'provenance dynamic dependencies section'; \
 	require_line "$$provenance" '^\[cargo_tree\]$$' 'provenance cargo tree section'; \
 	require_line "$$provenance" '^target/packaging-libghostty-vt/package/libexec/nmux$$' 'nmux dynamic dependency heading'; \
-	require_line "$$provenance" '^target/packaging-libghostty-vt/package/libexec/nmuxd$$' 'nmuxd dynamic dependency heading'; \
 	if ! awk '\
-		$$0 == "target/packaging-libghostty-vt/package/libexec/nmux" { in_nmux = 1; in_nmuxd = 0; next } \
-		$$0 == "target/packaging-libghostty-vt/package/libexec/nmuxd" { in_nmux = 0; in_nmuxd = 1; next } \
+		$$0 == "target/packaging-libghostty-vt/package/libexec/nmux" { in_nmux = 1; next } \
 		in_nmux && index($$0, "libghostty-vt") { found_nmux = 1 } \
-		in_nmuxd && index($$0, "libghostty-vt") { found_nmuxd = 1 } \
-		END { exit(found_nmux && found_nmuxd ? 0 : 1) }' "$$provenance"; then \
+		END { exit(found_nmux ? 0 : 1) }' "$$provenance"; then \
 		echo "missing libghostty-vt dynamic dependency records in archive provenance" >&2; \
 		exit 1; \
 	fi; \
@@ -1599,7 +1569,7 @@ packaging-archive-runtime-smoke: packaging-archive-sample
 	mkdir -p "$$install_root"; \
 	tar -C "$$install_root" -xzf "$$archive"; \
 	pkg_dir="$$install_root/package"; \
-	socket="$$work_dir/nmuxd.sock"; \
+	socket="$$work_dir/nmux.sock"; \
 	client_out="$$work_dir/client.out"; \
 	client_err="$$work_dir/client.err"; \
 	daemon_out="$$work_dir/daemon.out"; \
@@ -1608,7 +1578,7 @@ packaging-archive-runtime-smoke: packaging-archive-sample
 	trap 'status=$$?; if [ -n "$${daemon_pid:-}" ] && kill -0 "$$daemon_pid" >/dev/null 2>&1; then kill "$$daemon_pid" >/dev/null 2>&1 || true; wait "$$daemon_pid" >/dev/null 2>&1 || true; fi; rm -rf "$$work_dir"; exit "$$status"' EXIT INT TERM; \
 	printf 'packaged_runtime_smoke_install_root=%s\n' "$$install_root"; \
 	printf 'packaged_runtime_smoke_library_env=unset\n'; \
-	env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmuxd" --socket "$$socket" --one-shot --terminal-engine libghostty-vt --command "printf 'packaged-runtime-smoke\n'; cat >/dev/null" >"$$daemon_out" 2>"$$daemon_err" & \
+	env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmux" daemon --socket "$$socket" --one-shot --terminal-engine libghostty-vt --command "printf 'packaged-runtime-smoke\n'; cat >/dev/null" >"$$daemon_out" 2>"$$daemon_err" & \
 	daemon_pid="$$!"; \
 	if ! env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$$pkg_dir/bin/nmux" --socket "$$socket" --connect-timeout-ms 5000 --no-input --scrollback-start 1 --scrollback-count 5 >"$$client_out" 2>"$$client_err"; then \
 		echo "packaged runtime smoke client failed" >&2; \

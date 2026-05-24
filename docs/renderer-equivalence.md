@@ -55,7 +55,7 @@ representative server-owned terminal state for styled text, default text, wide
 cells, title metadata, bracketed paste mode, mouse tracking mode, and hyperlink
 presence is projected into nmux `TerminalUpdate` rows, runs, styles, modes, and
 metadata without raw ANSI text leaking into fallback rows. The `nmux-cli`
-integration smoke runs a real `nmuxd --terminal-engine libghostty-vt` plus
+integration smoke runs a real `nmux daemon --terminal-engine libghostty-vt` plus
 `nmux --json` attach, materializes the exported JSON into a small canonical
 workspace/surface/scrollback shape, and compares it to an expected semantic snapshot for
 structured rows/runs, style tables and IDs, SGR style flags, underline
@@ -73,7 +73,7 @@ The corpus lives in `fixtures/renderer-equivalence/*.json` so each fixture's
 shell command, direct terminal-output chunks, optional resize, and canonical
 expected state can grow without burying fixture semantics in test code. The core
 harness replays the direct chunks into `libghostty-vt`; the CLI harness runs
-the shell command through a real `nmuxd`, uses the live client path for resize
+the shell command through a real `nmux daemon`, uses the live client path for resize
 fixtures, and captures the resulting JSON state.
 Fixtures that require optional upstream/native capabilities, currently Kitty
 graphics placeholder metadata, declare that requirement and are skipped when

@@ -4,6 +4,9 @@ Status: Accepted
 
 Date: 2026-05-24
 
+Superseded in part by [ADR 0033](0033-remove-nmuxd-shim.md), which removes
+the temporary `nmuxd` compatibility shim.
+
 ## Context
 
 nmux has grown as two binaries in `nmux-cli`: `nmuxd` for the daemon and

@@ -3,8 +3,7 @@
 The current default workflow is a local state-sync prototype with a real local
 PTY host behind the daemon. `nmux daemon` owns one workspace tree, a daemon-owned
 terminal surface, scrollback, pane metadata, resize policy, and the local
-process host. The legacy `nmuxd` binary remains as a compatibility shim.
-`nmux` can attach once, run a live attach loop, reattach
+process host. `nmux` can attach once, run a live attach loop, reattach
 read-only, persist client render state, request daemon-owned scrollback ranges,
 send explicit text, paste, named-key, focus, mouse, or resize intents, and print
 nested `NMUX_*` pane context from commands running inside a pane. The runnable
@@ -153,11 +152,11 @@ Inspect the installed binary versions without connecting or binding a socket:
 
 ```sh
 nix develop . -c cargo run --bin nmux -- --version
-nix develop . -c cargo run --bin nmuxd -- --version
+nix develop . -c cargo run --bin nmux -- daemon --version
 nix develop . -c cargo run --bin nmux -- version
 nix develop . -c cargo run --bin nmux -- daemon --version
 nix develop . -c cargo run --bin nmux -- --version-json
-nix develop . -c cargo run --bin nmuxd -- --version-json
+nix develop . -c cargo run --bin nmux -- daemon --version-json
 nix develop . -c cargo run --bin nmux -- version --json
 ```
 
@@ -220,7 +219,7 @@ To prove input-driven output across attaches, keep the daemon running with a com
 
 ```sh
 # shell 1
-nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done"
+nix develop . -c cargo run --bin nmux -- daemon --socket /tmp/nmux.sock --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done"
 ```
 
 Then send input from one client:
@@ -280,19 +279,19 @@ an isolated temporary socket and state path unless `--socket` or `--state` is
 supplied explicitly. Add `--live` when the managed daemon should remain
 attached after the initial one-shot response. Add `--cwd DIR` for an existing
 working directory or repeatable `--env KEY=VALUE` when the managed pane command
-needs launch context without a separate `nmuxd` shell. Add
+needs launch context without a separate daemon shell. Add
 `--startup-timeout-ms MS` when slow local startup needs a longer private-daemon
 readiness window than the default 5000 ms.
 Use `nmux --shell` for the common local interactive form without spelling the
 managed daemon, live attach, byte input, and redraw flags separately.
 
-By default, `nmux daemon`, the `nmuxd` shim, and `nmux` use the same local socket path. The precedence
+By default, `nmux daemon` and `nmux` use the same local socket path. The precedence
 is explicit `--socket`, then a valid absolute `NMUX_SOCKET`, then
-`$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute
-path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Use `NMUX_SOCKET` for a
+`$XDG_RUNTIME_DIR/nmux/nmux.sock` when `XDG_RUNTIME_DIR` is a valid absolute
+path, otherwise `/tmp/nmux-$UID/nmux.sock`. Use `NMUX_SOCKET` for a
 shell-scoped local workspace, or pass `--socket` on both sides when you want an
 isolated smoke-test socket.
-Use `nmux --print-socket`, `nmux daemon --print-socket`, or `nmuxd --print-socket` to print the resolved socket
+Use `nmux --print-socket` or `nmux daemon --print-socket` to print the resolved socket
 path without connecting or binding; use `--print-socket-json` to include both
 the path and resolution source for scripts.
 Informational flags such as `--version`, `--version-json`, `--help`,
@@ -307,15 +306,14 @@ socket identity. `--state-info-json` reports setup failures as JSON error
 objects.
 
 ```sh
-NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --print-socket
+NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- daemon --print-socket
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket-json
 nix develop . -c cargo run --bin nmux -- --state /tmp/nmux-live.state --state-info-json
 ```
 
 Direct TCP is available for local-lab and tailnet experiments. Start the daemon
-with `nmux daemon --listen HOST:PORT --token TOKEN`, or the compatibility
-spelling `nmuxd --tcp-listen HOST:PORT --tcp-token TOKEN`. Attach with
+with `nmux daemon --listen HOST:PORT --token TOKEN`. Attach with
 `nmux HOST:PORT --token TOKEN`, `nmux --tcp HOST:PORT --tcp-token TOKEN`, or
 set `NMUX_TOKEN` instead of passing a token flag. A positional host without a
 port uses port 7007. This is direct token-authenticated TCP, not SSH bootstrap.
@@ -326,13 +324,13 @@ nix develop . -c cargo run --bin nmux -- 127.0.0.1:7007 --token TOKEN --live --s
 ```
 
 If the daemon is not running or the client points at the wrong socket, `nmux` reports the socket path in the connection error.
-When a script starts `nmux` before `nmuxd` has finished binding, pass `--connect-timeout-ms MS` so the client waits for the socket instead of failing immediately.
-If `nmuxd` cannot bind the socket path, it reports that path. If a socket path already exists, `nmuxd` refuses to replace it and includes a recovery hint; remove a stale socket only after confirming no daemon is using it, or pass a different `--socket`.
-On normal bounded exits, `nmuxd` removes the socket path it created if that path still points at the same socket file.
+When a script starts `nmux` before `nmux daemon` has finished binding, pass `--connect-timeout-ms MS` so the client waits for the socket instead of failing immediately.
+If `nmux daemon` cannot bind the socket path, it reports that path. If a socket path already exists, the daemon refuses to replace it and includes a recovery hint; remove a stale socket only after confirming no daemon is using it, or pass a different `--socket`.
+On normal bounded exits, the daemon removes the socket path it created if that path still points at the same socket file.
 Commands started in the local PTY receive `NMUX=1`, `NMUX_SESSION_ID`,
 `NMUX_PANE_ID`, `NMUX_SOCKET`, and `NMUX_ORIGIN` in their environment. These
 are local pane identity hints for nested nmux tooling and do not make the
-frontend replay raw PTY bytes. If `nmuxd` is launched from inside an nmux pane,
+frontend replay raw PTY bytes. If `nmux daemon` is launched from inside an nmux pane,
 it appends the inherited origin to the child pane origin with `>` so nested
 tools can see the local hop chain. Inside a pane, `nmux --print-context` prints
 the inherited `NMUX_*` key/value lines without connecting, and
@@ -346,7 +344,7 @@ one-shot daemon whose pane command invokes the client binary:
 ```sh
 rm -f /tmp/nmux-context.sock
 # terminal 1
-nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux-context.sock --one-shot --command 'cargo run --bin nmux -- --print-context; cat >/dev/null'
+nix develop . -c cargo run --bin nmux -- daemon --socket /tmp/nmux-context.sock --one-shot --command 'cargo run --bin nmux -- --print-context; cat >/dev/null'
 # terminal 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux-context.sock
 ```
@@ -356,7 +354,7 @@ Scrollback ranges are 1-based from the oldest retained row, and the client rejec
 Start a daemon that serves one live client for two input cycles:
 
 ```sh
-nix develop . -c cargo run --bin nmuxd -- --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+nix develop . -c cargo run --bin nmux -- daemon --live-cycles 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 ```
 
 Use `--live` instead of `--live-cycles` to keep serving that one live client until the client detaches:
@@ -364,13 +362,13 @@ Use `--live` instead of `--live-cycles` to keep serving that one live client unt
 ```sh
 rm -f /tmp/nmux.sock
 # shell 1
-nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+nix develop . -c cargo run --bin nmux -- daemon --socket /tmp/nmux.sock --live --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 ```
 
 Use `--live-forever` to keep the same daemon-owned workspace and PTY alive for sequential live clients until you stop it with Ctrl-C in the daemon shell:
 
 ```sh
-nix develop . -c cargo run --bin nmuxd -- --live-forever --ready-json --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+nix develop . -c cargo run --bin nmux -- daemon --live-forever --ready-json --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 ```
 
 Use `--live-clients COUNT` to keep the same daemon-owned workspace and PTY alive for a bounded number of sequential live clients:
@@ -378,7 +376,7 @@ Use `--live-clients COUNT` to keep the same daemon-owned workspace and PTY alive
 ```sh
 rm -f /tmp/nmux.sock
 # shell 1
-nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-clients 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
+nix develop . -c cargo run --bin nmux -- daemon --socket /tmp/nmux.sock --live-clients 2 --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"\$line\"; done"
 # shell 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nmux-live.state --live --iterations 1 --key $'first\n'
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nmux-live.state --live --no-input --iterations 1 --scrollback-start 1 --scrollback-count 8
@@ -443,7 +441,7 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --iterat
 
 After the process-host resize succeeds, the daemon commits the pane size into the workspace tree and republishes a `WorkspaceTreeSnapshot`. The CLI prints the updated workspace summary, including the committed size and daemon-published resize policy.
 
-The local daemon publishes `resize=fixed` by default. Use `nmuxd --resize-policy fixed|leader|active-client|manual` to advertise a different pane resize policy. `manual` ignores frontend viewport resize intents; explicit user-command resize intents remain eligible. `nmuxd --cols COUNT --rows COUNT` sets the initial local PTY and workspace pane size before the command starts. Client-side `nmux --live --cols COUNT --rows COUNT` sends a post-start resize intent. Both forms require dimensions in the local PTY range, 1 through 65535; the live-client form cannot be combined with `--no-input`. A resize-only live client attaches read-write and sends explicit `--cols`/`--rows` as a user-command resize intent, so the daemon can apply that control intent without sending pane input even when the published policy is `manual`.
+The local daemon publishes `resize=fixed` by default. Use `nmux daemon --resize-policy fixed|leader|active-client|manual` to advertise a different pane resize policy. `manual` ignores frontend viewport resize intents; explicit user-command resize intents remain eligible. `nmux daemon --cols COUNT --rows COUNT` sets the initial local PTY and workspace pane size before the command starts. Client-side `nmux --live --cols COUNT --rows COUNT` sends a post-start resize intent. Both forms require dimensions in the local PTY range, 1 through 65535; the live-client form cannot be combined with `--no-input`. A resize-only live client attaches read-write and sends explicit `--cols`/`--rows` as a user-command resize intent, so the daemon can apply that control intent without sending pane input even when the published policy is `manual`.
 
 For a resize-only live control intent, omit pane input flags:
 
@@ -490,7 +488,7 @@ For read-only live observation, use `--no-input`:
 
 ```sh
 rm -f /tmp/nmux.sock
-nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --live-cycles 3 --command "printf 'ready\n'; sleep 0.05; printf 'tick-one\n'; sleep 0.05; printf 'tick-two\n'; sleep 1"
+nix develop . -c cargo run --bin nmux -- daemon --socket /tmp/nmux.sock --live-cycles 3 --command "printf 'ready\n'; sleep 0.05; printf 'tick-one\n'; sleep 0.05; printf 'tick-two\n'; sleep 1"
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --no-input --interval-ms 500
 ```
 
@@ -506,7 +504,7 @@ default workflow proves the local state-sync spine: server-owned workspace
 state, server-owned pane surface state derived from a local PTY, server-owned
 scrollback ranges, FlatBuffers envelope framing, client-side rendering from
 decoded state objects, and client-to-daemon input/control forwarding.
-`nmuxd --terminal-engine interim` selects this current implementation explicitly. Backend `libghostty-vt` extraction is imported behind the `libghostty-vt` Cargo feature, but the default build keeps the interim engine to avoid making the native Ghostty/Zig build part of every development loop. ADR 0023 keeps that opt-in split after the M13 extraction milestone until native build cost, regular CI, non-Nix/toolchain provisioning, source-fetch policy, packaging, and workflow costs are accepted deliberately.
+`nmux daemon --terminal-engine interim` selects this current implementation explicitly. Backend `libghostty-vt` extraction is imported behind the `libghostty-vt` Cargo feature, but the default build keeps the interim engine to avoid making the native Ghostty/Zig build part of every development loop. ADR 0023 keeps that opt-in split after the M13 extraction milestone until native build cost, regular CI, non-Nix/toolchain provisioning, source-fetch policy, packaging, and workflow costs are accepted deliberately.
 
 ## Optional libghostty-vt Build
 
@@ -514,7 +512,7 @@ The experimental backend VT engine is gated behind the `libghostty-vt` Cargo
 feature. The dev shell pins Zig 0.15 because the Ghostty commit used by
 `libghostty-vt-sys` requires that Zig version.
 
-The opt-in engine keeps PTY bytes in `nmuxd` and maps Ghostty state back into
+The opt-in engine keeps PTY bytes in `nmux daemon` and maps Ghostty state back into
 nmux snapshots, patches, and scrollback chunks. The local CLI prints non-empty
 terminal title and OSC 7 working-directory metadata alongside the rendered pane
 surface, including redraw output.
@@ -525,7 +523,7 @@ and select the engine at runtime:
 ```sh
 rm -f /tmp/nmux-vt.sock
 # shell 1
-nix develop . -c env GIT_CONFIG_GLOBAL=/dev/null cargo run -p nmux-cli --features libghostty-vt --bin nmuxd -- --socket /tmp/nmux-vt.sock --terminal-engine libghostty-vt --one-shot --command "printf '\033[31mvt engine\033[0m\n'; cat >/dev/null"
+nix develop . -c env GIT_CONFIG_GLOBAL=/dev/null cargo run -p nmux-cli --features libghostty-vt --bin nmux -- daemon --socket /tmp/nmux-vt.sock --terminal-engine libghostty-vt --one-shot --command "printf '\033[31mvt engine\033[0m\n'; cat >/dev/null"
 # shell 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux-vt.sock
 ```
@@ -637,7 +635,7 @@ Start a long-running command-backed daemon:
 
 ```sh
 rm -f /tmp/nmux.sock /tmp/nmux-client.state
-nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done"
+nix develop . -c cargo run --bin nmux -- daemon --socket /tmp/nmux.sock --command "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done"
 ```
 
 Attach once and persist the rendered surface:

@@ -94,7 +94,7 @@ ADR 0031 records the container/sandbox execution boundary.
 
 ## Not yet started
 
-- Proxy daemon (aggregate multiple upstream nmuxd instances)
+- Proxy daemon (aggregate multiple upstream nmux daemon instances)
 - QUIC or SSH-bootstrap remote transport beyond the current token TCP listener
 - Web/mobile frontends
 - Permissions system beyond read-only/read-write

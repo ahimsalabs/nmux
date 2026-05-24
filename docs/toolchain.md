@@ -13,11 +13,10 @@ The flake also provides an installable default-engine package:
 ```sh
 nix build .
 ./result/bin/nmux --version
-./result/bin/nmuxd --version
 ```
 
-`packages.default` builds the interim-engine `nmux` and `nmuxd` binaries with
-crane and installs them under `$out/bin`. The opt-in `libghostty-vt` package is
+`packages.default` builds the interim-engine `nmux` binary with
+crane and installs it under `$out/bin`. The opt-in `libghostty-vt` package is
 intentionally not exposed yet because its Ghostty/Zig source-fetch path still
 needs a Nix-clean source policy.
 
@@ -76,13 +75,13 @@ nix develop . -c make packaging-archive-runtime-smoke
 - GNU Make for the repository check targets;
 - `nixfmt` as both the `nix fmt` formatter and a dev-shell tool;
 - Zig 0.15 for the optional native Ghostty VT build.
-- a crane-built `packages.default` derivation for default interim-engine
-  `nmux` and `nmuxd` binaries;
+- a crane-built `packages.default` derivation for the default interim-engine
+  `nmux` binary;
 - `checks.default` / `checks.nmux-tests`, which validate the schema and compile
   workspace Rust test targets with `cargo test --no-run`;
 - `checks.nmux-package`, an alias for the default package derivation;
-- `checks.nmux-package-smoke`, which runs packaged `nmux --version` and
-  `nmuxd --version` from `$out/bin`;
+- `checks.nmux-package-smoke`, which runs packaged `nmux --version` from
+  `$out/bin`;
 - `checks.source-audit`, which verifies the filtered flake source excludes
   `target/`, VCS metadata, and Nix result links.
 
@@ -101,7 +100,7 @@ a live PTY workflow runner. Use `nix develop . -c make check` and `nix develop
 PTY and Unix-socket behavior outside the sandboxed package derivation.
 `make renderer-equivalence-smoke` is a focused opt-in fixture projection check
 for renderer-equivalence work. It exercises both a core `TerminalUpdate` corpus
-and a real `nmuxd`/`nmux --json` artifact smoke. Use
+and a real `nmux daemon`/`nmux --json` artifact smoke. Use
 `make renderer-equivalence-artifacts` to write nmux canonical artifacts, or
 `make renderer-equivalence-compare
 RENDERER_EQUIVALENCE_ORACLE_DIR=/path/to/oracle` to compare the CLI corpus with
@@ -256,7 +255,7 @@ nix develop . -c make packaging-archive-verify
 
 That target writes `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz`,
 writes a matching `.sha256` file, extracts the archive, verifies the wrapped
-`nmux` and `nmuxd` binaries from the extracted layout, and then runs the
+`nmux` binary from the extracted layout, and then runs the
 no-rebuild archive verifier. Run `make packaging-archive-verify` directly to
 check an already-produced archive. Override `PACKAGING_ARCHIVE` and
 `PACKAGING_ARCHIVE_SHA256` when verifying a downloaded artifact outside the

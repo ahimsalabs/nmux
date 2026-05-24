@@ -62,11 +62,11 @@ pub(crate) fn default_socket_path_and_source_from(
 
     match runtime_dir.map(PathBuf::from) {
         Some(runtime_dir) if !runtime_dir.as_os_str().is_empty() && runtime_dir.is_absolute() => (
-            runtime_dir.join("nmux").join("nmuxd.sock"),
+            runtime_dir.join("nmux").join("nmux.sock"),
             SocketPathSource::XdgRuntimeDir,
         ),
         _ => (
-            PathBuf::from(format!("/tmp/nmux-{uid}")).join("nmuxd.sock"),
+            PathBuf::from(format!("/tmp/nmux-{uid}")).join("nmux.sock"),
             SocketPathSource::TempFallback,
         ),
     }
@@ -353,7 +353,7 @@ mod tests {
             (
                 PathBuf::from("/run/user/1000")
                     .join("nmux")
-                    .join("nmuxd.sock"),
+                    .join("nmux.sock"),
                 SocketPathSource::XdgRuntimeDir,
             )
         );
@@ -385,7 +385,7 @@ mod tests {
             (
                 PathBuf::from("/run/user/1000")
                     .join("nmux")
-                    .join("nmuxd.sock"),
+                    .join("nmux.sock"),
                 SocketPathSource::XdgRuntimeDir,
             )
         );
@@ -398,7 +398,7 @@ mod tests {
             (
                 PathBuf::from("/run/user/1000")
                     .join("nmux")
-                    .join("nmuxd.sock"),
+                    .join("nmux.sock"),
                 SocketPathSource::XdgRuntimeDir,
             )
         );
@@ -413,7 +413,7 @@ mod tests {
         assert_eq!(
             first,
             (
-                PathBuf::from("/tmp/nmux-501").join("nmuxd.sock"),
+                PathBuf::from("/tmp/nmux-501").join("nmux.sock"),
                 SocketPathSource::TempFallback,
             )
         );
@@ -424,7 +424,7 @@ mod tests {
         assert_eq!(
             default_socket_path_and_source_from(None, Some(OsString::from("")), 501),
             (
-                PathBuf::from("/tmp/nmux-501").join("nmuxd.sock"),
+                PathBuf::from("/tmp/nmux-501").join("nmux.sock"),
                 SocketPathSource::TempFallback,
             )
         );
@@ -435,7 +435,7 @@ mod tests {
                 501
             ),
             (
-                PathBuf::from("/tmp/nmux-501").join("nmuxd.sock"),
+                PathBuf::from("/tmp/nmux-501").join("nmux.sock"),
                 SocketPathSource::TempFallback,
             )
         );
@@ -444,14 +444,14 @@ mod tests {
             (
                 PathBuf::from("/run/user/501")
                     .join("nmux")
-                    .join("nmuxd.sock"),
+                    .join("nmux.sock"),
                 SocketPathSource::XdgRuntimeDir,
             )
         );
         assert_eq!(
             default_socket_path_and_source_from(None, Some(OsString::from("relative")), 501),
             (
-                PathBuf::from("/tmp/nmux-501").join("nmuxd.sock"),
+                PathBuf::from("/tmp/nmux-501").join("nmux.sock"),
                 SocketPathSource::TempFallback,
             )
         );

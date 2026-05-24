@@ -9,7 +9,7 @@ distribution path is source checkout plus the supported Nix development shell.
   Ghostty/Zig build.
 - Opt-in correctness builds use `--features libghostty-vt` and may build the
   native Ghostty VT library through `libghostty-vt-sys`.
-- `nmux` and `nmuxd` are the user-facing binaries today.
+- `nmux` is the user-facing binary; `nmux daemon` is the daemon entrypoint.
 - The repository does not currently define install paths, service units,
   shell completions, notarization/signing, update channels, or binary artifact
   provenance.
@@ -28,9 +28,9 @@ Use the narrowest packaging target that matches the evidence question:
 | Can the relocated archive serve a real opt-in native-VT pane? | `nix develop . -c make packaging-archive-runtime-smoke` |
 
 The target prints `make toolchain-info`, validates the optional native-VT
-toolchain preflight, builds default release `nmux` and `nmuxd` binaries into
+toolchain preflight, builds the default release `nmux` binary into
 `target/packaging-default`, builds opt-in `--features libghostty-vt` release
-binaries into `target/packaging-libghostty-vt`, then prints artifact paths,
+`nmux` into `target/packaging-libghostty-vt`, then prints artifact paths,
 byte sizes, discovered `libghostty-vt` dynamic-library artifacts, and
 `--version` output. The opt-in build uses `GIT_CONFIG_GLOBAL=/dev/null` and the
 same `GHOSTTY_SOURCE_DIR` validation as the terminal-correctness gate. For the
@@ -49,8 +49,8 @@ or native-library provenance by itself.
 `make packaging-layout-sample` builds on `make packaging-sample` and stages an
 opt-in local package layout at `target/packaging-libghostty-vt/package`:
 
-- `bin/nmux` and `bin/nmuxd` wrapper scripts;
-- `libexec/nmux` and `libexec/nmuxd` release binaries;
+- `bin/nmux` wrapper script;
+- `libexec/nmux` release binary;
 - `lib/libghostty-vt*` runtime-library artifacts.
 
 The wrappers resolve their own directory, set `DYLD_LIBRARY_PATH` and
@@ -65,7 +65,7 @@ default it checks `target/packaging-libghostty-vt/package`, but
 layout. The verifier requires the wrapper scripts, libexec binaries, package
 metadata, and at least one bundled `libghostty-vt` runtime library; checks the
 wrapper-managed `../lib` and `../libexec` shape; validates layout-level
-metadata; and runs wrapped `nmux --version` and `nmuxd --version` with
+metadata; and runs wrapped `nmux --version` with
 library-path environment variables unset. It does not validate provenance
 hashes, archive bytes, or daemon/client runtime behavior.
 
@@ -101,7 +101,7 @@ package provenance first.
 `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` and
 a matching `.sha256` file, extracts the archive under
 `target/packaging-libghostty-vt/archive/check`, and verifies the wrapped
-`nmux --version` and `nmuxd --version` commands from the extracted layout. It
+`nmux --version` from the extracted layout. It
 then runs `make packaging-archive-verify` against the produced archive and
 sidecar hash. This is a local release-artifact smoke check; it is still not a
 signed, notarized, published, or platform-native package.
@@ -123,7 +123,7 @@ are covered by the same staged-layout verifier.
 `make packaging-archive-runtime-smoke` builds on the archive sample, extracts
 the archive into a fresh `/tmp` install root outside `target/`, unsets
 `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH`, and runs the wrapped
-`nmuxd --terminal-engine libghostty-vt --one-shot` plus wrapped `nmux` client
+`nmux daemon --terminal-engine libghostty-vt --one-shot` plus wrapped `nmux` client
 against a temporary socket. It asserts that the client observes a known PTY
 sentinel from the packaged daemon. This proves the relocated package layout can
 serve a real opt-in native-VT pane locally through its own wrappers; it is still
@@ -152,7 +152,7 @@ requirement, packaging work must satisfy
   are handled for the native Ghostty source;
 - which provenance and checksum manifest is required for release artifacts;
 - what archive/package format is published per supported target;
-- whether `nmuxd --terminal-engine libghostty-vt` is enabled in shipped
+- whether `nmux daemon --terminal-engine libghostty-vt` is enabled in shipped
   binaries or reserved for developer builds;
 - how release checks map to `make check`, `make check-ghostty-vt`, and
   `make check-all`.

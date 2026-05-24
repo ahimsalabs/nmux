@@ -15,6 +15,12 @@ use serde_json::{Value, json};
 
 static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 
+fn daemon_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nmux"));
+    command.arg("daemon");
+    command
+}
+
 #[test]
 fn renderer_equivalence_smoke_captures_structured_nmux_state() {
     for fixture in load_fixtures() {
@@ -31,7 +37,7 @@ fn run_fixture(fixture: RendererFixture) {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server_command = Command::new(env!("CARGO_BIN_EXE_nmuxd"));
+    let mut server_command = daemon_command();
     server_command.args([
         "--socket",
         socket_path.to_str().expect("socket path"),
@@ -51,7 +57,7 @@ fn run_fixture(fixture: RendererFixture) {
     let mut server = server_command
         .args(["--command", fixture.command.as_str()])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -107,7 +113,7 @@ fn run_fixture(fixture: RendererFixture) {
     }
     let client = client_command.output().expect("run nmux --json");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -115,7 +121,7 @@ fn run_fixture(fixture: RendererFixture) {
         "nmux --json failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8(client.stdout).expect("json stdout is utf-8");
     let decoded = decode_renderer_client_json(&stdout, fixture.resize.is_some());

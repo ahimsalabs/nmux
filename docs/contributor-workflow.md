@@ -58,7 +58,7 @@ when changing terminal engine behavior.
 
 `make renderer-equivalence-smoke` is narrower: it runs the current
 renderer-equivalence fixture corpus projection through the opt-in
-`libghostty-vt` path, including a real `nmuxd`/`nmux --json` artifact smoke.
+`libghostty-vt` path, including a real `nmux daemon`/`nmux --json` artifact smoke.
 Use `make renderer-equivalence-artifacts` to write canonical nmux projections,
 and `make renderer-equivalence-compare
 RENDERER_EQUIVALENCE_ORACLE_DIR=/path/to/oracle` once an external oracle
@@ -90,7 +90,7 @@ any CI or packaging context in
 engine by itself.
 
 `make local-smoke` is a quick user-level workflow check for the default engine:
-it starts `nmuxd` and sequential `nmux` live clients over a temporary socket,
+it starts `nmux daemon` and sequential `nmux` live clients over a temporary socket,
 sends piped stdin input, verifies the echoed output survives read-only reattach
 through a persisted state file, verifies nested context and JSON informational
 flags plus daemon readiness JSON, then starts a new daemon on the same socket

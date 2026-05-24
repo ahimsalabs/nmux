@@ -9,10 +9,6 @@ repository.workspace = true
 name = "nmux"
 path = "src/bin/nmux.rs"
 
-[[bin]]
-name = "nmuxd"
-path = "src/bin/nmuxd.rs"
-
 [features]
 libghostty-vt = ["nmux-core/libghostty-vt"]
 

@@ -70,7 +70,7 @@ nix --extra-experimental-features 'nix-command flakes' develop . -c make local-s
 ```
 crates/nmux-proto   FlatBuffers wire helpers and generated bindings
 crates/nmux-core    Session, process host, terminal engine, adapters
-crates/nmux-cli     nmux daemon/client CLI, nmuxd shim, integration tests
+crates/nmux-cli     nmux daemon/client CLI, integration tests
 schema/             nmux.fbs protocol schema
 docs/               Roadmap, protocol, ADRs, running guide
 ```

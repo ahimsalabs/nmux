@@ -31,9 +31,9 @@ where
 
     if args.version || args.version_json {
         if args.version_json {
-            println!("{}", local::version_json("nmuxd", VERSION));
+            println!("{}", local::version_json("nmux", VERSION));
         } else {
-            println!("nmuxd {VERSION}");
+            println!("nmux {VERSION}");
         }
         return Ok(());
     }
@@ -63,7 +63,7 @@ where
                 return Err(err.into());
             }
         };
-        eprintln!("nmuxd: listening on tcp://{addr}");
+        eprintln!("nmux daemon: listening on tcp://{addr}");
         DaemonListener::Tcp(listener)
     } else {
         let listener = match local::bind_listener(&args.socket_path) {
@@ -74,7 +74,7 @@ where
             }
         };
         let cleanup = SocketCleanup::new(args.socket_path.clone());
-        eprintln!("nmuxd: listening on {}", args.socket_path.display());
+        eprintln!("nmux daemon: listening on {}", args.socket_path.display());
         DaemonListener::Unix {
             listener,
             _cleanup: cleanup,
@@ -464,7 +464,7 @@ impl TerminalEngineArg {
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "nmuxd",
+    name = "nmux daemon",
     disable_help_flag = true,
     disable_version_flag = true,
     args_override_self = true
@@ -1033,10 +1033,9 @@ fn validate_mode_args(args: DaemonModeArgs) -> Result<(), &'static str> {
 
 fn usage() -> &'static str {
     "\
-nmuxd - serve an nmux session over a local Unix socket
+nmux daemon - serve an nmux session over a local Unix socket
 
 Usage:
-  nmuxd [OPTIONS]
   nmux daemon [OPTIONS]
 
 Options:
@@ -1073,7 +1072,7 @@ Options:
   -h, --help                            Show this help
 
 Notes:
-  Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+  Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmux.sock, else /tmp/nmux-$UID/nmux.sock.
   --listen requires --token, --tcp-token, or NMUX_TOKEN and cannot be combined with --socket.
   Informational flags exit before daemon-mode validation or socket/PTY work.
   --ready-json does not exit; it emits one stdout line after socket bind and pane startup.
@@ -1084,12 +1083,11 @@ Notes:
   libghostty-vt requires building nmux with the libghostty-vt feature.
 
 Examples:
-  nmuxd --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
-  nmuxd --tcp-listen 127.0.0.1:7007 --tcp-token TOKEN
+  nmux daemon --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
   nmux daemon --listen 127.0.0.1:7007 --token TOKEN
-  nmuxd --live --command \"printf 'ready\\n'; cat\"
-  nmuxd --live-forever --command \"printf 'ready\\n'; cat\"
-  nmuxd --live-clients 2 --command \"printf 'ready\\n'; cat\"
+  nmux daemon --live --command \"printf 'ready\\n'; cat\"
+  nmux daemon --live-forever --command \"printf 'ready\\n'; cat\"
+  nmux daemon --live-clients 2 --command \"printf 'ready\\n'; cat\"
 "
 }
 
@@ -1268,10 +1266,10 @@ mod tests {
     #[test]
     fn args_accept_documented_launch_context() {
         let args = args_from_iter([
-            "nmuxd",
+            "nmux daemon",
             "--one-shot",
             "--socket",
-            "/tmp/nmuxd-test.sock",
+            "/tmp/nmux-daemon-test.sock",
             "--command",
             "printf hi",
             "--cwd",
@@ -1300,7 +1298,10 @@ mod tests {
         .expect("args");
 
         assert!(args.one_shot);
-        assert_eq!(args.socket_path, PathBuf::from("/tmp/nmuxd-test.sock"));
+        assert_eq!(
+            args.socket_path,
+            PathBuf::from("/tmp/nmux-daemon-test.sock")
+        );
         assert_eq!(args.socket_source, local::SocketPathSource::Explicit);
         assert_eq!(args.command.as_deref(), Some("printf hi"));
         assert_eq!(args.working_dir.as_deref(), Some("/tmp"));
@@ -1326,7 +1327,7 @@ mod tests {
     fn initial_host_kind_updates_pane_host_spec() {
         let mut host = HostSpec::local("local", CommandSpec::new("sh"));
         let args = args_from_iter([
-            "nmuxd",
+            "nmux daemon",
             "--one-shot",
             "--host",
             "container",
@@ -1395,7 +1396,7 @@ mod tests {
             Err("--sandbox-profile requires --host sandbox")
         );
 
-        let err = match args_from_iter(["nmuxd", "--one-shot", "--host", "container"]) {
+        let err = match args_from_iter(["nmux daemon", "--one-shot", "--host", "container"]) {
             Ok(_) => panic!("container host without image should fail"),
             Err(err) => err.to_string(),
         };
@@ -1490,7 +1491,7 @@ mod tests {
         );
         assert_eq!(validate_initial_tabs(2, Some("tab-2")), Ok(()));
 
-        let err = match args_from_iter(["nmuxd", "--one-shot", "--active-tab", ""]) {
+        let err = match args_from_iter(["nmux daemon", "--one-shot", "--active-tab", ""]) {
             Ok(_) => panic!("empty active tab should fail"),
             Err(err) => err.to_string(),
         };
@@ -1499,7 +1500,7 @@ mod tests {
 
     #[test]
     fn initial_size_validation_requires_pair_and_valid_range() {
-        let err = match args_from_iter(["nmuxd", "--one-shot", "--cols", "80"]) {
+        let err = match args_from_iter(["nmux daemon", "--one-shot", "--cols", "80"]) {
             Ok(_) => panic!("missing rows should fail"),
             Err(err) => err.to_string(),
         };

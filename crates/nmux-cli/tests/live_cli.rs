@@ -82,6 +82,12 @@ fn spawn_nmux_client_in_pty(args: &[&str]) -> PtyCommand {
     }
 }
 
+fn daemon_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nmux"));
+    command.arg("daemon");
+    command
+}
+
 impl PtyCommand {
     fn wait(mut self) -> PtyCommandOutput {
         let status = self.child.wait().expect("wait for nmux in pty");
@@ -106,7 +112,7 @@ fn one_shot_cli_receives_nmux_pane_environment() {
         "printf 'env:%s:%s:%s:%s:%s\\n' \"$NMUX\" \"$NMUX_SESSION_ID\" \"$NMUX_PANE_ID\" \"$NMUX_SOCKET\" \"$NMUX_ORIGIN\"; cat >/dev/null"
     );
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -115,7 +121,7 @@ fn one_shot_cli_receives_nmux_pane_environment() {
             &command,
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -124,7 +130,7 @@ fn one_shot_cli_receives_nmux_pane_environment() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -132,7 +138,7 @@ fn one_shot_cli_receives_nmux_pane_environment() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     let expected = format!(
@@ -151,7 +157,7 @@ fn one_shot_split_daemon_attaches_active_new_pane() {
     let _ = fs::remove_file(&socket_path);
     let command = "printf 'split-env:%s:%s\\n' \"$NMUX_PANE_ID\" \"$NMUX_SOCKET\"; cat >/dev/null";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -162,7 +168,7 @@ fn one_shot_split_daemon_attaches_active_new_pane() {
             command,
         ])
         .spawn()
-        .expect("spawn split nmuxd");
+        .expect("spawn split daemon");
 
     wait_for_socket(&socket_path);
 
@@ -175,7 +181,7 @@ fn one_shot_split_daemon_attaches_active_new_pane() {
         .output()
         .expect("run nmux --json");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -183,7 +189,7 @@ fn one_shot_split_daemon_attaches_active_new_pane() {
         "nmux --json failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -385,7 +391,7 @@ fn live_redraw_split_daemon_renders_pane_layout() {
     let _ = fs::remove_file(&socket_path);
     let command = "printf 'split-env:%s\\n' \"$NMUX_PANE_ID\"; sleep 1";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -397,7 +403,7 @@ fn live_redraw_split_daemon_renders_pane_layout() {
             command,
         ])
         .spawn()
-        .expect("spawn split nmuxd");
+        .expect("spawn split daemon");
 
     wait_for_socket(&socket_path);
     thread::sleep(Duration::from_millis(150));
@@ -416,7 +422,7 @@ fn live_redraw_split_daemon_renders_pane_layout() {
         .output()
         .expect("run nmux --live --redraw");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -424,7 +430,7 @@ fn live_redraw_split_daemon_renders_pane_layout() {
         "nmux --live --redraw failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -453,7 +459,7 @@ fn live_redraw_split_reattach_restores_cached_inactive_pane() {
     let _ = fs::remove_file(&state_path);
     let command = "printf 'split-env:%s\\n' \"$NMUX_PANE_ID\"; sleep 3";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -465,7 +471,7 @@ fn live_redraw_split_reattach_restores_cached_inactive_pane() {
             command,
         ])
         .spawn()
-        .expect("spawn split nmuxd");
+        .expect("spawn split daemon");
 
     wait_for_socket(&socket_path);
     thread::sleep(Duration::from_millis(150));
@@ -514,11 +520,11 @@ fn live_redraw_split_reattach_restores_cached_inactive_pane() {
         }
     }
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 }
 
 #[test]
@@ -527,7 +533,7 @@ fn one_shot_split_daemon_can_attach_requested_pane() {
     let _ = fs::remove_file(&socket_path);
     let command = "printf 'split-env:%s\\n' \"$NMUX_PANE_ID\"; cat >/dev/null";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -538,7 +544,7 @@ fn one_shot_split_daemon_can_attach_requested_pane() {
             command,
         ])
         .spawn()
-        .expect("spawn split nmuxd");
+        .expect("spawn split daemon");
 
     wait_for_socket(&socket_path);
 
@@ -553,7 +559,7 @@ fn one_shot_split_daemon_can_attach_requested_pane() {
         .output()
         .expect("run nmux --pane pane-1 --json");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -561,7 +567,7 @@ fn one_shot_split_daemon_can_attach_requested_pane() {
         "nmux --pane pane-1 --json failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -580,7 +586,7 @@ fn one_shot_multi_tab_daemon_attaches_active_tab() {
     let _ = fs::remove_file(&socket_path);
     let command = "printf 'tab-env:%s:%s\\n' \"$NMUX_PANE_ID\" \"$NMUX_SOCKET\"; cat >/dev/null";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -593,7 +599,7 @@ fn one_shot_multi_tab_daemon_attaches_active_tab() {
             command,
         ])
         .spawn()
-        .expect("spawn multi-tab nmuxd");
+        .expect("spawn multi-tab daemon");
 
     wait_for_socket(&socket_path);
 
@@ -606,7 +612,7 @@ fn one_shot_multi_tab_daemon_attaches_active_tab() {
         .output()
         .expect("run nmux --json");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -614,7 +620,7 @@ fn one_shot_multi_tab_daemon_attaches_active_tab() {
         "nmux --json failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -640,7 +646,7 @@ fn one_shot_cli_can_switch_to_requested_tab() {
     let _ = fs::remove_file(&socket_path);
     let command = "printf 'tab-env:%s\\n' \"$NMUX_PANE_ID\"; cat >/dev/null";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -651,7 +657,7 @@ fn one_shot_cli_can_switch_to_requested_tab() {
             command,
         ])
         .spawn()
-        .expect("spawn multi-tab nmuxd");
+        .expect("spawn multi-tab daemon");
 
     wait_for_socket(&socket_path);
 
@@ -666,7 +672,7 @@ fn one_shot_cli_can_switch_to_requested_tab() {
         .output()
         .expect("run nmux --tab tab-2 --json");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -674,7 +680,7 @@ fn one_shot_cli_can_switch_to_requested_tab() {
         "nmux --tab tab-2 --json failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -697,7 +703,7 @@ fn one_shot_cli_can_print_attach_json() {
     let _ = fs::remove_file(&socket_path);
     let command = "printf 'json-output\\n'; cat >/dev/null";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -706,7 +712,7 @@ fn one_shot_cli_can_print_attach_json() {
             command,
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -719,7 +725,7 @@ fn one_shot_cli_can_print_attach_json() {
         .output()
         .expect("run nmux --json");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -727,7 +733,7 @@ fn one_shot_cli_can_print_attach_json() {
         "nmux --json failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -770,7 +776,7 @@ fn pane_snapshot_subcommand_prints_json() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -779,7 +785,7 @@ fn pane_snapshot_subcommand_prints_json() {
             "printf 'snapshot-ready\n'; cat >/dev/null",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -795,7 +801,7 @@ fn pane_snapshot_subcommand_prints_json() {
         .output()
         .expect("run nmux pane snapshot");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -803,7 +809,7 @@ fn pane_snapshot_subcommand_prints_json() {
         "nmux pane snapshot failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -825,7 +831,7 @@ fn pane_send_subcommand_writes_to_target_pane() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -835,7 +841,7 @@ fn pane_send_subcommand_writes_to_target_pane() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'sent:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -882,7 +888,7 @@ fn pane_send_subcommand_writes_to_target_pane() {
 
     let reader = reader.wait_with_output().expect("wait for reader nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -890,7 +896,7 @@ fn pane_send_subcommand_writes_to_target_pane() {
         "reader nmux failed: {}",
         String::from_utf8_lossy(&reader.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&reader.stdout);
     assert!(
@@ -904,7 +910,7 @@ fn scriptable_cli_splits_panes_and_manages_tabs() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -912,7 +918,7 @@ fn scriptable_cli_splits_panes_and_manages_tabs() {
             "printf 'ready:%s\\n' \"$NMUX_PANE_ID\"; cat >/dev/null",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1032,7 +1038,7 @@ fn tcp_transport_can_attach_with_positional_remote_and_token_env() {
             "printf 'tcp-ready\\n'",
         ])
         .spawn()
-        .expect("spawn tcp nmuxd");
+        .expect("spawn tcp daemon");
 
     let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([&addr, "--connect-timeout-ms", "2000", "--json"])
@@ -1040,14 +1046,14 @@ fn tcp_transport_can_attach_with_positional_remote_and_token_env() {
         .output()
         .expect("run nmux over positional tcp");
 
-    let server_status = server.wait().expect("wait for tcp nmuxd");
+    let server_status = server.wait().expect("wait for tcp daemon");
 
     assert!(
         client.status.success(),
         "nmux tcp attach failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
         stdout.contains("\"pane_id\":\"pane-1\"") && stdout.contains("tcp-ready"),
@@ -1066,7 +1072,7 @@ fn one_shot_json_reports_state_save_error() {
     fs::set_permissions(&blocking_parent, fs::Permissions::from_mode(0o500))
         .expect("make parent read-only");
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1075,7 +1081,7 @@ fn one_shot_json_reports_state_save_error() {
             "printf 'save-error\n'",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1129,7 +1135,7 @@ fn live_json_reports_state_save_error() {
     fs::set_permissions(&blocking_parent, fs::Permissions::from_mode(0o500))
         .expect("make parent read-only");
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1138,7 +1144,7 @@ fn live_json_reports_state_save_error() {
             "printf 'live-save-error\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1197,7 +1203,7 @@ fn one_shot_cli_can_request_scrollback_tail() {
     let _ = fs::remove_file(&socket_path);
     let command = "printf 'alpha\nbeta\ngamma\ndelta\n'; cat >/dev/null";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1206,7 +1212,7 @@ fn one_shot_cli_can_request_scrollback_tail() {
             command,
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1220,7 +1226,7 @@ fn one_shot_cli_can_request_scrollback_tail() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -1228,7 +1234,7 @@ fn one_shot_cli_can_request_scrollback_tail() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -1245,7 +1251,7 @@ fn one_shot_cli_can_skip_scrollback_fetch() {
     let _ = fs::remove_file(&socket_path);
     let command = "printf 'current-only\nhistory-one\nhistory-two\n'; cat >/dev/null";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1254,7 +1260,7 @@ fn one_shot_cli_can_skip_scrollback_fetch() {
             command,
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1267,7 +1273,7 @@ fn one_shot_cli_can_skip_scrollback_fetch() {
         .output()
         .expect("run nmux --no-scrollback");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -1275,7 +1281,7 @@ fn one_shot_cli_can_skip_scrollback_fetch() {
         "nmux --no-scrollback failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -1295,7 +1301,7 @@ fn state_info_reports_persisted_cache_without_connecting() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1304,7 +1310,7 @@ fn state_info_reports_persisted_cache_without_connecting() {
             "printf 'state-info\n'; cat >/dev/null",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1319,7 +1325,7 @@ fn state_info_reports_persisted_cache_without_connecting() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -1327,7 +1333,7 @@ fn state_info_reports_persisted_cache_without_connecting() {
         "nmux failed: {}",
         String::from_utf8_lossy(&attach.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let info_json = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
@@ -1410,7 +1416,7 @@ fn state_info_reports_matching_live_socket_scope() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1419,7 +1425,7 @@ fn state_info_reports_matching_live_socket_scope() {
             "printf 'ready\n'; cat >/dev/null",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1477,11 +1483,11 @@ fn state_info_reports_matching_live_socket_scope() {
 }
 
 #[test]
-fn nmuxd_ready_json_reports_bound_socket_before_clients() {
+fn daemon_ready_json_reports_bound_socket_before_clients() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1492,7 +1498,7 @@ fn nmuxd_ready_json_reports_bound_socket_before_clients() {
         ])
         .stdout(Stdio::piped())
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     let stdout = server.stdout.take().expect("server stdout");
     let mut lines = BufReader::new(stdout).lines();
@@ -1551,7 +1557,7 @@ fn one_shot_daemon_can_set_command_cwd_and_env() {
     fs::create_dir_all(&cwd_path).expect("create cwd");
     let expected_cwd = fs::canonicalize(&cwd_path).expect("canonical cwd");
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1564,7 +1570,7 @@ fn one_shot_daemon_can_set_command_cwd_and_env() {
             "printf 'cwd:%s env:%s\\n' \"$(pwd -P)\" \"$NMUX_TEST_VALUE\"; cat >/dev/null",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1573,7 +1579,7 @@ fn one_shot_daemon_can_set_command_cwd_and_env() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_dir_all(&cwd_path);
 
@@ -1582,7 +1588,7 @@ fn one_shot_daemon_can_set_command_cwd_and_env() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -1601,7 +1607,7 @@ fn one_shot_json_cli_reports_protocol_error_object() {
     let _ = fs::remove_file(&socket_path);
     let command = "printf 'ready\\n'; cat >/dev/null";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1610,7 +1616,7 @@ fn one_shot_json_cli_reports_protocol_error_object() {
             command,
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1625,7 +1631,7 @@ fn one_shot_json_cli_reports_protocol_error_object() {
         .output()
         .expect("run nmux --json --focus gained");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -1633,7 +1639,7 @@ fn one_shot_json_cli_reports_protocol_error_object() {
         "nmux unexpectedly succeeded:\n{}",
         String::from_utf8_lossy(&client.stdout)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -1660,7 +1666,7 @@ fn one_shot_cli_appends_inherited_nmux_origin() {
     let _ = fs::remove_file(&socket_path);
     let command = "printf 'origin:%s\\n' \"$NMUX_ORIGIN\"; cat >/dev/null";
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1671,7 +1677,7 @@ fn one_shot_cli_appends_inherited_nmux_origin() {
         .env("NMUX", "1")
         .env("NMUX_ORIGIN", "outer")
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1680,7 +1686,7 @@ fn one_shot_cli_appends_inherited_nmux_origin() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -1688,7 +1694,7 @@ fn one_shot_cli_appends_inherited_nmux_origin() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -1706,7 +1712,7 @@ fn one_shot_cli_can_print_nested_nmux_context() {
         shell_quote(env!("CARGO_BIN_EXE_nmux"))
     );
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1715,7 +1721,7 @@ fn one_shot_cli_can_print_nested_nmux_context() {
             &command,
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1724,7 +1730,7 @@ fn one_shot_cli_can_print_nested_nmux_context() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -1732,7 +1738,7 @@ fn one_shot_cli_can_print_nested_nmux_context() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(stdout.contains("NMUX=1"), "missing nmux flag:\n{stdout}");
@@ -1759,7 +1765,7 @@ fn live_cli_streams_command_output_and_committed_resize() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -1768,7 +1774,7 @@ fn live_cli_streams_command_output_and_committed_resize() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -1791,7 +1797,7 @@ fn live_cli_streams_command_output_and_committed_resize() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -1799,7 +1805,7 @@ fn live_cli_streams_command_output_and_committed_resize() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(stdout.contains("session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"));
@@ -2028,7 +2034,7 @@ fn managed_start_json_reports_ready_error_without_nested_json() {
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
         stdout.starts_with(
-            "{\"error\":{\"message\":\"managed nmuxd startup failed: socket path already exists:"
+            "{\"error\":{\"message\":\"managed daemon startup failed: socket path already exists:"
         ),
         "missing clean managed startup JSON error:\n{stdout}"
     );
@@ -2038,7 +2044,7 @@ fn managed_start_json_reports_ready_error_without_nested_json() {
     );
     let stderr = String::from_utf8_lossy(&client.stderr);
     assert!(
-        stderr.contains("nmux: managed nmuxd startup failed: socket path already exists:"),
+        stderr.contains("nmux: managed daemon startup failed: socket path already exists:"),
         "missing stderr managed startup context:\n{stderr}"
     );
 }
@@ -2084,7 +2090,7 @@ fn live_cli_can_stream_json_events() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2093,7 +2099,7 @@ fn live_cli_can_stream_json_events() {
             "printf 'json-ready\n'; while IFS= read -r line; do printf 'json:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2113,7 +2119,7 @@ fn live_cli_can_stream_json_events() {
         .output()
         .expect("run nmux --live --json");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2121,7 +2127,7 @@ fn live_cli_can_stream_json_events() {
         "nmux --live --json failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     let mut lines = stdout.lines();
@@ -2162,7 +2168,7 @@ fn live_cli_can_record_timestamped_json_events() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&record_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2172,7 +2178,7 @@ fn live_cli_can_record_timestamped_json_events() {
             "printf 'record-ready\n'; sleep 0.05; printf 'record-update\n'; sleep 0.2",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2192,7 +2198,7 @@ fn live_cli_can_record_timestamped_json_events() {
         .output()
         .expect("run nmux --live --record");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2200,7 +2206,7 @@ fn live_cli_can_record_timestamped_json_events() {
         "nmux --live --record failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let record = fs::read_to_string(&record_path).expect("read record file");
     assert!(
@@ -2248,7 +2254,7 @@ fn live_json_reports_server_closed_detach() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2258,7 +2264,7 @@ fn live_json_reports_server_closed_detach() {
             "printf 'closing-soon\n'; sleep 0.05",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2274,7 +2280,7 @@ fn live_json_reports_server_closed_detach() {
         .output()
         .expect("run nmux --live --json");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2282,7 +2288,7 @@ fn live_json_reports_server_closed_detach() {
         "nmux --live --json failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -2299,7 +2305,7 @@ fn live_json_reports_stdin_eof_detach() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2308,7 +2314,7 @@ fn live_json_reports_stdin_eof_detach() {
             "printf 'json-stdin-ready\n'; while IFS= read -r line; do printf 'json-stdin:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2334,7 +2340,7 @@ fn live_json_reports_stdin_eof_detach() {
 
     let client = client.wait_with_output().expect("wait for nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2342,7 +2348,7 @@ fn live_json_reports_stdin_eof_detach() {
         "nmux --live --json --stdin failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -2363,7 +2369,7 @@ fn live_cli_commits_explicit_resize_without_pane_input() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2373,7 +2379,7 @@ fn live_cli_commits_explicit_resize_without_pane_input() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2394,7 +2400,7 @@ fn live_cli_commits_explicit_resize_without_pane_input() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2402,7 +2408,7 @@ fn live_cli_commits_explicit_resize_without_pane_input() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(stdout.contains("session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"));
@@ -2422,7 +2428,7 @@ fn live_libghostty_vt_cli_streams_command_output_and_committed_resize() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2433,7 +2439,7 @@ fn live_libghostty_vt_cli_streams_command_output_and_committed_resize() {
             "printf '\\033[31mready\\033[0m\n'; while IFS= read -r line; do printf '\\033[32mecho:%s\\033[0m\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2456,7 +2462,7 @@ fn live_libghostty_vt_cli_streams_command_output_and_committed_resize() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2464,7 +2470,7 @@ fn live_libghostty_vt_cli_streams_command_output_and_committed_resize() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(stdout.contains("session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed"));
@@ -2484,7 +2490,7 @@ fn live_cli_forwards_paste_input() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2493,7 +2499,7 @@ fn live_cli_forwards_paste_input() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'paste:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2512,7 +2518,7 @@ fn live_cli_forwards_paste_input() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2520,7 +2526,7 @@ fn live_cli_forwards_paste_input() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -2534,7 +2540,7 @@ fn live_cli_forwards_named_keypad_enter_in_normal_mode() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2543,7 +2549,7 @@ fn live_cli_forwards_named_keypad_enter_in_normal_mode() {
             "printf 'ready\n'; IFS= read -r line; printf 'key:%s\n' \"$line\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2562,7 +2568,7 @@ fn live_cli_forwards_named_keypad_enter_in_normal_mode() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2570,7 +2576,7 @@ fn live_cli_forwards_named_keypad_enter_in_normal_mode() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -2584,7 +2590,7 @@ fn live_cli_forwards_named_delete_key() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2593,7 +2599,7 @@ fn live_cli_forwards_named_delete_key() {
             "stty -icanon -echo min 4 time 20; printf 'ready\n'; bytes=$(dd bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'delete:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2612,7 +2618,7 @@ fn live_cli_forwards_named_delete_key() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2620,7 +2626,7 @@ fn live_cli_forwards_named_delete_key() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -2634,7 +2640,7 @@ fn live_cli_forwards_repeated_named_keys_in_order() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2643,7 +2649,7 @@ fn live_cli_forwards_repeated_named_keys_in_order() {
             "stty -icanon -echo min 5 time 20; printf 'ready\n'; bytes=$(dd bs=5 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'keys:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2664,7 +2670,7 @@ fn live_cli_forwards_repeated_named_keys_in_order() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2672,7 +2678,7 @@ fn live_cli_forwards_repeated_named_keys_in_order() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -2686,7 +2692,7 @@ fn live_cli_displays_daemon_resize_policy() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2698,7 +2704,7 @@ fn live_cli_displays_daemon_resize_policy() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2716,7 +2722,7 @@ fn live_cli_displays_daemon_resize_policy() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2724,7 +2730,7 @@ fn live_cli_displays_daemon_resize_policy() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -2738,7 +2744,7 @@ fn live_daemon_removes_socket_after_bounded_exit() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2748,7 +2754,7 @@ fn live_daemon_removes_socket_after_bounded_exit() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -2766,17 +2772,17 @@ fn live_daemon_removes_socket_after_bounded_exit() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
 
     assert!(
         client.status.success(),
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     assert!(
         !socket_path.exists(),
-        "nmuxd left socket after bounded exit: {}",
+        "daemon left socket after bounded exit: {}",
         socket_path.display()
     );
 }
@@ -2806,7 +2812,7 @@ fn live_cli_can_wait_for_daemon_socket() {
 
     thread::sleep(Duration::from_millis(100));
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2816,13 +2822,13 @@ fn live_cli_can_wait_for_daemon_socket() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     let client = client.wait_with_output().expect("wait for nmux");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     assert!(
         client.status.success(),
         "nmux failed: {}",
@@ -2851,7 +2857,7 @@ fn one_shot_cli_can_wait_for_daemon_socket() {
 
     thread::sleep(Duration::from_millis(100));
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2860,13 +2866,13 @@ fn one_shot_cli_can_wait_for_daemon_socket() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     let client = client.wait_with_output().expect("wait for nmux");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     assert!(
         client.status.success(),
         "nmux failed: {}",
@@ -2901,7 +2907,7 @@ fn follow_cli_can_wait_for_daemon_socket() {
 
     thread::sleep(Duration::from_millis(100));
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2910,13 +2916,13 @@ fn follow_cli_can_wait_for_daemon_socket() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     let client = client.wait_with_output().expect("wait for nmux");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     assert!(
         client.status.success(),
         "nmux failed: {}",
@@ -2952,7 +2958,7 @@ fn follow_json_cli_can_wait_for_daemon_socket() {
 
     thread::sleep(Duration::from_millis(100));
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2961,13 +2967,13 @@ fn follow_json_cli_can_wait_for_daemon_socket() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     let client = client.wait_with_output().expect("wait for nmux");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     assert!(
         client.status.success(),
         "nmux failed: {}",
@@ -2989,7 +2995,7 @@ fn live_cli_renders_initial_scrollback_range() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -2999,7 +3005,7 @@ fn live_cli_renders_initial_scrollback_range() {
             "printf 'one\ntwo\nthree\nfour\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3021,7 +3027,7 @@ fn live_cli_renders_initial_scrollback_range() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -3029,7 +3035,7 @@ fn live_cli_renders_initial_scrollback_range() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -3051,7 +3057,7 @@ fn live_cli_can_skip_initial_scrollback_fetch() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3061,7 +3067,7 @@ fn live_cli_can_skip_initial_scrollback_fetch() {
             "printf 'visible-live\nhistory-live\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3080,7 +3086,7 @@ fn live_cli_can_skip_initial_scrollback_fetch() {
         .output()
         .expect("run nmux live --no-scrollback");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -3088,7 +3094,7 @@ fn live_cli_can_skip_initial_scrollback_fetch() {
         "nmux live --no-scrollback failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -3106,7 +3112,7 @@ fn live_cli_renders_initial_scrollback_tail() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3116,7 +3122,7 @@ fn live_cli_renders_initial_scrollback_tail() {
             "printf 'one\ntwo\nthree\nfour\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3136,7 +3142,7 @@ fn live_cli_renders_initial_scrollback_tail() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -3144,7 +3150,7 @@ fn live_cli_renders_initial_scrollback_tail() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -3167,7 +3173,7 @@ fn live_cli_can_use_libghostty_vt_terminal_engine() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3179,7 +3185,7 @@ fn live_cli_can_use_libghostty_vt_terminal_engine() {
             "printf '\\033[31mred\\033[0m\nplain\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3201,7 +3207,7 @@ fn live_cli_can_use_libghostty_vt_terminal_engine() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -3209,7 +3215,7 @@ fn live_cli_can_use_libghostty_vt_terminal_engine() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -3232,7 +3238,7 @@ fn live_libghostty_vt_cli_replies_to_terminal_query() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3244,7 +3250,7 @@ fn live_libghostty_vt_cli_replies_to_terminal_query() {
             "stty raw -echo; printf '\\033[?7$p'; reply=$(dd bs=1 count=8 2>/dev/null | od -An -tx1 | tr -d ' \\n'); printf '\\r\\nreply:%s\\r\\n' \"$reply\"; stty sane; sleep 0.2",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3262,7 +3268,7 @@ fn live_libghostty_vt_cli_replies_to_terminal_query() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -3270,7 +3276,7 @@ fn live_libghostty_vt_cli_replies_to_terminal_query() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -3289,7 +3295,7 @@ fn live_libghostty_vt_cli_omits_alternate_screen_from_scrollback() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3301,7 +3307,7 @@ fn live_libghostty_vt_cli_omits_alternate_screen_from_scrollback() {
             "printf 'main-before\n\\033[?1049h\\033[Halt-only\n\\033[?1049lmain-after\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3323,7 +3329,7 @@ fn live_libghostty_vt_cli_omits_alternate_screen_from_scrollback() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -3331,7 +3337,7 @@ fn live_libghostty_vt_cli_omits_alternate_screen_from_scrollback() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -3358,7 +3364,7 @@ fn live_libghostty_vt_cli_prints_terminal_metadata() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3370,7 +3376,7 @@ fn live_libghostty_vt_cli_prints_terminal_metadata() {
             "printf '\\033]2;nmux live title\\033\\\\\\033]7;file://localhost/tmp/nmux\\007ready\\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3388,7 +3394,7 @@ fn live_libghostty_vt_cli_prints_terminal_metadata() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -3396,7 +3402,7 @@ fn live_libghostty_vt_cli_prints_terminal_metadata() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -3415,7 +3421,7 @@ fn live_libghostty_vt_cli_prints_metadata_only_update_without_reprinting_rows() 
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3427,7 +3433,7 @@ fn live_libghostty_vt_cli_prints_metadata_only_update_without_reprinting_rows() 
             "printf 'ready\\n'; sleep 0.3; printf '\\033]2;metadata only\\033\\\\'; sleep 0.3",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3445,7 +3451,7 @@ fn live_libghostty_vt_cli_prints_metadata_only_update_without_reprinting_rows() 
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -3453,7 +3459,7 @@ fn live_libghostty_vt_cli_prints_metadata_only_update_without_reprinting_rows() 
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -3477,7 +3483,7 @@ fn live_libghostty_vt_cli_persists_metadata_only_update_to_state() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3489,7 +3495,7 @@ fn live_libghostty_vt_cli_persists_metadata_only_update_to_state() {
             "printf 'ready\\n'; sleep 0.3; printf '\\033]2;patched metadata\\033\\\\\\033]7;file://localhost/tmp/patched\\007'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3531,7 +3537,7 @@ fn live_libghostty_vt_cli_persists_metadata_only_update_to_state() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -3540,7 +3546,7 @@ fn live_libghostty_vt_cli_persists_metadata_only_update_to_state() {
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -3569,7 +3575,7 @@ fn live_libghostty_vt_cli_persists_cursor_only_update_to_state() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3581,7 +3587,7 @@ fn live_libghostty_vt_cli_persists_cursor_only_update_to_state() {
             "printf 'ready\\n'; sleep 0.3; printf '\\033[2;5H'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3639,14 +3645,14 @@ fn live_libghostty_vt_cli_persists_cursor_only_update_to_state() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
 
     assert!(
         second_client.status.success(),
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let second_stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -3676,7 +3682,7 @@ fn live_libghostty_vt_cli_persists_color_only_update_to_state() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3688,7 +3694,7 @@ fn live_libghostty_vt_cli_persists_color_only_update_to_state() {
             "printf 'ready\\n'; sleep 0.3; printf '\\033[?2004h\\033]12;#ff00ff\\033\\\\\\033]4;1;#112233\\033\\\\'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3761,14 +3767,14 @@ fn live_libghostty_vt_cli_persists_color_only_update_to_state() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
 
     assert!(
         second_client.status.success(),
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let second_stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -3808,7 +3814,7 @@ fn live_libghostty_vt_cli_persists_mode_only_update_to_state() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3820,7 +3826,7 @@ fn live_libghostty_vt_cli_persists_mode_only_update_to_state() {
             "printf 'ready\\n'; sleep 0.3; printf '\\033[?2004h\\033[?1004h'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3883,14 +3889,14 @@ fn live_libghostty_vt_cli_persists_mode_only_update_to_state() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
 
     assert!(
         second_client.status.success(),
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let second_stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -3920,7 +3926,7 @@ fn live_libghostty_vt_cli_persists_styled_wide_runs_to_state() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -3932,7 +3938,7 @@ fn live_libghostty_vt_cli_persists_styled_wide_runs_to_state() {
             "printf '\\033[31mred\\033[0m plain\\nwide:\\344\\270\\255'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -3987,14 +3993,14 @@ fn live_libghostty_vt_cli_persists_styled_wide_runs_to_state() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
 
     assert!(
         second_client.status.success(),
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let second_stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -4021,7 +4027,7 @@ fn live_libghostty_vt_cli_persists_replace_rows_metadata_to_state() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4033,7 +4039,7 @@ fn live_libghostty_vt_cli_persists_replace_rows_metadata_to_state() {
             "printf 'ready\\n'; sleep 0.3; printf '\\033]133;A\\033\\\\prompt \\033]133;B\\033\\\\input\\033]133;C\\033\\\\output\\n\\033]8;;https://example.com\\033\\\\linked\\033]8;;\\033\\\\ text'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4090,14 +4096,14 @@ fn live_libghostty_vt_cli_persists_replace_rows_metadata_to_state() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
 
     assert!(
         second_client.status.success(),
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let second_stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -4124,7 +4130,7 @@ fn live_libghostty_vt_cli_redraw_prints_terminal_metadata() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4136,7 +4142,7 @@ fn live_libghostty_vt_cli_redraw_prints_terminal_metadata() {
             "printf '\\033]2;redraw title\\033\\\\\\033]7;file://localhost/tmp/redraw\\007ready\\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4155,7 +4161,7 @@ fn live_libghostty_vt_cli_redraw_prints_terminal_metadata() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4163,7 +4169,7 @@ fn live_libghostty_vt_cli_redraw_prints_terminal_metadata() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -4190,7 +4196,7 @@ fn live_libghostty_vt_cli_forwards_focus_when_reporting_is_enabled() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4201,7 +4207,7 @@ fn live_libghostty_vt_cli_forwards_focus_when_reporting_is_enabled() {
             "stty -icanon -echo min 3 time 20; printf '\\033[?1004hready\n'; bytes=$(dd bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'focus:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4220,7 +4226,7 @@ fn live_libghostty_vt_cli_forwards_focus_when_reporting_is_enabled() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4228,7 +4234,7 @@ fn live_libghostty_vt_cli_forwards_focus_when_reporting_is_enabled() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -4243,7 +4249,7 @@ fn live_libghostty_vt_cli_forwards_application_keypad_enter() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4254,7 +4260,7 @@ fn live_libghostty_vt_cli_forwards_application_keypad_enter() {
             "stty -icanon -echo min 3 time 20; printf '\\033=ready\n'; bytes=$(dd bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'keypad:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4273,7 +4279,7 @@ fn live_libghostty_vt_cli_forwards_application_keypad_enter() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4281,7 +4287,7 @@ fn live_libghostty_vt_cli_forwards_application_keypad_enter() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -4296,7 +4302,7 @@ fn live_libghostty_vt_cli_forwards_application_cursor_arrow() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4307,7 +4313,7 @@ fn live_libghostty_vt_cli_forwards_application_cursor_arrow() {
             "stty -icanon -echo min 3 time 20; printf '\\033[?1hready\n'; bytes=$(dd bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'cursor:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4326,7 +4332,7 @@ fn live_libghostty_vt_cli_forwards_application_cursor_arrow() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4334,7 +4340,7 @@ fn live_libghostty_vt_cli_forwards_application_cursor_arrow() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -4349,7 +4355,7 @@ fn live_libghostty_vt_cli_forwards_modified_named_key() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4360,7 +4366,7 @@ fn live_libghostty_vt_cli_forwards_modified_named_key() {
             "stty -icanon -echo min 6 time 20; printf 'ready\n'; bytes=$(dd bs=6 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'modified:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4381,7 +4387,7 @@ fn live_libghostty_vt_cli_forwards_modified_named_key() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4389,7 +4395,7 @@ fn live_libghostty_vt_cli_forwards_modified_named_key() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -4404,7 +4410,7 @@ fn live_libghostty_vt_cli_forwards_sgr_mouse_press() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4415,7 +4421,7 @@ fn live_libghostty_vt_cli_forwards_sgr_mouse_press() {
             "stty -icanon -echo min 9 time 20; printf '\\033[?1000h\\033[?1006hready\n'; bytes=$(dd bs=9 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4434,7 +4440,7 @@ fn live_libghostty_vt_cli_forwards_sgr_mouse_press() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4442,7 +4448,7 @@ fn live_libghostty_vt_cli_forwards_sgr_mouse_press() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -4457,7 +4463,7 @@ fn live_libghostty_vt_cli_forwards_sgr_mouse_modifiers() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4468,7 +4474,7 @@ fn live_libghostty_vt_cli_forwards_sgr_mouse_modifiers() {
             "stty -icanon -echo min 10 time 20; printf '\\033[?1000h\\033[?1006hready\n'; bytes=$(dd bs=10 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4489,7 +4495,7 @@ fn live_libghostty_vt_cli_forwards_sgr_mouse_modifiers() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4497,7 +4503,7 @@ fn live_libghostty_vt_cli_forwards_sgr_mouse_modifiers() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -4512,7 +4518,7 @@ fn live_libghostty_vt_cli_forwards_sgr_pixel_mouse_coordinates() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4523,7 +4529,7 @@ fn live_libghostty_vt_cli_forwards_sgr_pixel_mouse_coordinates() {
             "stty -icanon -echo min 0 time 20; printf '\\033[?1000h\\033[?1006h\\033[?1016hready\n'; bytes=$(dd bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4544,7 +4550,7 @@ fn live_libghostty_vt_cli_forwards_sgr_pixel_mouse_coordinates() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4552,7 +4558,7 @@ fn live_libghostty_vt_cli_forwards_sgr_pixel_mouse_coordinates() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -4567,7 +4573,7 @@ fn live_libghostty_vt_cli_blocks_motion_in_normal_mouse_mode() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4578,7 +4584,7 @@ fn live_libghostty_vt_cli_blocks_motion_in_normal_mouse_mode() {
             "stty -icanon -echo min 0 time 5; printf '\\033[?1000h\\033[?1006hready\n'; bytes=$(dd bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4597,7 +4603,7 @@ fn live_libghostty_vt_cli_blocks_motion_in_normal_mouse_mode() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4605,7 +4611,7 @@ fn live_libghostty_vt_cli_blocks_motion_in_normal_mouse_mode() {
         "nmux unexpectedly succeeded:\n{}",
         String::from_utf8_lossy(&client.stdout)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stderr = String::from_utf8_lossy(&client.stderr);
     assert!(
@@ -4622,7 +4628,7 @@ fn live_libghostty_vt_cli_reports_mouse_out_of_bounds() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4633,7 +4639,7 @@ fn live_libghostty_vt_cli_reports_mouse_out_of_bounds() {
             "stty -icanon -echo min 0 time 5; printf '\\033[?1000h\\033[?1006hready\n'; bytes=$(dd bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4652,7 +4658,7 @@ fn live_libghostty_vt_cli_reports_mouse_out_of_bounds() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4660,7 +4666,7 @@ fn live_libghostty_vt_cli_reports_mouse_out_of_bounds() {
         "nmux unexpectedly succeeded:\n{}",
         String::from_utf8_lossy(&client.stdout)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stderr = String::from_utf8_lossy(&client.stderr);
     assert!(
@@ -4676,7 +4682,7 @@ fn live_cli_redraw_includes_initial_scrollback_range() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4686,7 +4692,7 @@ fn live_cli_redraw_includes_initial_scrollback_range() {
             "printf 'ready\nhistory\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4709,7 +4715,7 @@ fn live_cli_redraw_includes_initial_scrollback_range() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4717,7 +4723,7 @@ fn live_cli_redraw_includes_initial_scrollback_range() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -4739,11 +4745,11 @@ fn live_cli_redraw_includes_initial_scrollback_range() {
 #[test]
 fn live_cli_uses_shared_default_socket_from_runtime_dir() {
     let runtime_dir = test_runtime_dir();
-    let socket_path = runtime_dir.join("nmux").join("nmuxd.sock");
+    let socket_path = runtime_dir.join("nmux").join("nmux.sock");
     let _ = fs::remove_dir_all(&runtime_dir);
     fs::create_dir_all(&runtime_dir).expect("create runtime dir");
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .env_remove("NMUX_SOCKET")
         .args([
@@ -4753,7 +4759,7 @@ fn live_cli_uses_shared_default_socket_from_runtime_dir() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4771,7 +4777,7 @@ fn live_cli_uses_shared_default_socket_from_runtime_dir() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_dir_all(&runtime_dir);
 
     assert!(
@@ -4779,7 +4785,7 @@ fn live_cli_uses_shared_default_socket_from_runtime_dir() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert_default_workspace_attached(
@@ -4793,7 +4799,7 @@ fn live_cli_uses_shared_default_socket_from_env() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .env("NMUX_SOCKET", &socket_path)
         .args([
             "--live-cycles",
@@ -4802,7 +4808,7 @@ fn live_cli_uses_shared_default_socket_from_env() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4819,7 +4825,7 @@ fn live_cli_uses_shared_default_socket_from_env() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4827,7 +4833,7 @@ fn live_cli_uses_shared_default_socket_from_env() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert_default_workspace_attached(&stdout, "env-socket live attach did not use NMUX_SOCKET");
@@ -4843,7 +4849,7 @@ fn live_cli_commits_explicit_resize_with_manual_policy() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4855,7 +4861,7 @@ fn live_cli_commits_explicit_resize_with_manual_policy() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4876,7 +4882,7 @@ fn live_cli_commits_explicit_resize_with_manual_policy() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4884,7 +4890,7 @@ fn live_cli_commits_explicit_resize_with_manual_policy() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stderr = String::from_utf8_lossy(&client.stderr);
     assert!(
@@ -4907,7 +4913,7 @@ fn live_cli_forwards_modified_named_keys() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4916,7 +4922,7 @@ fn live_cli_forwards_modified_named_keys() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4937,7 +4943,7 @@ fn live_cli_forwards_modified_named_keys() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4945,7 +4951,7 @@ fn live_cli_forwards_modified_named_keys() {
         "nmux failed:\n{}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -4959,7 +4965,7 @@ fn live_cli_reports_mouse_tracking_rejections() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -4968,7 +4974,7 @@ fn live_cli_reports_mouse_tracking_rejections() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -4987,7 +4993,7 @@ fn live_cli_reports_mouse_tracking_rejections() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -4995,7 +5001,7 @@ fn live_cli_reports_mouse_tracking_rejections() {
         "nmux unexpectedly succeeded:\n{}",
         String::from_utf8_lossy(&client.stdout)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stderr = String::from_utf8_lossy(&client.stderr);
     assert!(
@@ -5009,7 +5015,7 @@ fn live_cli_reports_focus_reporting_rejections() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5018,7 +5024,7 @@ fn live_cli_reports_focus_reporting_rejections() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5037,7 +5043,7 @@ fn live_cli_reports_focus_reporting_rejections() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -5045,7 +5051,7 @@ fn live_cli_reports_focus_reporting_rejections() {
         "nmux unexpectedly succeeded:\n{}",
         String::from_utf8_lossy(&client.stdout)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stderr = String::from_utf8_lossy(&client.stderr);
     assert!(
@@ -5065,7 +5071,7 @@ fn live_json_cli_reports_protocol_error_event() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5074,7 +5080,7 @@ fn live_json_cli_reports_protocol_error_event() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5094,7 +5100,7 @@ fn live_json_cli_reports_protocol_error_event() {
         .output()
         .expect("run nmux --live --json");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -5102,7 +5108,7 @@ fn live_json_cli_reports_protocol_error_event() {
         "nmux unexpectedly succeeded:\n{}",
         String::from_utf8_lossy(&client.stdout)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -5128,7 +5134,7 @@ fn live_cli_redraw_repaints_surface_in_place() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5138,7 +5144,7 @@ fn live_cli_redraw_repaints_surface_in_place() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5162,7 +5168,7 @@ fn live_cli_redraw_repaints_surface_in_place() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -5170,7 +5176,7 @@ fn live_cli_redraw_repaints_surface_in_place() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -5192,7 +5198,7 @@ fn live_cli_speculative_echo_repaints_before_server_confirmation() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5202,7 +5208,7 @@ fn live_cli_speculative_echo_repaints_before_server_confirmation() {
             "stty -echo; printf 'ready'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5223,7 +5229,7 @@ fn live_cli_speculative_echo_repaints_before_server_confirmation() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -5231,7 +5237,7 @@ fn live_cli_speculative_echo_repaints_before_server_confirmation() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -5251,7 +5257,7 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5261,7 +5267,7 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5308,7 +5314,7 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -5316,7 +5322,7 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -5341,7 +5347,7 @@ fn live_clients_can_observe_shared_input_concurrently() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5351,7 +5357,7 @@ fn live_clients_can_observe_shared_input_concurrently() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5391,7 +5397,7 @@ fn live_clients_can_observe_shared_input_concurrently() {
     let read_only_output = read_only_client
         .wait_with_output()
         .expect("wait for read-only nmux");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -5404,7 +5410,7 @@ fn live_clients_can_observe_shared_input_concurrently() {
         "read-only nmux failed: {}",
         String::from_utf8_lossy(&read_only_output.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let writer_stdout = String::from_utf8_lossy(&writer_client.stdout);
     assert!(
@@ -5423,7 +5429,7 @@ fn live_json_clients_exchange_presence_identity() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5433,7 +5439,7 @@ fn live_json_clients_exchange_presence_identity() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5488,7 +5494,7 @@ fn live_json_clients_exchange_presence_identity() {
     let reader_output = reader_client
         .wait_with_output()
         .expect("wait for reader nmux");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -5501,7 +5507,7 @@ fn live_json_clients_exchange_presence_identity() {
         "reader nmux failed: {}",
         String::from_utf8_lossy(&reader_output.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let reader_stdout = String::from_utf8_lossy(&reader_output.stdout);
     assert!(
@@ -5533,7 +5539,7 @@ fn live_current_surface_reattach_reports_focus_rejection() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5543,7 +5549,7 @@ fn live_current_surface_reattach_reports_focus_rejection() {
             "printf 'ready\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5586,7 +5592,7 @@ fn live_current_surface_reattach_reports_focus_rejection() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -5594,7 +5600,7 @@ fn live_current_surface_reattach_reports_focus_rejection() {
         !second_client.status.success(),
         "second nmux unexpectedly succeeded"
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stderr = String::from_utf8_lossy(&second_client.stderr);
     assert!(
@@ -5610,7 +5616,7 @@ fn live_current_surface_reattach_forwards_paste_input() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5620,7 +5626,7 @@ fn live_current_surface_reattach_forwards_paste_input() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'paste:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5663,7 +5669,7 @@ fn live_current_surface_reattach_forwards_paste_input() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -5672,7 +5678,7 @@ fn live_current_surface_reattach_forwards_paste_input() {
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -5689,7 +5695,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_application_cursor_arrow
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5701,7 +5707,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_application_cursor_arrow
             "stty -icanon -echo min 3 time 20; printf '\\033[?1hready\n'; bytes=$(dd bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'cursor:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5744,7 +5750,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_application_cursor_arrow
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -5753,7 +5759,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_application_cursor_arrow
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -5774,7 +5780,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_application_keypad_enter
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5786,7 +5792,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_application_keypad_enter
             "stty -icanon -echo min 3 time 20; printf '\\033=ready\n'; bytes=$(dd bs=3 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'keypad:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5829,7 +5835,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_application_keypad_enter
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -5838,7 +5844,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_application_keypad_enter
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -5859,7 +5865,7 @@ fn live_libghostty_vt_current_surface_reattach_wraps_bracketed_paste() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5871,7 +5877,7 @@ fn live_libghostty_vt_current_surface_reattach_wraps_bracketed_paste() {
             "stty -icanon -echo min 16 time 20; printf '\\033[?2004hready\n'; bytes=$(dd bs=16 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'paste:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5914,7 +5920,7 @@ fn live_libghostty_vt_current_surface_reattach_wraps_bracketed_paste() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -5923,7 +5929,7 @@ fn live_libghostty_vt_current_surface_reattach_wraps_bracketed_paste() {
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -5944,7 +5950,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_sgr_mouse_press() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -5956,7 +5962,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_sgr_mouse_press() {
             "stty -icanon -echo min 9 time 20; printf '\\033[?1000h\\033[?1006hready\n'; bytes=$(dd bs=9 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -5999,7 +6005,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_sgr_mouse_press() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -6008,7 +6014,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_sgr_mouse_press() {
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -6029,7 +6035,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_sgr_pixel_mouse_press() 
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6041,7 +6047,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_sgr_pixel_mouse_press() 
             "stty -icanon -echo min 0 time 20; printf '\\033[?1000h\\033[?1006h\\033[?1016hready\n'; bytes=$(dd bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6086,7 +6092,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_sgr_pixel_mouse_press() 
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -6095,7 +6101,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_sgr_pixel_mouse_press() 
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -6115,7 +6121,7 @@ fn live_state_file_is_scoped_to_socket_identity() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut first_server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut first_server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6125,7 +6131,7 @@ fn live_state_file_is_scoped_to_socket_identity() {
             "printf 'first daemon\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn first nmuxd");
+        .expect("spawn first daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6144,7 +6150,7 @@ fn live_state_file_is_scoped_to_socket_identity() {
         ])
         .output()
         .expect("run first nmux");
-    let first_status = first_server.wait().expect("wait for first nmuxd");
+    let first_status = first_server.wait().expect("wait for first daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6152,9 +6158,12 @@ fn live_state_file_is_scoped_to_socket_identity() {
         "first nmux failed: {}",
         String::from_utf8_lossy(&first_client.stderr)
     );
-    assert!(first_status.success(), "first nmuxd failed: {first_status}");
+    assert!(
+        first_status.success(),
+        "first daemon failed: {first_status}"
+    );
 
-    let mut second_server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut second_server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6164,7 +6173,7 @@ fn live_state_file_is_scoped_to_socket_identity() {
             "printf 'second daemon\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn second nmuxd");
+        .expect("spawn second daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6183,7 +6192,7 @@ fn live_state_file_is_scoped_to_socket_identity() {
         ])
         .output()
         .expect("run second nmux");
-    let second_status = second_server.wait().expect("wait for second nmuxd");
+    let second_status = second_server.wait().expect("wait for second daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -6194,7 +6203,7 @@ fn live_state_file_is_scoped_to_socket_identity() {
     );
     assert!(
         second_status.success(),
-        "second nmuxd failed: {second_status}"
+        "second daemon failed: {second_status}"
     );
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
@@ -6216,7 +6225,7 @@ fn live_libghostty_vt_clients_can_reattach_to_persisted_workspace_state() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6228,7 +6237,7 @@ fn live_libghostty_vt_clients_can_reattach_to_persisted_workspace_state() {
             "printf '\\033]2;cached title\\033\\\\\\033]7;file://localhost/tmp/cached\\007ready\\n'; while IFS= read -r line; do printf '\\033[32mecho:%s\\033[0m\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6275,7 +6284,7 @@ fn live_libghostty_vt_clients_can_reattach_to_persisted_workspace_state() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -6284,7 +6293,7 @@ fn live_libghostty_vt_clients_can_reattach_to_persisted_workspace_state() {
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -6317,7 +6326,7 @@ fn live_libghostty_vt_reattach_recovers_style_table_full_refresh() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6329,7 +6338,7 @@ fn live_libghostty_vt_reattach_recovers_style_table_full_refresh() {
             "printf 'ready\n'; while IFS= read -r line; do printf '\\033[31mstyled:%s\\033[0m\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6372,7 +6381,7 @@ fn live_libghostty_vt_reattach_recovers_style_table_full_refresh() {
         .output()
         .expect("run second nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
@@ -6381,7 +6390,7 @@ fn live_libghostty_vt_reattach_recovers_style_table_full_refresh() {
         "second nmux failed: {}",
         String::from_utf8_lossy(&second_client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
     assert!(
@@ -6399,7 +6408,7 @@ fn live_forever_can_serve_sequential_reattach_clients() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6408,7 +6417,7 @@ fn live_forever_can_serve_sequential_reattach_clients() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6448,7 +6457,7 @@ fn live_forever_can_serve_sequential_reattach_clients() {
         .expect("run second nmux");
 
     let _ = server.kill();
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6458,7 +6467,7 @@ fn live_forever_can_serve_sequential_reattach_clients() {
     );
     assert!(
         !server_status.success(),
-        "nmuxd should have been terminated after test clients"
+        "daemon should have been terminated after test clients"
     );
 
     let stdout = String::from_utf8_lossy(&second_client.stdout);
@@ -6473,7 +6482,7 @@ fn live_cli_can_drive_distinct_input_lines_from_stdin() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6482,7 +6491,7 @@ fn live_cli_can_drive_distinct_input_lines_from_stdin() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6511,7 +6520,7 @@ fn live_cli_can_drive_distinct_input_lines_from_stdin() {
     drop(stdin);
 
     let client = client.wait_with_output().expect("wait for nmux");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6519,7 +6528,7 @@ fn live_cli_can_drive_distinct_input_lines_from_stdin() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(stdout.contains("echo:ping"), "missing ping echo:\n{stdout}");
@@ -6531,7 +6540,7 @@ fn live_cli_can_drive_input_chunks_from_stdin_bytes() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6540,7 +6549,7 @@ fn live_cli_can_drive_input_chunks_from_stdin_bytes() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6586,7 +6595,7 @@ fn live_cli_can_drive_input_chunks_from_stdin_bytes() {
 
     let client = client.wait_with_output().expect("wait for nmux");
     stdout_reader.join().expect("stdout reader");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6594,7 +6603,7 @@ fn live_cli_can_drive_input_chunks_from_stdin_bytes() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     assert!(
         lines.iter().any(|line| line.contains("echo:ping")),
         "missing ping echo:\n{}",
@@ -6612,7 +6621,7 @@ fn live_stdin_bytes_keeps_polling_before_input_arrives() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6621,7 +6630,7 @@ fn live_stdin_bytes_keeps_polling_before_input_arrives() {
             "printf 'ready\n'; sleep 0.05; printf 'tick-before-input\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6654,7 +6663,7 @@ fn live_stdin_bytes_keeps_polling_before_input_arrives() {
 
     let client = client.wait_with_output().expect("wait for nmux");
     stdout_reader.join().expect("stdout reader");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6667,7 +6676,7 @@ fn live_stdin_bytes_keeps_polling_before_input_arrives() {
         stderr.contains("nmux: stdin EOF; detached"),
         "missing stdin EOF status:\n{stderr}"
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     assert!(
         lines.iter().any(|line| line.contains("tick-before-input")),
         "missing delayed output:\n{}",
@@ -6680,7 +6689,7 @@ fn live_stdin_lines_keep_polling_before_input_arrives() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6689,7 +6698,7 @@ fn live_stdin_lines_keep_polling_before_input_arrives() {
             "printf 'ready\n'; sleep 0.05; printf 'tick-before-input\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6722,7 +6731,7 @@ fn live_stdin_lines_keep_polling_before_input_arrives() {
 
     let client = client.wait_with_output().expect("wait for nmux");
     stdout_reader.join().expect("stdout reader");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6735,7 +6744,7 @@ fn live_stdin_lines_keep_polling_before_input_arrives() {
         stderr.contains("nmux: stdin EOF; detached"),
         "missing stdin EOF status:\n{stderr}"
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     assert!(
         lines.iter().any(|line| line.contains("tick-before-input")),
         "missing delayed output:\n{}",
@@ -6748,7 +6757,7 @@ fn live_stdin_bytes_ctrl_right_bracket_detaches() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6757,7 +6766,7 @@ fn live_stdin_bytes_ctrl_right_bracket_detaches() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6794,7 +6803,7 @@ fn live_stdin_bytes_ctrl_right_bracket_detaches() {
 
     let client = client.wait_with_output().expect("wait for nmux");
     stdout_reader.join().expect("stdout reader");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6807,7 +6816,7 @@ fn live_stdin_bytes_ctrl_right_bracket_detaches() {
         stderr.contains("nmux: detached by local Ctrl-]"),
         "missing detach status:\n{stderr}"
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     assert!(
         lines.iter().any(|line| line.contains("echo:ping")),
         "missing ping echo:\n{}",
@@ -6820,7 +6829,7 @@ fn live_stdin_bytes_can_pass_ctrl_right_bracket_through() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6829,7 +6838,7 @@ fn live_stdin_bytes_can_pass_ctrl_right_bracket_through() {
             "stty -icanon -echo min 6 time 20; printf 'ready\n'; bytes=$(dd bs=6 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'bytes:%s\n' \"$bytes\"",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6861,7 +6870,7 @@ fn live_stdin_bytes_can_pass_ctrl_right_bracket_through() {
     drop(client.stdin.take());
 
     let client = client.wait_with_output().expect("wait for nmux");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6874,7 +6883,7 @@ fn live_stdin_bytes_can_pass_ctrl_right_bracket_through() {
         !stderr.contains("detached by local Ctrl-]"),
         "unexpected local detach status:\n{stderr}"
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
         stdout.contains("bytes:70696e670a1d"),
@@ -6887,7 +6896,7 @@ fn live_read_only_cli_observes_output_without_input() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6897,7 +6906,7 @@ fn live_read_only_cli_observes_output_without_input() {
             "printf 'ready\n'; sleep 0.05; printf 'tick-one\n'; sleep 0.05; printf 'tick-two\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -6914,7 +6923,7 @@ fn live_read_only_cli_observes_output_without_input() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6922,7 +6931,7 @@ fn live_read_only_cli_observes_output_without_input() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -6940,7 +6949,7 @@ fn live_cli_renders_split_pty_writes_as_one_logical_line() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6950,7 +6959,7 @@ fn live_cli_renders_split_pty_writes_as_one_logical_line() {
             "printf a; sleep 0.05; printf b; sleep 0.05; printf c; printf '\\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
     thread::sleep(Duration::from_millis(200));
@@ -6968,7 +6977,7 @@ fn live_cli_renders_split_pty_writes_as_one_logical_line() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6976,7 +6985,7 @@ fn live_cli_renders_split_pty_writes_as_one_logical_line() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert_split_pty_writes_render_as_one_line(&stdout);
@@ -6987,7 +6996,7 @@ fn live_redraw_cli_renders_split_pty_writes_as_one_logical_line() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -6997,7 +7006,7 @@ fn live_redraw_cli_renders_split_pty_writes_as_one_logical_line() {
             "printf a; sleep 0.05; printf b; sleep 0.05; printf c; printf '\\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
     thread::sleep(Duration::from_millis(200));
@@ -7016,7 +7025,7 @@ fn live_redraw_cli_renders_split_pty_writes_as_one_logical_line() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -7024,7 +7033,7 @@ fn live_redraw_cli_renders_split_pty_writes_as_one_logical_line() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert_split_pty_writes_render_as_one_line(&stdout);
@@ -7035,7 +7044,7 @@ fn live_redraw_tty_uses_alternate_screen_and_logical_lines() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -7045,7 +7054,7 @@ fn live_redraw_tty_uses_alternate_screen_and_logical_lines() {
             "printf 'ready\n'; sleep 0.05; printf a; sleep 0.01; printf b; sleep 0.01; printf c; printf '\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -7061,11 +7070,11 @@ fn live_redraw_tty_uses_alternate_screen_and_logical_lines() {
     ])
     .wait();
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(output.success, "nmux failed:\n{}", output.output);
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
     assert!(
         output.output.contains("\x1b[?1049h\x1b[?25l"),
         "missing alternate-screen entry:\n{}",
@@ -7103,7 +7112,7 @@ fn live_read_only_cli_without_iterations_runs_until_server_closes() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -7113,7 +7122,7 @@ fn live_read_only_cli_without_iterations_runs_until_server_closes() {
             "printf 'ready\n'; sleep 0.05; printf 'tick-one\n'; sleep 0.05; printf 'tick-two\n'; sleep 1",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -7128,7 +7137,7 @@ fn live_read_only_cli_without_iterations_runs_until_server_closes() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -7141,7 +7150,7 @@ fn live_read_only_cli_without_iterations_runs_until_server_closes() {
         stderr.contains("nmux: live server closed connection"),
         "missing daemon close status:\n{stderr}"
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -7159,7 +7168,7 @@ fn live_stdin_without_iterations_stops_on_eof_without_default_key() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -7168,7 +7177,7 @@ fn live_stdin_without_iterations_stops_on_eof_without_default_key() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -7192,7 +7201,7 @@ fn live_stdin_without_iterations_stops_on_eof_without_default_key() {
     drop(stdin);
 
     let client = client.wait_with_output().expect("wait for nmux");
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -7205,7 +7214,7 @@ fn live_stdin_without_iterations_stops_on_eof_without_default_key() {
         stderr.contains("nmux: stdin EOF; detached"),
         "missing stdin EOF status:\n{stderr}"
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(stdout.contains("echo:ping"), "missing ping echo:\n{stdout}");
@@ -7223,7 +7232,7 @@ fn live_cli_persists_rendered_surface_state() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&state_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = daemon_command()
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
@@ -7233,7 +7242,7 @@ fn live_cli_persists_rendered_surface_state() {
             "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
         ])
         .spawn()
-        .expect("spawn nmuxd");
+        .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
 
@@ -7254,7 +7263,7 @@ fn live_cli_persists_rendered_surface_state() {
         .output()
         .expect("run nmux");
 
-    let server_status = server.wait().expect("wait for nmuxd");
+    let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -7262,7 +7271,7 @@ fn live_cli_persists_rendered_surface_state() {
         "nmux failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(server_status.success(), "daemon failed: {server_status}");
 
     let state = fs::read_to_string(&state_path).expect("read state");
     let _ = fs::remove_file(&state_path);
