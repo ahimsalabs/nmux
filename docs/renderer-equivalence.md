@@ -64,13 +64,15 @@ including explicit cursor color and palette overrides that feed indexed styles,
 cell widths including combining-mark clusters, hyperlink-presence flags, OSC
 133 row/run semantics, dirty and Kitty-placeholder row metadata, cursor state
 including blink state and in-place cursor-editing output, terminal modes,
-title/OSC 7 metadata, initial workspace geometry and wrap/reflow behavior, main
-screen restoration after alternate screen, and omission of raw control text.
+title/OSC 7 metadata, initial workspace geometry, explicit post-output resize
+reflow behavior, main screen restoration after alternate screen, and omission
+of raw control text.
 The corpus lives in `fixtures/renderer-equivalence/*.json` so each fixture's
-shell command, direct terminal-output chunks, and canonical expected state can
-grow without burying fixture semantics in test code. The core harness replays
-the direct chunks into `libghostty-vt`; the CLI harness runs the shell command
-through a real `nmuxd` and `nmux --json`.
+shell command, direct terminal-output chunks, optional resize, and canonical
+expected state can grow without burying fixture semantics in test code. The core
+harness replays the direct chunks into `libghostty-vt`; the CLI harness runs
+the shell command through a real `nmuxd`, uses the live client path for resize
+fixtures, and captures the resulting JSON state.
 Fixtures that require optional upstream/native capabilities, currently Kitty
 graphics placeholder metadata, declare that requirement and are skipped when
 `libghostty-vt` reports the capability is unavailable.

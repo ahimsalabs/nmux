@@ -30,7 +30,6 @@ fn run_fixture(fixture: RendererFixture) {
     server_command.args([
         "--socket",
         socket_path.to_str().expect("socket path"),
-        "--one-shot",
         "--terminal-engine",
         "libghostty-vt",
     ]);
@@ -39,6 +38,11 @@ fn run_fixture(fixture: RendererFixture) {
         let rows = size.rows.to_string();
         server_command.args(["--cols", cols.as_str(), "--rows", rows.as_str()]);
     }
+    if fixture.resize.is_some() {
+        server_command.args(["--live-clients", "2", "--live-cycles", "1"]);
+    } else {
+        server_command.arg("--one-shot");
+    }
     let mut server = server_command
         .args(["--command", fixture.command.as_str()])
         .spawn()
@@ -46,20 +50,57 @@ fn run_fixture(fixture: RendererFixture) {
 
     wait_for_socket(&socket_path);
 
-    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
-        .args([
-            "--socket",
-            socket_path.to_str().expect("socket path"),
-            "--connect-timeout-ms",
-            "5000",
-            "--json",
-            "--scrollback-start",
+    if let Some(size) = &fixture.resize {
+        let cols = size.cols.to_string();
+        let rows = size.rows.to_string();
+        let resize_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+            .args([
+                "--socket",
+                socket_path.to_str().expect("socket path"),
+                "--connect-timeout-ms",
+                "5000",
+                "--live",
+                "--iterations",
+                "3",
+                "--cols",
+                cols.as_str(),
+                "--rows",
+                rows.as_str(),
+                "--interval-ms",
+                "100",
+            ])
+            .output()
+            .expect("run nmux resize client");
+        assert!(
+            resize_client.status.success(),
+            "nmux resize client failed: {}",
+            String::from_utf8_lossy(&resize_client.stderr)
+        );
+    }
+
+    let mut client_command = Command::new(env!("CARGO_BIN_EXE_nmux"));
+    client_command.args([
+        "--socket",
+        socket_path.to_str().expect("socket path"),
+        "--connect-timeout-ms",
+        "5000",
+        "--json",
+        "--scrollback-start",
+        "1",
+        "--scrollback-count",
+        "20",
+    ]);
+    if fixture.resize.is_some() {
+        client_command.args([
+            "--live",
+            "--no-input",
+            "--iterations",
             "1",
-            "--scrollback-count",
-            "20",
-        ])
-        .output()
-        .expect("run nmux --json");
+            "--interval-ms",
+            "100",
+        ]);
+    }
+    let client = client_command.output().expect("run nmux --json");
 
     let server_status = server.wait().expect("wait for nmuxd");
     let _ = fs::remove_file(&socket_path);
@@ -72,7 +113,7 @@ fn run_fixture(fixture: RendererFixture) {
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 
     let stdout = String::from_utf8(client.stdout).expect("json stdout is utf-8");
-    let decoded: Value = serde_json::from_str(&stdout).expect("decode nmux json");
+    let decoded = decode_renderer_client_json(&stdout, fixture.resize.is_some());
     let workspace = materialize_workspace(&decoded);
     let surface = materialize_surface(&decoded);
     let scrollback = materialize_scrollback(&decoded);
@@ -88,12 +129,29 @@ fn run_fixture(fixture: RendererFixture) {
     }
 }
 
+fn decode_renderer_client_json(stdout: &str, live: bool) -> Value {
+    if !live {
+        return serde_json::from_str(stdout).expect("decode nmux json");
+    }
+    for line in stdout.lines() {
+        let decoded: Value = serde_json::from_str(line).expect("decode live nmux json line");
+        if decoded.get("event").and_then(Value::as_str) == Some("attach") {
+            return decoded
+                .get("attach")
+                .expect("live attach event has attach object")
+                .clone();
+        }
+    }
+    panic!("live nmux json did not include attach event:\n{stdout}");
+}
+
 #[derive(Debug)]
 struct RendererFixture {
     name: String,
     command: String,
     requires_kitty_graphics: bool,
     initial_size: Option<FixtureSize>,
+    resize: Option<FixtureSize>,
     expected_workspace: CanonicalWorkspace,
     expected_surface: CanonicalSurface,
     expected_scrollback: Vec<CanonicalRow>,
@@ -230,6 +288,7 @@ fn load_fixture_path(path: &Path) -> RendererFixture {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         initial_size: decoded.get("initial_size").map(materialize_fixture_size),
+        resize: decoded.get("resize").map(materialize_fixture_size),
         expected_workspace: materialize_workspace(expected),
         expected_surface: materialize_surface(expected),
         expected_scrollback: expected

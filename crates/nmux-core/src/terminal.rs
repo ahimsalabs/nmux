@@ -1432,10 +1432,17 @@ mod tests {
         requires_kitty_graphics: bool,
         cols: u32,
         rows: u32,
+        resize: Option<RendererFixtureSize>,
         terminal_output: Vec<String>,
         expected_terminal: Value,
         expected_surface: Value,
         expected_scrollback: Value,
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    struct RendererFixtureSize {
+        cols: u32,
+        rows: u32,
     }
 
     #[cfg(feature = "libghostty-vt")]
@@ -1459,6 +1466,16 @@ mod tests {
             }
             let update = update
                 .unwrap_or_else(|| panic!("{} did not produce a terminal update", fixture.name));
+            let update = match fixture.resize {
+                Some(size) => engine
+                    .resize(
+                        terminal_input_from_update_with_size(fixture.cols, fixture.rows, &update),
+                        size.cols,
+                        size.rows,
+                    )
+                    .unwrap_or_else(|| panic!("{} resize did not produce an update", fixture.name)),
+                None => update,
+            };
 
             let actual_terminal = renderer_terminal_json(&update);
             if fixture.name == "libghostty-vt-smoke" {
@@ -1562,6 +1579,7 @@ mod tests {
             rows: renderer_numeric_field(size, "rows")
                 .try_into()
                 .expect("fixture rows fit u32"),
+            resize: decoded.get("resize").map(materialize_renderer_fixture_size),
             terminal_output: renderer_string_or_array_field(&decoded, "terminal_output"),
             expected_terminal: expected
                 .get("terminal")
@@ -1575,6 +1593,18 @@ mod tests {
                 .get("scrollback")
                 .expect("expected scrollback rows")
                 .clone(),
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn materialize_renderer_fixture_size(size: &Value) -> RendererFixtureSize {
+        RendererFixtureSize {
+            cols: renderer_numeric_field(size, "cols")
+                .try_into()
+                .expect("fixture cols fit u32"),
+            rows: renderer_numeric_field(size, "rows")
+                .try_into()
+                .expect("fixture rows fit u32"),
         }
     }
 

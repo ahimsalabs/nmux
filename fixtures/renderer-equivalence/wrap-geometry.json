@@ -3,6 +3,10 @@
     "cols": 10,
     "rows": 5
   },
+  "resize": {
+    "cols": 15,
+    "rows": 5
+  },
   "command": "printf 'wrap-test-12345'; printf '\\n'; cat >/dev/null",
   "terminal_output": [
     "wrap-test-12345",
@@ -13,7 +17,7 @@
       "session_id": "local",
       "tab_id": "tab-1",
       "pane_id": "pane-1",
-      "cols": 10,
+      "cols": 15,
       "rows": 5,
       "resize_policy": "fixed"
     },
@@ -22,7 +26,7 @@
       "working_directory": "",
       "surface_kind": "main",
       "cursor": {
-        "row": 2,
+        "row": 1,
         "col": 0,
         "visible": true,
         "shape": "block",
@@ -76,29 +80,14 @@
       ],
       "row_updates": [
         {
-          "text": "wrap-test-",
+          "text": "wrap-test-12345",
           "semantic_prompt": "none",
           "dirty": true,
           "kitty_virtual_placeholder": false,
           "runs": [
             {
-              "text": "wrap-test-",
-              "cell_widths": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-              "style_id": 0,
-              "flags": 0,
-              "semantic_content": "output"
-            }
-          ]
-        },
-        {
-          "text": "12345",
-          "semantic_prompt": "none",
-          "dirty": true,
-          "kitty_virtual_placeholder": false,
-          "runs": [
-            {
-              "text": "12345",
-              "cell_widths": [1, 1, 1, 1, 1],
+              "text": "wrap-test-12345",
+              "cell_widths": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
               "style_id": 0,
               "flags": 0,
               "semantic_content": "output"
@@ -109,29 +98,14 @@
     },
     "scrollback": [
       {
-        "text": "wrap-test-",
+        "text": "wrap-test-12345",
         "semantic_prompt": "none",
-          "dirty": true,
-          "kitty_virtual_placeholder": false,
+        "dirty": true,
+        "kitty_virtual_placeholder": false,
         "runs": [
           {
-            "text": "wrap-test-",
-            "cell_widths": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-            "style_id": 0,
-            "flags": 0,
-            "semantic_content": "output"
-          }
-        ]
-      },
-      {
-        "text": "12345",
-        "semantic_prompt": "none",
-          "dirty": true,
-          "kitty_virtual_placeholder": false,
-        "runs": [
-          {
-            "text": "12345",
-            "cell_widths": [1, 1, 1, 1, 1],
+            "text": "wrap-test-12345",
+            "cell_widths": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             "style_id": 0,
             "flags": 0,
             "semantic_content": "output"
