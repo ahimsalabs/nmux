@@ -12,7 +12,7 @@ see all panes restored.
 
 ## Next features (priority order)
 
-None queued.
+- Supply-chain pin-change review gate (issue #7)
 
 ## Test gaps to close
 
@@ -20,7 +20,7 @@ None queued.
 
 ## Deferred until usable
 
-- Default engine promotion evidence / packaging / CI bundles (issue #7)
+- Default engine promotion evidence / packaging / CI bundles
 - Renderer equivalence oracle
 - Protocol extensions (hyperlink IDs, images, command lifecycle, physical keys)
 - Per-client cursor/mouse overlays; current multiplayer MVP uses actor identity,
