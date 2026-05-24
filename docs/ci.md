@@ -5,7 +5,8 @@ The repository has a GitHub Actions workflow at
 
 ## Required Default Gate
 
-Pull requests and pushes to `main` run the default-engine gate:
+Pull requests and pushes to `main` run the default-engine gate for code,
+schema, workflow, and non-markdown changes:
 
 ```sh
 nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).source-audit" --no-link --print-out-paths
@@ -24,6 +25,10 @@ client state, verifies a sequential read-only reattach sees the output, verifies
 nested `nmux --print-context` sees the pane identity environment, then reuses
 the same socket path for a new daemon and verifies the old cached surface is
 not rendered.
+
+Markdown-only changes under `README.md`, `WORK.md`, `AGENTS.md`, or `docs/`
+take a shorter cached path that runs the same source audit without compiling
+and testing the Rust workspace.
 
 For ordinary implementation or documentation pushes, record the GitHub Actions
 run ID or URL after pushing and let the run complete asynchronously unless the

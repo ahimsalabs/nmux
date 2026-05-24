@@ -7,19 +7,20 @@ over FlatBuffers — not client-side PTY replay.
 
 - `nmuxd` owns a session with a local PTY, serves state over a Unix socket
 - `nmux` attaches, renders server-owned pane state, sends input/resize intents
-- Live attach, reconnect, persisted client state, scrollback fetches
+- Split panes, switch tabs, route input to the focused pane, and send commands
+- Live attach, reconnect, persisted client state, split redraw, scrollback fetches
+- Concurrent live clients with shared surface updates and presence identity
+- Scriptable local control: `nmux pane split`, `nmux pane send`, `nmux tab new`
+- Token-authenticated TCP transport for non-Unix-socket experiments
 - Opt-in `libghostty-vt` engine for VT-correct terminal state extraction
 - Default `interim` text surface (not VT-correct — a prototype)
 
 ## What it doesn't do yet
 
-- Multi-pane / pane splitting
-- Multi-tab / tab management
-- Simultaneous multi-client attach (sequential only)
-- Scriptable workspace management (`nmux pane split`, `nmux tab new`)
-- Remote transport (local Unix socket only)
 - Container/sandbox process hosts
 - Frontend Ghostty renderer
+- Hardened remote transport and production auth
+- Default-engine promotion for `libghostty-vt`
 
 See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
 
@@ -61,6 +62,36 @@ crates/nmux-core    Session, process host, terminal engine, adapters
 crates/nmux-cli     nmuxd daemon, nmux client, integration tests
 schema/             nmux.fbs protocol schema
 docs/               Roadmap, protocol, ADRs, running guide
+```
+
+## Rust dependencies
+
+Cargo dependencies are locked in [Cargo.lock](Cargo.lock). Refresh this summary
+with `nix develop . -c cargo metadata --format-version 1 --all-features` after
+dependency changes.
+
+Direct workspace dependencies:
+
+| Crate | Normal dependencies | Dev/test dependencies | Optional features |
+| --- | --- | --- | --- |
+| `nmux-proto` | `flatbuffers` | none | none |
+| `nmux-core` | `flatbuffers`, `libc`, `nmux-proto`, `portable-pty` | `serde_json` | `libghostty-vt` |
+| `nmux-cli` | `clap`, `flatbuffers`, `libc`, `nmux-core`, `nmux-proto` | `portable-pty`, `serde_json` | `libghostty-vt` |
+
+Resolved dependency inventory, including indirect, optional, target-specific,
+and test dependencies:
+
+```text
+anstream, anstyle, anstyle-parse, anstyle-query, anstyle-wincon, anyhow,
+bitflags, cfg-if, cfg_aliases, clap, clap_builder, clap_derive, clap_lex,
+colorchoice, downcast-rs, filedescriptor, flatbuffers, heck, int-enum,
+is_terminal_polyfill, itoa, lazy_static, libc, libghostty-vt,
+libghostty-vt-sys, log, memchr, nix, nmux-cli, nmux-core, nmux-proto,
+once_cell_polyfill, portable-pty, proc-macro2, proc-macro2-diagnostics, quote,
+rustc_version, semver, serde, serde_core, serde_derive, serde_json, serial2,
+shared_library, shell-words, strsim, syn, thiserror, thiserror-impl,
+unicode-ident, utf8parse, version_check, winapi, winapi-i686-pc-windows-gnu,
+winapi-x86_64-pc-windows-gnu, windows-link, windows-sys, winreg, zmij
 ```
 
 ## More info

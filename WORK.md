@@ -22,7 +22,6 @@ None queued.
 ## Deferred until usable
 
 - Default engine promotion evidence / packaging / CI bundles
-- README dependency inventory and docs-only fast-build policy (issue #5)
 - Renderer equivalence oracle
 - Streaming playback/replay design for exports, web embeds, timestamp metadata,
   and presence history (issue #3)
