@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{collections::BTreeSet, fmt::Write as _};
 
 use serde_json::{Value, json};
 
@@ -555,10 +556,74 @@ fn compare_oracle_fixture(fixture_name: &str, actual: &Value, oracle_dir: &Path)
             oracle_path.display()
         )
     });
-    assert_eq!(
-        actual, &expected,
-        "renderer-equivalence oracle mismatch for {fixture_name}"
+    assert_json_eq_with_path(
+        &expected,
+        actual,
+        &format!("renderer-equivalence oracle mismatch for {fixture_name}"),
     );
+}
+
+fn assert_json_eq_with_path(expected: &Value, actual: &Value, context: &str) {
+    if expected == actual {
+        return;
+    }
+    let path = json_mismatch_path(expected, actual);
+    panic!("{context} at {path}\nexpected: {expected}\nactual: {actual}");
+}
+
+fn json_mismatch_path(expected: &Value, actual: &Value) -> String {
+    json_mismatch_path_inner(expected, actual, "$").unwrap_or_else(|| "$".to_owned())
+}
+
+fn json_mismatch_path_inner(expected: &Value, actual: &Value, path: &str) -> Option<String> {
+    match (expected, actual) {
+        (Value::Object(expected), Value::Object(actual)) => {
+            let keys: BTreeSet<&String> = expected.keys().chain(actual.keys()).collect();
+            for key in keys {
+                let child = json_path_field(path, key);
+                match (expected.get(key), actual.get(key)) {
+                    (Some(expected), Some(actual)) => {
+                        if let Some(path) = json_mismatch_path_inner(expected, actual, &child) {
+                            return Some(path);
+                        }
+                    }
+                    _ => return Some(child),
+                }
+            }
+            None
+        }
+        (Value::Array(expected), Value::Array(actual)) => {
+            let shared = expected.len().min(actual.len());
+            for index in 0..shared {
+                let child = format!("{path}[{index}]");
+                if let Some(path) =
+                    json_mismatch_path_inner(&expected[index], &actual[index], &child)
+                {
+                    return Some(path);
+                }
+            }
+            (expected.len() != actual.len()).then(|| format!("{path}.length"))
+        }
+        _ => (expected != actual).then(|| path.to_owned()),
+    }
+}
+
+fn json_path_field(parent: &str, key: &str) -> String {
+    if key
+        .chars()
+        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return format!("{parent}.{key}");
+    }
+    let mut escaped = String::new();
+    write!(
+        &mut escaped,
+        "{}[{}]",
+        parent,
+        serde_json::to_string(key).expect("encode json path key")
+    )
+    .expect("write json path");
+    escaped
 }
 
 fn canonical_artifact_json(
@@ -742,4 +807,39 @@ fn renderer_equivalence_oracle_fixture_accepts_matching_canonical_json() {
     compare_oracle_fixture("smoke", &actual, &dir);
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn renderer_equivalence_oracle_mismatch_reports_json_path() {
+    let expected = json!({
+        "surface": {
+            "row_updates": [
+                {
+                    "runs": [
+                        {
+                            "text": "expected",
+                        },
+                    ],
+                },
+            ],
+        },
+    });
+    let actual = json!({
+        "surface": {
+            "row_updates": [
+                {
+                    "runs": [
+                        {
+                            "text": "actual",
+                        },
+                    ],
+                },
+            ],
+        },
+    });
+
+    assert_eq!(
+        json_mismatch_path(&expected, &actual),
+        "$.surface.row_updates[0].runs[0].text"
+    );
 }
