@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
-use nmux_cli::local;
+use nmux_cli::{daemon, local};
 use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
 
@@ -104,6 +104,7 @@ const MOUSE_BUTTON_NAMES: &[&str] = &["none", "left", "middle", "right", "wheel-
 const LOCAL_ECHO_NAMES: &[&str] = &["off", "tty"];
 const DETACH_KEY_NAMES: &[&str] = &["ctrl-]", "none"];
 const DEFAULT_MANAGED_STARTUP_TIMEOUT_MS: u64 = 5000;
+const DEFAULT_REMOTE_PORT: u16 = 7007;
 
 fn main() {
     if let Err(err) = run() {
@@ -113,6 +114,10 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let raw_args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if let Some(result) = run_builtin_subcommand(&raw_args) {
+        return result;
+    }
     let args = args()?;
     if args.help {
         print!("{}", usage());
@@ -170,6 +175,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return run_replay(&args);
     }
 
+    if args.auto_default {
+        return run_default(args);
+    }
+
     if args.start {
         return run_managed(args);
     }
@@ -179,14 +188,162 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match args.script_command {
+        Some(ScriptCommand::SessionList) => return run_session_list(&args),
+        Some(ScriptCommand::PaneList) => return run_pane_list(&args),
         Some(ScriptCommand::PaneSend) => return run_pane_send(&args),
         Some(ScriptCommand::PaneSplit | ScriptCommand::TabNew | ScriptCommand::TabClose) => {
             return run_control_command(&args);
         }
+        Some(ScriptCommand::TabList) => return run_tab_list(&args),
         _ => {}
     }
 
     run_attach_loop(&args)
+}
+
+fn run_default(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    if !stdin_is_tty() {
+        return run_attach_loop(&args);
+    }
+    args.live = true;
+    args.stdin_bytes = true;
+    args.redraw = true;
+    args.interval_ms = 16;
+    if args.socket_path.exists() {
+        run_live(&args)
+    } else {
+        args.start = true;
+        run_managed(args)
+    }
+}
+
+fn attach_for_listing(args: &Args) -> Result<local::RenderedAttach, Box<dyn std::error::Error>> {
+    let mut client_state = load_client_state(args.state_path.as_deref()).map_err(|err| {
+        report_cli_error(args, err.as_ref()).ok();
+        err
+    })?;
+    attach_once(args, &mut client_state).inspect_err(|err| {
+        report_cli_error(args, err.as_ref()).ok();
+    })
+}
+
+fn run_session_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let rendered = attach_for_listing(args)?;
+    if args.output_json {
+        println!(
+            "{{\"sessions\":[{{\"session_id\":{},\"active\":true}}]}}",
+            local::json_string(&rendered.workspace.session_id)
+        );
+    } else {
+        println!("{}", rendered.workspace.session_id);
+    }
+    Ok(())
+}
+
+fn run_tab_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let rendered = attach_for_listing(args)?;
+    if args.output_json {
+        println!(
+            "{{\"tabs\":[{{\"tab_id\":{},\"active\":true}}]}}",
+            local::json_string(&rendered.workspace.tab_id)
+        );
+    } else {
+        println!("{} active", rendered.workspace.tab_id);
+    }
+    Ok(())
+}
+
+fn run_pane_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let rendered = attach_for_listing(args)?;
+    let panes = workspace_panes(&rendered.workspace);
+    if args.output_json {
+        let panes_json = panes
+            .iter()
+            .map(|pane| {
+                format!(
+                    "{{\"pane_id\":{},\"active\":{},\"cols\":{},\"rows\":{},\"resize_policy\":{}}}",
+                    local::json_string(&pane.pane_id),
+                    pane.pane_id == rendered.workspace.pane_id,
+                    pane.cols,
+                    pane.rows,
+                    local::json_string(resize_policy_name(pane.resize_policy))
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("{{\"panes\":[{panes_json}]}}");
+    } else {
+        for pane in panes {
+            let active = if pane.pane_id == rendered.workspace.pane_id {
+                " active"
+            } else {
+                ""
+            };
+            println!(
+                "{}{} {}x{} resize={}",
+                pane.pane_id,
+                active,
+                pane.cols,
+                pane.rows,
+                resize_policy_name(pane.resize_policy)
+            );
+        }
+    }
+    Ok(())
+}
+
+fn workspace_panes(workspace: &local::WorkspaceSummary) -> Vec<local::WorkspacePaneSummary> {
+    let Some(root) = workspace.pane_tree.as_ref() else {
+        return vec![local::WorkspacePaneSummary {
+            pane_id: workspace.pane_id.clone(),
+            cols: workspace.cols,
+            rows: workspace.rows,
+            resize_policy: workspace.resize_policy,
+            split_axis: protocol::SplitAxis::None,
+            children: Vec::new(),
+        }];
+    };
+    let mut panes = Vec::new();
+    collect_leaf_panes(root, &mut panes);
+    panes
+}
+
+fn collect_leaf_panes(
+    pane: &local::WorkspacePaneSummary,
+    panes: &mut Vec<local::WorkspacePaneSummary>,
+) {
+    if pane.children.is_empty() {
+        panes.push(pane.clone());
+        return;
+    }
+    for child in &pane.children {
+        collect_leaf_panes(child, panes);
+    }
+}
+
+fn run_builtin_subcommand(
+    raw_args: &[std::ffi::OsString],
+) -> Option<Result<(), Box<dyn std::error::Error>>> {
+    let first = raw_args.first()?.to_str()?;
+    match first {
+        "daemon" => {
+            let argv = std::iter::once(std::ffi::OsString::from("nmux daemon"))
+                .chain(raw_args.iter().skip(1).cloned());
+            Some(daemon::run_from_iter(argv))
+        }
+        "version" => {
+            if raw_args.len() == 1 {
+                println!("nmux {VERSION}");
+                Some(Ok(()))
+            } else if raw_args.len() == 2 && raw_args[1].to_str() == Some("--json") {
+                println!("{}", local::version_json("nmux", VERSION));
+                Some(Ok(()))
+            } else {
+                Some(Err("usage: nmux version [--json]".into()))
+            }
+        }
+        _ => None,
+    }
 }
 
 fn run_pane_send(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -473,6 +630,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             return Err(err);
         }
     };
+    if let Err(err) = validate_target_session(args, &rendered.workspace.session_id) {
+        report_live_setup_error(args, err.as_ref())?;
+        return Err(err);
+    }
     // Styled ANSI SGR output is only useful on real terminals. When stdout
     // is captured (tests, pipes), emit plain text for compatibility.
     let use_styled = stdout_is_tty();
@@ -852,6 +1013,7 @@ fn run_managed(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let daemon = match ManagedDaemon::start(
         &args.socket_path,
         daemon_mode,
+        args.target_session_id.as_deref(),
         &command,
         args.start_working_dir.as_deref(),
         &args.start_env,
@@ -930,6 +1092,7 @@ impl ManagedDaemon {
     fn start(
         socket_path: &Path,
         mode: ManagedDaemonMode,
+        session_id: Option<&str>,
         command: &str,
         working_dir: Option<&str>,
         env: &[(String, String)],
@@ -947,6 +1110,10 @@ impl ManagedDaemon {
             "--command".to_owned(),
             command.to_owned(),
         ];
+        if let Some(session_id) = session_id {
+            command_args.push("--session".to_owned());
+            command_args.push(session_id.to_owned());
+        }
         if let Some(working_dir) = working_dir {
             command_args.push("--cwd".to_owned());
             command_args.push(working_dir.to_owned());
@@ -1702,12 +1869,27 @@ fn attach_once(
         options.mouse = None;
     }
 
-    if args.tcp_endpoint.is_some() {
+    let rendered = if args.tcp_endpoint.is_some() {
         let stream = connect_to_daemon(args)?;
         local::attach_render_once_from_stream(stream, options, client_state)
     } else {
         local::attach_render_once(&args.socket_path, options, client_state)
+    }?;
+    validate_target_session(args, &rendered.workspace.session_id)?;
+    Ok(rendered)
+}
+
+fn validate_target_session(
+    args: &Args,
+    actual_session_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(expected) = args.target_session_id.as_deref() else {
+        return Ok(());
+    };
+    if expected == actual_session_id {
+        return Ok(());
     }
+    Err(format!("target session {expected:?} is not served by this daemon; attached session is {actual_session_id:?}").into())
 }
 
 fn apply_client_identity(args: &Args, request: &mut local::AttachRequest) {
@@ -1721,7 +1903,7 @@ fn connect_to_daemon(args: &Args) -> Result<UnixStream, Box<dyn std::error::Erro
         let token = args
             .tcp_token
             .as_deref()
-            .ok_or("--tcp requires --tcp-token")?;
+            .ok_or("remote TCP attach requires --token, --tcp-token, or NMUX_TOKEN")?;
         return match connect_timeout_duration(args) {
             Some(timeout) => local::connect_to_tcp_daemon_with_timeout(endpoint, token, timeout),
             None => local::connect_to_tcp_daemon(endpoint, token),
@@ -2354,6 +2536,7 @@ struct Args {
     state_info_json: bool,
     socket_path: PathBuf,
     socket_source: local::SocketPathSource,
+    target_session_id: Option<String>,
     tcp_endpoint: Option<String>,
     tcp_token: Option<String>,
     target_pane_id: Option<String>,
@@ -2396,6 +2579,7 @@ struct Args {
     script_split_axis: protocol::SplitAxis,
     script_title: Option<String>,
     replay_path: Option<PathBuf>,
+    auto_default: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -2434,9 +2618,16 @@ struct RawArgs {
     state_info_json: bool,
     #[arg(long = "socket", value_name = "PATH")]
     socket_path: Option<PathBuf>,
+    #[arg(short = 's', long = "session", value_name = "NAME", allow_hyphen_values = true)]
+    target_session_id: Option<String>,
     #[arg(long = "tcp", value_name = "HOST:PORT", allow_hyphen_values = true)]
     tcp_endpoint: Option<String>,
-    #[arg(long = "tcp-token", value_name = "TOKEN", allow_hyphen_values = true)]
+    #[arg(
+        long = "tcp-token",
+        alias = "token",
+        value_name = "TOKEN",
+        allow_hyphen_values = true
+    )]
     tcp_token: Option<String>,
     #[arg(long = "pane", value_name = "PANE_ID", allow_hyphen_values = true)]
     target_pane_id: Option<String>,
@@ -2582,9 +2773,12 @@ struct RawArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ScriptCommand {
+    SessionList,
+    PaneList,
     PaneSend,
     PaneSnapshot,
     PaneSplit,
+    TabList,
     TabNew,
     TabClose,
     Replay,
@@ -2604,16 +2798,40 @@ enum RawCommand {
         #[arg(value_name = "PATH")]
         path: PathBuf,
     },
+    Attach {
+        #[arg(value_name = "SESSION", allow_hyphen_values = true)]
+        session: Option<String>,
+    },
+    New {
+        #[arg(value_name = "SESSION", allow_hyphen_values = true)]
+        session: Option<String>,
+    },
+    Ls,
+    Kill {
+        #[arg(value_name = "SESSION", allow_hyphen_values = true)]
+        session: Option<String>,
+    },
+    SendKeys {
+        #[arg(short = 't', value_name = "PANE_ID", allow_hyphen_values = true)]
+        target: Option<String>,
+        #[arg(value_name = "KEYS", allow_hyphen_values = true)]
+        keys: Vec<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
 enum RawPaneCommand {
+    Ls {
+        #[arg(long = "json", action = ArgAction::SetTrue)]
+        json: bool,
+    },
     Send {
         #[arg(value_name = "PANE_ID", allow_hyphen_values = true)]
         pane_id: String,
         #[arg(value_name = "TEXT", allow_hyphen_values = true)]
         text: String,
     },
+    #[command(alias = "read")]
     Snapshot {
         #[arg(value_name = "PANE_ID", allow_hyphen_values = true)]
         pane_id: String,
@@ -2630,6 +2848,10 @@ enum RawPaneCommand {
 
 #[derive(Debug, Subcommand)]
 enum RawTabCommand {
+    Ls {
+        #[arg(long = "json", action = ArgAction::SetTrue)]
+        json: bool,
+    },
     New {
         #[arg(value_name = "TAB_ID", allow_hyphen_values = true)]
         tab_id: Option<String>,
@@ -2666,6 +2888,9 @@ where
     I: IntoIterator<Item = S>,
     S: Into<std::ffi::OsString>,
 {
+    let input_args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    let auto_default = input_args.is_empty();
+    let args = preprocess_args(input_args)?;
     let mut raw = RawArgs::try_parse_from(
         std::iter::once(std::ffi::OsString::from("nmux")).chain(args.into_iter().map(Into::into)),
     )
@@ -2678,6 +2903,9 @@ where
         Some(path) => (path, local::SocketPathSource::Explicit),
         None => local::default_socket_path_and_source(),
     };
+    if raw.target_session_id.as_deref().is_some_and(str::is_empty) {
+        return Err("--session requires a non-empty name".into());
+    }
     let key_set = raw.key_text.is_some();
     let key_name_set = !raw.key_names.is_empty();
     let key_modifiers_set = raw.key_modifiers.is_some();
@@ -2750,14 +2978,19 @@ where
     if raw.tcp_endpoint.as_deref().is_some_and(str::is_empty) {
         return Err("--tcp requires a non-empty HOST:PORT".into());
     }
-    if raw.tcp_token.as_deref().is_some_and(str::is_empty) {
-        return Err("--tcp-token requires a non-empty token".into());
+    let tcp_token = raw.tcp_token.or_else(|| {
+        std::env::var("NMUX_TOKEN")
+            .ok()
+            .filter(|value| !value.is_empty())
+    });
+    if tcp_token.as_deref().is_some_and(str::is_empty) {
+        return Err("--token requires a non-empty token".into());
     }
-    if raw.tcp_endpoint.is_some() && raw.tcp_token.is_none() && !exits_before_attach {
-        return Err("--tcp requires --tcp-token".into());
+    if raw.tcp_endpoint.is_some() && tcp_token.is_none() && !exits_before_attach {
+        return Err("remote TCP attach requires --token, --tcp-token, or NMUX_TOKEN".into());
     }
-    if raw.tcp_endpoint.is_none() && raw.tcp_token.is_some() && !exits_before_attach {
-        return Err("--tcp-token requires --tcp".into());
+    if raw.tcp_endpoint.is_none() && tcp_token.is_some() && !exits_before_attach {
+        return Err("--token requires a remote host or --tcp".into());
     }
     if raw.tcp_endpoint.is_some() && socket_path_set && !exits_before_attach {
         return Err("--tcp cannot be combined with --socket".into());
@@ -2884,8 +3117,9 @@ where
         state_info_json: raw.state_info_json,
         socket_path,
         socket_source,
+        target_session_id: raw.target_session_id,
         tcp_endpoint: raw.tcp_endpoint,
-        tcp_token: raw.tcp_token,
+        tcp_token,
         target_pane_id: raw.target_pane_id,
         target_tab_id: raw.target_tab_id,
         actor_id,
@@ -2926,7 +3160,62 @@ where
         script_split_axis: script.split_axis,
         script_title: script.title,
         replay_path,
+        auto_default,
     })
+}
+
+fn preprocess_args<I, S>(args: I) -> Result<Vec<std::ffi::OsString>, Box<dyn std::error::Error>>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<std::ffi::OsString>,
+{
+    let raw = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    let Some(first) = raw.first() else {
+        return Ok(raw);
+    };
+    let Some(first_text) = first.to_str() else {
+        return Ok(raw);
+    };
+    if first_text.starts_with('-') || known_command(first_text) {
+        return Ok(raw);
+    }
+
+    let mut normalized = Vec::with_capacity(raw.len() + 1);
+    normalized.push(std::ffi::OsString::from("--tcp"));
+    normalized.push(std::ffi::OsString::from(normalize_remote_endpoint(
+        first_text,
+    )?));
+    normalized.extend(raw.into_iter().skip(1));
+    Ok(normalized)
+}
+
+fn known_command(value: &str) -> bool {
+    matches!(
+        value,
+        "pane" | "tab" | "replay" | "attach" | "new" | "ls" | "kill" | "send-keys"
+    )
+}
+
+fn normalize_remote_endpoint(value: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("remote host requires a non-empty value".into());
+    }
+    let host = value
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(value);
+    if host.is_empty() {
+        return Err("remote host requires a host after user@".into());
+    }
+    if host
+        .rsplit_once(':')
+        .is_some_and(|(_, port)| !port.is_empty())
+    {
+        Ok(host.to_owned())
+    } else {
+        Ok(format!("{host}:{DEFAULT_REMOTE_PORT}"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2960,7 +3249,88 @@ fn normalize_script_command(
                 replay_path: Some(path),
             })
         }
+        RawCommand::Ls => {
+            raw.no_input = true;
+            raw.no_scrollback = true;
+            Ok(NormalizedScriptCommand {
+                command: Some(ScriptCommand::SessionList),
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                replay_path: None,
+            })
+        }
+        RawCommand::Attach { session } => {
+            if session.as_deref().is_some_and(str::is_empty) {
+                return Err("attach requires a non-empty session name".into());
+            }
+            if raw.target_session_id.is_some() && session.is_some() {
+                return Err("--session cannot be combined with attach SESSION".into());
+            }
+            raw.target_session_id = session;
+            Ok(NormalizedScriptCommand {
+                command: None,
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                replay_path: None,
+            })
+        }
+        RawCommand::New { session } => {
+            if session.as_deref().is_some_and(str::is_empty) {
+                return Err("new requires a non-empty session name".into());
+            }
+            if raw.target_session_id.is_some() && session.is_some() {
+                return Err("--session cannot be combined with new SESSION".into());
+            }
+            raw.target_session_id = session;
+            raw.start = true;
+            raw.live = true;
+            raw.stdin_bytes = true;
+            raw.redraw = true;
+            Ok(NormalizedScriptCommand {
+                command: None,
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                replay_path: None,
+            })
+        }
+        RawCommand::Kill { session } => {
+            if session.as_deref().is_some_and(str::is_empty) {
+                return Err("kill requires a non-empty session name".into());
+            }
+            Err("session kill is not implemented yet".into())
+        }
+        RawCommand::SendKeys { target, keys } => {
+            if raw.target_pane_id.is_some() || target.is_some() {
+                let pane_id = target.or_else(|| raw.target_pane_id.clone());
+                if pane_id.as_deref().is_some_and(str::is_empty) {
+                    return Err("send-keys target requires a non-empty pane ID".into());
+                }
+                raw.target_pane_id = pane_id;
+            }
+            if keys.is_empty() {
+                return Err("send-keys requires at least one key".into());
+            }
+            raw.key_text = Some(keys.join(""));
+            raw.no_scrollback = true;
+            Ok(NormalizedScriptCommand {
+                command: Some(ScriptCommand::PaneSend),
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                replay_path: None,
+            })
+        }
         RawCommand::Pane { command } => match command {
+            RawPaneCommand::Ls { json } => {
+                raw.no_input = true;
+                raw.no_scrollback = true;
+                raw.output_json = json || raw.output_json;
+                Ok(NormalizedScriptCommand {
+                    command: Some(ScriptCommand::PaneList),
+                    split_axis: protocol::SplitAxis::None,
+                    title: None,
+                    replay_path: None,
+                })
+            }
             RawPaneCommand::Send { pane_id, text } => {
                 if raw.target_pane_id.is_some() {
                     return Err("--pane cannot be combined with the pane subcommand".into());
@@ -3019,6 +3389,17 @@ fn normalize_script_command(
                 return Err("--tab cannot be combined with the tab subcommand".into());
             }
             match command {
+                RawTabCommand::Ls { json } => {
+                    raw.no_input = true;
+                    raw.no_scrollback = true;
+                    raw.output_json = json || raw.output_json;
+                    Ok(NormalizedScriptCommand {
+                        command: Some(ScriptCommand::TabList),
+                        split_axis: protocol::SplitAxis::None,
+                        title: None,
+                        replay_path: None,
+                    })
+                }
                 RawTabCommand::New { tab_id, title } => {
                     if tab_id.as_deref().is_some_and(str::is_empty) {
                         return Err("tab new requires a non-empty tab ID".into());
@@ -4201,17 +4582,29 @@ nmux - attach to an nmux daemon over a local Unix socket
 
 Usage:
   nmux [OPTIONS]
+  nmux [OPTIONS] [user@]HOST[:PORT]
+  nmux daemon [DAEMON_OPTIONS]
+  nmux attach
+  nmux new
+  nmux ls
+  nmux kill [SESSION]
+  nmux [OPTIONS] pane ls [--json]
   nmux [OPTIONS] pane send PANE_ID TEXT
+  nmux [OPTIONS] pane read PANE_ID [--json]
   nmux [OPTIONS] pane snapshot PANE_ID --json
   nmux [OPTIONS] pane split horizontal|vertical [PANE_ID]
+  nmux [OPTIONS] tab ls [--json]
   nmux [OPTIONS] tab new [TAB_ID] [--title TITLE]
   nmux [OPTIONS] tab close [TAB_ID]
+  nmux send-keys [-t PANE_ID] KEYS...
   nmux replay PATH
+  nmux version [--json]
 
 Options:
   --socket PATH              Unix socket path
+  -s, --session NAME         Target a named session on the selected daemon
   --tcp HOST:PORT            Connect over TCP instead of a Unix socket
-  --tcp-token TOKEN          Shared token for TCP transport authentication
+  --tcp-token, --token TOKEN Shared token for TCP transport authentication
   --pane PANE_ID             Attach to and send input to PANE_ID
   --tab TAB_ID               Attach to and make TAB_ID active
   --actor-id ID              Client actor ID for presence
@@ -4266,16 +4659,28 @@ Options:
   -h, --help                 Show this help
 
 Subcommands:
+  daemon [OPTIONS]                Run the daemon in the foreground
+  attach                          Attach to the default local session
+  new                             Start a private live shell session
+  ls                              List the current local session
+  kill [SESSION]                  Reserved for session shutdown
+  pane ls [--json]                List panes in the active tab
   pane send PANE_ID TEXT          Send text input to a pane
+  pane read PANE_ID [--json]      Print a pane surface, optionally as JSON
   pane snapshot PANE_ID --json    Print a pane snapshot as JSON
   pane split AXIS [PANE_ID]       Split a pane horizontally or vertically
+  tab ls [--json]                 List tabs visible to the current protocol
   tab new [TAB_ID]                Create and switch to a new tab
   tab close [TAB_ID]              Close a tab, defaulting to the active tab
+  send-keys [-t PANE_ID] KEYS...  Send text keys to a pane
   replay PATH                     Print surface frames from a recorded live session
+  version [--json]                Print client version information
 
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
-  --tcp requires --tcp-token and cannot be combined with --socket, --start, or --shell.
+  [user@]HOST[:PORT] is direct TCP today; host without a port uses 7007.
+  Remote TCP requires --token, --tcp-token, or NMUX_TOKEN.
+  --tcp cannot be combined with --socket, --start, or --shell.
   --print-context prints inherited NMUX_* pane identity without connecting.
   --print-context-json prints the same inherited context as a JSON object.
   --print-socket-json prints the resolved socket path and source as JSON.
@@ -4300,6 +4705,8 @@ Examples:
   nmux --live --no-input
   nmux --live --stdin-bytes --redraw
   nmux --live --redraw --key x --speculative-echo
+  nmux daemon --live-forever
+  nmux devbox:7007 --token TOKEN
   nmux --shell
   nmux --start --cwd /tmp --env NMUX_DEMO=1 --command 'pwd; env | grep ^NMUX_DEMO=; cat >/dev/null'
   nmux --start --live --stdin-bytes --redraw --command '$SHELL'
@@ -4505,8 +4912,8 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AttachMode, ClientModeArgs, DetachKey, ExplicitInputModeArgs, FocusEvent,
-        HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
+        AttachMode, ClientModeArgs, DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs,
+        FocusEvent, HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
         LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
         PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
         STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags,
@@ -4520,9 +4927,9 @@ mod tests {
         interim_surface_fidelity_warning_needed, live_update_print_kind,
         managed_ready_error_message, parse_detach_key, parse_env_assignment, parse_focus_event,
         parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, raw_terminal_mode_needed, raw_terminal_termios,
-        redraw_terminal_guard_needed, redraw_workspace_surface_text, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_mode_needed,
+        raw_terminal_termios, redraw_terminal_guard_needed, redraw_workspace_surface_text,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -4587,6 +4994,7 @@ mod tests {
         assert!(!args.stdin_bytes);
         assert!(!args.no_input);
         assert!(!args.live);
+        assert!(args.auto_default);
         assert!(!args.version);
         assert!(!args.version_json);
         assert!(!args.list_key_names);
@@ -4658,6 +5066,11 @@ mod tests {
         assert!(snapshot.no_scrollback);
         assert!(snapshot.output_json);
 
+        let read = args_from_iter(["pane", "read", "pane-2", "--json"]).expect("read args");
+        assert_eq!(read.script_command, Some(ScriptCommand::PaneSnapshot));
+        assert_eq!(read.target_pane_id.as_deref(), Some("pane-2"));
+        assert!(read.output_json);
+
         let split = args_from_iter(["pane", "split", "vertical", "pane-2"]).expect("split args");
         assert_eq!(split.script_command, Some(ScriptCommand::PaneSplit));
         assert_eq!(split.target_pane_id.as_deref(), Some("pane-2"));
@@ -4674,6 +5087,62 @@ mod tests {
         let tab_close = args_from_iter(["tab", "close", "tab-work"]).expect("tab close args");
         assert_eq!(tab_close.script_command, Some(ScriptCommand::TabClose));
         assert_eq!(tab_close.target_tab_id.as_deref(), Some("tab-work"));
+
+        let pane_ls = args_from_iter(["pane", "ls", "--json"]).expect("pane ls args");
+        assert_eq!(pane_ls.script_command, Some(ScriptCommand::PaneList));
+        assert!(pane_ls.no_input);
+        assert!(pane_ls.output_json);
+
+        let tab_ls = args_from_iter(["tab", "ls", "--json"]).expect("tab ls args");
+        assert_eq!(tab_ls.script_command, Some(ScriptCommand::TabList));
+        assert!(tab_ls.no_input);
+        assert!(tab_ls.output_json);
+
+        let session_ls = args_from_iter(["ls"]).expect("session ls args");
+        assert_eq!(session_ls.script_command, Some(ScriptCommand::SessionList));
+        assert!(session_ls.no_input);
+
+        let attach_named = args_from_iter(["attach", "work"]).expect("attach args");
+        assert_eq!(attach_named.target_session_id.as_deref(), Some("work"));
+
+        let new_named = args_from_iter(["new", "work"]).expect("new args");
+        assert_eq!(new_named.target_session_id.as_deref(), Some("work"));
+        assert!(new_named.start);
+        assert!(new_named.live);
+    }
+
+    #[test]
+    fn remote_positional_normalizes_to_tcp_endpoint() {
+        let direct = args_from_iter(["devbox:9000", "--token", "secret"]).expect("direct remote");
+        assert_eq!(direct.tcp_endpoint.as_deref(), Some("devbox:9000"));
+        assert_eq!(direct.tcp_token.as_deref(), Some("secret"));
+
+        let default_port =
+            args_from_iter(["user@devbox", "--token", "secret"]).expect("default remote port");
+        let expected_endpoint = format!("devbox:{DEFAULT_REMOTE_PORT}");
+        assert_eq!(
+            default_port.tcp_endpoint.as_deref(),
+            Some(expected_endpoint.as_str())
+        );
+
+        let err = match args_from_iter(["devbox:9000"]) {
+            Ok(_) => panic!("remote without token should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(
+            err,
+            "remote TCP attach requires --token, --tcp-token, or NMUX_TOKEN"
+        );
+
+        let processed = preprocess_args(["pane", "split", "vertical"]).expect("preprocess");
+        assert_eq!(
+            processed,
+            vec![
+                std::ffi::OsString::from("pane"),
+                std::ffi::OsString::from("split"),
+                std::ffi::OsString::from("vertical")
+            ]
+        );
     }
 
     #[test]
@@ -6508,7 +6977,8 @@ mod tests {
         assert!(usage.contains("--print-socket"));
         assert!(usage.contains("--print-socket-json"));
         assert!(usage.contains("--tcp HOST:PORT"));
-        assert!(usage.contains("--tcp-token TOKEN"));
+        assert!(usage.contains("--tcp-token, --token TOKEN"));
+        assert!(usage.contains("-s, --session NAME"));
         assert!(usage.contains("--state-info"));
         assert!(usage.contains("--state-info-json"));
         assert!(usage.contains("--tab TAB_ID"));
@@ -6529,10 +6999,15 @@ mod tests {
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));
         assert!(usage.contains("pane send PANE_ID TEXT"));
+        assert!(usage.contains("pane ls [--json]"));
+        assert!(usage.contains("pane read PANE_ID [--json]"));
         assert!(usage.contains("pane snapshot PANE_ID --json"));
         assert!(usage.contains("pane split AXIS [PANE_ID]"));
         assert!(usage.contains("tab new [TAB_ID]"));
+        assert!(usage.contains("tab ls [--json]"));
         assert!(usage.contains("tab close [TAB_ID]"));
+        assert!(usage.contains("send-keys [-t PANE_ID] KEYS..."));
+        assert!(usage.contains("version [--json]"));
         assert!(usage.contains("--start waits for nmuxd --ready-json"));
         assert!(usage.contains("interim text surface"));
     }

@@ -200,6 +200,110 @@ fn one_shot_split_daemon_attaches_active_new_pane() {
 }
 
 #[test]
+fn nmux_daemon_alias_serves_list_subcommands() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = "printf 'list-ready:%s\\n' \"$NMUX_PANE_ID\"; sleep 1";
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "daemon",
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--live-clients",
+            "3",
+            "--split",
+            "vertical",
+            "--command",
+            command,
+        ])
+        .spawn()
+        .expect("spawn nmux daemon");
+
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(150));
+
+    let pane_list = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "pane",
+            "ls",
+            "--json",
+        ])
+        .output()
+        .expect("run nmux pane ls");
+    assert!(
+        pane_list.status.success(),
+        "nmux pane ls failed: {}",
+        String::from_utf8_lossy(&pane_list.stderr)
+    );
+    let pane_stdout = String::from_utf8_lossy(&pane_list.stdout);
+    assert!(
+        pane_stdout.contains("\"pane_id\":\"pane-1\"")
+            && pane_stdout.contains("\"pane_id\":\"pane-2\"")
+            && pane_stdout.contains("\"active\":true"),
+        "pane list should include both split panes and active marker:\n{pane_stdout}"
+    );
+
+    let tab_list = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "tab",
+            "ls",
+            "--json",
+        ])
+        .output()
+        .expect("run nmux tab ls");
+    assert!(
+        tab_list.status.success(),
+        "nmux tab ls failed: {}",
+        String::from_utf8_lossy(&tab_list.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&tab_list.stdout).contains("\"tab_id\":\"tab-1\""),
+        "tab list should include active tab:\n{}",
+        String::from_utf8_lossy(&tab_list.stdout)
+    );
+
+    let session_list = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--json",
+            "ls",
+        ])
+        .output()
+        .expect("run nmux ls");
+    let server_status = server.wait().expect("wait for nmux daemon");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        session_list.status.success(),
+        "nmux ls failed: {}",
+        String::from_utf8_lossy(&session_list.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&session_list.stdout).contains("\"session_id\":\"work\""),
+        "session list should include named session:\n{}",
+        String::from_utf8_lossy(&session_list.stdout)
+    );
+    assert!(
+        server_status.success(),
+        "nmux daemon failed: {server_status}"
+    );
+}
+
+#[test]
 fn live_redraw_split_daemon_renders_pane_layout() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

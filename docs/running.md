@@ -1,9 +1,10 @@
 # Running nmux
 
 The current default workflow is a local state-sync prototype with a real local
-PTY host behind the daemon. `nmuxd` owns one workspace tree, a daemon-owned
+PTY host behind the daemon. `nmux daemon` owns one workspace tree, a daemon-owned
 terminal surface, scrollback, pane metadata, resize policy, and the local
-process host. `nmux` can attach once, run a live attach loop, reattach
+process host. The legacy `nmuxd` binary remains as a compatibility shim.
+`nmux` can attach once, run a live attach loop, reattach
 read-only, persist client render state, request daemon-owned scrollback ranges,
 send explicit text, paste, named-key, focus, mouse, or resize intents, and print
 nested `NMUX_*` pane context from commands running inside a pane. The runnable
@@ -36,7 +37,7 @@ another:
 
 ```sh
 # shell 1
-nix develop . -c cargo run --bin nmuxd -- --live-forever
+nix develop . -c cargo run --bin nmux -- daemon --live-forever
 # shell 2
 nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 ```
@@ -45,18 +46,24 @@ Detach the live client with Ctrl-] by default, or pass `--detach-key none` to
 forward that byte to the pane; stop the daemon in shell 1 with Ctrl-C when
 finished. This uses the default `interim` engine and the shared default socket
 path unless `--socket` or `NMUX_SOCKET` selects a different local workspace.
+Use `--session NAME` or `-s NAME` on `nmux daemon` to publish a non-default
+session name; clients can target the same daemon with `nmux --session NAME`,
+`nmux attach NAME`, or `nmux new NAME` for managed private sessions. The current
+daemon still owns one session, so a mismatched target name fails clearly rather
+than selecting from a multi-session server.
 
 For a private local workspace owned by one client command, use `--start`:
 
 ```sh
+nix develop . -c cargo run --bin nmux
 nix develop . -c cargo run --bin nmux -- --start --command "printf 'hello from pty\n'; cat >/dev/null"
 nix develop . -c cargo run --bin nmux -- --start --cwd "$PWD" --env NMUX_DEMO=1 --command 'printf "cwd:%s env:%s\n" "$PWD" "$NMUX_DEMO"; cat >/dev/null'
 nix develop . -c cargo run --bin nmux -- --start --startup-timeout-ms 10000 --command "$SHELL"
 nix develop . -c cargo run --bin nmux -- --shell
 ```
 
-Without `--live`, `--start` runs a managed `nmuxd --one-shot --ready-json`.
-With `--live`, it runs a managed `nmuxd --live-forever --ready-json`. Both
+Without `--live`, `--start` runs a managed daemon in one-shot ready-json mode.
+With `--live`, it runs a managed daemon in live-forever ready-json mode. Both
 forms use a short temporary socket path by default, wait for the daemon
 readiness event internally, attach through the normal nmux protocol, and stop
 the managed daemon when the client exits. If `--command SHELL` is omitted, the
@@ -67,9 +74,10 @@ the private daemon before daemon-owned `NMUX_*` identity variables are injected.
 kills the private daemon and reports setup failure. With `--json`, managed
 startup failures are reported as client JSON error objects using the daemon
 readiness error message rather than nesting daemon JSON inside a string.
-`nmux --shell` expands to
-the common interactive private shell path: `--start --live --stdin-bytes
---redraw`. In that path the client uses raw stdin, mirrors daemon-published
+Bare interactive `nmux` uses the same live byte-input redraw path. It attaches
+to the default socket when one exists, otherwise it starts a private shell.
+`nmux --shell` forces the private-shell form and expands to `--start --live
+--stdin-bytes --redraw`. In that path the client uses raw stdin, mirrors daemon-published
 mouse tracking onto the host terminal, and forwards modified named keys plus
 SGR mouse/scroll input through the same daemon-owned gates used by explicit
 `--key-name` and `--mouse` input.
@@ -108,8 +116,8 @@ rendered. It is the shortest runnable end-to-end workflow check for the default
 engine.
 
 For scripts that start a daemon and then attach a client, add `--ready-json` to
-`nmuxd`. It prints one stdout line after the socket is bound and the initial
-pane has started:
+`nmux daemon`. It prints one stdout line after the socket is bound and the
+initial pane has started:
 
 ```json
 {"event":"ready","NMUX_SOCKET":"/tmp/nmux.sock","source":"--socket","mode":"live-forever","terminal_engine":"interim","resize_policy":"fixed"}
@@ -145,15 +153,18 @@ Inspect the installed binary versions without connecting or binding a socket:
 ```sh
 nix develop . -c cargo run --bin nmux -- --version
 nix develop . -c cargo run --bin nmuxd -- --version
+nix develop . -c cargo run --bin nmux -- version
+nix develop . -c cargo run --bin nmux -- daemon --version
 nix develop . -c cargo run --bin nmux -- --version-json
 nix develop . -c cargo run --bin nmuxd -- --version-json
+nix develop . -c cargo run --bin nmux -- version --json
 ```
 
 Start a one-shot daemon with the default local shell:
 
 ```sh
 # shell 1
-nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --one-shot
+nix develop . -c cargo run --bin nmux -- daemon --socket /tmp/nmux.sock --one-shot
 ```
 
 In another shell, attach a client:
@@ -180,7 +191,7 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --json
 For a deterministic PTY-output smoke test, run the daemon with an explicit shell command:
 
 ```sh
-nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --one-shot --command "printf 'hello from pty\n'; cat >/dev/null"
+nix develop . -c cargo run --bin nmux -- daemon --socket /tmp/nmux.sock --one-shot --command "printf 'hello from pty\n'; cat >/dev/null"
 ```
 
 Use `--cwd DIR` and repeatable `--env KEY=VALUE` when the pane command needs an
@@ -188,7 +199,7 @@ existing launch directory or explicit environment. nmux still injects authoritat
 `NMUX_*` pane identity variables after user-provided env values:
 
 ```sh
-nix develop . -c cargo run --bin nmuxd -- --socket /tmp/nmux.sock --one-shot --cwd "$PWD" --env NMUX_DEMO=1 --command 'printf "cwd:%s env:%s\n" "$PWD" "$NMUX_DEMO"; cat >/dev/null'
+nix develop . -c cargo run --bin nmux -- daemon --socket /tmp/nmux.sock --one-shot --cwd "$PWD" --env NMUX_DEMO=1 --command 'printf "cwd:%s env:%s\n" "$PWD" "$NMUX_DEMO"; cat >/dev/null'
 ```
 
 Expected output after attaching the client:
@@ -274,13 +285,13 @@ readiness window than the default 5000 ms.
 Use `nmux --shell` for the common local interactive form without spelling the
 managed daemon, live attach, byte input, and redraw flags separately.
 
-By default, `nmuxd` and `nmux` use the same local socket path. The precedence
+By default, `nmux daemon`, the `nmuxd` shim, and `nmux` use the same local socket path. The precedence
 is explicit `--socket`, then a valid absolute `NMUX_SOCKET`, then
 `$XDG_RUNTIME_DIR/nmux/nmuxd.sock` when `XDG_RUNTIME_DIR` is a valid absolute
 path, otherwise `/tmp/nmux-$UID/nmuxd.sock`. Use `NMUX_SOCKET` for a
 shell-scoped local workspace, or pass `--socket` on both sides when you want an
 isolated smoke-test socket.
-Use `nmux --print-socket` or `nmuxd --print-socket` to print the resolved socket
+Use `nmux --print-socket`, `nmux daemon --print-socket`, or `nmuxd --print-socket` to print the resolved socket
 path without connecting or binding; use `--print-socket-json` to include both
 the path and resolution source for scripts.
 Informational flags such as `--version`, `--version-json`, `--help`,
@@ -299,6 +310,18 @@ NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmuxd -- --p
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket
 NMUX_SOCKET=/tmp/nmux-project.sock nix develop . -c cargo run --bin nmux -- --print-socket-json
 nix develop . -c cargo run --bin nmux -- --state /tmp/nmux-live.state --state-info-json
+```
+
+Direct TCP is available for local-lab and tailnet experiments. Start the daemon
+with `nmux daemon --listen HOST:PORT --token TOKEN`, or the compatibility
+spelling `nmuxd --tcp-listen HOST:PORT --tcp-token TOKEN`. Attach with
+`nmux HOST:PORT --token TOKEN`, `nmux --tcp HOST:PORT --tcp-token TOKEN`, or
+set `NMUX_TOKEN` instead of passing a token flag. A positional host without a
+port uses port 7007. This is direct token-authenticated TCP, not SSH bootstrap.
+
+```sh
+nix develop . -c cargo run --bin nmux -- daemon --listen 127.0.0.1:7007 --token TOKEN --live-forever
+nix develop . -c cargo run --bin nmux -- 127.0.0.1:7007 --token TOKEN --live --stdin-bytes --redraw
 ```
 
 If the daemon is not running or the client points at the wrong socket, `nmux` reports the socket path in the connection error.

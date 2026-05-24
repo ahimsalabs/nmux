@@ -20,13 +20,14 @@ fn nmux_help_lists_live_client_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--connect-timeout-ms MS"));
+    assert!(stdout.contains("-s, --session NAME"));
     assert!(stdout.contains("--startup-timeout-ms MS"));
     assert!(stdout.contains("--print-context"));
     assert!(stdout.contains("--print-context-json"));
     assert!(stdout.contains("--print-socket"));
     assert!(stdout.contains("--print-socket-json"));
     assert!(stdout.contains("--tcp HOST:PORT"));
-    assert!(stdout.contains("--tcp-token TOKEN"));
+    assert!(stdout.contains("--tcp-token, --token TOKEN"));
     assert!(stdout.contains("-V, --version"));
     assert!(stdout.contains("--version-json"));
     assert!(stdout.contains("--key-name NAME"));
@@ -94,8 +95,9 @@ fn nmuxd_help_lists_live_server_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--live-cycles COUNT"));
-    assert!(stdout.contains("--tcp-listen HOST:PORT"));
-    assert!(stdout.contains("--tcp-token TOKEN"));
+    assert!(stdout.contains("--tcp-listen, --listen HOST:PORT"));
+    assert!(stdout.contains("--tcp-token, --token TOKEN"));
+    assert!(stdout.contains("-s, --session NAME"));
     assert!(stdout.contains("--print-socket"));
     assert!(stdout.contains("--print-socket-json"));
     assert!(stdout.contains("--ready-json"));
@@ -124,6 +126,91 @@ fn nmuxd_help_lists_live_server_flags() {
     assert!(stdout.contains("nmuxd --live"));
     assert!(stdout.contains("nmuxd --live-forever"));
     assert!(stdout.contains("nmuxd --live-clients 2"));
+}
+
+#[test]
+fn nmux_daemon_help_lists_server_aliases() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args(["daemon", "--help"])
+        .output()
+        .expect("run nmux daemon --help");
+
+    assert!(
+        output.status.success(),
+        "nmux daemon --help failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Usage:"));
+    assert!(stdout.contains("--tcp-listen, --listen HOST:PORT"));
+    assert!(stdout.contains("--tcp-token, --token TOKEN"));
+    assert!(stdout.contains("-s, --session NAME"));
+    assert!(stdout.contains("--ready-json"));
+    assert!(stdout.contains("--live-forever"));
+    assert!(stdout.contains("--terminal-engine interim|libghostty-vt"));
+}
+
+#[test]
+fn nmux_daemon_version_alias_has_no_socket_side_effects() {
+    let socket_path = test_socket_path();
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "daemon",
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--version",
+        ])
+        .output()
+        .expect("run nmux daemon --version");
+
+    assert!(
+        output.status.success(),
+        "nmux daemon --version failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        concat!("nmuxd ", env!("CARGO_PKG_VERSION"))
+    );
+    assert!(
+        !socket_path.exists(),
+        "nmux daemon --version should not bind a socket path"
+    );
+}
+
+#[test]
+fn nmux_version_subcommand_reports_client_version() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .arg("version")
+        .output()
+        .expect("run nmux version");
+
+    assert!(
+        output.status.success(),
+        "nmux version failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        concat!("nmux ", env!("CARGO_PKG_VERSION"))
+    );
+
+    let json_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args(["version", "--json"])
+        .output()
+        .expect("run nmux version --json");
+    assert!(
+        json_output.status.success(),
+        "nmux version --json failed: {}",
+        String::from_utf8_lossy(&json_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&json_output.stdout).trim(),
+        format!(
+            "{{\"binary\":\"nmux\",\"version\":\"{}\"}}",
+            env!("CARGO_PKG_VERSION")
+        )
+    );
 }
 
 #[test]

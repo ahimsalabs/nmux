@@ -5,12 +5,12 @@ over FlatBuffers — not client-side PTY replay.
 
 ## What it does today
 
-- `nmuxd` owns a session with a local PTY, serves state over a Unix socket
+- `nmux daemon` owns a session with a local PTY, serves state over a socket
 - `nmux` attaches, renders server-owned pane state, sends input/resize intents
 - Split panes, switch tabs, route input to the focused pane, and send commands
 - Live attach, reconnect, persisted client state, split redraw, scrollback fetches
 - Concurrent live clients with shared surface updates and presence identity
-- Scriptable local control: `nmux pane split`, `nmux pane send`, `nmux tab new`
+- Scriptable control: `nmux pane split`, `nmux pane send`, `nmux tab new`
 - Token-authenticated TCP transport for non-Unix-socket experiments
 - Experimental container/sandbox host selection for daemon-started pane commands
 - Opt-in `libghostty-vt` engine for VT-correct terminal state extraction
@@ -29,7 +29,7 @@ See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
 
 ```sh
 # run directly from GitHub (requires Nix with flakes)
-nix run github:ahimsalabs/nmux -- --shell
+nix run github:ahimsalabs/nmux
 ```
 
 Pre-built binaries for Linux (x86_64, aarch64) and macOS (Apple Silicon) are
@@ -45,10 +45,10 @@ nix develop . -c make check
 nix develop . -c make local-smoke
 
 # interactive shell (one command)
-nix develop . -c cargo run --bin nmux -- --shell
+nix develop . -c cargo run --bin nmux
 
 # or manual: daemon in shell 1, client in shell 2
-nix develop . -c cargo run --bin nmuxd -- --live-forever        # shell 1
+nix develop . -c cargo run --bin nmux -- daemon --live-forever  # shell 1
 nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw  # shell 2
 # Ctrl-] detaches the client; Ctrl-C stops the daemon
 ```
@@ -70,7 +70,7 @@ nix --extra-experimental-features 'nix-command flakes' develop . -c make local-s
 ```
 crates/nmux-proto   FlatBuffers wire helpers and generated bindings
 crates/nmux-core    Session, process host, terminal engine, adapters
-crates/nmux-cli     nmuxd daemon, nmux client, integration tests
+crates/nmux-cli     nmux daemon/client CLI, nmuxd shim, integration tests
 schema/             nmux.fbs protocol schema
 docs/               Roadmap, protocol, ADRs, running guide
 ```
