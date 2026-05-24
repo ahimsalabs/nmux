@@ -37,6 +37,20 @@ impl HostSpec {
             command,
         }
     }
+
+    pub fn container(
+        id: impl Into<String>,
+        image: impl Into<String>,
+        command: CommandSpec,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            kind: HostKind::Container {
+                image: image.into(),
+            },
+            command,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,6 +249,100 @@ struct LocalPtyProcess {
     pending_output: VecDeque<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HostSpawnCommand {
+    program: String,
+    args: Vec<String>,
+    working_dir: Option<String>,
+    env: Vec<(String, String)>,
+}
+
+impl HostSpawnCommand {
+    fn from_command(command: &CommandSpec) -> Self {
+        Self {
+            program: command.program.clone(),
+            args: command.args.clone(),
+            working_dir: command.working_dir.clone(),
+            env: command.env.clone(),
+        }
+    }
+}
+
+fn spawn_command_for_host(
+    spec: &HostSpec,
+    allocate_tty: bool,
+    pane_id: &str,
+) -> Result<HostSpawnCommand, HostError> {
+    match &spec.kind {
+        HostKind::Local => Ok(HostSpawnCommand::from_command(&spec.command)),
+        HostKind::Container { image } => {
+            Ok(container_spawn_command(image, &spec.command, allocate_tty))
+        }
+        HostKind::Sandbox { profile } => {
+            sandbox_spawn_command(&spec.id, profile, &spec.command, pane_id)
+        }
+    }
+}
+
+fn container_spawn_command(
+    image: &str,
+    command: &CommandSpec,
+    allocate_tty: bool,
+) -> HostSpawnCommand {
+    let runtime = std::env::var("NMUX_CONTAINER_RUNTIME").unwrap_or_else(|_| "docker".to_owned());
+    let mut args = vec!["run".to_owned(), "--rm".to_owned(), "-i".to_owned()];
+    if allocate_tty {
+        args.push("-t".to_owned());
+    }
+    if let Some(working_dir) = &command.working_dir {
+        args.extend(["--workdir".to_owned(), working_dir.clone()]);
+    }
+    for (key, value) in &command.env {
+        args.extend(["-e".to_owned(), format!("{key}={value}")]);
+    }
+    args.push(image.to_owned());
+    args.push(command.program.clone());
+    args.extend(command.args.iter().cloned());
+    HostSpawnCommand {
+        program: runtime,
+        args,
+        working_dir: None,
+        env: Vec::new(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn sandbox_spawn_command(
+    _host_id: &str,
+    profile: &str,
+    command: &CommandSpec,
+    _pane_id: &str,
+) -> Result<HostSpawnCommand, HostError> {
+    let mut args = vec!["-p".to_owned(), profile.to_owned(), command.program.clone()];
+    args.extend(command.args.iter().cloned());
+    Ok(HostSpawnCommand {
+        program: "sandbox-exec".to_owned(),
+        args,
+        working_dir: command.working_dir.clone(),
+        env: command.env.clone(),
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn sandbox_spawn_command(
+    host_id: &str,
+    profile: &str,
+    _command: &CommandSpec,
+    _pane_id: &str,
+) -> Result<HostSpawnCommand, HostError> {
+    Err(HostError::UnsupportedHostKind {
+        host_id: host_id.to_owned(),
+        kind: HostKind::Sandbox {
+            profile: profile.to_owned(),
+        },
+    })
+}
+
 impl LocalProcessHost {
     fn process_mut(&mut self, pane_id: &str) -> Result<&mut LocalProcess, HostError> {
         self.processes
@@ -406,13 +514,6 @@ impl ProcessOutput for LocalPtyHost {
 
 impl ProcessHost for LocalPtyHost {
     fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
-        if spec.kind != HostKind::Local {
-            return Err(HostError::UnsupportedHostKind {
-                host_id: spec.id.clone(),
-                kind: spec.kind.clone(),
-            });
-        }
-
         if let Some(process) = self.processes.get(pane_id) {
             if process.process.status == ProcessStatus::Running {
                 return Err(HostError::AlreadyRunning {
@@ -431,12 +532,13 @@ impl ProcessHost for LocalPtyHost {
                 pixel_height: 0,
             })
             .map_err(|error| Self::io_error(pane_id, "openpty", error))?;
-        let mut command = CommandBuilder::new(&spec.command.program);
-        command.args(&spec.command.args);
-        for (key, value) in &spec.command.env {
+        let spawn_command = spawn_command_for_host(spec, true, pane_id)?;
+        let mut command = CommandBuilder::new(&spawn_command.program);
+        command.args(&spawn_command.args);
+        for (key, value) in &spawn_command.env {
             command.env(key, value);
         }
-        if let Some(working_dir) = &spec.command.working_dir {
+        if let Some(working_dir) = &spawn_command.working_dir {
             command.cwd(working_dir);
         }
 
@@ -567,13 +669,6 @@ impl ProcessHost for LocalPtyHost {
 
 impl ProcessHost for LocalProcessHost {
     fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
-        if spec.kind != HostKind::Local {
-            return Err(HostError::UnsupportedHostKind {
-                host_id: spec.id.clone(),
-                kind: spec.kind.clone(),
-            });
-        }
-
         if let Some(process) = self.processes.get(pane_id) {
             if process.process.status == ProcessStatus::Running {
                 return Err(HostError::AlreadyRunning {
@@ -582,14 +677,15 @@ impl ProcessHost for LocalProcessHost {
             }
         }
 
-        let mut command = Command::new(&spec.command.program);
+        let spawn_command = spawn_command_for_host(spec, false, pane_id)?;
+        let mut command = Command::new(&spawn_command.program);
         command
-            .args(&spec.command.args)
-            .envs(spec.command.env.iter().map(|(key, value)| (key, value)))
+            .args(&spawn_command.args)
+            .envs(spawn_command.env.iter().map(|(key, value)| (key, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        if let Some(working_dir) = &spec.command.working_dir {
+        if let Some(working_dir) = &spawn_command.working_dir {
             command.current_dir(working_dir);
         }
 
@@ -802,7 +898,7 @@ mod tests {
     use super::{
         CommandSpec, HostError, HostEvent, HostKind, HostSpec, LocalProcessHost, LocalPtyHost,
         PlanningHost, ProcessHost, ProcessOutput, ProcessStatus, RecordingOutput,
-        UnsupportedSandboxHost,
+        UnsupportedSandboxHost, spawn_command_for_host,
     };
     use std::thread;
     use std::time::{Duration, Instant};
@@ -939,19 +1035,112 @@ mod tests {
     }
 
     #[test]
-    fn local_process_host_rejects_non_local_specs() {
-        let spec = HostSpec::sandbox("sandbox", "default", CommandSpec::new("sh"));
-        let mut host = LocalProcessHost::default();
+    fn container_host_choice_lowers_to_runtime_command() {
+        let spec = HostSpec::container(
+            "container",
+            "alpine:latest",
+            CommandSpec::new("sh")
+                .with_args(["-lc", "echo nmux"])
+                .with_working_dir("/workspace")
+                .with_env("TERM", "xterm-256color"),
+        );
+
+        let command = spawn_command_for_host(&spec, true, "pane-1").expect("container command");
+
+        assert_eq!(command.program, "docker");
+        assert_eq!(
+            command.args,
+            vec![
+                "run",
+                "--rm",
+                "-i",
+                "-t",
+                "--workdir",
+                "/workspace",
+                "-e",
+                "TERM=xterm-256color",
+                "alpine:latest",
+                "sh",
+                "-lc",
+                "echo nmux",
+            ]
+        );
+        assert_eq!(command.working_dir, None);
+        assert!(command.env.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sandbox_host_choice_lowers_to_macos_sandbox_exec() {
+        let spec = HostSpec::sandbox(
+            "sandbox",
+            "(version 1) (allow default)",
+            CommandSpec::new("sh")
+                .with_args(["-lc", "echo nmux"])
+                .with_working_dir("/tmp")
+                .with_env("TERM", "xterm-256color"),
+        );
+
+        let command = spawn_command_for_host(&spec, false, "pane-1").expect("sandbox command");
+
+        assert_eq!(command.program, "sandbox-exec");
+        assert_eq!(
+            command.args,
+            vec![
+                "-p",
+                "(version 1) (allow default)",
+                "sh",
+                "-lc",
+                "echo nmux",
+            ]
+        );
+        assert_eq!(command.working_dir.as_deref(), Some("/tmp"));
+        assert_eq!(
+            command.env,
+            vec![("TERM".to_owned(), "xterm-256color".to_owned())]
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn sandbox_host_choice_reports_platform_boundary() {
+        let spec = HostSpec::sandbox(
+            "sandbox",
+            "(version 1) (allow default)",
+            CommandSpec::new("sh"),
+        );
 
         assert_eq!(
-            host.start_pane("pane-1", &spec),
+            spawn_command_for_host(&spec, false, "pane-1"),
             Err(HostError::UnsupportedHostKind {
                 host_id: "sandbox".to_owned(),
                 kind: HostKind::Sandbox {
-                    profile: "default".to_owned(),
+                    profile: "(version 1) (allow default)".to_owned(),
                 },
             })
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn local_process_host_starts_macos_sandbox_command() {
+        let spec = HostSpec::sandbox(
+            "sandbox",
+            "(version 1) (allow default)",
+            CommandSpec::new("sh").with_args(["-c", "cat >/dev/null"]),
+        );
+        let mut host = LocalProcessHost::default();
+
+        let process = host
+            .start_pane("pane-1", &spec)
+            .expect("start sandbox pane");
+        assert_eq!(process.status, ProcessStatus::Running);
+        assert_eq!(process.host_id, "sandbox");
+
+        host.write_input("pane-1", b"hello\n")
+            .expect("write sandbox input");
+        let stopped = host.stop_pane("pane-1").expect("stop sandbox pane");
+        assert_eq!(stopped.status, ProcessStatus::Exited);
     }
 
     #[test]
