@@ -20,7 +20,7 @@ None queued.
 
 ## Deferred until usable
 
-- Default engine promotion evidence / packaging / CI bundles
+- Default engine promotion evidence / packaging / CI bundles (issue #7)
 - Renderer equivalence oracle
 - Protocol extensions (hyperlink IDs, images, command lifecycle, physical keys)
 - Per-client cursor/mouse overlays; current multiplayer MVP uses actor identity,
