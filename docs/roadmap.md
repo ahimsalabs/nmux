@@ -102,8 +102,10 @@ Done:
 - Interactive byte-streamed live sessions listen for `SIGWINCH` and send resize intents from the current TTY size when explicit `--cols` and `--rows` are not set.
 - `nmux --live --no-input` observes command output without forwarding input and, without `--iterations`, keeps polling until the daemon closes the live connection.
 - `nmux --live` renders the requested initial scrollback range before streaming live surface updates, including in the first `--redraw` repaint buffer.
-- `nmux --live --redraw` clears and repaints the current client-side pane surface on each streamed update instead of appending every render.
-- Interactive TTY `--redraw` uses the alternate screen and restores it on exit; captured/piped redraw output remains plain clear/home escape output.
+- `nmux --live --redraw` repaints the current client-side pane surface on each streamed update. On a real TTY, differential rendering rewrites only changed rows via cursor addressing, eliminating full-screen flicker; a latency counter overlay in the top-right corner shows milliseconds between frames.
+- When the `libghostty-vt` engine produces structured style data, the client reconstructs ANSI SGR styling (bold, italic, 24-bit RGB colors) from protocol `StyleSummary` objects without parsing raw VT bytes. Styled output persists across detach/reattach through the state file.
+- Cursor-only and mode-only patches with unchanged metadata are no-ops in redraw mode.
+- Interactive TTY `--redraw` uses the alternate screen and restores it on exit; captured/piped redraw output falls back to plain clear/home escape output without differential rendering or styling.
 - Redraw mode includes the current workspace summary in every repaint and updates it when live workspace snapshots arrive.
 - Live mode renders streamed snapshots and patches through the same client-side pane surface state used by reconnects, and can persist that state with `--state`.
 - `nmux --live --cols --rows` sends `ResizeIntent` through the live loop, including resize-only clients that send no pane input; after process-host resize succeeds, the daemon commits the pane size and republishes a `WorkspaceTreeSnapshot`.

@@ -2148,6 +2148,62 @@ fn render_run_summaries(runs: &[CellRunSummary]) -> String {
     rendered
 }
 
+/// Convert a structured style into an ANSI SGR escape sequence.
+/// Style flags: bit 0=bold, 1=italic, 2=faint, 3=blink, 4=inverse,
+/// 5=invisible, 6=strikethrough, 7=overline, 8..12=underline variants.
+/// RGBA colors are packed as `[R, G, B, 0xFF]` in big-endian u32.
+fn style_to_sgr(style: &StyleSummary) -> String {
+    let mut params = Vec::new();
+    let flags = style.flags;
+    if flags & (1 << 0) != 0 {
+        params.push("1".to_owned());
+    }
+    if flags & (1 << 2) != 0 {
+        params.push("2".to_owned());
+    }
+    if flags & (1 << 1) != 0 {
+        params.push("3".to_owned());
+    }
+    // Underline variants: bit 8=single, 9=double, 10=curly, 11=dotted, 12=dashed
+    if flags & (1 << 8) != 0 {
+        params.push("4".to_owned());
+    } else if flags & (1 << 9) != 0 {
+        params.push("21".to_owned());
+    } else if flags & (0x1f << 10) != 0 {
+        // Curly/dotted/dashed — use SGR 4:3/4:4/4:5 if terminal supports it,
+        // fall back to single underline for broad compatibility.
+        params.push("4".to_owned());
+    }
+    if flags & (1 << 3) != 0 {
+        params.push("5".to_owned());
+    }
+    if flags & (1 << 4) != 0 {
+        params.push("7".to_owned());
+    }
+    if flags & (1 << 5) != 0 {
+        params.push("8".to_owned());
+    }
+    if flags & (1 << 6) != 0 {
+        params.push("9".to_owned());
+    }
+    if flags & (1 << 7) != 0 {
+        params.push("53".to_owned());
+    }
+    if style.fg_rgba != 0 {
+        let [r, g, b, _] = style.fg_rgba.to_be_bytes();
+        params.push(format!("38;2;{r};{g};{b}"));
+    }
+    if style.bg_rgba != 0 {
+        let [r, g, b, _] = style.bg_rgba.to_be_bytes();
+        params.push(format!("48;2;{r};{g};{b}"));
+    }
+    if params.is_empty() {
+        String::new()
+    } else {
+        format!("\x1b[{}m", params.join(";"))
+    }
+}
+
 pub fn read_input_event_from_stream(
     stream: &mut UnixStream,
 ) -> Result<InputSummary, Box<dyn std::error::Error>> {
@@ -3586,6 +3642,50 @@ impl ClientPaneSurface {
         self.row_text[..visible_rows].join("\n")
     }
 
+    /// Render visible rows with ANSI SGR styling derived from structured cell
+    /// runs and the style table. The client never parses raw VT bytes; it
+    /// reconstructs styled output from the protocol's structured style objects.
+    pub fn render_styled_text(&self) -> String {
+        let visible_rows = self.visible_row_count();
+        let mut output = String::new();
+        for row_index in 0..visible_rows {
+            if row_index > 0 {
+                output.push('\n');
+            }
+            let runs = &self.row_runs[row_index];
+            if runs.is_empty() {
+                output.push_str(&self.row_text[row_index]);
+                continue;
+            }
+            for run in runs {
+                let style = self.styles.get(run.style_id as usize);
+                let needs_sgr = style.is_some_and(|s| {
+                    s.fg_rgba != 0 || s.bg_rgba != 0 || s.flags != 0
+                });
+                if needs_sgr {
+                    if let Some(style) = style {
+                        output.push_str(&style_to_sgr(style));
+                    }
+                }
+                output.push_str(&run.text);
+                if needs_sgr {
+                    output.push_str("\x1b[0m");
+                }
+            }
+        }
+        output
+    }
+
+    /// Returns true when the style table contains any non-default styles,
+    /// indicating that the terminal engine produced structured style data.
+    pub fn has_styled_runs(&self) -> bool {
+        self.styles.len() > 1
+            || self
+                .styles
+                .first()
+                .is_some_and(|s| s.fg_rgba != 0 || s.bg_rgba != 0 || s.flags != 0)
+    }
+
     fn visible_row_count(&self) -> usize {
         self.row_text
             .iter()
@@ -4344,11 +4444,37 @@ impl ClientAttachState {
         overlay.render_underlined(surface)
     }
 
+    /// Render a surface update with optional ANSI SGR styling from structured
+    /// cell runs. When `styled` is true and the engine produced style data,
+    /// the output contains SGR escape sequences reconstructed from protocol
+    /// objects — the client never parses raw VT bytes.
+    pub fn render_surface_update_styled(
+        &mut self,
+        update: &SurfaceUpdate,
+        styled: bool,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        self.apply_surface_update_styled(update, styled)
+    }
+
     pub fn cached_surface_text(&self, pane_id: &str) -> Option<String> {
         self.surfaces
             .iter()
             .find(|surface| surface.pane_id == pane_id)
             .map(ClientPaneSurface::render_text)
+    }
+
+    /// Like `cached_surface_text` but with optional ANSI SGR styling.
+    pub fn cached_surface_text_styled(&self, pane_id: &str, styled: bool) -> Option<String> {
+        self.surfaces
+            .iter()
+            .find(|surface| surface.pane_id == pane_id)
+            .map(|surface| {
+                if styled && surface.has_styled_runs() {
+                    surface.render_styled_text()
+                } else {
+                    surface.render_text()
+                }
+            })
     }
 
     pub fn cached_surface_metadata(&self, pane_id: &str) -> Option<TerminalMetadataSummary> {
@@ -4418,13 +4544,25 @@ impl ClientAttachState {
         &mut self,
         update: &SurfaceUpdate,
     ) -> Result<String, Box<dyn std::error::Error>> {
+        self.apply_surface_update_styled(update, false)
+    }
+
+    fn apply_surface_update_styled(
+        &mut self,
+        update: &SurfaceUpdate,
+        styled: bool,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         if let Some(surface) = self
             .surfaces
             .iter_mut()
             .find(|surface| surface.pane_id == update.pane_id)
         {
             surface.apply_update(update)?;
-            return Ok(surface.render_text());
+            return Ok(if styled && surface.has_styled_runs() {
+                surface.render_styled_text()
+            } else {
+                surface.render_text()
+            });
         }
 
         if update.kind != SurfaceUpdateKind::Snapshot {
@@ -4436,7 +4574,11 @@ impl ClientAttachState {
         }
 
         let surface = ClientPaneSurface::from_snapshot(update)?;
-        let rendered = surface.render_text();
+        let rendered = if styled && surface.has_styled_runs() {
+            surface.render_styled_text()
+        } else {
+            surface.render_text()
+        };
         self.surfaces.push(surface);
         Ok(rendered)
     }

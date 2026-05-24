@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{ArgAction, Parser, ValueEnum};
 use nmux_cli::local;
@@ -347,8 +347,18 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             return Err(err);
         }
     };
+    // Styled ANSI SGR output is only useful on real terminals. When stdout
+    // is captured (tests, pipes), emit plain text for compatibility.
+    let use_styled = stdout_is_tty();
+    // Re-render with styles if the engine produced structured style data
+    // and we're outputting to a real terminal.
+    if use_styled && rendered.surface_text.is_some() {
+        rendered.surface_text =
+            client_state.cached_surface_text_styled(&attached_pane_id, true);
+    }
     if rendered.surface_text.is_none() {
-        rendered.surface_text = client_state.cached_surface_text(&attached_pane_id);
+        rendered.surface_text =
+            client_state.cached_surface_text_styled(&attached_pane_id, use_styled);
         if let Some(surface) = client_state.cached_surface_summary(&attached_pane_id) {
             rendered.surface_kind = surface.surface_kind;
             rendered.cursor = surface.cursor;
@@ -381,11 +391,19 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
     }
+    // Differential rendering with latency overlay is only useful on real
+    // terminals. When stdout is captured (tests, pipes), fall back to the
+    // legacy full-screen-clear path so output is plain text.
+    let mut redraw_state = if args.redraw && stdout_is_tty() {
+        Some(RedrawState::new())
+    } else {
+        None
+    };
     if args.output_json {
         rendered.scrollback = scrollback;
         println!("{}", format_live_attach_json(&rendered));
     } else {
-        print_live_rendered(rendered, args.redraw, scrollback);
+        print_live_rendered(rendered, args.redraw, scrollback, redraw_state.as_mut());
     }
     flush_stdout()?;
 
@@ -540,6 +558,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             &current_surface_metadata,
                             &current_surface_text,
                             args.redraw,
+                            redraw_state.as_mut(),
                         );
                     } else {
                         println!("{}", current_workspace.display_line());
@@ -553,7 +572,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         title: update.title.clone(),
                         working_directory: update.working_directory.clone(),
                     };
-                    current_surface_text = client_state.render_surface_update(&update)?;
+                    current_surface_text = client_state
+                        .render_surface_update_styled(&update, use_styled)?;
                     if args.output_json {
                         println!(
                             "{}",
@@ -572,6 +592,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             &current_surface_text,
                             &update,
                             args.redraw,
+                            redraw_state.as_mut(),
                         );
                     }
                     flush_stdout()?;
@@ -918,7 +939,7 @@ fn repaint_speculative_echo(
         return Ok(());
     };
     *current_surface_text = predicted;
-    print_live_surface(workspace, metadata, current_surface_text, true);
+    print_live_surface(workspace, metadata, current_surface_text, true, None);
     flush_stdout()?;
     Ok(())
 }
@@ -1362,6 +1383,7 @@ fn print_live_rendered(
     rendered: local::RenderedAttach,
     redraw: bool,
     initial_scrollback: Option<local::ScrollbackChunkSummary>,
+    redraw_state: Option<&mut RedrawState>,
 ) {
     if redraw {
         let surface_text = rendered
@@ -1373,7 +1395,11 @@ fn print_live_rendered(
             &surface_text,
             initial_scrollback,
         );
-        redraw_terminal(&redraw_text);
+        if let Some(state) = redraw_state {
+            state.render_initial(&redraw_text);
+        } else {
+            redraw_terminal(&redraw_text);
+        }
         return;
     }
 
@@ -1388,14 +1414,15 @@ fn print_live_surface(
     metadata: &local::TerminalMetadataSummary,
     surface_text: &str,
     redraw: bool,
+    redraw_state: Option<&mut RedrawState>,
 ) {
     if redraw {
-        redraw_terminal(&redraw_text_with_context(
-            workspace,
-            metadata,
-            surface_text,
-            None,
-        ));
+        let text = redraw_text_with_context(workspace, metadata, surface_text, None);
+        if let Some(state) = redraw_state {
+            state.render_diff(&text);
+        } else {
+            redraw_terminal(&text);
+        }
     } else {
         print_terminal_metadata(metadata);
         println!("{surface_text}");
@@ -1409,12 +1436,24 @@ fn print_live_update(
     surface_text: &str,
     update: &local::SurfaceUpdate,
     redraw: bool,
+    redraw_state: Option<&mut RedrawState>,
 ) {
     match live_update_print_kind(previous_metadata, metadata, update, redraw) {
         LiveUpdatePrintKind::Surface => {
-            print_live_surface(workspace, metadata, surface_text, redraw)
+            print_live_surface(workspace, metadata, surface_text, redraw, redraw_state)
         }
-        LiveUpdatePrintKind::Metadata => print_terminal_metadata(metadata),
+        LiveUpdatePrintKind::Metadata => {
+            if redraw {
+                if let Some(state) = redraw_state {
+                    // Re-render with new metadata via differential update.
+                    let text =
+                        redraw_text_with_context(workspace, metadata, surface_text, None);
+                    state.render_diff(&text);
+                }
+            } else {
+                print_terminal_metadata(metadata);
+            }
+        }
         LiveUpdatePrintKind::None => {}
     }
 }
@@ -1432,12 +1471,16 @@ fn live_update_print_kind(
     update: &local::SurfaceUpdate,
     redraw: bool,
 ) -> LiveUpdatePrintKind {
-    if redraw
-        || update.kind == local::SurfaceUpdateKind::Snapshot
+    if update.kind == local::SurfaceUpdateKind::Snapshot
         || update.patch_kind == Some(protocol::PatchKind::ReplaceRows)
     {
         LiveUpdatePrintKind::Surface
-    } else if metadata != previous_metadata {
+    } else if redraw && metadata != previous_metadata {
+        // In redraw mode, metadata changes trigger a differential surface
+        // repaint (the header rows contain metadata). Cursor-only and
+        // mode-only patches with unchanged metadata are no-ops.
+        LiveUpdatePrintKind::Metadata
+    } else if !redraw && metadata != previous_metadata {
         LiveUpdatePrintKind::Metadata
     } else {
         LiveUpdatePrintKind::None
@@ -1448,6 +1491,112 @@ fn redraw_terminal(surface_text: &str) {
     print!("\x1b[2J\x1b[H{surface_text}");
     if !surface_text.ends_with('\n') {
         println!();
+    }
+}
+
+/// Tracks displayed rows for differential rendering and latency measurement.
+struct RedrawState {
+    /// Previously displayed rows (including header lines).
+    previous_rows: Vec<String>,
+    /// Terminal width for latency overlay positioning.
+    terminal_cols: u32,
+    /// When the last frame was rendered.
+    last_frame_time: Instant,
+    /// Most recent measured frame latency.
+    last_latency: Duration,
+}
+
+impl RedrawState {
+    fn new() -> Self {
+        Self {
+            previous_rows: Vec::new(),
+            terminal_cols: 80,
+            last_frame_time: Instant::now(),
+            last_latency: Duration::ZERO,
+        }
+    }
+
+    fn update_terminal_size(&mut self) {
+        if let Ok(Some((cols, _))) = stdin_terminal_size() {
+            self.terminal_cols = cols;
+        }
+    }
+
+    /// Render the full surface text differentially: only write rows that changed.
+    /// Uses cursor addressing to update individual rows without clearing the screen.
+    fn render_diff(&mut self, surface_text: &str) {
+        let now = Instant::now();
+        self.last_latency = now.duration_since(self.last_frame_time);
+        self.last_frame_time = now;
+        self.update_terminal_size();
+
+        let new_rows: Vec<String> = surface_text.lines().map(String::from).collect();
+        let mut output = String::new();
+
+        // Hide cursor during update to avoid flicker.
+        output.push_str("\x1b[?25l");
+
+        let max_rows = new_rows.len().max(self.previous_rows.len());
+        for i in 0..max_rows {
+            let new_row = new_rows.get(i).map(String::as_str).unwrap_or("");
+            let old_row = self.previous_rows.get(i).map(String::as_str).unwrap_or("");
+            if new_row != old_row {
+                // Move cursor to row i+1 (1-based), column 1.
+                output.push_str(&format!("\x1b[{};1H\x1b[2K{}", i + 1, new_row));
+            }
+        }
+
+        // Draw latency overlay in top-right corner.
+        let latency_text = format_latency(self.last_latency);
+        let latency_col =
+            self.terminal_cols.saturating_sub(latency_text.len() as u32) + 1;
+        output.push_str(&format!(
+            "\x1b[1;{}H\x1b[7m{}\x1b[27m",
+            latency_col, latency_text
+        ));
+
+        // Park cursor at the bottom to avoid visual artifacts.
+        let park_row = new_rows.len().max(1);
+        output.push_str(&format!("\x1b[{};1H", park_row));
+
+        print!("{output}");
+
+        self.previous_rows = new_rows;
+    }
+
+    /// Full repaint for initial frame (no previous state to diff against).
+    fn render_initial(&mut self, surface_text: &str) {
+        self.last_frame_time = Instant::now();
+        self.last_latency = Duration::ZERO;
+        self.update_terminal_size();
+
+        // Clear screen and render everything.
+        print!("\x1b[2J\x1b[H{surface_text}");
+
+        let new_rows: Vec<String> = surface_text.lines().map(String::from).collect();
+
+        // Draw latency overlay.
+        let latency_text = format_latency(self.last_latency);
+        let latency_col =
+            self.terminal_cols.saturating_sub(latency_text.len() as u32) + 1;
+        print!(
+            "\x1b[1;{}H\x1b[7m{}\x1b[27m",
+            latency_col, latency_text
+        );
+
+        let park_row = new_rows.len().max(1);
+        print!("\x1b[{};1H", park_row);
+
+        self.previous_rows = new_rows;
+    }
+}
+
+fn format_latency(latency: Duration) -> String {
+    let ms = latency.as_millis();
+    if ms == 0 {
+        " 0ms ".to_owned()
+    } else {
+        format!(" {}ms ", ms)
     }
 }
 
@@ -4045,8 +4194,20 @@ mod tests {
             live_update_print_kind(&previous, &previous, &snapshot, false),
             LiveUpdatePrintKind::Surface
         );
+        // With differential rendering, cursor-only patches with unchanged
+        // metadata in redraw mode are no-ops (no rows changed).
         assert_eq!(
             live_update_print_kind(&previous, &previous, &cursor_only, true),
+            LiveUpdatePrintKind::None
+        );
+        // But cursor-only + metadata change in redraw mode does trigger Metadata.
+        assert_eq!(
+            live_update_print_kind(&previous, &changed, &cursor_only, true),
+            LiveUpdatePrintKind::Metadata
+        );
+        // ReplaceRows in redraw mode still triggers Surface.
+        assert_eq!(
+            live_update_print_kind(&previous, &previous, &replace_rows, true),
             LiveUpdatePrintKind::Surface
         );
     }
