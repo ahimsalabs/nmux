@@ -200,6 +200,68 @@ fn one_shot_split_daemon_attaches_active_new_pane() {
 }
 
 #[test]
+fn live_redraw_split_daemon_renders_pane_layout() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = "printf 'split-env:%s\\n' \"$NMUX_PANE_ID\"; sleep 1";
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--split",
+            "vertical",
+            "--command",
+            command,
+        ])
+        .spawn()
+        .expect("spawn split nmuxd");
+
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(150));
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--redraw",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux --live --redraw");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux --live --redraw failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("[pane-1]") && stdout.contains("[pane-2 active]"),
+        "split redraw should label both panes:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("split-env:pane-2"),
+        "split redraw should render the active split pane surface:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(" | "),
+        "split redraw should render vertical pane separator:\n{stdout}"
+    );
+}
+
+#[test]
 fn one_shot_cli_can_print_attach_json() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

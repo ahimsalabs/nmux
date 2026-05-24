@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -373,6 +374,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .surface_text
         .clone()
         .unwrap_or_else(|| current_workspace.display_line());
+    let mut current_pane_surfaces = BTreeMap::new();
+    current_pane_surfaces.insert(attached_pane_id.clone(), current_surface_text.clone());
     let mut current_modes = rendered.modes;
     let scrollback = match initial_live_scrollback(
         args,
@@ -411,7 +414,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(mouse_modes) = host_mouse_modes.as_mut() {
             mouse_modes.sync(current_modes)?;
         }
-        print_live_rendered(rendered, args.redraw, scrollback, redraw_state.as_mut());
+        print_live_rendered(
+            rendered,
+            args.redraw,
+            scrollback,
+            redraw_state.as_mut(),
+            Some(&current_pane_surfaces),
+        );
     }
     flush_stdout()?;
 
@@ -569,6 +578,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             &current_surface_text,
                             args.redraw,
                             redraw_state.as_mut(),
+                            Some(&current_pane_surfaces),
                         );
                     } else {
                         println!("{}", current_workspace.display_line());
@@ -589,6 +599,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     current_surface_text =
                         client_state.render_surface_update_styled(&update, use_styled)?;
+                    current_pane_surfaces
+                        .insert(update.pane_id.clone(), current_surface_text.clone());
                     if let Some(ref mut rs) = redraw_state {
                         rs.record_decode_time(decode_start.elapsed());
                     }
@@ -611,6 +623,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             &update,
                             args.redraw,
                             redraw_state.as_mut(),
+                            Some(&current_pane_surfaces),
                         );
                     }
                     flush_stdout()?;
@@ -966,6 +979,7 @@ fn repaint_speculative_echo(
         current_surface_text,
         true,
         redraw_state,
+        None,
     );
     flush_stdout()?;
     Ok(())
@@ -1502,6 +1516,7 @@ fn print_live_rendered(
     redraw: bool,
     initial_scrollback: Option<local::ScrollbackChunkSummary>,
     redraw_state: Option<&mut RedrawState>,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
 ) {
     if redraw {
         let surface_text = rendered
@@ -1514,6 +1529,7 @@ fn print_live_rendered(
             &surface_text,
             initial_scrollback,
             has_status_bar,
+            pane_surfaces,
         );
         if let Some(state) = redraw_state {
             state.render_initial(&rendered.workspace, &redraw_text);
@@ -1535,11 +1551,18 @@ fn print_live_surface(
     surface_text: &str,
     redraw: bool,
     redraw_state: Option<&mut RedrawState>,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
 ) {
     if redraw {
         let has_status_bar = redraw_state.is_some();
-        let text =
-            redraw_text_with_context(workspace, metadata, surface_text, None, has_status_bar);
+        let text = redraw_text_with_context(
+            workspace,
+            metadata,
+            surface_text,
+            None,
+            has_status_bar,
+            pane_surfaces,
+        );
         if let Some(state) = redraw_state {
             state.render_diff(workspace, &text);
         } else {
@@ -1559,17 +1582,29 @@ fn print_live_update(
     update: &local::SurfaceUpdate,
     redraw: bool,
     redraw_state: Option<&mut RedrawState>,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
 ) {
     match live_update_print_kind(previous_metadata, metadata, update, redraw) {
-        LiveUpdatePrintKind::Surface => {
-            print_live_surface(workspace, metadata, surface_text, redraw, redraw_state)
-        }
+        LiveUpdatePrintKind::Surface => print_live_surface(
+            workspace,
+            metadata,
+            surface_text,
+            redraw,
+            redraw_state,
+            pane_surfaces,
+        ),
         LiveUpdatePrintKind::Metadata => {
             if redraw {
                 if let Some(state) = redraw_state {
                     // Re-render with new metadata via differential update.
-                    let text =
-                        redraw_text_with_context(workspace, metadata, surface_text, None, true);
+                    let text = redraw_text_with_context(
+                        workspace,
+                        metadata,
+                        surface_text,
+                        None,
+                        true,
+                        pane_surfaces,
+                    );
                     state.render_diff(workspace, &text);
                 }
             } else {
@@ -1854,6 +1889,7 @@ fn redraw_text_with_context(
     surface_text: &str,
     scrollback: Option<local::ScrollbackChunkSummary>,
     has_status_bar: bool,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
 ) -> String {
     let mut text = String::new();
     if !has_status_bar {
@@ -1865,8 +1901,126 @@ fn redraw_text_with_context(
     if let Some(scrollback) = scrollback {
         text.push_str(&format_scrollback(&scrollback));
     }
-    text.push_str(surface_text);
+    text.push_str(&redraw_workspace_surface_text(
+        workspace,
+        surface_text,
+        pane_surfaces,
+    ));
     text
+}
+
+fn redraw_workspace_surface_text(
+    workspace: &local::WorkspaceSummary,
+    active_surface_text: &str,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
+) -> String {
+    let Some(root) = workspace.pane_tree.as_ref() else {
+        return active_surface_text.to_owned();
+    };
+    if root.children.is_empty() {
+        return active_surface_text.to_owned();
+    }
+    render_redraw_pane_node(root, workspace, active_surface_text, pane_surfaces).join("\n")
+}
+
+fn render_redraw_pane_node(
+    pane: &local::WorkspacePaneSummary,
+    workspace: &local::WorkspaceSummary,
+    active_surface_text: &str,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
+) -> Vec<String> {
+    if pane.children.is_empty() {
+        return render_redraw_leaf_pane(pane, workspace, active_surface_text, pane_surfaces);
+    }
+
+    let child_blocks: Vec<Vec<String>> = pane
+        .children
+        .iter()
+        .map(|child| render_redraw_pane_node(child, workspace, active_surface_text, pane_surfaces))
+        .collect();
+
+    match pane.split_axis {
+        protocol::SplitAxis::Vertical => join_redraw_blocks_vertical(&child_blocks),
+        protocol::SplitAxis::Horizontal => join_redraw_blocks_horizontal(&child_blocks),
+        _ => child_blocks.into_iter().flatten().collect(),
+    }
+}
+
+fn render_redraw_leaf_pane(
+    pane: &local::WorkspacePaneSummary,
+    workspace: &local::WorkspaceSummary,
+    active_surface_text: &str,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
+) -> Vec<String> {
+    let active = pane.pane_id == workspace.pane_id;
+    let header = if active {
+        format!("[{} active]", pane.pane_id)
+    } else {
+        format!("[{}]", pane.pane_id)
+    };
+    let body = if active {
+        active_surface_text
+    } else {
+        pane_surfaces
+            .and_then(|surfaces| surfaces.get(&pane.pane_id).map(String::as_str))
+            .unwrap_or("(surface not cached)")
+    };
+
+    let mut lines = vec![header];
+    lines.extend(body.lines().map(String::from));
+    lines
+}
+
+fn join_redraw_blocks_horizontal(blocks: &[Vec<String>]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (index, block) in blocks.iter().enumerate() {
+        if index > 0 {
+            let width = block
+                .iter()
+                .map(|line| visible_width(line))
+                .max()
+                .unwrap_or(1)
+                .max(1);
+            lines.push("-".repeat(width));
+        }
+        lines.extend(block.iter().cloned());
+    }
+    lines
+}
+
+fn join_redraw_blocks_vertical(blocks: &[Vec<String>]) -> Vec<String> {
+    let widths: Vec<usize> = blocks
+        .iter()
+        .map(|block| {
+            block
+                .iter()
+                .map(|line| visible_width(line))
+                .max()
+                .unwrap_or(1)
+        })
+        .collect();
+    let height = blocks.iter().map(Vec::len).max().unwrap_or(0);
+    let mut lines = Vec::with_capacity(height);
+
+    for row in 0..height {
+        let mut line = String::new();
+        for (index, block) in blocks.iter().enumerate() {
+            if index > 0 {
+                line.push_str(" | ");
+            }
+            let cell = block.get(row).map(String::as_str).unwrap_or("");
+            line.push_str(cell);
+            let padding = widths[index].saturating_sub(visible_width(cell));
+            line.push_str(&" ".repeat(padding));
+        }
+        lines.push(line);
+    }
+
+    lines
+}
+
+fn visible_width(line: &str) -> usize {
+    line.chars().count()
 }
 
 fn print_terminal_metadata(metadata: &local::TerminalMetadataSummary) {
@@ -3755,13 +3909,15 @@ mod tests {
         parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
         parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
         raw_terminal_mode_needed, raw_terminal_termios, redraw_terminal_guard_needed,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        redraw_workspace_surface_text, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
     };
     use nmux_cli::local;
     use nmux_proto::protocol;
+    use std::collections::BTreeMap;
     use std::path::Path;
 
     fn zero_termios() -> libc::termios {
@@ -3979,6 +4135,7 @@ mod tests {
                 cols: 80,
                 rows: 24,
                 resize_policy: protocol::ResizePolicy::ActiveClient,
+                pane_tree: None,
             },
             status: local::AttachStatusSummary {
                 pane_id: "pane-1".to_owned(),
@@ -4133,6 +4290,7 @@ mod tests {
             cols: 80,
             rows: 24,
             resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
         };
         let rendered = local::RenderedAttach {
             workspace: workspace.clone(),
@@ -4594,6 +4752,7 @@ mod tests {
             cols: 80,
             rows: 24,
             resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
         };
 
         let initial = state.render_initial_text(&ws, "pane output\nsecond line");
@@ -4628,6 +4787,53 @@ mod tests {
             update.contains("rows") && update.contains("fps"),
             "status bar should contain frame stats: {update:?}"
         );
+    }
+
+    #[test]
+    fn redraw_workspace_surface_text_renders_split_panes() {
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-2".to_owned(),
+            cols: 40,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: Some(local::WorkspacePaneSummary {
+                pane_id: "pane-root".to_owned(),
+                cols: 80,
+                rows: 24,
+                resize_policy: protocol::ResizePolicy::Fixed,
+                split_axis: protocol::SplitAxis::Vertical,
+                children: vec![
+                    local::WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 40,
+                        rows: 24,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                    local::WorkspacePaneSummary {
+                        pane_id: "pane-2".to_owned(),
+                        cols: 40,
+                        rows: 24,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                ],
+            }),
+        };
+        let mut surfaces = BTreeMap::new();
+        surfaces.insert("pane-1".to_owned(), "left cached".to_owned());
+
+        let text = redraw_workspace_surface_text(&workspace, "right active", Some(&surfaces));
+
+        assert!(text.contains("[pane-1]"), "{text:?}");
+        assert!(text.contains("[pane-2 active]"), "{text:?}");
+        assert!(text.contains("left cached"), "{text:?}");
+        assert!(text.contains("right active"), "{text:?}");
+        assert!(text.contains(" | "), "{text:?}");
     }
 
     #[test]

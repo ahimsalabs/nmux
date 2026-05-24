@@ -1774,6 +1774,7 @@ pub fn workspace_summary_from_frame(
     let root = tab.root().ok_or("workspace tab has no root pane")?;
     let pane = find_pane_node(root, &active_pane_id)
         .ok_or_else(|| format!("workspace active pane not found: {active_pane_id}"))?;
+    let pane_tree = workspace_pane_summary_from_node(root)?;
 
     Ok(WorkspaceSummary {
         session_id: required_string(snapshot.session_id(), "workspace session_id")?,
@@ -1782,6 +1783,7 @@ pub fn workspace_summary_from_frame(
         cols: pane.cols(),
         rows: pane.rows(),
         resize_policy: validate_resize_policy(pane.resize_policy())?,
+        pane_tree: Some(pane_tree),
     })
 }
 
@@ -3078,6 +3080,29 @@ fn find_pane_node<'a>(
         }
     }
     None
+}
+
+fn workspace_pane_summary_from_node(
+    pane: protocol::PaneNode<'_>,
+) -> Result<WorkspacePaneSummary, Box<dyn std::error::Error>> {
+    let children = if let Some(children) = pane.children() {
+        let mut summaries = Vec::with_capacity(children.len());
+        for index in 0..children.len() {
+            summaries.push(workspace_pane_summary_from_node(children.get(index))?);
+        }
+        summaries
+    } else {
+        Vec::new()
+    };
+
+    Ok(WorkspacePaneSummary {
+        pane_id: required_string(pane.pane_id(), "workspace pane_id")?,
+        cols: pane.cols(),
+        rows: pane.rows(),
+        resize_policy: validate_resize_policy(pane.resize_policy())?,
+        split_axis: validate_split_axis(pane.split_axis())?,
+        children,
+    })
 }
 
 fn validate_resize_reason(
@@ -5580,6 +5605,7 @@ pub struct WorkspaceSummary {
     pub cols: u32,
     pub rows: u32,
     pub resize_policy: protocol::ResizePolicy,
+    pub pane_tree: Option<WorkspacePaneSummary>,
 }
 
 impl WorkspaceSummary {
@@ -5594,6 +5620,16 @@ impl WorkspaceSummary {
             resize_policy_label(self.resize_policy)
         )
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspacePaneSummary {
+    pub pane_id: String,
+    pub cols: u32,
+    pub rows: u32,
+    pub resize_policy: protocol::ResizePolicy,
+    pub split_axis: protocol::SplitAxis,
+    pub children: Vec<WorkspacePaneSummary>,
 }
 
 fn resize_policy_label(policy: protocol::ResizePolicy) -> &'static str {
@@ -7059,6 +7095,14 @@ mod tests {
                 cols: 80,
                 rows: 24,
                 resize_policy: protocol::ResizePolicy::Fixed,
+                pane_tree: Some(WorkspacePaneSummary {
+                    pane_id: "pane-1".to_owned(),
+                    cols: 80,
+                    rows: 24,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                    split_axis: protocol::SplitAxis::None,
+                    children: Vec::new(),
+                }),
             }
         );
         assert_eq!(
@@ -8712,6 +8756,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 2),
@@ -8783,6 +8828,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -8804,6 +8850,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -8833,6 +8880,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -8870,6 +8918,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -8891,6 +8940,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -8923,6 +8973,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 7),
@@ -8957,6 +9008,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary_with_state(
@@ -8995,6 +9047,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 8),
@@ -9094,6 +9147,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 7),
@@ -9384,6 +9438,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 2),
@@ -10989,6 +11044,14 @@ mod tests {
                 cols: 100,
                 rows: 30,
                 resize_policy: protocol::ResizePolicy::Fixed,
+                pane_tree: Some(WorkspacePaneSummary {
+                    pane_id: "pane-1".to_owned(),
+                    cols: 100,
+                    rows: 30,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                    split_axis: protocol::SplitAxis::None,
+                    children: Vec::new(),
+                }),
             })
         );
         let update =
@@ -12663,6 +12726,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-2", 2),
@@ -12792,6 +12856,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
+                    pane_tree: None,
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 2),
