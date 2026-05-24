@@ -12,14 +12,12 @@ see all panes restored.
 
 ## Next features (priority order)
 
-1. **Multi-pane**: split panes horizontally/vertically, route input to focused
-   pane, render multiple panes in redraw mode
-2. **Multi-tab**: create/switch/close tabs within a session
-3. **Simultaneous multi-client**: broadcast surface updates to all attached
+1. **Multi-tab**: create/switch/close tabs within a session
+2. **Simultaneous multi-client**: broadcast surface updates to all attached
    clients concurrently, not just sequential attach
-4. **Scriptable CLI**: `nmux pane split`, `nmux tab new`, `nmux pane send`,
+3. **Scriptable CLI**: `nmux pane split`, `nmux tab new`, `nmux pane send`,
    `nmux pane snapshot --json`
-5. **Remote transport**: TCP/QUIC listener beyond Unix socket, identity/auth
+4. **Remote transport**: TCP/QUIC listener beyond Unix socket, identity/auth
 
 ## Test gaps to close
 
