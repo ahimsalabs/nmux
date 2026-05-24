@@ -295,7 +295,7 @@ printf 'ping\npong\n' | nix develop . -c cargo run --bin nmux -- --socket /tmp/n
 
 For interactive `--stdin-bytes`, Ctrl-] detaches the client by default; add
 `--detach-key none` when the pane program should receive that byte instead.
-Add `--redraw` to repaint the workspace summary and current pane surface in place on each live update; when stdout is a TTY, redraw uses the alternate screen and restores it on exit. Interactive byte mode uses noncanonical stdin, defaults local echo off, can preserve the TTY echo setting with `--local-echo tty`, and sends TTY-size resize intents on `SIGWINCH` unless explicit `--cols` and `--rows` are provided. Explicit `--cols` and `--rows` are user-command resize intents, so they can commit a resize without sending pane input even when the daemon publishes `resize=manual`.
+Add `--redraw` to repaint the workspace summary and current pane surface in place on each live update; when stdout is a TTY, redraw uses the alternate screen and restores it on exit. Interactive byte mode uses noncanonical stdin, defaults local echo off, can preserve the TTY echo setting with `--local-echo tty`, and sends TTY-size resize intents on `SIGWINCH` unless explicit `--cols` and `--rows` are provided. `nmux --live --cols/--rows` sends a post-start user-command resize intent, so it can commit a resize without sending pane input even when the daemon publishes `resize=manual`; `nmuxd --cols/--rows` sets the initial PTY and workspace pane size before the pane command starts.
 Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set.
 
 Resize policy smoke:
