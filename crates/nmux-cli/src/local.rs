@@ -230,9 +230,9 @@ fn serve_next_with_output(
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
     if let Some(output) = output.as_deref_mut() {
-        let Some(pane_id) = active_pane_id(session).map(ToOwned::to_owned) else {
+        let Some(pane_id) = attach_target_pane_id(session, &request) else {
             let mut seq = 1;
-            write_active_pane_not_found_error(&mut stream, session, &mut seq)?;
+            write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
             return Ok(());
         };
         if let Err(err) = poll_pane_output_with_engines(session, engines, output, &pane_id) {
@@ -255,9 +255,9 @@ where
 {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
-    let Some(pane_id) = active_pane_id(session).map(ToOwned::to_owned) else {
+    let Some(pane_id) = attach_target_pane_id(session, &request) else {
         let mut seq = 1;
-        write_active_pane_not_found_error(&mut stream, session, &mut seq)?;
+        write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
         return Ok(());
     };
     if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
@@ -280,9 +280,9 @@ where
 {
     let (mut stream, _) = listener.accept()?;
     let request = read_attach_request(&mut stream)?;
-    let Some(pane_id) = active_pane_id(session).map(ToOwned::to_owned) else {
+    let Some(pane_id) = attach_target_pane_id(session, &request) else {
         let mut seq = 1;
-        write_active_pane_not_found_error(&mut stream, session, &mut seq)?;
+        write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
         return Ok(());
     };
     if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
@@ -302,8 +302,8 @@ fn serve_live_attached_client(
     cycles: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut seq = 1;
-    let Some(pane_id) = active_pane_id(session).map(ToOwned::to_owned) else {
-        write_active_pane_not_found_error(stream, session, &mut seq)?;
+    let Some(pane_id) = attach_target_pane_id(session, &request) else {
+        write_attach_target_not_found_error(stream, session, &mut seq, &request)?;
         return Ok(());
     };
     let leaf_pane_ids = session.leaf_pane_ids();
@@ -724,8 +724,8 @@ fn serve_attached_client(
     engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut seq = 1;
-    let Some(pane_id) = active_pane_id(session).map(ToOwned::to_owned) else {
-        write_active_pane_not_found_error(stream, session, &mut seq)?;
+    let Some(pane_id) = attach_target_pane_id(session, &request) else {
+        write_attach_target_not_found_error(stream, session, &mut seq, &request)?;
         return Ok(());
     };
 
@@ -813,6 +813,26 @@ fn serve_attached_client(
 
 fn active_pane_id(session: &Session) -> Option<&str> {
     session.active_pane_id()
+}
+
+fn attach_target_pane_id(session: &Session, request: &AttachRequest) -> Option<String> {
+    match request.focused_pane_id.as_deref() {
+        Some(pane_id) => session.surface_version(pane_id).map(|_| pane_id.to_owned()),
+        None => active_pane_id(session).map(ToOwned::to_owned),
+    }
+}
+
+fn write_attach_target_not_found_error(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    request: &AttachRequest,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(pane_id) = request.focused_pane_id.as_deref() {
+        write_pane_not_found_error(stream, session, seq, pane_id)
+    } else {
+        write_active_pane_not_found_error(stream, session, seq)
+    }
 }
 
 fn active_tab<'a>(session: &'a Session) -> Option<&'a nmux_core::session::Tab> {
@@ -1244,7 +1264,7 @@ pub fn attach_with_known_surfaces(
             user_id: "local-user".to_owned(),
             display_name: "local".to_owned(),
             mode: AttachMode::ReadWrite,
-            focused_pane_id: Some("pane-1".to_owned()),
+            focused_pane_id: None,
             known_surfaces,
         },
     )
@@ -7176,7 +7196,7 @@ mod tests {
                 user_id: "local-user".to_owned(),
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
-                focused_pane_id: Some("pane-1".to_owned()),
+                focused_pane_id: None,
             }
         );
         let surface = snapshot.surface.as_ref().expect("surface update");
@@ -9747,6 +9767,10 @@ mod tests {
         let snapshot = attach_with_client_options(
             &socket_path,
             AttachOptions {
+                request: AttachRequest {
+                    focused_pane_id: None,
+                    ..AttachOptions::default().request
+                },
                 scrollback_start_line: 1,
                 scrollback_line_count: 1,
                 ..AttachOptions::default()
@@ -10100,8 +10124,9 @@ mod tests {
 
         let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
-        write_attach_request(&mut stream, &AttachOptions::default().request)
-            .expect("write attach request");
+        let mut request = AttachOptions::default().request;
+        request.focused_pane_id = None;
+        write_attach_request(&mut stream, &request).expect("write attach request");
         let err = attach_from_stream(&mut stream).expect_err("missing active pane should fail");
         server.join().expect("server thread");
 
@@ -10127,8 +10152,9 @@ mod tests {
 
         let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
-        write_attach_request(&mut stream, &AttachOptions::default().request)
-            .expect("write attach request");
+        let mut request = AttachOptions::default().request;
+        request.focused_pane_id = None;
+        write_attach_request(&mut stream, &request).expect("write attach request");
         let err = attach_from_stream(&mut stream).expect_err("missing active tab should fail");
         server.join().expect("server thread");
 

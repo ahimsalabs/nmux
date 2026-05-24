@@ -316,6 +316,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
+    options.request.focused_pane_id = args.target_pane_id.clone();
     if args.stdin_input || args.stdin_bytes || (args.live_resize.is_some() && !args.no_input) {
         options.request.mode = AttachMode::ReadWrite;
     } else if options.input_text.is_none()
@@ -1476,6 +1477,7 @@ fn attach_once(
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
+    options.request.focused_pane_id = args.target_pane_id.clone();
     if args.follow
         || (options.input_text.is_none()
             && options.key_name.is_none()
@@ -2090,6 +2092,7 @@ struct Args {
     state_info_json: bool,
     socket_path: PathBuf,
     socket_source: local::SocketPathSource,
+    target_pane_id: Option<String>,
     input_text: Option<String>,
     key_name: Option<String>,
     key_names: Vec<String>,
@@ -2158,6 +2161,8 @@ struct RawArgs {
     state_info_json: bool,
     #[arg(long = "socket", value_name = "PATH")]
     socket_path: Option<PathBuf>,
+    #[arg(long = "pane", value_name = "PANE_ID", allow_hyphen_values = true)]
+    target_pane_id: Option<String>,
     #[arg(long = "key", value_name = "TEXT", allow_hyphen_values = true)]
     key_text: Option<String>,
     #[arg(
@@ -2353,6 +2358,9 @@ where
         }
         value => value,
     };
+    if raw.target_pane_id.as_deref().is_some_and(str::is_empty) {
+        return Err("--pane requires a non-empty pane ID".into());
+    }
     let mut input_text = raw.key_text;
     if key_name_set || paste_set || focus_set || mouse_set || raw.no_input || raw.follow {
         input_text = None;
@@ -2468,6 +2476,7 @@ where
         state_info_json: raw.state_info_json,
         socket_path,
         socket_source,
+        target_pane_id: raw.target_pane_id,
         input_text,
         key_name,
         key_names,
@@ -3624,6 +3633,7 @@ Usage:
 
 Options:
   --socket PATH              Unix socket path
+  --pane PANE_ID             Attach to and send input to PANE_ID
   --print-context            Print inherited nmux pane context and exit
   --print-context-json       Print inherited nmux pane context as JSON and exit
   --print-socket             Print the resolved socket path and exit

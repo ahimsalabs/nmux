@@ -266,6 +266,59 @@ fn live_redraw_split_daemon_renders_pane_layout() {
 }
 
 #[test]
+fn one_shot_split_daemon_can_attach_requested_pane() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = "printf 'split-env:%s\\n' \"$NMUX_PANE_ID\"; cat >/dev/null";
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--split",
+            "vertical",
+            "--command",
+            command,
+        ])
+        .spawn()
+        .expect("spawn split nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--pane",
+            "pane-1",
+            "--json",
+        ])
+        .output()
+        .expect("run nmux --pane pane-1 --json");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux --pane pane-1 --json failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("\"pane_id\":\"pane-1\""),
+        "requested pane attach should report pane-1:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("split-env:pane-1"),
+        "requested pane attach should render pane-1 output:\n{stdout}"
+    );
+}
+
+#[test]
 fn one_shot_cli_can_print_attach_json() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
