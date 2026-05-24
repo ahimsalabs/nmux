@@ -12,19 +12,28 @@ schema, workflow, and non-markdown changes:
 nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).source-audit" --no-link --print-out-paths
 nix develop . -c make toolchain-info
 nix develop . -c make check
+nix develop . -c make static-link-verify
 nix develop . -c make local-smoke
 ```
 
 The source audit checks that the flake source excludes build output and VCS
-metadata before CI enters the development shell. The remaining steps keep
-regular CI on the default `interim` engine. A green required CI run does not
-claim `libghostty-vt` correctness and does not change the default engine
-decision. `make local-smoke` adds a real default-engine daemon/client
-workflow check: it starts `nmux daemon`, sends live stdin through `nmux`, persists
-client state, verifies a sequential read-only reattach sees the output, verifies
-nested `nmux --print-context` sees the pane identity environment, then reuses
-the same socket path for a new daemon and verifies the old cached surface is
-not rendered.
+metadata before CI enters the development shell. The remaining steps exercise
+the default `libghostty-vt` engine, renderer-equivalence tests included in
+`make check`, static-link verification for the release binary, and a real
+default-engine daemon/client smoke. `make local-smoke` starts `nmux daemon`,
+sends live stdin through `nmux`, persists client state, verifies a sequential
+read-only reattach sees the output, verifies nested `nmux --print-context` sees
+the pane identity environment, then reuses the same socket path for a new daemon
+and verifies the old cached surface is not rendered.
+
+The workflow also runs a focused Ubuntu interim fallback job:
+
+```sh
+nix develop . -c make check-interim
+```
+
+That job builds and tests with `--no-default-features`, keeping the explicit
+legacy/debug `interim` backend covered without making it the product default.
 
 Markdown-only changes under `README.md`, `WORK.md`, `AGENTS.md`, or `docs/`
 take a shorter cached path that runs the same source audit without compiling
@@ -34,18 +43,6 @@ For ordinary implementation or documentation pushes, record the GitHub Actions
 run ID or URL after pushing and let the run complete asynchronously unless the
 task specifically requires CI completion as evidence. Only promotion evidence
 runs need the full transcription and artifact-verification treatment below.
-
-## Manual Native VT Check
-
-The same workflow exposes a direct manual `workflow_dispatch` job for the
-opt-in native VT correctness gate:
-
-```sh
-nix develop . -c make check-ghostty-vt
-```
-
-This job is intentionally manual and does not make `libghostty-vt` a regular
-or required CI gate.
 
 ## Manual Promotion Evidence
 
@@ -57,7 +54,7 @@ nix develop . -c make promotion-evidence-bundle
 ```
 
 That job is intentionally manual. It records source-fetch provenance, runs the
-default gate plus the opt-in `libghostty-vt` gate, times the inner
+default Ghostty gate plus the interim fallback gate, times the inner
 `make check-all` run, and produces a verifiable native-VT package archive. The
 bundle target gathers the same local promotion evidence under
 `target/promotion-evidence` and runs `make promotion-evidence-verify` before

@@ -120,12 +120,15 @@ jobs:
         run: nix develop . -c make toolchain-info
       - name: Check
         run: nix develop . -c make check
+      - name: Static link verification
+        run: nix develop . -c make static-link-verify
       - name: Local smoke
         run: nix develop . -c make local-smoke
 
-  native-vt-opt-in:
-    name: native VT opt-in
-    if: github.event_name == 'workflow_dispatch'
+  interim:
+    name: interim / no-default-features
+    needs: change-scope
+    if: needs.change-scope.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -147,13 +150,13 @@ jobs:
             ~/.cargo/git
             ~/.cargo/registry
             target
-          key: nmux-${{ runner.os }}-cargo-native-vt-${{ hashFiles('Cargo.lock') }}
+          key: nmux-${{ runner.os }}-cargo-interim-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            nmux-${{ runner.os }}-cargo-native-vt-
+            nmux-${{ runner.os }}-cargo-interim-
       - name: Toolchain info
         run: nix develop . -c make toolchain-info
-      - name: Check ghostty VT
-        run: nix develop . -c make check-ghostty-vt
+      - name: Check interim
+        run: nix develop . -c make check-interim
 
   promotion-evidence-bundle:
     name: promotion evidence bundle

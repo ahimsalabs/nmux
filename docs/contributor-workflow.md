@@ -1,8 +1,8 @@
 # Contributor Workflow
 
-The normal contributor path stays on the default `interim` terminal engine. The
-optional backend `libghostty-vt` path is available for terminal-correctness work,
-but it is not part of every local edit, regular check, or release baseline.
+The normal contributor path uses the default `libghostty-vt` terminal engine.
+The legacy `interim` backend remains available for no-default-features builds
+and explicit debugging.
 
 ## Default-Engine Work
 
@@ -12,8 +12,7 @@ Use this path for changes to:
 - attach, reconnect, follow, live streaming, scrollback fetches, cached client
   state, and daemon-owned input/control semantics;
 - FlatBuffers schema validation, generated bindings, and default-engine tests;
-- docs, ADRs, and roadmap updates that do not change the optional native VT
-  path.
+- docs, ADRs, and roadmap updates.
 
 Run focused tests while iterating, then run:
 
@@ -22,14 +21,12 @@ nix develop . -c make check
 nix develop . -c make local-smoke
 ```
 
-This validates the schema with `flatc` and runs `cargo test --workspace`
-against the default engine, then runs a real local daemon/client smoke over a
-temporary socket. Keep interim renderer limitations explicit in user-facing
-docs; green default-engine tests and smoke checks are not a claim of VT
-correctness. GitHub Actions runs this default gate on pull requests and pushes
-to `main`; the manual promotion workflow also uploads `nmux-promotion-evidence`
-and verifies the downloaded artifact in a dependent job. See [ci.md](ci.md) for
-the workflow shape.
+This validates the schema with `flatc`, runs `cargo test --workspace` against
+the default Ghostty engine, and runs a real local daemon/client smoke over a
+temporary socket. GitHub Actions also runs `make static-link-verify` on the
+default matrix and `make check-interim` on Ubuntu. The manual promotion
+workflow uploads `nmux-promotion-evidence` and verifies the downloaded artifact
+in a dependent job. See [ci.md](ci.md) for the workflow shape.
 
 ## Terminal-Correctness Work
 
@@ -43,18 +40,17 @@ Use this path for changes that touch:
 - feature-sensitive attach/reconnect behavior, cached state, or daemon-owned
   structured input semantics.
 
-Run the default gate plus the full opt-in gate:
+Run the default gate plus static-link verification:
 
 ```sh
 nix develop . -c make check
-nix develop . -c make check-ghostty-vt
+nix develop . -c make static-link-verify
 ```
 
-`make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package suites
-with `--features libghostty-vt` and `RUST_TEST_THREADS=1`. It is intentionally
-broader than a filtered Ghostty smoke test. The serial harness setting is part
-of the current native-VT evidence gate; do not replace it with filtered tests
-when changing terminal engine behavior.
+`make check-ghostty-vt` remains as a compatibility alias for `make check`.
+The serial harness setting in `make check` is part of the current native-VT
+gate; do not replace it with filtered tests when changing terminal engine
+behavior.
 
 `make renderer-equivalence-smoke` is narrower: it runs the current
 renderer-equivalence fixture corpus projection through the opt-in

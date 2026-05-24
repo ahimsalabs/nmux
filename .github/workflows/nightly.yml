@@ -17,7 +17,7 @@ jobs:
     name: check status
     runs-on: ubuntu-latest
     steps:
-      - name: Require successful check workflow
+      - name: Require successful check workflow for published commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -40,7 +40,7 @@ jobs:
             status="$(printf '%s\n' "$run" | jq -r '.status')"
             conclusion="$(printf '%s\n' "$run" | jq -r '.conclusion // ""')"
             url="$(printf '%s\n' "$run" | jq -r '.url')"
-            echo "check workflow: status=$status conclusion=${conclusion:-pending} url=$url"
+            echo "check workflow for $GITHUB_SHA: status=$status conclusion=${conclusion:-pending} url=$url"
 
             if [ "$status" != "completed" ]; then
               sleep 20
@@ -55,7 +55,7 @@ jobs:
             exit 1
           done
 
-          echo "Timed out waiting for successful check workflow for $GITHUB_SHA" >&2
+          echo "Timed out waiting for successful check workflow for exact published commit $GITHUB_SHA" >&2
           exit 1
 
   build:
