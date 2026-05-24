@@ -353,8 +353,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     // Re-render with styles if the engine produced structured style data
     // and we're outputting to a real terminal.
     if use_styled && rendered.surface_text.is_some() {
-        rendered.surface_text =
-            client_state.cached_surface_text_styled(&attached_pane_id, true);
+        rendered.surface_text = client_state.cached_surface_text_styled(&attached_pane_id, true);
     }
     if rendered.surface_text.is_none() {
         rendered.surface_text =
@@ -572,8 +571,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         title: update.title.clone(),
                         working_directory: update.working_directory.clone(),
                     };
-                    current_surface_text = client_state
-                        .render_surface_update_styled(&update, use_styled)?;
+                    current_surface_text =
+                        client_state.render_surface_update_styled(&update, use_styled)?;
                     if args.output_json {
                         println!(
                             "{}",
@@ -1446,8 +1445,7 @@ fn print_live_update(
             if redraw {
                 if let Some(state) = redraw_state {
                     // Re-render with new metadata via differential update.
-                    let text =
-                        redraw_text_with_context(workspace, metadata, surface_text, None);
+                    let text = redraw_text_with_context(workspace, metadata, surface_text, None);
                     state.render_diff(&text);
                 }
             } else {
@@ -1548,8 +1546,7 @@ impl RedrawState {
 
         // Draw latency overlay in top-right corner.
         let latency_text = format_latency(self.last_latency);
-        let latency_col =
-            self.terminal_cols.saturating_sub(latency_text.len() as u32) + 1;
+        let latency_col = self.terminal_cols.saturating_sub(latency_text.len() as u32) + 1;
         output.push_str(&format!(
             "\x1b[1;{}H\x1b[7m{}\x1b[27m",
             latency_col, latency_text
@@ -1577,12 +1574,8 @@ impl RedrawState {
 
         // Draw latency overlay.
         let latency_text = format_latency(self.last_latency);
-        let latency_col =
-            self.terminal_cols.saturating_sub(latency_text.len() as u32) + 1;
-        print!(
-            "\x1b[1;{}H\x1b[7m{}\x1b[27m",
-            latency_col, latency_text
-        );
+        let latency_col = self.terminal_cols.saturating_sub(latency_text.len() as u32) + 1;
+        print!("\x1b[1;{}H\x1b[7m{}\x1b[27m", latency_col, latency_text);
 
         let park_row = new_rows.len().max(1);
         print!("\x1b[{};1H", park_row);

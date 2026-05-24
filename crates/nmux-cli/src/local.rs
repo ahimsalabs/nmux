@@ -3659,9 +3659,8 @@ impl ClientPaneSurface {
             }
             for run in runs {
                 let style = self.styles.get(run.style_id as usize);
-                let needs_sgr = style.is_some_and(|s| {
-                    s.fg_rgba != 0 || s.bg_rgba != 0 || s.flags != 0
-                });
+                let needs_sgr =
+                    style.is_some_and(|s| s.fg_rgba != 0 || s.bg_rgba != 0 || s.flags != 0);
                 if needs_sgr {
                     if let Some(style) = style {
                         output.push_str(&style_to_sgr(style));
