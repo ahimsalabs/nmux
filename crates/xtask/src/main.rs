@@ -11,6 +11,7 @@ const PACKAGING_PROVENANCE_MANIFEST_DEFAULT: &str =
 const PACKAGING_LAYOUT_DEFAULT: &str = "target/packaging-libghostty-vt/package";
 const PACKAGING_ARCHIVE_DEFAULT: &str =
     "target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz";
+const PROMOTION_EVIDENCE_DIR_DEFAULT: &str = "target/promotion-evidence";
 const LIBGHOSTTY_VT_SOURCE: &str = r#"source = "git+https://github.com/uzaaft/libghostty-rs.git?rev=31d1f70004ff80727e36437cd540984f927333ce#31d1f70004ff80727e36437cd540984f927333ce""#;
 const RUNTIME_LIBRARY_STRATEGY: &str = "runtime_library_strategy=staged libghostty-vt native library artifacts for packaging evidence; nmux must not dynamically depend on libghostty-vt";
 
@@ -33,6 +34,7 @@ fn run() -> Result<()> {
     match command.as_str() {
         "packaging-archive-verify" => packaging_archive_verify(),
         "packaging-provenance-manifest-verify" => packaging_provenance_manifest_verify(),
+        "promotion-evidence-verify" => promotion_evidence_verify(),
         "static-link-verify" => static_link_verify(),
         "source-fetch-provenance-verify" => source_fetch_provenance_verify(),
         _ => usage_error(),
@@ -40,7 +42,7 @@ fn run() -> Result<()> {
 }
 
 fn usage_error() -> Result<()> {
-    Err("usage: xtask <packaging-archive-verify|packaging-provenance-manifest-verify|static-link-verify|source-fetch-provenance-verify>".into())
+    Err("usage: xtask <packaging-archive-verify|packaging-provenance-manifest-verify|promotion-evidence-verify|static-link-verify|source-fetch-provenance-verify>".into())
 }
 
 fn static_link_verify() -> Result<()> {
@@ -103,10 +105,13 @@ fn command_exists(name: &str) -> bool {
 }
 
 fn source_fetch_provenance_verify() -> Result<()> {
-    println!("verifying source-fetch provenance report");
     let report =
         env::var("SOURCE_FETCH_REPORT").unwrap_or_else(|_| SOURCE_FETCH_REPORT_DEFAULT.into());
-    let report_path = PathBuf::from(report);
+    source_fetch_provenance_verify_at(&PathBuf::from(report))
+}
+
+fn source_fetch_provenance_verify_at(report_path: &Path) -> Result<()> {
+    println!("verifying source-fetch provenance report");
     let report_text = read_required_text(&report_path, "source-fetch provenance artifact")?;
 
     require_exact(
@@ -251,10 +256,13 @@ fn source_fetch_provenance_verify() -> Result<()> {
 }
 
 fn packaging_provenance_manifest_verify() -> Result<()> {
-    println!("verifying opt-in libghostty-vt package provenance manifest");
     let manifest = env::var("PACKAGING_PROVENANCE_MANIFEST")
         .unwrap_or_else(|_| PACKAGING_PROVENANCE_MANIFEST_DEFAULT.into());
-    let manifest_path = PathBuf::from(manifest);
+    packaging_provenance_manifest_verify_at(&PathBuf::from(manifest))
+}
+
+fn packaging_provenance_manifest_verify_at(manifest_path: &Path) -> Result<()> {
+    println!("verifying opt-in libghostty-vt package provenance manifest");
     let manifest_text = read_required_text(&manifest_path, "provenance manifest")?;
     let pkg_dir = Path::new(PACKAGING_LAYOUT_DEFAULT);
 
@@ -456,7 +464,6 @@ fn packaging_provenance_manifest_verify() -> Result<()> {
 }
 
 fn packaging_archive_verify() -> Result<()> {
-    println!("verifying existing opt-in libghostty-vt package archive");
     let archive = PathBuf::from(
         env::var("PACKAGING_ARCHIVE").unwrap_or_else(|_| PACKAGING_ARCHIVE_DEFAULT.into()),
     );
@@ -467,6 +474,11 @@ fn packaging_archive_verify() -> Result<()> {
                 archive.to_str().unwrap_or(PACKAGING_ARCHIVE_DEFAULT)
             )
         }));
+    packaging_archive_verify_at(&archive, &archive_sha_file)
+}
+
+fn packaging_archive_verify_at(archive: &Path, archive_sha_file: &Path) -> Result<()> {
+    println!("verifying existing opt-in libghostty-vt package archive");
     require_file(&archive, "archive artifact")?;
     require_file(&archive_sha_file, "archive SHA-256 artifact")?;
 
@@ -584,6 +596,408 @@ fn packaging_archive_verify() -> Result<()> {
     )?;
     packaging_layout_verify_for_dir(&pkg_dir)?;
     println!("packaging_archive_verified={}", archive.display());
+    Ok(())
+}
+
+fn promotion_evidence_verify() -> Result<()> {
+    println!("verifying local promotion evidence bundle");
+    let bundle_dir = PathBuf::from(
+        env::var("PROMOTION_EVIDENCE_DIR")
+            .unwrap_or_else(|_| PROMOTION_EVIDENCE_DIR_DEFAULT.into()),
+    );
+    let summary = bundle_dir.join("SUMMARY.txt");
+    let run_log = bundle_dir.join("RUN.log");
+    let toolchain = bundle_dir.join("TOOLCHAIN.txt");
+    let source_fetch = bundle_dir.join("SOURCE_FETCH.txt");
+    let offline_probe = bundle_dir.join("OFFLINE_PROBE.txt");
+    let package_provenance = bundle_dir.join("PACKAGE_PROVENANCE.txt");
+    let promotion_open_work = bundle_dir.join("PROMOTION_OPEN_WORK.txt");
+    let cargo_tree = bundle_dir.join("CARGO_TREE.txt");
+    let archive_file = bundle_dir.join("PACKAGE_ARCHIVE.tar.gz");
+    let archive_sha_file = bundle_dir.join("ARCHIVE.sha256");
+    let cache_state = bundle_dir.join("CACHE_STATE.txt");
+    let vcs_status = bundle_dir.join("VCS_STATUS.txt");
+    let bundle_manifest = bundle_dir.join("BUNDLE_MANIFEST.txt");
+
+    for (path, description) in [
+        (&summary, "summary"),
+        (&run_log, "run log"),
+        (&toolchain, "toolchain"),
+        (&source_fetch, "source-fetch"),
+        (&offline_probe, "offline probe"),
+        (&package_provenance, "package provenance"),
+        (&promotion_open_work, "promotion open work"),
+        (&cargo_tree, "cargo tree"),
+        (&archive_file, "package archive"),
+        (&archive_sha_file, "archive SHA-256"),
+        (&cache_state, "cache state"),
+        (&vcs_status, "VCS status"),
+        (&bundle_manifest, "bundle manifest"),
+    ] {
+        require_file(path, description)?;
+    }
+
+    verify_promotion_bundle_manifest(&bundle_dir, &bundle_manifest)?;
+
+    let summary_text = read_required_text(&summary, "summary")?;
+    require_exact(
+        &summary_text,
+        "nmux promotion evidence bundle",
+        "summary title",
+        &summary,
+    )?;
+    for (prefix, description) in [
+        ("generated_at_utc=", "generation timestamp"),
+        ("started_at_utc=", "bundle start timestamp"),
+        ("completed_at_utc=", "bundle completion timestamp"),
+    ] {
+        require_line_where(
+            &summary_text,
+            |line| line.strip_prefix(prefix).is_some_and(is_utc_timestamp),
+            description,
+            &summary,
+        )?;
+    }
+    require_line_where(
+        &summary_text,
+        |line| {
+            line.strip_prefix("bundle_elapsed_seconds=")
+                .is_some_and(is_decimal)
+        },
+        "bundle elapsed seconds",
+        &summary,
+    )?;
+    require_line_where(
+        &summary_text,
+        |line| field_has_value(line, "host="),
+        "host identity",
+        &summary,
+    )?;
+    require_line_where(
+        &summary_text,
+        |line| {
+            line.strip_prefix("git_revision=")
+                .is_some_and(is_unknown_or_git_sha)
+        },
+        "git revision",
+        &summary,
+    )?;
+    require_line_where(
+        &summary_text,
+        |line| matches!(line, "github_actions=true" | "github_actions=false"),
+        "GitHub Actions flag",
+        &summary,
+    )?;
+    for (prefix, description) in [
+        ("github_server_url=", "GitHub server URL field"),
+        ("github_repository=", "GitHub repository field"),
+        ("github_run_id=", "GitHub run ID field"),
+        ("github_run_attempt=", "GitHub run attempt field"),
+        ("github_ref=", "GitHub ref field"),
+        ("github_sha=", "GitHub SHA field"),
+        ("runner_os=", "runner OS field"),
+        ("runner_arch=", "runner architecture field"),
+        ("runner_name=", "runner name field"),
+    ] {
+        require_line_where(
+            &summary_text,
+            |line| field_has_value(line, prefix),
+            description,
+            &summary,
+        )?;
+    }
+    let github_actions = field_value(&summary_text, "github_actions=").unwrap_or_default();
+    if github_actions == "true" {
+        require_line_where(
+            &summary_text,
+            |line| {
+                line.strip_prefix("github_server_url=")
+                    .is_some_and(|value| {
+                        value.starts_with("http://") || value.starts_with("https://")
+                    })
+            },
+            "GitHub Actions server URL",
+            &summary,
+        )?;
+        require_line_where(
+            &summary_text,
+            |line| {
+                line.strip_prefix("github_repository=")
+                    .is_some_and(|value| value.split_once('/').is_some())
+            },
+            "GitHub Actions repository",
+            &summary,
+        )?;
+        require_line_where(
+            &summary_text,
+            |line| line.strip_prefix("github_run_id=").is_some_and(is_decimal),
+            "GitHub Actions run ID",
+            &summary,
+        )?;
+        require_line_where(
+            &summary_text,
+            |line| {
+                line.strip_prefix("github_run_attempt=")
+                    .is_some_and(is_decimal)
+            },
+            "GitHub Actions run attempt",
+            &summary,
+        )?;
+        require_line_where(
+            &summary_text,
+            |line| {
+                line.strip_prefix("github_ref=")
+                    .is_some_and(|value| value.starts_with("refs/"))
+            },
+            "GitHub Actions ref",
+            &summary,
+        )?;
+        require_line_where(
+            &summary_text,
+            |line| line.strip_prefix("github_sha=").is_some_and(is_git_sha),
+            "GitHub Actions SHA",
+            &summary,
+        )?;
+        require_line_where(
+            &summary_text,
+            |line| {
+                matches!(
+                    line,
+                    "runner_os=Linux" | "runner_os=macOS" | "runner_os=Windows"
+                )
+            },
+            "GitHub Actions runner OS",
+            &summary,
+        )?;
+        require_line_where(
+            &summary_text,
+            |line| {
+                matches!(
+                    line,
+                    "runner_arch=X64" | "runner_arch=ARM64" | "runner_arch=X86"
+                )
+            },
+            "GitHub Actions runner architecture",
+            &summary,
+        )?;
+        require_absent_exact(
+            &summary_text,
+            "runner_name=unset",
+            "GitHub Actions runner name must not be unset",
+            &summary,
+        )?;
+    }
+    require_line_where(
+        &summary_text,
+        |line| {
+            matches!(
+                line,
+                "ghostty_source_mode=pinned-fetch" | "ghostty_source_mode=local"
+            )
+        },
+        "Ghostty source mode",
+        &summary,
+    )?;
+    require_line_where(
+        &summary_text,
+        |line| field_has_value(line, "GHOSTTY_SOURCE_DIR="),
+        "GHOSTTY_SOURCE_DIR field",
+        &summary,
+    )?;
+    require_line_where(
+        &summary_text,
+        |line| field_has_value(line, "GIT_CONFIG_GLOBAL="),
+        "GIT_CONFIG_GLOBAL field",
+        &summary,
+    )?;
+    require_line_where(
+        &summary_text,
+        |line| {
+            matches!(
+                line,
+                "working_tree_status=clean"
+                    | "working_tree_status=dirty"
+                    | "working_tree_status=unknown"
+            )
+        },
+        "working tree status",
+        &summary,
+    )?;
+    for (line, description) in [
+        ("vcs_status=VCS_STATUS.txt", "VCS status path"),
+        (
+            "promotion_open_work=PROMOTION_OPEN_WORK.txt",
+            "promotion open work path",
+        ),
+        ("cache_state=CACHE_STATE.txt", "cache state path"),
+        ("run_log=RUN.log", "run log path"),
+        ("toolchain=TOOLCHAIN.txt", "toolchain path"),
+        ("source_fetch=SOURCE_FETCH.txt", "source-fetch path"),
+        (
+            "source_fetch_offline_probe=OFFLINE_PROBE.txt",
+            "source-fetch offline probe path",
+        ),
+        (
+            "package_provenance=PACKAGE_PROVENANCE.txt",
+            "package provenance path",
+        ),
+        ("cargo_tree=CARGO_TREE.txt", "cargo tree path"),
+        (
+            "package_archive=PACKAGE_ARCHIVE.tar.gz",
+            "package archive path",
+        ),
+        (
+            "local_smoke_reattach=passed",
+            "local workflow persisted reattach smoke",
+        ),
+        (
+            "local_smoke_socket_recreation=passed",
+            "local workflow socket recreation smoke",
+        ),
+        (
+            "local_smoke_print_context=passed",
+            "local workflow print-context smoke",
+        ),
+        (
+            "local_smoke_json_info=passed",
+            "local workflow JSON informational smoke",
+        ),
+        (
+            "local_smoke_ready_json=passed",
+            "local workflow ready-json smoke",
+        ),
+        (
+            "local_smoke_managed_start=passed",
+            "local workflow managed start smoke",
+        ),
+        ("local_smoke=passed", "local workflow smoke"),
+        ("packaged_runtime_smoke=passed", "packaged runtime smoke"),
+    ] {
+        require_exact(&summary_text, line, description, &summary)?;
+    }
+    for (prefix, description) in [
+        ("check_all_real_seconds=", "check-all real timing"),
+        ("check_all_user_seconds=", "check-all user timing"),
+        ("check_all_sys_seconds=", "check-all sys timing"),
+    ] {
+        require_line_where(
+            &summary_text,
+            |line| line.strip_prefix(prefix).is_some_and(is_decimal),
+            description,
+            &summary,
+        )?;
+    }
+
+    let run_log_text = read_required_text(&run_log, "run log")?;
+    let check_all_real = require_time_p_value(&run_log_text, "real", &run_log)?;
+    let check_all_user = require_time_p_value(&run_log_text, "user", &run_log)?;
+    let check_all_sys = require_time_p_value(&run_log_text, "sys", &run_log)?;
+    require_exact(
+        &summary_text,
+        &format!("check_all_real_seconds={check_all_real}"),
+        "check-all real timing matches run log",
+        &summary,
+    )?;
+    require_exact(
+        &summary_text,
+        &format!("check_all_user_seconds={check_all_user}"),
+        "check-all user timing matches run log",
+        &summary,
+    )?;
+    require_exact(
+        &summary_text,
+        &format!("check_all_sys_seconds={check_all_sys}"),
+        "check-all sys timing matches run log",
+        &summary,
+    )?;
+    let archive_sha = read_required_text(&archive_sha_file, "archive SHA-256")?;
+    require_exact(
+        &summary_text,
+        &format!("archive_sha256={}", archive_sha.trim_end()),
+        "archive SHA-256",
+        &summary,
+    )?;
+
+    let toolchain_text = read_required_text(&toolchain, "toolchain")?;
+    require_line_where(
+        &toolchain_text,
+        |line| line.starts_with("cargo=cargo "),
+        "cargo version",
+        &toolchain,
+    )?;
+    require_line_where(
+        &toolchain_text,
+        |line| line.starts_with("rustc=rustc "),
+        "rustc version",
+        &toolchain,
+    )?;
+    require_exact(
+        &toolchain_text,
+        "flatc=flatc version 25.12.19",
+        "flatc version",
+        &toolchain,
+    )?;
+    require_line_where(
+        &toolchain_text,
+        |line| line.starts_with("zig=0.15."),
+        "Zig version",
+        &toolchain,
+    )?;
+
+    source_fetch_provenance_verify_at(&source_fetch)?;
+    verify_offline_probe(&offline_probe, &run_log, &run_log_text)?;
+    verify_package_provenance_in_bundle(&package_provenance, &run_log_text, &run_log)?;
+    packaging_provenance_manifest_verify_at(&package_provenance)?;
+    require_line_where(
+        &run_log_text,
+        |line| {
+            line == "provenance_manifest_verified=target/packaging-libghostty-vt/package/PROVENANCE.txt"
+        },
+        "package provenance verifier result",
+        &run_log,
+    )?;
+    require_line_where(
+        &run_log_text,
+        |line| {
+            line.starts_with("packaged_runtime_smoke_install_root=/tmp/nmuxpkg.")
+                && line.ends_with("/install")
+        },
+        "relocated package install root",
+        &run_log,
+    )?;
+    require_exact(
+        &run_log_text,
+        "packaged_runtime_smoke_library_env=unset",
+        "clean packaged runtime library environment",
+        &run_log,
+    )?;
+    require_exact(
+        &run_log_text,
+        "packaged_runtime_smoke=passed",
+        "runtime smoke result",
+        &run_log,
+    )?;
+    let cargo_tree_text = read_required_text(&cargo_tree, "cargo tree")?;
+    require_line_where(
+        &cargo_tree_text,
+        |line| line.starts_with("nmux-cli v"),
+        "cargo tree root",
+        &cargo_tree,
+    )?;
+    require_line_where(
+        &archive_sha,
+        |line| {
+            line.strip_suffix("  PACKAGE_ARCHIVE.tar.gz")
+                .is_some_and(is_sha256)
+        },
+        "archive SHA-256 file",
+        &archive_sha_file,
+    )?;
+    packaging_archive_verify_at(&archive_file, &archive_sha_file)?;
+    verify_cache_state(&cache_state)?;
+    verify_vcs_status(&vcs_status, &summary, &summary_text, &github_actions)?;
+    verify_promotion_open_work(&promotion_open_work)?;
+    println!("promotion_evidence_verified={}", summary.display());
     Ok(())
 }
 
@@ -865,6 +1279,461 @@ fn require_wrapper_line(wrapper: &Path, line: &str, description: &str) -> Result
     .into())
 }
 
+fn verify_promotion_bundle_manifest(bundle_dir: &Path, manifest: &Path) -> Result<()> {
+    const NAMES: &[&str] = &[
+        "ARCHIVE.sha256",
+        "CACHE_STATE.txt",
+        "CARGO_TREE.txt",
+        "OFFLINE_PROBE.txt",
+        "PACKAGE_ARCHIVE.tar.gz",
+        "PACKAGE_PROVENANCE.txt",
+        "PROMOTION_OPEN_WORK.txt",
+        "RUN.log",
+        "SOURCE_FETCH.txt",
+        "SUMMARY.txt",
+        "TOOLCHAIN.txt",
+        "VCS_STATUS.txt",
+    ];
+    let mut expected = String::from("nmux promotion evidence bundle manifest\n");
+    for name in NAMES {
+        expected.push_str(&format!(
+            "{}  {name}\n",
+            sha256_file(&bundle_dir.join(name))?
+        ));
+    }
+    let actual = fs::read_to_string(manifest)?;
+    if actual != expected {
+        return Err(format!("bundle manifest mismatch: {}", manifest.display()).into());
+    }
+    Ok(())
+}
+
+fn require_time_p_value(run_log: &str, field: &str, path: &Path) -> Result<String> {
+    let mut value = None;
+    for line in run_log.lines() {
+        if line == "== promotion local sample: packaging archive runtime smoke ==" {
+            break;
+        }
+        if let Some(candidate) = line.strip_prefix(&format!("{field} ")) {
+            if is_decimal(candidate) {
+                value = Some(candidate.to_owned());
+            }
+        }
+    }
+    value.ok_or_else(|| {
+        format!(
+            "missing check-all {field} time -p result in {}",
+            path.display()
+        )
+        .into()
+    })
+}
+
+fn verify_offline_probe(offline_probe: &Path, run_log: &Path, run_log_text: &str) -> Result<()> {
+    let text = read_required_text(offline_probe, "offline probe")?;
+    for (line, description) in [
+        ("nmux source-fetch offline probe", "offline probe title"),
+        (
+            "probe_scope=cache-present opt-in native VT build only; not cold checkout, CI cache miss, network-failure, or default/package source policy evidence",
+            "offline probe scope",
+        ),
+        ("CARGO_NET_OFFLINE=true", "offline probe Cargo offline mode"),
+        (
+            "GIT_CONFIG_GLOBAL=/dev/null",
+            "offline probe Git config isolation",
+        ),
+        (
+            "CARGO_TARGET_DIR=target/source-fetch-offline",
+            "offline probe target dir",
+        ),
+        ("package=nmux-core", "offline probe package"),
+        ("features=libghostty-vt", "offline probe features"),
+        ("source_fetch_offline_probe=passed", "offline probe result"),
+    ] {
+        require_exact(&text, line, description, offline_probe)?;
+    }
+    require_line_where(
+        &text,
+        |line| {
+            line.strip_prefix("elapsed_seconds=")
+                .is_some_and(is_decimal)
+        },
+        "offline probe elapsed seconds",
+        offline_probe,
+    )?;
+    for (line, description) in [
+        (
+            "== promotion local sample: cache-present offline source-fetch probe ==",
+            "offline probe run-log section",
+        ),
+        (
+            "verifying source-fetch offline probe report",
+            "offline probe verifier ran",
+        ),
+        (
+            "source_fetch_offline_probe_verified=target/source-fetch-offline/OFFLINE_PROBE.txt",
+            "offline probe verifier result",
+        ),
+        (
+            "source_fetch_offline_probe=target/source-fetch-offline/OFFLINE_PROBE.txt",
+            "offline probe artifact path",
+        ),
+    ] {
+        require_exact(run_log_text, line, description, run_log)?;
+    }
+    require_line_where(
+        run_log_text,
+        |line| line == "running cache-present source-fetch offline probe",
+        "offline probe command ran",
+        run_log,
+    )?;
+    require_line_where(
+        run_log_text,
+        |line| {
+            line == "   Compiling libghostty-vt-sys v0.1.1"
+                || line == "    Checking libghostty-vt-sys v0.1.1"
+                || line.starts_with("    Finished `test` profile ")
+        },
+        "offline probe native VT build activity",
+        run_log,
+    )?;
+    require_line_where(
+        run_log_text,
+        |line| {
+            line.starts_with("  Executable unittests src/lib.rs (target/source-fetch-offline/debug/deps/nmux_core-")
+                && line.ends_with(')')
+        },
+        "offline probe nmux-core test binary",
+        run_log,
+    )?;
+    run_just_with_env(
+        "source-fetch-offline-probe-verify",
+        &[
+            ("SOURCE_FETCH_OFFLINE_PROBE_REPORT", offline_probe),
+            ("SOURCE_FETCH_OFFLINE_PROBE_LOG", run_log),
+        ],
+    )
+}
+
+fn verify_package_provenance_in_bundle(
+    package_provenance: &Path,
+    run_log_text: &str,
+    run_log: &Path,
+) -> Result<()> {
+    let text = read_required_text(package_provenance, "package provenance")?;
+    for (line, description) in [
+        ("[staged_files]", "packaging staged file hashes"),
+        ("[native_runtime_libraries]", "packaging runtime libraries"),
+        (
+            "package_format=local-tar-archive-layout",
+            "package metadata format",
+        ),
+        (
+            "terminal_engine=libghostty-vt",
+            "package metadata terminal engine",
+        ),
+        (
+            "terminal_engine_status=opt-in",
+            "package metadata terminal engine status",
+        ),
+        ("[dynamic_dependencies]", "packaging dynamic dependencies"),
+    ] {
+        require_exact(&text, line, description, package_provenance)?;
+    }
+    for (prefix, description) in [
+        (
+            "target/packaging-libghostty-vt/package/bin/nmux",
+            "packaged nmux wrapper hash",
+        ),
+        (
+            "target/packaging-libghostty-vt/package/PACKAGE_METADATA.txt",
+            "package metadata hash",
+        ),
+        (
+            "target/packaging-libghostty-vt/package/libexec/nmux",
+            "packaged nmux binary hash",
+        ),
+    ] {
+        require_line_where(
+            &text,
+            |line| {
+                line.strip_prefix(prefix)
+                    .is_some_and(file_record_suffix_is_valid)
+            },
+            description,
+            package_provenance,
+        )?;
+    }
+    require_line_where(
+        &text,
+        |line| {
+            wildcard_file_record_is_valid(
+                line,
+                "target/packaging-libghostty-vt/package/lib/libghostty-vt",
+            )
+        },
+        "packaged native runtime library hash",
+        package_provenance,
+    )?;
+    require_line_where(
+        &text,
+        |line| line.starts_with("target/packaging-libghostty-vt/package/lib/libghostty-vt"),
+        "packaging runtime library path",
+        package_provenance,
+    )?;
+    for (line, description) in [
+        (
+            "== promotion local sample: local workflow smoke ==",
+            "local smoke run-log section",
+        ),
+        ("running local nmux daemon/client smoke", "local smoke ran"),
+        (
+            "local_smoke_reattach=passed",
+            "local smoke persisted reattach result",
+        ),
+        (
+            "local_smoke_socket_recreation=passed",
+            "local smoke socket recreation result",
+        ),
+        (
+            "local_smoke_print_context=passed",
+            "local smoke print-context result",
+        ),
+        (
+            "local_smoke_json_info=passed",
+            "local smoke JSON informational result",
+        ),
+        (
+            "local_smoke_ready_json=passed",
+            "local smoke ready-json result",
+        ),
+        (
+            "local_smoke_managed_start=passed",
+            "local smoke managed start result",
+        ),
+        ("local_smoke=passed", "local smoke result"),
+    ] {
+        require_exact(run_log_text, line, description, run_log)?;
+    }
+    Ok(())
+}
+
+fn verify_cache_state(cache_state: &Path) -> Result<()> {
+    let text = read_required_text(cache_state, "cache state")?;
+    require_exact(
+        &text,
+        "nmux promotion evidence cache state",
+        "cache state title",
+        cache_state,
+    )?;
+    require_line_where(
+        &text,
+        |line| {
+            line.strip_prefix("generated_at_utc=")
+                .is_some_and(is_utc_timestamp)
+        },
+        "cache state timestamp",
+        cache_state,
+    )?;
+    for (prefix, description) in [
+        ("cache_state_scope=", "cache state scope"),
+        ("CARGO_HOME=", "cache state CARGO_HOME"),
+        ("CARGO_TARGET_DIR=", "cache state CARGO_TARGET_DIR"),
+        ("cache_state_note=", "cache state interpretation note"),
+    ] {
+        require_line_where(
+            &text,
+            |line| field_has_value(line, prefix),
+            description,
+            cache_state,
+        )?;
+    }
+    for (prefix, description) in [
+        ("nix_store_status=", "Nix store cache status"),
+        ("cargo_home_status=", "Cargo home cache status"),
+        ("cargo_registry_status=", "Cargo registry cache status"),
+        ("cargo_git_status=", "Cargo git cache status"),
+        ("cargo_target_dir_status=", "Cargo target cache status"),
+        (
+            "packaging_libghostty_vt_target_dir_status=",
+            "native VT target cache status",
+        ),
+        (
+            "source_fetch_offline_probe_status=",
+            "source-fetch offline probe status",
+        ),
+    ] {
+        require_line_where(
+            &text,
+            |line| {
+                line.strip_prefix(prefix)
+                    .is_some_and(|value| matches!(value, "present" | "missing"))
+            },
+            description,
+            cache_state,
+        )?;
+    }
+    Ok(())
+}
+
+fn verify_vcs_status(
+    vcs_status: &Path,
+    summary: &Path,
+    summary_text: &str,
+    github_actions: &str,
+) -> Result<()> {
+    let text = read_required_text(vcs_status, "VCS status")?;
+    require_exact(
+        &text,
+        "nmux promotion evidence VCS status",
+        "VCS status title",
+        vcs_status,
+    )?;
+    require_line_where(
+        &text,
+        |line| {
+            line.strip_prefix("generated_at_utc=")
+                .is_some_and(is_utc_timestamp)
+        },
+        "VCS status timestamp",
+        vcs_status,
+    )?;
+    require_line_where(
+        &text,
+        |line| field_has_value(line, "vcs_status_scope="),
+        "VCS status scope",
+        vcs_status,
+    )?;
+    require_line_where(
+        &text,
+        |line| {
+            line.strip_prefix("git_revision=")
+                .is_some_and(is_unknown_or_git_sha)
+        },
+        "VCS git revision",
+        vcs_status,
+    )?;
+    require_line_where(
+        &text,
+        |line| {
+            line.strip_prefix("git_status_porcelain=")
+                .is_some_and(|value| matches!(value, "clean" | "dirty" | "unknown"))
+        },
+        "VCS git working-tree status",
+        vcs_status,
+    )?;
+    require_exact(
+        &text,
+        "[git_status_porcelain_v1]",
+        "VCS git status section",
+        vcs_status,
+    )?;
+    require_line_where(
+        &text,
+        |line| {
+            matches!(
+                line,
+                "jj_status_available=true" | "jj_status_available=false"
+            )
+        },
+        "VCS jj availability",
+        vcs_status,
+    )?;
+    require_exact(&text, "[jj_status]", "VCS jj status section", vcs_status)?;
+    let summary_git_revision = field_value(summary_text, "git_revision=").unwrap_or_default();
+    let vcs_git_revision = field_value(&text, "git_revision=").unwrap_or_default();
+    if summary_git_revision != vcs_git_revision {
+        return Err(format!(
+            "promotion evidence git revision mismatch: SUMMARY.txt has {summary_git_revision} but VCS_STATUS.txt has {vcs_git_revision}"
+        )
+        .into());
+    }
+    if github_actions == "true" {
+        let github_sha = field_value(summary_text, "github_sha=").unwrap_or_default();
+        if summary_git_revision != github_sha {
+            return Err(format!(
+                "promotion evidence GitHub SHA mismatch: SUMMARY.txt git_revision is {summary_git_revision} but github_sha is {github_sha}"
+            )
+            .into());
+        }
+    }
+    let vcs_worktree_status = field_value(&text, "git_status_porcelain=").unwrap_or_default();
+    require_exact(
+        summary_text,
+        &format!("working_tree_status={vcs_worktree_status}"),
+        "summary working tree status matches VCS artifact",
+        summary,
+    )
+}
+
+fn verify_promotion_open_work(promotion_open_work: &Path) -> Result<()> {
+    let text = read_required_text(promotion_open_work, "promotion open work")?;
+    for (line, description) in [
+        (
+            "nmux native VT promotion open work",
+            "promotion open work title",
+        ),
+        ("promotion_decision=not-promoted", "promotion decision"),
+        (
+            "default_terminal_engine=interim-text",
+            "default terminal engine",
+        ),
+        ("libghostty_vt_status=opt-in", "libghostty-vt opt-in status"),
+        (
+            "open_work_scope=known blockers that must be resolved before libghostty-vt can become the default engine or a regular required CI gate",
+            "promotion open work scope",
+        ),
+        (
+            "open_work_ci=manual promotion evidence bundle and downloaded-artifact verifier jobs still need recorded CI runs",
+            "promotion open work CI gap",
+        ),
+        (
+            "open_work_platforms=more supported local systems and at least one full cold-checkout or cold-machine run still need timing evidence",
+            "promotion open work platform gap",
+        ),
+        (
+            "open_work_non_nix=non-Nix toolchain checklist still needs a successful platform-specific validation run",
+            "promotion open work non-Nix gap",
+        ),
+        (
+            "open_work_source_policy=packaged/default build source policy still needs a decision and evidence",
+            "promotion open work source-policy gap",
+        ),
+        (
+            "open_work_packaging=native VT binary distribution expectations still need supported-target, signing, notarization, installed-package, and platform distribution decisions despite local layout, archive, provenance, and runtime-smoke verifiers",
+            "promotion open work packaging gap",
+        ),
+        (
+            "open_work_frontend=frontend Ghostty renderer hydration remains separate from backend terminal-state extraction",
+            "promotion open work frontend gap",
+        ),
+    ] {
+        require_exact(&text, line, description, promotion_open_work)?;
+    }
+    require_line_where(
+        &text,
+        |line| {
+            line.strip_prefix("generated_at_utc=")
+                .is_some_and(is_utc_timestamp)
+        },
+        "promotion open work timestamp",
+        promotion_open_work,
+    )
+}
+
+fn run_just_with_env(recipe: &str, envs: &[(&str, &Path)]) -> Result<()> {
+    let mut command = Command::new("just");
+    command.arg(recipe);
+    for (name, value) in envs {
+        command.env(name, value);
+    }
+    let status = command.status()?;
+    if !status.success() {
+        return Err(format!("just {recipe} failed with status {status}").into());
+    }
+    Ok(())
+}
+
 struct TempDir {
     path: PathBuf,
 }
@@ -942,6 +1811,13 @@ fn require_exact(text: &str, line: &str, description: &str, path: &Path) -> Resu
     Err(format!("missing record in {}: {description}", path.display()).into())
 }
 
+fn require_absent_exact(text: &str, line: &str, description: &str, path: &Path) -> Result<()> {
+    if text.lines().any(|candidate| candidate == line) {
+        return Err(format!("unexpected record in {}: {description}", path.display()).into());
+    }
+    Ok(())
+}
+
 fn require_line_where(
     text: &str,
     predicate: impl Fn(&str) -> bool,
@@ -985,6 +1861,29 @@ fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
 fn field_has_value(line: &str, prefix: &str) -> bool {
     line.strip_prefix(prefix)
         .is_some_and(|value| !value.is_empty())
+}
+
+fn field_value(text: &str, prefix: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.strip_prefix(prefix).map(str::to_owned))
+}
+
+fn is_decimal(value: &str) -> bool {
+    let Some((whole, fraction)) = value.split_once('.') else {
+        return !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit());
+    };
+    !whole.is_empty()
+        && !fraction.is_empty()
+        && whole.bytes().all(|byte| byte.is_ascii_digit())
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn is_git_sha(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn is_unknown_or_git_sha(value: &str) -> bool {
+    value == "unknown" || is_git_sha(value)
 }
 
 fn is_sha256(value: &str) -> bool {

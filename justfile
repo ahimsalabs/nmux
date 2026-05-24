@@ -165,7 +165,7 @@ promotion-evidence-bundle:
     @scripts/promotion-evidence-bundle.sh
 
 promotion-evidence-verify:
-    @scripts/promotion-evidence-verify.sh
+    cargo run -p xtask -- promotion-evidence-verify
 
 # --- Source fetch ---
 
