@@ -58,9 +58,10 @@ metadata without raw ANSI text leaking into fallback rows. The `nmux-cli`
 integration smoke runs a real `nmuxd --terminal-engine libghostty-vt` plus
 `nmux --json` attach, materializes the exported JSON into a small canonical
 workspace/surface/scrollback shape, and compares it to an expected semantic snapshot for
-structured rows/runs, style tables and IDs, compact terminal color state, cell
-widths including combining-mark clusters, hyperlink-presence flags, OSC 133
-row/run semantics, dirty and Kitty-placeholder row metadata, cursor state
+structured rows/runs, style tables and IDs, compact terminal color state
+including explicit cursor color and palette overrides that feed indexed styles,
+cell widths including combining-mark clusters, hyperlink-presence flags, OSC
+133 row/run semantics, dirty and Kitty-placeholder row metadata, cursor state
 including blink state and in-place cursor-editing output, terminal modes,
 title/OSC 7 metadata, initial workspace geometry and wrap/reflow behavior, main
 screen restoration after alternate screen, and omission of raw control text.
