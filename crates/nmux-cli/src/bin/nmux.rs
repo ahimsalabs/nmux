@@ -10,7 +10,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use nmux_cli::local;
 use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
@@ -174,7 +174,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return run_live(&args);
     }
 
+    if args.script_command == Some(ScriptCommand::PaneSend) {
+        return run_pane_send(&args);
+    }
+
     run_attach_loop(&args)
+}
+
+fn run_pane_send(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let mut client_state = load_client_state(args.state_path.as_deref()).map_err(|err| {
+        report_cli_error(args, err.as_ref()).ok();
+        err
+    })?;
+    match attach_once(args, &mut client_state) {
+        Ok(_) => save_client_state(args.state_path.as_deref(), &client_state),
+        Err(err) => {
+            report_cli_error(args, err.as_ref())?;
+            Err(err)
+        }
+    }
 }
 
 fn run_attach_loop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -2147,6 +2165,7 @@ struct Args {
     interval_ms: u64,
     connect_timeout_ms: Option<u64>,
     iterations: Option<usize>,
+    script_command: Option<ScriptCommand>,
 }
 
 #[derive(Debug, Parser)]
@@ -2321,6 +2340,38 @@ struct RawArgs {
     connect_timeout_ms: Option<u64>,
     #[arg(long = "iterations", value_name = "COUNT", value_parser = parse_iterations_arg)]
     iterations: Option<usize>,
+    #[command(subcommand)]
+    command: Option<RawCommand>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ScriptCommand {
+    PaneSend,
+    PaneSnapshot,
+}
+
+#[derive(Debug, Subcommand)]
+enum RawCommand {
+    Pane {
+        #[command(subcommand)]
+        command: RawPaneCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RawPaneCommand {
+    Send {
+        #[arg(value_name = "PANE_ID", allow_hyphen_values = true)]
+        pane_id: String,
+        #[arg(value_name = "TEXT", allow_hyphen_values = true)]
+        text: String,
+    },
+    Snapshot {
+        #[arg(value_name = "PANE_ID", allow_hyphen_values = true)]
+        pane_id: String,
+        #[arg(long = "json", action = ArgAction::SetTrue)]
+        json: bool,
+    },
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
@@ -2332,10 +2383,11 @@ where
     I: IntoIterator<Item = S>,
     S: Into<std::ffi::OsString>,
 {
-    let raw = RawArgs::try_parse_from(
+    let mut raw = RawArgs::try_parse_from(
         std::iter::once(std::ffi::OsString::from("nmux")).chain(args.into_iter().map(Into::into)),
     )
     .map_err(clap_error_message)?;
+    let script_command = normalize_script_command(&mut raw)?;
     let (socket_path, socket_source) = match raw.socket_path {
         Some(path) => (path, local::SocketPathSource::Explicit),
         None => local::default_socket_path_and_source(),
@@ -2561,7 +2613,42 @@ where
         interval_ms,
         connect_timeout_ms,
         iterations,
+        script_command,
     })
+}
+
+fn normalize_script_command(
+    raw: &mut RawArgs,
+) -> Result<Option<ScriptCommand>, Box<dyn std::error::Error>> {
+    let Some(command) = raw.command.take() else {
+        return Ok(None);
+    };
+    if raw.target_pane_id.is_some() {
+        return Err("--pane cannot be combined with the pane subcommand".into());
+    }
+    match command {
+        RawCommand::Pane { command } => match command {
+            RawPaneCommand::Send { pane_id, text } => {
+                if pane_id.is_empty() {
+                    return Err("pane send requires a non-empty pane ID".into());
+                }
+                raw.target_pane_id = Some(pane_id);
+                raw.key_text = Some(text);
+                raw.no_scrollback = true;
+                Ok(Some(ScriptCommand::PaneSend))
+            }
+            RawPaneCommand::Snapshot { pane_id, json } => {
+                if pane_id.is_empty() {
+                    return Err("pane snapshot requires a non-empty pane ID".into());
+                }
+                raw.target_pane_id = Some(pane_id);
+                raw.no_input = true;
+                raw.no_scrollback = true;
+                raw.output_json = json || raw.output_json;
+                Ok(Some(ScriptCommand::PaneSnapshot))
+            }
+        },
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3706,6 +3793,8 @@ nmux - attach to an nmux daemon over a local Unix socket
 
 Usage:
   nmux [OPTIONS]
+  nmux [OPTIONS] pane send PANE_ID TEXT
+  nmux [OPTIONS] pane snapshot PANE_ID --json
 
 Options:
   --socket PATH              Unix socket path
@@ -3760,6 +3849,10 @@ Options:
   --version-json             Show version as JSON
   -V, --version              Show version
   -h, --help                 Show this help
+
+Subcommands:
+  pane send PANE_ID TEXT          Send text input to a pane
+  pane snapshot PANE_ID --json    Print a pane snapshot as JSON
 
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
@@ -3995,7 +4088,7 @@ mod tests {
         HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
         LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
         PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
-        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScrollbackSelectionArgFlags,
+        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags,
         SigwinchResizeContext, StateInfoSocketSummary, args_from_iter, format_cli_error_json,
         format_context_json, format_input_choices_json, format_key_names_json,
         format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
@@ -4126,6 +4219,23 @@ mod tests {
             Err(err) => err.to_string(),
         };
         assert_eq!(err, "--actor-id requires a non-empty ID");
+    }
+
+    #[test]
+    fn pane_subcommands_normalize_to_attach_options() {
+        let send = args_from_iter(["pane", "send", "pane-2", "hello\n"]).expect("send args");
+        assert_eq!(send.script_command, Some(ScriptCommand::PaneSend));
+        assert_eq!(send.target_pane_id.as_deref(), Some("pane-2"));
+        assert_eq!(send.input_text.as_deref(), Some("hello\n"));
+        assert!(send.no_scrollback);
+
+        let snapshot =
+            args_from_iter(["pane", "snapshot", "pane-2", "--json"]).expect("snapshot args");
+        assert_eq!(snapshot.script_command, Some(ScriptCommand::PaneSnapshot));
+        assert_eq!(snapshot.target_pane_id.as_deref(), Some("pane-2"));
+        assert!(snapshot.no_input);
+        assert!(snapshot.no_scrollback);
+        assert!(snapshot.output_json);
     }
 
     #[test]
@@ -5978,6 +6088,8 @@ mod tests {
         assert!(usage.contains("--mouse-pixels X:Y"));
         assert!(usage.contains("--redraw"));
         assert!(usage.contains("--cols COUNT"));
+        assert!(usage.contains("pane send PANE_ID TEXT"));
+        assert!(usage.contains("pane snapshot PANE_ID --json"));
         assert!(usage.contains("--start waits for nmuxd --ready-json"));
         assert!(usage.contains("interim text surface"));
     }

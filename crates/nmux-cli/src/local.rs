@@ -3102,6 +3102,10 @@ fn read_optional_server_error_from_stream(
                     let error = error_summary_from_frame(&frame)?;
                     Err(server_error(error))
                 }
+                protocol::EnvelopeBody::PresenceUpdate
+                | protocol::EnvelopeBody::WorkspaceTreeSnapshot
+                | protocol::EnvelopeBody::PaneSurfaceSnapshot
+                | protocol::EnvelopeBody::PaneSurfacePatch => Ok(()),
                 other => Err(
                     format!("unexpected server frame before scrollback fetch: {other:?}").into(),
                 ),

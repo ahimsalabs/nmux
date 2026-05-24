@@ -510,6 +510,140 @@ fn one_shot_cli_can_print_attach_json() {
 }
 
 #[test]
+fn pane_snapshot_subcommand_prints_json() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--command",
+            "printf 'snapshot-ready\n'; cat >/dev/null",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "pane",
+            "snapshot",
+            "pane-1",
+            "--json",
+        ])
+        .output()
+        .expect("run nmux pane snapshot");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux pane snapshot failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("\"pane_id\":\"pane-1\""),
+        "missing pane:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("snapshot-ready"),
+        "missing surface text:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"scrollback\":null"),
+        "pane snapshot should skip scrollback fetch:\n{stdout}"
+    );
+}
+
+#[test]
+fn pane_send_subcommand_writes_to_target_pane() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "2",
+            "--command",
+            "printf 'ready\n'; while IFS= read -r line; do printf 'sent:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let reader = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "3",
+            "--interval-ms",
+            "1000",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn reader nmux");
+
+    thread::sleep(Duration::from_millis(150));
+
+    let sender = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "pane",
+            "send",
+            "pane-1",
+            "scripted\n",
+        ])
+        .output()
+        .expect("run nmux pane send");
+
+    assert!(
+        sender.status.success(),
+        "nmux pane send failed: {}",
+        String::from_utf8_lossy(&sender.stderr)
+    );
+    assert!(
+        sender.stdout.is_empty(),
+        "pane send should be quiet on success:\n{}",
+        String::from_utf8_lossy(&sender.stdout)
+    );
+
+    let reader = reader.wait_with_output().expect("wait for reader nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        reader.status.success(),
+        "reader nmux failed: {}",
+        String::from_utf8_lossy(&reader.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&reader.stdout);
+    assert!(
+        stdout.contains("sent:scripted"),
+        "pane send did not reach target pane:\n{stdout}"
+    );
+}
+
+#[test]
 fn one_shot_json_reports_state_save_error() {
     let socket_path = test_socket_path();
     let blocking_parent = test_state_path();
