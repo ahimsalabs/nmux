@@ -949,6 +949,59 @@ fn managed_start_live_cli_runs_private_daemon() {
 }
 
 #[test]
+fn managed_start_live_cli_can_stream_json_events() {
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--start",
+            "--live",
+            "--json",
+            "--iterations",
+            "2",
+            "--key",
+            "managed-json\n",
+            "--interval-ms",
+            "100",
+            "--command",
+            "printf 'managed-live-json-ready\n'; while IFS= read -r line; do printf 'managed-json:%s\n' \"$line\"; done",
+        ])
+        .output()
+        .expect("run nmux --start --live --json");
+
+    assert!(
+        client.status.success(),
+        "nmux --start --live --json failed: {}\n{}",
+        String::from_utf8_lossy(&client.stderr),
+        String::from_utf8_lossy(&client.stdout)
+    );
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("{\"event\":\"attach\"")),
+        "missing live attach JSON event:\n{stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("{\"event\":\"surface\"")),
+        "missing live surface JSON event:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("managed-live-json-ready"),
+        "missing managed live initial JSON output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("managed-json:managed-json"),
+        "missing managed live input JSON output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("{\"event\":\"detach\",\"reason\":\"iteration-limit\"}"),
+        "missing live detach JSON event:\n{stdout}"
+    );
+}
+
+#[test]
 fn managed_shell_cli_runs_private_live_daemon() {
     let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
