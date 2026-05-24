@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use clap::{ArgAction, Parser, ValueEnum};
 use nmux_cli::local;
-use nmux_core::host::{CommandSpec, LocalPtyHost, ProcessHost};
+use nmux_core::host::{CommandSpec, HostKind, HostSpec, LocalPtyHost, ProcessHost};
 use nmux_core::session::Session;
 use nmux_core::terminal::{PaneTerminalEngines, TerminalEngineKind};
 use nmux_proto::protocol;
@@ -15,6 +15,7 @@ use nmux_proto::protocol;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RESIZE_POLICY_NAMES: &[&str] = &["fixed", "leader", "active-client", "manual"];
 const SPLIT_AXIS_NAMES: &[&str] = &["horizontal", "vertical"];
+const HOST_KIND_NAMES: &[&str] = &["local", "sandbox", "container"];
 const TERMINAL_ENGINE_NAMES: &[&str] = &["interim", "libghostty-vt"];
 
 fn main() {
@@ -108,6 +109,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .env
             .extend(args.env.iter().cloned());
     }
+    apply_initial_host_kind(&mut session.tabs[0].root.host, &args)?;
     for tab_number in 2..=args.initial_tabs {
         let pane_id = format!("tab-{tab_number}-pane-1");
         let tab_id = format!("tab-{tab_number}");
@@ -370,6 +372,9 @@ struct Args {
     active_tab_id: Option<String>,
     initial_split: Option<protocol::SplitAxis>,
     resize_policy: protocol::ResizePolicy,
+    host_kind: HostKindArg,
+    sandbox_profile: Option<String>,
+    container_image: Option<String>,
     terminal_engine_kind: TerminalEngineKind,
 }
 
@@ -415,6 +420,13 @@ impl From<SplitAxisArg> for protocol::SplitAxis {
             SplitAxisArg::Vertical => protocol::SplitAxis::Vertical,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum HostKindArg {
+    Local,
+    Sandbox,
+    Container,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -512,6 +524,20 @@ struct RawArgs {
         value_name = "fixed|leader|active-client|manual"
     )]
     resize_policy: Option<ResizePolicyArg>,
+    #[arg(long = "host", value_name = "local|sandbox|container")]
+    host_kind: Option<HostKindArg>,
+    #[arg(
+        long = "sandbox-profile",
+        value_name = "PROFILE",
+        allow_hyphen_values = true
+    )]
+    sandbox_profile: Option<String>,
+    #[arg(
+        long = "container-image",
+        value_name = "IMAGE",
+        allow_hyphen_values = true
+    )]
+    container_image: Option<String>,
     #[arg(long = "terminal-engine", value_name = "interim|libghostty-vt")]
     terminal_engine_kind: Option<TerminalEngineArg>,
 }
@@ -543,6 +569,19 @@ where
         .resize_policy
         .map(protocol::ResizePolicy::from)
         .unwrap_or(protocol::ResizePolicy::Fixed);
+    let host_kind = raw.host_kind.unwrap_or(HostKindArg::Local);
+    let sandbox_profile = match raw.sandbox_profile {
+        Some(value) if value.is_empty() => {
+            return Err("--sandbox-profile requires a non-empty profile".into());
+        }
+        value => value,
+    };
+    let container_image = match raw.container_image {
+        Some(value) if value.is_empty() => {
+            return Err("--container-image requires a non-empty image".into());
+        }
+        value => value,
+    };
     let initial_size = match (raw.cols, raw.rows) {
         (Some(cols), Some(rows)) => Some((cols, rows)),
         (None, None) => None,
@@ -601,6 +640,11 @@ where
         if tcp_listen.is_some() && socket_path_set {
             return Err("--tcp-listen cannot be combined with --socket".into());
         }
+        validate_host_args(
+            host_kind,
+            sandbox_profile.as_deref(),
+            container_image.as_deref(),
+        )?;
     }
 
     Ok(Args {
@@ -628,6 +672,9 @@ where
         active_tab_id,
         initial_split,
         resize_policy,
+        host_kind,
+        sandbox_profile,
+        container_image,
         terminal_engine_kind,
     })
 }
@@ -635,6 +682,7 @@ where
 fn format_daemon_choices_json() -> String {
     let resize_policies = format_json_string_array(RESIZE_POLICY_NAMES);
     let split_axes = format_json_string_array(SPLIT_AXIS_NAMES);
+    let host_kinds = format_json_string_array(HOST_KIND_NAMES);
     let terminal_engines = TERMINAL_ENGINE_NAMES
         .iter()
         .map(|name| {
@@ -647,13 +695,13 @@ fn format_daemon_choices_json() -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"resize_policies\":{resize_policies},\"split_axes\":{split_axes},\"terminal_engines\":[{terminal_engines}]}}"
+        "{{\"resize_policies\":{resize_policies},\"split_axes\":{split_axes},\"host_kinds\":{host_kinds},\"terminal_engines\":[{terminal_engines}]}}"
     )
 }
 
 fn format_ready_json(args: &Args) -> String {
     format!(
-        "{{\"event\":\"ready\",\"NMUX_SOCKET\":{},\"source\":{},\"mode\":{},\"terminal_engine\":{},\"resize_policy\":{}}}",
+        "{{\"event\":\"ready\",\"NMUX_SOCKET\":{},\"source\":{},\"mode\":{},\"terminal_engine\":{},\"resize_policy\":{},\"host\":{}}}",
         local::json_string(&args.transport_endpoint()),
         local::json_string(if args.tcp_listen.is_some() {
             "--tcp-listen"
@@ -662,7 +710,8 @@ fn format_ready_json(args: &Args) -> String {
         }),
         local::json_string(daemon_mode_name(args)),
         local::json_string(terminal_engine_kind_name(args.terminal_engine_kind)),
-        local::json_string(resize_policy_name(args.resize_policy))
+        local::json_string(resize_policy_name(args.resize_policy)),
+        local::json_string(host_kind_name(args.host_kind))
     )
 }
 
@@ -708,6 +757,14 @@ fn terminal_engine_kind_name(kind: TerminalEngineKind) -> &'static str {
     }
 }
 
+fn host_kind_name(kind: HostKindArg) -> &'static str {
+    match kind {
+        HostKindArg::Local => "local",
+        HostKindArg::Sandbox => "sandbox",
+        HostKindArg::Container => "container",
+    }
+}
+
 fn resize_policy_name(policy: protocol::ResizePolicy) -> &'static str {
     match policy {
         protocol::ResizePolicy::Fixed => "fixed",
@@ -716,6 +773,35 @@ fn resize_policy_name(policy: protocol::ResizePolicy) -> &'static str {
         protocol::ResizePolicy::Manual => "manual",
         _ => "unknown",
     }
+}
+
+fn apply_initial_host_kind(
+    host: &mut HostSpec,
+    args: &Args,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match args.host_kind {
+        HostKindArg::Local => {
+            host.id = "local".to_owned();
+            host.kind = HostKind::Local;
+        }
+        HostKindArg::Sandbox => {
+            let profile = args
+                .sandbox_profile
+                .clone()
+                .ok_or("--host sandbox requires --sandbox-profile")?;
+            host.id = "sandbox".to_owned();
+            host.kind = HostKind::Sandbox { profile };
+        }
+        HostKindArg::Container => {
+            let image = args
+                .container_image
+                .clone()
+                .ok_or("--host container requires --container-image")?;
+            host.id = "container".to_owned();
+            host.kind = HostKind::Container { image };
+        }
+    }
+    Ok(())
 }
 
 fn terminal_engine_available(name: &str) -> bool {
@@ -788,6 +874,40 @@ fn validate_initial_tabs(
     };
     if tab_number == 0 || tab_number > initial_tabs {
         return Err("--active-tab must name an initial tab created by --tabs");
+    }
+    Ok(())
+}
+
+fn validate_host_args(
+    host_kind: HostKindArg,
+    sandbox_profile: Option<&str>,
+    container_image: Option<&str>,
+) -> Result<(), &'static str> {
+    match host_kind {
+        HostKindArg::Local => {
+            if sandbox_profile.is_some() {
+                return Err("--sandbox-profile requires --host sandbox");
+            }
+            if container_image.is_some() {
+                return Err("--container-image requires --host container");
+            }
+        }
+        HostKindArg::Sandbox => {
+            if sandbox_profile.is_none() {
+                return Err("--host sandbox requires --sandbox-profile");
+            }
+            if container_image.is_some() {
+                return Err("--container-image requires --host container");
+            }
+        }
+        HostKindArg::Container => {
+            if container_image.is_none() {
+                return Err("--host container requires --container-image");
+            }
+            if sandbox_profile.is_some() {
+                return Err("--sandbox-profile requires --host sandbox");
+            }
+        }
     }
     Ok(())
 }
@@ -906,6 +1026,9 @@ Options:
   --split horizontal|vertical           Start with pane-1 split into pane-1 and pane-2
   --resize-policy fixed|leader|active-client|manual
                                          Publish and enforce pane resize policy
+  --host local|sandbox|container        Run pane commands locally, through sandbox-exec, or a container runtime
+  --sandbox-profile PROFILE             macOS sandbox-exec profile for --host sandbox
+  --container-image IMAGE               Container image for --host container
   --terminal-engine interim|libghostty-vt
                                          Backend terminal engine implementation
   --version-json                         Show version as JSON
@@ -919,6 +1042,8 @@ Notes:
   --ready-json does not exit; it emits one stdout line after socket bind and pane startup.
   Existing socket paths are not replaced automatically.
   When started inside nmux, NMUX_ORIGIN is appended for child pane commands.
+  --host container uses $NMUX_CONTAINER_RUNTIME or docker, and passes pane cwd/env into the runtime.
+  --host sandbox currently uses macOS sandbox-exec and reports an unsupported host on other platforms.
   libghostty-vt requires building nmux with the libghostty-vt feature.
 
 Examples:
@@ -956,12 +1081,14 @@ fn parse_terminal_engine_kind(value: &str) -> Result<TerminalEngineKind, &'stati
 #[cfg(test)]
 mod tests {
     use super::{
-        Args, DaemonModeArgs, SocketCleanup, args_from_iter, format_daemon_choices_json,
-        format_ready_error_json, format_ready_json, parse_env_assignment, parse_numeric_arg,
-        parse_resize_policy, parse_terminal_engine_kind, usage, validate_initial_size,
-        validate_initial_tabs, validate_mode_args,
+        Args, DaemonModeArgs, HostKindArg, SocketCleanup, apply_initial_host_kind, args_from_iter,
+        format_daemon_choices_json, format_ready_error_json, format_ready_json,
+        parse_env_assignment, parse_numeric_arg, parse_resize_policy, parse_terminal_engine_kind,
+        usage, validate_host_args, validate_initial_size, validate_initial_tabs,
+        validate_mode_args,
     };
     use nmux_cli::local;
+    use nmux_core::host::{CommandSpec, HostKind, HostSpec};
     use nmux_core::terminal::TerminalEngineKind;
     use nmux_proto::protocol;
     use std::fs;
@@ -1026,6 +1153,7 @@ mod tests {
             )
         );
         assert!(json.contains("\"split_axes\":[\"horizontal\",\"vertical\"]"));
+        assert!(json.contains("\"host_kinds\":[\"local\",\"sandbox\",\"container\"]"));
         assert!(json.contains("{\"name\":\"interim\",\"available\":true}"));
         #[cfg(feature = "libghostty-vt")]
         assert!(json.contains("{\"name\":\"libghostty-vt\",\"available\":true}"));
@@ -1060,12 +1188,15 @@ mod tests {
             active_tab_id: None,
             initial_split: None,
             resize_policy: protocol::ResizePolicy::ActiveClient,
+            host_kind: HostKindArg::Container,
+            sandbox_profile: None,
+            container_image: Some("alpine:latest".to_owned()),
             terminal_engine_kind: TerminalEngineKind::InterimText,
         };
 
         assert_eq!(
             format_ready_json(&args),
-            "{\"event\":\"ready\",\"NMUX_SOCKET\":\"/tmp/nmux-ready.sock\",\"source\":\"--socket\",\"mode\":\"live-forever\",\"terminal_engine\":\"interim\",\"resize_policy\":\"active-client\"}"
+            "{\"event\":\"ready\",\"NMUX_SOCKET\":\"/tmp/nmux-ready.sock\",\"source\":\"--socket\",\"mode\":\"live-forever\",\"terminal_engine\":\"interim\",\"resize_policy\":\"active-client\",\"host\":\"container\"}"
         );
     }
 
@@ -1120,6 +1251,10 @@ mod tests {
             "vertical",
             "--resize-policy",
             "active-client",
+            "--host",
+            "sandbox",
+            "--sandbox-profile",
+            "(version 1) (allow default)",
             "--terminal-engine",
             "interim",
         ])
@@ -1139,7 +1274,37 @@ mod tests {
         assert_eq!(args.active_tab_id.as_deref(), Some("tab-2"));
         assert_eq!(args.initial_split, Some(protocol::SplitAxis::Vertical));
         assert_eq!(args.resize_policy, protocol::ResizePolicy::ActiveClient);
+        assert_eq!(args.host_kind, HostKindArg::Sandbox);
+        assert_eq!(
+            args.sandbox_profile.as_deref(),
+            Some("(version 1) (allow default)")
+        );
+        assert_eq!(args.container_image, None);
         assert_eq!(args.terminal_engine_kind, TerminalEngineKind::InterimText);
+    }
+
+    #[test]
+    fn initial_host_kind_updates_pane_host_spec() {
+        let mut host = HostSpec::local("local", CommandSpec::new("sh"));
+        let args = args_from_iter([
+            "nmuxd",
+            "--one-shot",
+            "--host",
+            "container",
+            "--container-image",
+            "alpine:latest",
+        ])
+        .expect("args");
+
+        apply_initial_host_kind(&mut host, &args).expect("apply host kind");
+
+        assert_eq!(host.id, "container");
+        assert_eq!(
+            host.kind,
+            HostKind::Container {
+                image: "alpine:latest".to_owned(),
+            }
+        );
     }
 
     #[test]
@@ -1165,10 +1330,37 @@ mod tests {
         assert!(usage.contains("--active-tab TAB_ID"));
         assert!(usage.contains("--split horizontal|vertical"));
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
+        assert!(usage.contains("--host local|sandbox|container"));
+        assert!(usage.contains("--sandbox-profile PROFILE"));
+        assert!(usage.contains("--container-image IMAGE"));
         assert!(usage.contains("--terminal-engine interim|libghostty-vt"));
+        assert!(usage.contains("--host container uses $NMUX_CONTAINER_RUNTIME"));
         assert!(usage.contains("libghostty-vt requires building nmux"));
         assert!(usage.contains("--ready-json does not exit"));
         assert!(usage.contains("Existing socket paths are not replaced automatically"));
+    }
+
+    #[test]
+    fn host_validation_requires_matching_options() {
+        assert_eq!(validate_host_args(HostKindArg::Local, None, None), Ok(()));
+        assert_eq!(
+            validate_host_args(HostKindArg::Sandbox, None, None),
+            Err("--host sandbox requires --sandbox-profile")
+        );
+        assert_eq!(
+            validate_host_args(HostKindArg::Container, None, None),
+            Err("--host container requires --container-image")
+        );
+        assert_eq!(
+            validate_host_args(HostKindArg::Local, Some("profile"), None),
+            Err("--sandbox-profile requires --host sandbox")
+        );
+
+        let err = match args_from_iter(["nmuxd", "--one-shot", "--host", "container"]) {
+            Ok(_) => panic!("container host without image should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("--host container requires --container-image"));
     }
 
     #[test]

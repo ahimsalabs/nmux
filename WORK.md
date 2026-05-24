@@ -27,7 +27,6 @@ None queued.
 - Per-client cursor/mouse overlays; current multiplayer MVP uses actor identity,
   attach focused pane, and the shared daemon-owned terminal cursor (issue #2)
 - Frontend Ghostty renderer hydration
-- Container/sandbox process hosts
 
 ## Architectural constraints
 
