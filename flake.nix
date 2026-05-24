@@ -59,6 +59,7 @@
 
       defaultNativeBuildInputs = pkgs: [
         pkgs.flatbuffers
+        pkgs.zig_0_15
       ];
 
       defaultBuildArgs = pkgs: {

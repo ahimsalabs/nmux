@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+default = ["libghostty-vt"]
 libghostty-vt = ["dep:libghostty-vt", "libghostty-vt/link-static"]
 
 [dependencies]

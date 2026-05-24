@@ -13,11 +13,11 @@ PACKAGING_ARCHIVE_SHA256 ?= $(PACKAGING_ARCHIVE).sha256
 RENDERER_EQUIVALENCE_ARTIFACT_DIR ?= target/renderer-equivalence
 RENDERER_EQUIVALENCE_ORACLE_DIR ?=
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema local-smoke packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-manifest-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample renderer-equivalence-artifacts renderer-equivalence-compare renderer-equivalence-smoke require-cargo require-flatc require-ghostty-source require-zig rust-test source-audit source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify static-link-verify toolchain-info
+.PHONY: check check-all check-ghostty-vt check-interim check-schema check-toolchain check-vt-toolchain generate-schema local-smoke packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-manifest-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample renderer-equivalence-artifacts renderer-equivalence-compare renderer-equivalence-smoke require-cargo require-flatc require-ghostty-source require-zig rust-test source-audit source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify static-link-verify toolchain-info
 
-check: check-toolchain check-schema rust-test
+check: check-vt-toolchain check-schema rust-test
 
-check-all: check check-ghostty-vt
+check-all: check check-interim
 
 source-audit:
 	@system="$$(nix eval --impure --raw --expr builtins.currentSystem)"; \
@@ -196,13 +196,15 @@ local-smoke: check-toolchain
 	printf 'local_smoke_managed_start=passed\n'; \
 	printf 'local_smoke=passed\n'
 
-check-ghostty-vt: check-vt-toolchain
-	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt
-	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-cli --features libghostty-vt
+check-ghostty-vt: check
+
+check-interim: check-toolchain check-schema
+	cargo test -p nmux-core --no-default-features
+	cargo test -p nmux-cli --no-default-features
 
 static-link-verify: check-vt-toolchain
 	@echo "building libghostty-vt release binary for static-link verification"
-	GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/static-link-verify cargo build -p nmux-cli --release --bin nmux --features libghostty-vt
+	GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/static-link-verify cargo build -p nmux-cli --release --bin nmux
 	@bin=target/static-link-verify/release/nmux; \
 	deps=target/static-link-verify/DYNAMIC_DEPS.txt; \
 	if command -v otool >/dev/null 2>&1; then \
@@ -349,9 +351,9 @@ promotion-cold-deps-verify:
 	require_exact "$$report" "check_all_user_seconds=$$log_user" 'user timing matches log'; \
 	require_exact "$$report" "check_all_sys_seconds=$$log_sys" 'sys timing matches log'; \
 	require_line "$$log" '^flatc --json --strict-json --no-warnings -o /tmp schema/nmux\.fbs$$' 'schema check ran'; \
-	require_line "$$log" '^cargo test --workspace$$' 'default workspace tests ran'; \
-	require_line "$$log" '^RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt$$' 'opt-in core tests ran serially'; \
-	require_line "$$log" '^RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-cli --features libghostty-vt$$' 'opt-in cli tests ran serially'; \
+	require_line "$$log" '^RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test --workspace$$' 'default Ghostty workspace tests ran'; \
+	require_line "$$log" '^cargo test -p nmux-core --no-default-features$$' 'no-default-features core tests ran'; \
+	require_line "$$log" '^cargo test -p nmux-cli --no-default-features$$' 'no-default-features cli tests ran'; \
 	printf 'promotion_cold_deps_verified=%s\n' "$$report"
 
 promotion-local-sample:
@@ -1646,11 +1648,11 @@ require-flatc:
 	fi
 
 require-zig:
-	@command -v zig >/dev/null 2>&1 || { echo "missing zig; use 'nix develop . -c make check-ghostty-vt' or install Zig 0.15 for the optional libghostty-vt build" >&2; exit 127; }
+	@command -v zig >/dev/null 2>&1 || { echo "missing zig; use 'nix develop . -c make check' or install Zig 0.15 for the default libghostty-vt build" >&2; exit 127; }
 	@version="$$(zig version)"; \
 	case "$$version" in \
 		$(ZIG_VERSION_PREFIX)*) ;; \
-		*) echo "unsupported zig $$version; expected $(ZIG_VERSION_PREFIX)x. Use 'nix develop . -c make check-ghostty-vt' or install Zig 0.15" >&2; exit 1 ;; \
+		*) echo "unsupported zig $$version; expected $(ZIG_VERSION_PREFIX)x. Use 'nix develop . -c make check' or install Zig 0.15" >&2; exit 1 ;; \
 	esac
 
 require-ghostty-source:
@@ -1660,7 +1662,7 @@ require-ghostty-source:
 	fi
 
 rust-test: require-cargo
-	cargo test --workspace
+	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test --workspace
 
 toolchain-info:
 	@printf 'cargo=%s\n' "$$(command -v cargo >/dev/null 2>&1 && cargo --version || printf 'missing')"
