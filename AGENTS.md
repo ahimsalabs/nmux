@@ -8,26 +8,33 @@ Build nmux into a usable terminal multiplexer. The priority list is in
 [WORK.md](WORK.md) — work through it top to bottom. Ship code that users can
 run; don't substitute documentation or evidence infrastructure for features.
 
+## Reading order
+
+Start here, then follow links as needed:
+
+1. **This file** — goal, rules, checks
+2. **[WORK.md](WORK.md)** — what to build next (punch list, <50 lines)
+3. **[README.md](README.md)** — what works today, quick start
+4. **[docs/roadmap.md](docs/roadmap.md)** — milestone history (M0-M14 done)
+5. **[docs/protocol.md](docs/protocol.md)** — FlatBuffers state-sync contract
+6. **[docs/running.md](docs/running.md)** — detailed usage and examples
+7. **[docs/adr](docs/adr)** — architecture decisions (read on demand)
+8. **[docs/protocol-futures.md](docs/protocol-futures.md)** — withheld protocol tracks
+
+Don't read everything upfront. WORK.md and this file are enough to start.
+Read protocol.md when changing the schema, ADRs when making boundary
+decisions, running.md when changing CLI behavior.
+
 ## Project shape
 
 nmux is a portable terminal workspace. The daemon owns terminal state and
-syncs it over FlatBuffers to clients. See [README.md](README.md) for what
-works today, [WORK.md](WORK.md) for what to build next, and
-[docs/roadmap.md](docs/roadmap.md) for milestone history.
+syncs it over FlatBuffers to clients.
 
 Crate layout:
 
 - `crates/nmux-proto` — FlatBuffers wire helpers and generated schema bindings
 - `crates/nmux-core` — session state, process hosts, terminal engine boundary
 - `crates/nmux-cli` — `nmuxd` daemon, `nmux` client, integration tests
-
-Key docs:
-
-- [docs/roadmap.md](docs/roadmap.md) — milestone history and status
-- [docs/protocol.md](docs/protocol.md) — FlatBuffers state-sync contract
-- [docs/protocol-futures.md](docs/protocol-futures.md) — withheld protocol tracks
-- [docs/running.md](docs/running.md) — usage examples
-- [docs/adr](docs/adr) — architecture decisions
 
 ## Working rules
 
@@ -39,10 +46,86 @@ Key docs:
 - Keep commits small with a clear review purpose.
 - Don't create documentation infrastructure (evidence bundles, promotion
   trackers, criteria docs) until the features in WORK.md are done.
-- Keep WORK.md under 50 lines. It's a punch list, not a journal.
-- Keep README.md concise. No feature dump paragraphs.
 - If subagents are useful, run them as bounded read-only assistants.
 - Don't inspect or copy generated Ghostty source under `target/`.
+
+## Documentation gardening
+
+Docs exist to support building and using nmux. When they grow without bound
+or drift from the code, they become a liability.
+
+**What belongs where:**
+
+| Content | Location |
+| --- | --- |
+| What to build next | WORK.md |
+| What the project is, how to start | README.md |
+| Agent rules and reading order | AGENTS.md |
+| Milestone history, what's not started | docs/roadmap.md |
+| How to run nmux, CLI examples | docs/running.md |
+| Protocol schema contract | docs/protocol.md |
+| Boundary decisions | docs/adr/NNNN-*.md |
+| Upstream-blocked work | docs/upstream/*.md |
+| Withheld protocol tracks | docs/protocol-futures.md |
+
+**Gardening rules:**
+
+- Don't append implementation status to WORK.md. It's a punch list — items
+  get checked off and removed, not annotated with paragraphs.
+- Don't recapitulate every behavior in milestone status blocks. 2-3 sentences
+  per milestone in roadmap.md.
+- Don't create new tracker docs (evidence bundles, criteria, promotion
+  trackers) until WORK.md features are done.
+- Keep docs concise. If a file is growing, trim before adding.
+- README.md should never contain a paragraph longer than 4 lines.
+- If you need to document a protocol decision, write an ADR — don't expand
+  WORK.md or README.md.
+- Update running.md when CLI behavior changes. Don't duplicate running.md
+  content in README.md.
+- Delete stale docs rather than maintaining them. If a doc isn't useful for
+  building or using nmux, it shouldn't exist.
+
+## Work queue
+
+WORK.md is the canonical priority list. Items also come from GitHub issues.
+
+**At the start of each session:**
+
+1. Check for new issues: `gh issue list -l agent --author broady -R ahimsalabs/nmux --json number,title,body`
+2. Triage each new item into WORK.md at the right priority (not just appended)
+3. Commit: `work: triage #N into queue`
+4. Then start building from the top of WORK.md
+
+**When a work item from an issue is done:**
+
+- Remove it from WORK.md
+- Close the issue: `gh issue close N -R ahimsalabs/nmux`
+- Reference the issue number in the commit message
+
+Don't close issues when triaging — only when the work is actually complete.
+
+## Self-check (every 10 commits)
+
+After every 10 commits, pause and reflect before continuing. Run:
+
+```sh
+jj log --no-graph -r 'ancestors(@, 10)' -T 'description.first_line() ++ "\n"'
+wc -l WORK.md README.md AGENTS.md docs/roadmap.md
+```
+
+Ask yourself:
+
+1. **Am I building features or churning docs?** If most of the last 10 commits
+   are `docs:` or `build:`, stop and switch to feature work.
+2. **Are docs growing?** If you've been adding to docs, trim or stop.
+3. **Am I stuck in a loop?** If the last 10 commits are all in the same file
+   or the same narrow area, step back and pick a different item.
+4. **Is WORK.md still accurate?** Remove completed items, update priorities.
+5. **Do tests pass?** Run `make check && make local-smoke` if you haven't
+   recently.
+
+If the answer to #1 is "mostly docs", the next 10 commits must be mostly
+feature code. This is a hard rule.
 
 ## Checks
 

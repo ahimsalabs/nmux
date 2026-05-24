@@ -107,6 +107,8 @@ pub struct Tab {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pane {
     pub id: String,
+    pub split_axis: protocol::SplitAxis,
+    pub children: Vec<Pane>,
     pub host: HostSpec,
     pub surface_version: u64,
     pub last_patch_kind: protocol::PatchKind,
@@ -206,6 +208,8 @@ impl Session {
                 active_pane_id: "pane-1".to_owned(),
                 root: Pane {
                     id: "pane-1".to_owned(),
+                    split_axis: protocol::SplitAxis::None,
+                    children: Vec::new(),
                     host: HostSpec::local("local", CommandSpec::new("sh")),
                     surface_version: 2,
                     last_patch_kind: protocol::PatchKind::ReplaceRows,
@@ -419,6 +423,80 @@ impl Session {
         true
     }
 
+    pub fn active_pane_id(&self) -> Option<&str> {
+        let tab = self.tabs.iter().find(|tab| tab.id == self.active_tab_id)?;
+        self.pane_in_tab(tab, &tab.active_pane_id)
+            .is_some()
+            .then_some(tab.active_pane_id.as_str())
+    }
+
+    pub fn focus_pane(&mut self, pane_id: &str) -> bool {
+        let Some(tab_index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == self.active_tab_id)
+        else {
+            return false;
+        };
+        if self.pane_in_tab(&self.tabs[tab_index], pane_id).is_none() {
+            return false;
+        }
+        if self.tabs[tab_index].active_pane_id == pane_id {
+            return false;
+        }
+        self.tabs[tab_index].active_pane_id = pane_id.to_owned();
+        self.version = self.version.saturating_add(1);
+        true
+    }
+
+    pub fn split_active_pane(
+        &mut self,
+        axis: protocol::SplitAxis,
+        new_pane_id: impl Into<String>,
+        new_host: HostSpec,
+    ) -> bool {
+        let Some(pane_id) = self.active_pane_id().map(ToOwned::to_owned) else {
+            return false;
+        };
+        self.split_pane(&pane_id, axis, new_pane_id, new_host)
+    }
+
+    pub fn split_pane(
+        &mut self,
+        pane_id: &str,
+        axis: protocol::SplitAxis,
+        new_pane_id: impl Into<String>,
+        new_host: HostSpec,
+    ) -> bool {
+        if !matches!(
+            axis,
+            protocol::SplitAxis::Horizontal | protocol::SplitAxis::Vertical
+        ) {
+            return false;
+        }
+        let new_pane_id = new_pane_id.into();
+        if new_pane_id.is_empty() || self.pane(&new_pane_id).is_some() {
+            return false;
+        }
+        let Some(tab_index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == self.active_tab_id)
+        else {
+            return false;
+        };
+        let split = {
+            let tab = &mut self.tabs[tab_index];
+            split_pane_node(&mut tab.root, pane_id, axis, &new_pane_id, new_host)
+        };
+        if !split {
+            return false;
+        }
+        self.tabs[tab_index].active_pane_id = new_pane_id;
+        self.version = self.version.saturating_add(1);
+        true
+    }
+
     pub fn resize_intent_allowed(
         policy: protocol::ResizePolicy,
         reason: protocol::ResizeReason,
@@ -448,20 +526,7 @@ impl Session {
 
         let mut tab_offsets = Vec::with_capacity(self.tabs.len());
         for tab in &self.tabs {
-            let pane_id = builder.create_string(&tab.root.id);
-            let pane = protocol::PaneNode::create(
-                &mut builder,
-                &protocol::PaneNodeArgs {
-                    pane_id: Some(pane_id),
-                    kind: protocol::PaneKind::Pty,
-                    split_axis: protocol::SplitAxis::None,
-                    children: None,
-                    surface_version: tab.root.surface_version,
-                    cols: tab.root.cols,
-                    rows: tab.root.rows,
-                    resize_policy: tab.root.resize_policy,
-                },
-            );
+            let pane = build_pane_node(&mut builder, &tab.root);
 
             let tab_id = builder.create_string(&tab.id);
             let title = builder.create_string(&tab.title);
@@ -572,13 +637,7 @@ impl Session {
     }
 
     pub fn surface_version(&self, pane_id: &str) -> Option<u64> {
-        self.tabs.iter().find_map(|tab| {
-            if tab.root.id == pane_id {
-                Some(tab.root.surface_version)
-            } else {
-                None
-            }
-        })
+        self.pane(pane_id).map(|pane| pane.surface_version)
     }
 
     pub fn scrollback_version(&self, pane_id: &str) -> Option<u64> {
@@ -628,23 +687,19 @@ impl Session {
     }
 
     fn pane(&self, pane_id: &str) -> Option<&Pane> {
-        self.tabs.iter().find_map(|tab| {
-            if tab.root.id == pane_id {
-                Some(&tab.root)
-            } else {
-                None
-            }
-        })
+        self.tabs
+            .iter()
+            .find_map(|tab| pane_node(&tab.root, pane_id))
     }
 
     fn pane_mut(&mut self, pane_id: &str) -> Option<&mut Pane> {
-        self.tabs.iter_mut().find_map(|tab| {
-            if tab.root.id == pane_id {
-                Some(&mut tab.root)
-            } else {
-                None
-            }
-        })
+        self.tabs
+            .iter_mut()
+            .find_map(|tab| pane_node_mut(&mut tab.root, pane_id))
+    }
+
+    fn pane_in_tab<'a>(&self, tab: &'a Tab, pane_id: &str) -> Option<&'a Pane> {
+        pane_node(&tab.root, pane_id)
     }
 
     pub fn pane_surface_frame(&self, connection_id: &str, seq: u64) -> Vec<u8> {
