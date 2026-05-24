@@ -20,7 +20,8 @@ ADR 0035 briefly restored the portable interim package because the public flake
 package let `libghostty-vt-sys` fetch Ghostty from inside the build script. The
 default package now supplies `GHOSTTY_SOURCE_DIR` from a Nix-fetched Ghostty
 source derivation pinned to the same upstream revision expected by
-`libghostty-vt-sys`, avoiding build-script network fetches in the package
+`libghostty-vt-sys`, and `GHOSTTY_ZIG_SYSTEM_DIR` from Ghostty's generated Nix
+Zig dependency set. This avoids build-script network fetches in the package
 derivation.
 
 `interim` still has value as a small fallback for debugging and for
@@ -35,8 +36,10 @@ as an explicit legacy/debug choice, and keep `cargo test --no-default-features`
 covered by `just check-interim`.
 
 The flake default package and checks build the Ghostty-backed binary. The
-package derivation sets `GHOSTTY_SOURCE_DIR` to a pinned Nix source fetch rather
-than allowing the native build script to clone Ghostty during the Cargo build.
+package derivation sets `GHOSTTY_SOURCE_DIR` to a pinned Nix source fetch and
+`GHOSTTY_ZIG_SYSTEM_DIR` to pre-fetched Zig dependencies rather than allowing
+the native build script to clone Ghostty or download Zig packages during the
+Cargo build.
 
 Resize-driven surface dimension changes require a full surface snapshot rather
 than a patch, because `PaneSurfacePatch` does not carry new pane dimensions.

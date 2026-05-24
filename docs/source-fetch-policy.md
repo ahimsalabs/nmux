@@ -3,7 +3,8 @@
 This repository uses backend `libghostty-vt` extraction as the default engine.
 Local development can use the `libghostty-vt-sys` pinned fetch path or an
 explicit `GHOSTTY_SOURCE_DIR`; the Nix package uses a Nix-fetched Ghostty source
-derivation so package builds do not clone Ghostty from inside the Cargo build.
+derivation plus pre-fetched Ghostty Zig package dependencies so package builds
+do not clone Ghostty or download Zig packages from inside the Cargo build.
 
 ## Current Behavior
 
@@ -20,7 +21,8 @@ derivation so package builds do not clone Ghostty from inside the Cargo build.
   `libghostty-vt-sys` fetch path.
 - `packages.default` sets `GHOSTTY_SOURCE_DIR` to a pinned Nix
   `ghostty-org/ghostty` source fetch, matching the commit expected by
-  `libghostty-vt-sys`.
+  `libghostty-vt-sys`, and sets `GHOSTTY_ZIG_SYSTEM_DIR` to Ghostty's
+  Nix-generated Zig package dependency directory.
 - `just toolchain-info` and `just promotion-sample` report the source mode as
   `ghostty_source_mode=pinned-fetch` or `ghostty_source_mode=local`, along with
   whether the local directory is present.

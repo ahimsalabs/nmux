@@ -17,8 +17,10 @@ nix build .
 
 `packages.default` builds the Ghostty-backed `nmux` binary with crane and
 installs it under `$out/bin`. The package derivation supplies
-`GHOSTTY_SOURCE_DIR` from a pinned Nix source fetch so it does not clone Ghostty
-from inside the Cargo build.
+`GHOSTTY_SOURCE_DIR` from a pinned Nix source fetch and
+`GHOSTTY_ZIG_SYSTEM_DIR` from Ghostty's pre-fetched Zig package dependency
+set, so it does not clone Ghostty or download Zig packages from inside the
+Cargo build.
 
 All Nix examples assume `nix-command` and `flakes` are enabled. If your Nix
 install has not enabled them globally, run the same commands as:

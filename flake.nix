@@ -103,6 +103,13 @@
           hash = "sha256-HHHgWuBssEBMfV5hOFdFxp0WUXiwfl20NfkjU/ZNuC8=";
         };
 
+      ghosttyZigDeps =
+        pkgs:
+        pkgs.callPackage (ghosttySource pkgs + "/build.zig.zon.nix") {
+          name = "ghostty-zig-deps-6590196";
+          zig_0_15 = pkgs.zig_0_15;
+        };
+
       defaultBuildArgs =
         pkgs:
         {
@@ -113,6 +120,7 @@
           cargoExtraArgs = "-p nmux-cli --bin nmux";
           nativeBuildInputs = defaultNativeBuildInputs pkgs;
           GHOSTTY_SOURCE_DIR = ghosttySource pkgs;
+          GHOSTTY_ZIG_SYSTEM_DIR = ghosttyZigDeps pkgs;
           GIT_CONFIG_GLOBAL = "/dev/null";
           ZIG_GLOBAL_CACHE_DIR = "/tmp/zig-global-cache";
           ZIG_LOCAL_CACHE_DIR = "/tmp/zig-local-cache";
