@@ -35,15 +35,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         observability::init_from_env()?;
     }
     let nmux = nmux_binary_path()?;
-    let mut daemon = start_daemon(
+    let report = run_latency_suite(
         &nmux,
         &workspace.socket_path,
         workspace.trace_path.as_deref(),
+        args.iterations,
+        args.warmup,
     )?;
-    let result = run_latency_suite(&workspace.socket_path, args.iterations, args.warmup);
-    let _ = daemon.kill();
-    let _ = daemon.wait();
-    let report = result?;
     if args.json {
         println!("{}", report.to_json(workspace.trace_path.as_deref()));
     } else {
@@ -52,37 +50,110 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[instrument(level = "info", skip(socket_path))]
+#[instrument(level = "info", skip(nmux, socket_path, trace_path))]
 fn run_latency_suite(
+    nmux: &Path,
     socket_path: &Path,
+    trace_path: Option<&Path>,
     iterations: usize,
     warmup: usize,
-) -> Result<LatencyReport, Box<dyn std::error::Error>> {
+) -> Result<LatencySuiteReport, Box<dyn std::error::Error>> {
+    let cases = [
+        BenchCase {
+            name: "key-input-echo",
+            pane_id: "pane-1",
+            input_kind: InputKind::Key,
+        },
+        BenchCase {
+            name: "raw-input-echo",
+            pane_id: "pane-1",
+            input_kind: InputKind::Raw,
+        },
+        BenchCase {
+            name: "paste-input-echo",
+            pane_id: "pane-1",
+            input_kind: InputKind::Paste,
+        },
+    ];
+    let mut reports = Vec::with_capacity(cases.len());
+    for case in cases {
+        let case_socket_path = case_socket_path(socket_path, case.name);
+        let report = run_latency_case(
+            nmux,
+            &case_socket_path,
+            trace_path,
+            case,
+            iterations,
+            warmup,
+        )?;
+        reports.push(report);
+    }
+    Ok(LatencySuiteReport { cases: reports })
+}
+
+#[instrument(level = "info", skip(nmux, socket_path, trace_path))]
+fn run_latency_case(
+    nmux: &Path,
+    socket_path: &Path,
+    trace_path: Option<&Path>,
+    case: BenchCase,
+    iterations: usize,
+    warmup: usize,
+) -> Result<LatencyCaseReport, Box<dyn std::error::Error>> {
+    let _ = fs::remove_file(socket_path);
+    let mut daemon = start_daemon(nmux, socket_path, trace_path, None)?;
+    let result = run_single_client_case(socket_path, case, iterations, warmup);
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    let _ = fs::remove_file(socket_path);
+    result
+}
+
+fn run_single_client_case(
+    socket_path: &Path,
+    case: BenchCase,
+    iterations: usize,
+    warmup: usize,
+) -> Result<LatencyCaseReport, Box<dyn std::error::Error>> {
     let mut stream = local::connect_to_daemon_with_timeout(socket_path, Duration::from_secs(5))?;
     stream.set_read_timeout(Some(DEFAULT_TIMEOUT))?;
-    let request = local::AttachRequest {
-        actor_id: "latency-bench".to_owned(),
-        user_id: "latency-bench".to_owned(),
-        display_name: "latency bench".to_owned(),
-        mode: AttachMode::ReadWrite,
-        focused_pane_id: Some("pane-1".to_owned()),
-        known_surfaces: Vec::new(),
-    };
-    local::write_attach_request(&mut stream, &request)?;
-    let snapshot = local::attach_from_stream(&mut stream)?;
-    let pane_id = snapshot.status.pane_id;
+    let pane_id = attach_live_stream(&mut stream, AttachMode::ReadWrite, case.pane_id)?;
     let mut sequence = local::ClientFrameSequence::default();
     let mut samples = Vec::with_capacity(iterations);
 
     for index in 0..(warmup + iterations) {
-        let token = format!("{}-{}", std::process::id(), index);
-        let elapsed = measure_echo_latency(&mut stream, &mut sequence, &pane_id, &token)?;
+        let token = format!("{}-{}-{}", case.name, std::process::id(), index);
+        let elapsed = measure_echo_latency(
+            &mut stream,
+            &mut sequence,
+            &pane_id,
+            &token,
+            case.input_kind,
+        )?;
         if index >= warmup {
             samples.push(elapsed);
         }
     }
 
-    Ok(LatencyReport::from_samples(samples))
+    Ok(LatencyCaseReport::from_samples(case.name, samples))
+}
+
+fn attach_live_stream(
+    stream: &mut UnixStream,
+    mode: AttachMode,
+    pane_id: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let request = local::AttachRequest {
+        actor_id: format!("latency-bench-{pane_id}-{mode:?}"),
+        user_id: "latency-bench".to_owned(),
+        display_name: "latency bench".to_owned(),
+        mode,
+        focused_pane_id: Some(pane_id.to_owned()),
+        known_surfaces: Vec::new(),
+    };
+    local::write_attach_request(stream, &request)?;
+    let snapshot = local::attach_from_stream(stream)?;
+    Ok(snapshot.status.pane_id)
 }
 
 #[instrument(level = "trace", skip(stream, sequence, token), fields(pane_id = %pane_id, token = %token))]
@@ -91,12 +162,17 @@ fn measure_echo_latency(
     sequence: &mut local::ClientFrameSequence,
     pane_id: &str,
     token: &str,
+    input_kind: InputKind,
 ) -> Result<Duration, Box<dyn std::error::Error>> {
     let input = format!("{token}\n");
     let expected = format!("nmux-latency:{token}");
     let start = Instant::now();
-    local::send_key_input_with_sequence(stream, sequence, pane_id, &input)?;
+    let deadline = start + DEFAULT_TIMEOUT;
+    send_input(stream, sequence, pane_id, &input, input_kind)?;
     loop {
+        if Instant::now() >= deadline {
+            return Err(format!("timed out waiting for {expected}").into());
+        }
         match local::read_live_surface_update_from_stream(stream)? {
             local::LiveSurfaceRead::Update(update) => {
                 if update.text.contains(&expected)
@@ -125,19 +201,32 @@ fn start_daemon(
     nmux: &Path,
     socket_path: &Path,
     trace_path: Option<&Path>,
+    concurrent_cycles: Option<usize>,
 ) -> Result<Child, Box<dyn std::error::Error>> {
-    let command =
-        "stty -echo; while IFS= read -r line; do printf 'nmux-latency:%s\\n' \"$line\"; done";
+    let command = "while IFS= read -r line; do printf 'nmux-latency:%s\\n' \"$line\"; done";
+    let mut args = vec![
+        "daemon".to_owned(),
+        "--socket".to_owned(),
+        socket_path
+            .to_str()
+            .ok_or("socket path is not UTF-8")?
+            .to_owned(),
+        "--ready-json".to_owned(),
+        "--command".to_owned(),
+        command.to_owned(),
+    ];
+    if let Some(cycles) = concurrent_cycles {
+        args.extend([
+            "--live-clients".to_owned(),
+            "2".to_owned(),
+            "--live-cycles".to_owned(),
+            cycles.to_string(),
+        ]);
+    } else {
+        args.push("--live-forever".to_owned());
+    }
     let mut child = Command::new(nmux)
-        .args([
-            "daemon",
-            "--socket",
-            socket_path.to_str().ok_or("socket path is not UTF-8")?,
-            "--ready-json",
-            "--live-forever",
-            "--command",
-            command,
-        ])
+        .args(args)
         .envs(trace_path.map(|path| ("NMUX_TRACE_FILE", path.as_os_str())))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -163,8 +252,76 @@ fn wait_for_ready(child: &mut Child) -> Result<(), Box<dyn std::error::Error>> {
     Err(format!("daemon did not report ready: {}", line.trim()).into())
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BenchCase {
+    name: &'static str,
+    pane_id: &'static str,
+    input_kind: InputKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum InputKind {
+    Key,
+    Raw,
+    Paste,
+}
+
+fn send_input(
+    stream: &mut UnixStream,
+    sequence: &mut local::ClientFrameSequence,
+    pane_id: &str,
+    input: &str,
+    kind: InputKind,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match kind {
+        InputKind::Key => {
+            local::send_key_input_with_sequence(stream, sequence, pane_id, input).map(|_| ())
+        }
+        InputKind::Raw => {
+            local::send_raw_input_with_sequence(stream, sequence, pane_id, input.as_bytes())
+                .map(|_| ())
+        }
+        InputKind::Paste => local::send_paste_input_with_sequence(stream, sequence, pane_id, input),
+    }
+}
+
 #[derive(Debug)]
-struct LatencyReport {
+struct LatencySuiteReport {
+    cases: Vec<LatencyCaseReport>,
+}
+
+impl LatencySuiteReport {
+    fn display(&self, trace_path: Option<&Path>) -> String {
+        let mut output = String::from("input-to-display latency suite");
+        for case in &self.cases {
+            output.push('\n');
+            output.push_str(&case.display());
+        }
+        if let Some(trace_path) = trace_path {
+            output.push_str(&format!("\ntrace={}", trace_path.display()));
+        }
+        output
+    }
+
+    fn to_json(&self, trace_path: Option<&Path>) -> String {
+        let cases = self
+            .cases
+            .iter()
+            .map(LatencyCaseReport::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"cases\":[{cases}],\"trace_path\":{}}}",
+            trace_path
+                .map(|path| nmux_cli::json::json_string(&path.display().to_string()))
+                .unwrap_or_else(|| "null".to_owned())
+        )
+    }
+}
+
+#[derive(Debug)]
+struct LatencyCaseReport {
+    name: &'static str,
     samples: Vec<Duration>,
     min: Duration,
     p50: Duration,
@@ -174,12 +331,13 @@ struct LatencyReport {
     mean: Duration,
 }
 
-impl LatencyReport {
-    fn from_samples(mut samples: Vec<Duration>) -> Self {
+impl LatencyCaseReport {
+    fn from_samples(name: &'static str, mut samples: Vec<Duration>) -> Self {
         samples.sort_unstable();
         let total_nanos: u128 = samples.iter().map(Duration::as_nanos).sum();
         let mean = Duration::from_nanos((total_nanos / samples.len() as u128) as u64);
         Self {
+            name,
             min: samples[0],
             p50: percentile(&samples, 50),
             p90: percentile(&samples, 90),
@@ -190,9 +348,10 @@ impl LatencyReport {
         }
     }
 
-    fn display(&self, trace_path: Option<&Path>) -> String {
-        let mut output = format!(
-            "input-to-display latency: n={} min={} mean={} p50={} p90={} p99={} max={}",
+    fn display(&self) -> String {
+        format!(
+            "{}: n={} min={} mean={} p50={} p90={} p99={} max={}",
+            self.name,
             self.samples.len(),
             format_duration(self.min),
             format_duration(self.mean),
@@ -200,26 +359,20 @@ impl LatencyReport {
             format_duration(self.p90),
             format_duration(self.p99),
             format_duration(self.max)
-        );
-        if let Some(trace_path) = trace_path {
-            output.push_str(&format!("\ntrace={}", trace_path.display()));
-        }
-        output
+        )
     }
 
-    fn to_json(&self, trace_path: Option<&Path>) -> String {
+    fn to_json(&self) -> String {
         format!(
-            "{{\"samples\":{},\"min_us\":{},\"mean_us\":{},\"p50_us\":{},\"p90_us\":{},\"p99_us\":{},\"max_us\":{},\"trace_path\":{}}}",
+            "{{\"name\":{},\"samples\":{},\"min_us\":{},\"mean_us\":{},\"p50_us\":{},\"p90_us\":{},\"p99_us\":{},\"max_us\":{}}}",
+            nmux_cli::json::json_string(self.name),
             self.samples.len(),
             self.min.as_micros(),
             self.mean.as_micros(),
             self.p50.as_micros(),
             self.p90.as_micros(),
             self.p99.as_micros(),
-            self.max.as_micros(),
-            trace_path
-                .map(|path| nmux_cli::json::json_string(&path.display().to_string()))
-                .unwrap_or_else(|| "null".to_owned())
+            self.max.as_micros()
         )
     }
 }
@@ -227,6 +380,19 @@ impl LatencyReport {
 fn percentile(samples: &[Duration], percentile: usize) -> Duration {
     let index = ((samples.len() - 1) * percentile).div_ceil(100);
     samples[index]
+}
+
+fn case_socket_path(base: &Path, case_name: &str) -> PathBuf {
+    let stem = base
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("nmux");
+    let extension = base.extension().and_then(|extension| extension.to_str());
+    let filename = match extension {
+        Some(extension) => format!("{stem}-{case_name}.{extension}"),
+        None => format!("{stem}-{case_name}"),
+    };
+    base.with_file_name(filename)
 }
 
 fn format_duration(duration: Duration) -> String {
