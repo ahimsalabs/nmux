@@ -32,7 +32,7 @@ Use a broader target only when the change needs the extra evidence:
 | Normal default-engine or docs work | `nix develop . -c make check` and `nix develop . -c make local-smoke` |
 | Backend `libghostty-vt` correctness work | `nix develop . -c make check` and `nix develop . -c make check-ghostty-vt` |
 | Renderer-equivalence fixture work | `nix develop . -c make renderer-equivalence-smoke` |
-| Nix package/build work | `nix build .` and `nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).default` |
+| Nix package/build work | `nix build .`, `nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).default`, and `nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).nmux-package-smoke` |
 | Release-style local validation | `nix develop . -c make check-all` |
 | Self-contained promotion evidence bundle | `nix develop . -c make promotion-evidence-bundle` then `nix develop . -c make promotion-evidence-verify` |
 | Source-fetch evidence | `nix develop . -c make source-fetch-provenance-sample` or `nix develop . -c make source-fetch-offline-probe` |
@@ -80,6 +80,8 @@ nix develop . -c make packaging-archive-runtime-smoke
 - `checks.default` / `checks.nmux-tests`, which validate the schema and compile
   workspace Rust test targets with `cargo test --no-run`;
 - `checks.nmux-package`, an alias for the default package derivation;
+- `checks.nmux-package-smoke`, which runs packaged `nmux --version` and
+  `nmuxd --version` from `$out/bin`;
 - `checks.source-audit`, which verifies the filtered flake source excludes
   `target/`, VCS metadata, and Nix result links.
 

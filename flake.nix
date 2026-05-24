@@ -162,6 +162,21 @@
             printf 'flake_source_max_kib=%s\n' "$maxSourceKiB"
           } > "$out/source-audit.txt"
           '';
+
+      packageSmokeFor =
+        pkgs: package:
+        pkgs.runCommand "nmux-package-smoke" { } ''
+          test -x ${package}/bin/nmux
+          test -x ${package}/bin/nmuxd
+          ${package}/bin/nmux --version | grep -F 'nmux ${packageVersion}'
+          ${package}/bin/nmuxd --version | grep -F 'nmuxd ${packageVersion}'
+
+          mkdir -p "$out"
+          {
+            printf 'nmux_package_binaries=passed\n'
+            printf 'nmux_package_version=passed\n'
+          } > "$out/package-smoke.txt"
+        '';
     in
     {
       packages = forEachSystem (
@@ -205,6 +220,7 @@
           default = nmux-tests;
           nmux-tests = defaultTestsFor pkgs;
           nmux-package = self.packages.${system}.default;
+          nmux-package-smoke = packageSmokeFor pkgs self.packages.${system}.default;
           source-audit = sourceAuditFor pkgs;
         }
       );
