@@ -256,6 +256,10 @@ fn live_redraw_split_daemon_renders_pane_layout() {
         "split redraw should render the active split pane surface:\n{stdout}"
     );
     assert!(
+        stdout.contains("split-env:pane-1"),
+        "split redraw should render the inactive split pane surface:\n{stdout}"
+    );
+    assert!(
         stdout.contains(" | "),
         "split redraw should render vertical pane separator:\n{stdout}"
     );

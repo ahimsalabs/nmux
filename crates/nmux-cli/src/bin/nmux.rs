@@ -589,18 +589,26 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     let decode_start = Instant::now();
                     speculative_echo.reconcile_update(&update);
                     let previous_metadata = current_surface_metadata.clone();
-                    current_surface_metadata = local::TerminalMetadataSummary {
+                    let update_metadata = local::TerminalMetadataSummary {
                         title: update.title.clone(),
                         working_directory: update.working_directory.clone(),
                     };
-                    current_modes = update.modes;
-                    if let Some(mouse_modes) = host_mouse_modes.as_mut() {
-                        mouse_modes.sync(current_modes)?;
-                    }
-                    current_surface_text =
+                    let update_surface_text =
                         client_state.render_surface_update_styled(&update, use_styled)?;
                     current_pane_surfaces
-                        .insert(update.pane_id.clone(), current_surface_text.clone());
+                        .insert(update.pane_id.clone(), update_surface_text.clone());
+                    if update.pane_id == current_workspace.pane_id {
+                        current_surface_metadata = update_metadata.clone();
+                        current_modes = update.modes;
+                        if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+                            mouse_modes.sync(current_modes)?;
+                        }
+                        current_surface_text = update_surface_text.clone();
+                    } else if let Some(active_text) =
+                        current_pane_surfaces.get(&current_workspace.pane_id)
+                    {
+                        current_surface_text = active_text.clone();
+                    }
                     if let Some(ref mut rs) = redraw_state {
                         rs.record_decode_time(decode_start.elapsed());
                     }
@@ -609,8 +617,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             "{}",
                             format_live_surface_update_json(
                                 &current_workspace,
-                                &current_surface_metadata,
-                                &current_surface_text,
+                                &update_metadata,
+                                &update_surface_text,
                                 &update,
                             )
                         );

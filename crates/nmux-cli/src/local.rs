@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -305,6 +306,7 @@ fn serve_live_attached_client(
         write_active_pane_not_found_error(stream, session, &mut seq)?;
         return Ok(());
     };
+    let leaf_pane_ids = session.leaf_pane_ids();
     let workspace_frame = session.workspace_tree_frame("local-client", seq);
     wire::write_default_frame(stream, &workspace_frame)?;
     seq += 1;
@@ -329,7 +331,10 @@ fn serve_live_attached_client(
             seq += 1;
         }
     }
-    let mut known_surface_version = session.surface_version(&pane_id).unwrap_or_default();
+    let mut known_surface_versions = known_surface_versions_from_request(&request);
+    if let Some(current) = session.surface_version(&pane_id) {
+        known_surface_versions.insert(pane_id.clone(), current);
+    }
 
     let mut completed_cycles = 0;
     while completed_cycles < cycles {
@@ -514,41 +519,35 @@ fn serve_live_attached_client(
             }
         }
 
-        let output_pane_id = input_pane_id.as_deref().unwrap_or(&pane_id);
         let quiet_timeout = if input_pane_id.is_some() {
             LIVE_POST_INPUT_POLL_TIMEOUT
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
         let output_result = if host.notify_fd().is_some() {
-            poll_pane_output_with_host_until_poll_quiet(
+            poll_panes_output_with_host_until_poll_quiet(
                 session,
                 engines,
                 host,
-                output_pane_id,
+                &leaf_pane_ids,
                 quiet_timeout,
             )
         } else {
-            poll_pane_output_with_host_until_quiet(session, engines, host, output_pane_id)
+            poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
         };
         if let Err(err) = output_result {
-            write_host_output_error(stream, session, &mut seq, output_pane_id, err)?;
+            let error_pane_id = host_error_pane_id(&err).to_owned();
+            write_host_output_error(stream, session, &mut seq, &error_pane_id, err)?;
             return Ok(());
         }
 
-        let current = session.surface_version(&pane_id).unwrap_or_default();
-        let patch_kind = session
-            .surface_patch_kind(&pane_id)
-            .unwrap_or(protocol::PatchKind::ReplaceRows);
-        if let Some(response) =
-            surface_response_for_known_version(current, known_surface_version, patch_kind)
-        {
-            if let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq) {
-                wire::write_default_frame(stream, &surface_frame)?;
-                seq += 1;
-            }
-            known_surface_version = current;
-        }
+        write_changed_surface_frames(
+            stream,
+            session,
+            &mut seq,
+            &leaf_pane_ids,
+            &mut known_surface_versions,
+        )?;
         if count_cycle {
             completed_cycles += 1;
         }
@@ -1039,6 +1038,45 @@ fn surface_response_frame(
     }
 }
 
+fn known_surface_versions_from_request(request: &AttachRequest) -> BTreeMap<String, u64> {
+    request
+        .known_surfaces
+        .iter()
+        .map(|known| (known.pane_id.clone(), known.version))
+        .collect()
+}
+
+fn write_changed_surface_frames(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    pane_ids: &[String],
+    known_versions: &mut BTreeMap<String, u64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for pane_id in pane_ids {
+        let Some(current) = session.surface_version(pane_id) else {
+            continue;
+        };
+        let response = match known_versions.get(pane_id).copied() {
+            Some(known) => {
+                let patch_kind = session
+                    .surface_patch_kind(pane_id)
+                    .unwrap_or(protocol::PatchKind::ReplaceRows);
+                surface_response_for_known_version(current, known, patch_kind)
+            }
+            None => Some(SurfaceResponse::Snapshot),
+        };
+        if let Some(response) = response {
+            if let Some(surface_frame) = surface_response_frame(session, pane_id, response, *seq) {
+                wire::write_default_frame(stream, &surface_frame)?;
+                *seq += 1;
+            }
+        }
+        known_versions.insert(pane_id.clone(), current);
+    }
+    Ok(())
+}
+
 pub fn poll_pane_output(
     session: &mut Session,
     output: &mut dyn ProcessOutput,
@@ -1084,18 +1122,23 @@ pub fn poll_pane_output_with_host_and_engines(
     Ok(changed)
 }
 
-fn poll_pane_output_with_host_until_quiet(
+fn poll_panes_output_with_host_until_quiet(
     session: &mut Session,
     engines: &mut PaneTerminalEngines,
     host: &mut dyn ProcessHostOutput,
-    pane_id: &str,
+    pane_ids: &[String],
 ) -> Result<bool, HostError> {
     let deadline = Instant::now() + Duration::from_millis(120);
     let mut quiet_since = None;
     let mut changed = false;
 
     loop {
-        if poll_pane_output_with_host_and_engines(session, engines, host, pane_id)? {
+        let mut cycle_changed = false;
+        for pane_id in pane_ids {
+            cycle_changed |=
+                poll_pane_output_with_host_and_engines(session, engines, host, pane_id)?;
+        }
+        if cycle_changed {
             changed = true;
             quiet_since = None;
         } else if changed {
@@ -1114,15 +1157,15 @@ fn poll_pane_output_with_host_until_quiet(
     }
 }
 
-fn poll_pane_output_with_host_until_poll_quiet(
+fn poll_panes_output_with_host_until_poll_quiet(
     session: &mut Session,
     engines: &mut PaneTerminalEngines,
     host: &mut dyn ProcessHostOutput,
-    pane_id: &str,
+    pane_ids: &[String],
     quiet_timeout: Duration,
 ) -> Result<bool, HostError> {
     let Some(notify_fd) = host.notify_fd() else {
-        return poll_pane_output_with_host_until_quiet(session, engines, host, pane_id);
+        return poll_panes_output_with_host_until_quiet(session, engines, host, pane_ids);
     };
     let deadline = Instant::now() + Duration::from_millis(120);
     let mut quiet_since = None;
@@ -1130,13 +1173,19 @@ fn poll_pane_output_with_host_until_poll_quiet(
 
     loop {
         if let Err(error) = drain_notify_fd(notify_fd) {
+            let pane_id = pane_ids.first().map(String::as_str).unwrap_or("unknown");
             return Err(HostError::Io {
                 pane_id: pane_id.to_owned(),
                 operation: "drain_notify_fd".to_owned(),
                 message: error.to_string(),
             });
         }
-        if poll_pane_output_with_host_and_engines(session, engines, host, pane_id)? {
+        let mut cycle_changed = false;
+        for pane_id in pane_ids {
+            cycle_changed |=
+                poll_pane_output_with_host_and_engines(session, engines, host, pane_id)?;
+        }
+        if cycle_changed {
             changed = true;
             quiet_since = None;
         } else if changed {
@@ -1160,12 +1209,23 @@ fn poll_pane_output_with_host_until_poll_quiet(
                 .min(LIVE_IDLE_POLL_TIMEOUT)
         };
         if let Err(error) = poll_notify_fd(notify_fd, timeout) {
+            let pane_id = pane_ids.first().map(String::as_str).unwrap_or("unknown");
             return Err(HostError::Io {
                 pane_id: pane_id.to_owned(),
                 operation: "poll_notify_fd".to_owned(),
                 message: error.to_string(),
             });
         }
+    }
+}
+
+fn host_error_pane_id(error: &HostError) -> &str {
+    match error {
+        HostError::UnsupportedHostKind { host_id, .. } => host_id,
+        HostError::UnsupportedOperation { pane_id, .. }
+        | HostError::AlreadyRunning { pane_id }
+        | HostError::NotRunning { pane_id }
+        | HostError::Io { pane_id, .. } => pane_id,
     }
 }
 
