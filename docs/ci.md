@@ -30,6 +30,18 @@ run ID or URL after pushing and let the run complete asynchronously unless the
 task specifically requires CI completion as evidence. Only promotion evidence
 runs need the full transcription and artifact-verification treatment below.
 
+## Manual Native VT Check
+
+The same workflow exposes a direct manual `workflow_dispatch` job for the
+opt-in native VT correctness gate:
+
+```sh
+nix develop . -c make check-ghostty-vt
+```
+
+This job is intentionally manual and does not make `libghostty-vt` a regular
+or required CI gate.
+
 ## Manual Promotion Evidence
 
 The same workflow exposes a manual `workflow_dispatch` job for promotion

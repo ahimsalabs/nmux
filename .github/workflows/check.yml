@@ -40,6 +40,23 @@ jobs:
       - name: Local smoke
         run: nix develop . -c make local-smoke
 
+  native-vt-opt-in:
+    name: native VT opt-in
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Toolchain info
+        run: nix develop . -c make toolchain-info
+      - name: Check ghostty VT
+        run: nix develop . -c make check-ghostty-vt
+
   promotion-evidence-bundle:
     name: promotion evidence bundle
     if: github.event_name == 'workflow_dispatch'
