@@ -6777,7 +6777,7 @@ fn live_redraw_tty_uses_alternate_screen_and_logical_lines() {
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
-            "--live-cycles",
+            "--live-clients",
             "1",
             "--command",
             "printf 'ready\n'; sleep 0.05; printf a; sleep 0.01; printf b; sleep 0.01; printf c; printf '\n'; sleep 1",
