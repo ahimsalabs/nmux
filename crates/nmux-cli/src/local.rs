@@ -8602,6 +8602,98 @@ mod tests {
     }
 
     #[test]
+    fn styled_surface_rendering_uses_structured_runs_without_mutating_plain_text() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![SurfaceRowUpdate {
+                runs: vec![
+                    styled_run("red", 1, vec![1, 1, 1]),
+                    CellRunSummary::plain(" plain "),
+                    styled_run("bold", 2, vec![1, 1, 1, 1]),
+                ],
+                ..surface_row(0, "red plain bold")
+            }],
+        );
+        snapshot.styles = vec![
+            StyleSummary {
+                fg_rgba: 0,
+                bg_rgba: 0,
+                underline_rgba: 0,
+                flags: 0,
+            },
+            StyleSummary {
+                fg_rgba: 0xff0000ff,
+                bg_rgba: 0,
+                underline_rgba: 0,
+                flags: 0,
+            },
+            StyleSummary {
+                fg_rgba: 0,
+                bg_rgba: 0x001122ff,
+                underline_rgba: 0,
+                flags: 1 << 0,
+            },
+        ];
+        let surface = ClientPaneSurface::from_snapshot(&snapshot).expect("styled surface");
+
+        assert!(surface.has_styled_runs());
+        assert_eq!(surface.render_text(), "red plain bold");
+        assert_eq!(
+            surface.render_styled_text(),
+            "\x1b[38;2;255;0;0mred\x1b[0m plain \x1b[1;48;2;0;17;34mbold\x1b[0m"
+        );
+        assert_eq!(surface.render_text(), "red plain bold");
+    }
+
+    #[test]
+    fn client_attach_state_can_render_cached_surface_with_or_without_styles() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![SurfaceRowUpdate {
+                runs: vec![
+                    CellRunSummary::plain("plain "),
+                    styled_run("italic", 1, vec![1, 1, 1, 1, 1, 1]),
+                ],
+                ..surface_row(0, "plain italic")
+            }],
+        );
+        snapshot.styles = vec![
+            StyleSummary {
+                fg_rgba: 0,
+                bg_rgba: 0,
+                underline_rgba: 0,
+                flags: 0,
+            },
+            StyleSummary {
+                fg_rgba: 0,
+                bg_rgba: 0,
+                underline_rgba: 0,
+                flags: 1 << 1,
+            },
+        ];
+        let mut state = ClientAttachState::default();
+        assert_eq!(
+            state
+                .render_surface_update_styled(&snapshot, true)
+                .expect("render styled snapshot"),
+            "plain \x1b[3mitalic\x1b[0m"
+        );
+
+        assert_eq!(
+            state.cached_surface_text_styled("pane-1", false).as_deref(),
+            Some("plain italic")
+        );
+        assert_eq!(
+            state.cached_surface_text_styled("pane-1", true).as_deref(),
+            Some("plain \x1b[3mitalic\x1b[0m")
+        );
+    }
+
+    #[test]
     fn terminal_metadata_summary_formats_visible_values() {
         let metadata = TerminalMetadataSummary {
             title: "pane\u{1b} title".to_owned(),
