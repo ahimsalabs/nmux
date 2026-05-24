@@ -92,6 +92,14 @@ jobs:
         if: matrix.cross
         run: pip3 install ziglang && cargo install cargo-zigbuild
 
+      - name: Set build metadata
+        run: |
+          {
+            echo "NMUX_BUILD_CHANNEL=nightly"
+            echo "NMUX_BUILD_COMMIT=$GITHUB_SHA"
+            echo "NMUX_BUILD_DATE=$(date -u +%Y-%m-%d)"
+          } >> "$GITHUB_ENV"
+
       - name: Build (native)
         if: "!matrix.cross"
         run: cargo build --release -p nmux-cli --bin nmux

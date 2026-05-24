@@ -19,6 +19,7 @@ use nmux_core::terminal::{
 };
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 
+pub use crate::build_info::BuildInfo;
 pub use crate::json::{json_string, socket_path_json, version_json};
 pub use crate::socket::{
     SocketIdentity, SocketPathSource, accept_authenticated_tcp_client, bind_listener,

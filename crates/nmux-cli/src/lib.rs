@@ -1,3 +1,4 @@
+pub mod build_info;
 pub mod daemon;
 pub mod json;
 pub mod local;

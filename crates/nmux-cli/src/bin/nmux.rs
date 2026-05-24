@@ -18,7 +18,6 @@ use nmux_proto::protocol;
 const STDIN_BYTES_DETACH: u8 = 0x1d;
 const REDRAW_TERMINAL_ENTER: &str = "\x1b[?1049h\x1b[?25l";
 const REDRAW_TERMINAL_EXIT: &str = "\x1b[?25h\x1b[?1049l";
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
 const SUPPORTED_KEY_NAMES: &[&str] = &[
     "numpad-enter",
@@ -125,10 +124,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.version || args.version_json {
+        let build = local::BuildInfo::current();
         if args.version_json {
-            println!("{}", local::version_json("nmux", VERSION));
+            println!("{}", local::version_json("nmux", build));
         } else {
-            println!("nmux {VERSION}");
+            println!("{}", build.version_line("nmux"));
         }
         return Ok(());
     }
@@ -335,11 +335,12 @@ fn run_builtin_subcommand(
             Some(daemon::run_from_iter(argv))
         }
         "version" => {
+            let build = local::BuildInfo::current();
             if raw_args.len() == 1 {
-                println!("nmux {VERSION}");
+                println!("{}", build.version_line("nmux"));
                 Some(Ok(()))
             } else if raw_args.len() == 2 && raw_args[1].to_str() == Some("--json") {
-                println!("{}", local::version_json("nmux", VERSION));
+                println!("{}", local::version_json("nmux", build));
                 Some(Ok(()))
             } else {
                 Some(Err("usage: nmux version [--json]".into()))

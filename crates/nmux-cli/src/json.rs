@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::build_info::BuildInfo;
 use crate::socket::SocketPathSource;
 
 pub fn socket_path_json(path: &Path, source: SocketPathSource) -> String {
@@ -10,11 +11,14 @@ pub fn socket_path_json(path: &Path, source: SocketPathSource) -> String {
     )
 }
 
-pub fn version_json(binary: &str, version: &str) -> String {
+pub fn version_json(binary: &str, build: BuildInfo) -> String {
     format!(
-        "{{\"binary\":{},\"version\":{}}}",
+        "{{\"binary\":{},\"version\":{},\"channel\":{},\"commit\":{},\"build_date\":{}}}",
         json_string(binary),
-        json_string(version)
+        json_string(build.version),
+        json_string(build.channel),
+        json_string(build.commit),
+        json_string(build.build_date)
     )
 }
 
@@ -54,9 +58,16 @@ mod tests {
 
     #[test]
     fn version_json_escapes_values() {
+        let build = BuildInfo {
+            version: "1.2.3\n",
+            channel: "nightly\"",
+            commit: "abc\\def",
+            build_date: "2026-05-24\t",
+        };
+
         assert_eq!(
-            version_json("nmux\"cli", "1.2.3\n"),
-            "{\"binary\":\"nmux\\\"cli\",\"version\":\"1.2.3\\n\"}"
+            version_json("nmux\"cli", build),
+            "{\"binary\":\"nmux\\\"cli\",\"version\":\"1.2.3\\n\",\"channel\":\"nightly\\\"\",\"commit\":\"abc\\\\def\",\"build_date\":\"2026-05-24\\t\"}"
         );
     }
 }

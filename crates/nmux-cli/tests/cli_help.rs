@@ -11,6 +11,32 @@ fn daemon_command() -> Command {
     command
 }
 
+fn assert_version_line(stdout: &[u8]) {
+    let stdout = String::from_utf8_lossy(stdout);
+    let line = stdout.trim();
+    assert!(
+        line.starts_with(concat!("nmux ", env!("CARGO_PKG_VERSION"), " (")),
+        "version line should include package version and build suffix, got: {line}"
+    );
+    assert!(
+        line.ends_with(')'),
+        "version line should end with build suffix, got: {line}"
+    );
+}
+
+fn assert_version_json(stdout: &[u8]) {
+    let stdout = String::from_utf8_lossy(stdout);
+    let json = stdout.trim();
+    assert!(json.contains("\"binary\":\"nmux\""), "json: {json}");
+    assert!(
+        json.contains(&format!("\"version\":\"{}\"", env!("CARGO_PKG_VERSION"))),
+        "json: {json}"
+    );
+    assert!(json.contains("\"channel\":\""), "json: {json}");
+    assert!(json.contains("\"commit\":\""), "json: {json}");
+    assert!(json.contains("\"build_date\":\""), "json: {json}");
+}
+
 #[test]
 fn nmux_help_lists_live_client_flags() {
     let output = Command::new(env!("CARGO_BIN_EXE_nmux"))
@@ -175,10 +201,7 @@ fn nmux_daemon_version_alias_has_no_socket_side_effects() {
         "nmux daemon --version failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        concat!("nmux ", env!("CARGO_PKG_VERSION"))
-    );
+    assert_version_line(&output.stdout);
     assert!(
         !socket_path.exists(),
         "nmux daemon --version should not bind a socket path"
@@ -197,10 +220,7 @@ fn nmux_version_subcommand_reports_client_version() {
         "nmux version failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        concat!("nmux ", env!("CARGO_PKG_VERSION"))
-    );
+    assert_version_line(&output.stdout);
 
     let json_output = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args(["version", "--json"])
@@ -211,13 +231,7 @@ fn nmux_version_subcommand_reports_client_version() {
         "nmux version --json failed: {}",
         String::from_utf8_lossy(&json_output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&json_output.stdout).trim(),
-        format!(
-            "{{\"binary\":\"nmux\",\"version\":\"{}\"}}",
-            env!("CARGO_PKG_VERSION")
-        )
-    );
+    assert_version_json(&json_output.stdout);
 }
 
 #[test]
@@ -232,10 +246,7 @@ fn version_flags_report_binary_versions_without_side_effects() {
         "nmux --version failed: {}",
         String::from_utf8_lossy(&client_output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&client_output.stdout).trim(),
-        concat!("nmux ", env!("CARGO_PKG_VERSION"))
-    );
+    assert_version_line(&client_output.stdout);
 
     let daemon_socket_path = test_socket_path();
     let daemon_output = daemon_command()
@@ -252,10 +263,7 @@ fn version_flags_report_binary_versions_without_side_effects() {
         "nmux daemon --version failed: {}",
         String::from_utf8_lossy(&daemon_output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&daemon_output.stdout).trim(),
-        concat!("nmux ", env!("CARGO_PKG_VERSION"))
-    );
+    assert_version_line(&daemon_output.stdout);
     assert!(
         !daemon_socket_path.exists(),
         "nmux daemon --version should not bind a socket path"
@@ -274,13 +282,7 @@ fn version_json_flags_report_binary_versions_without_side_effects() {
         "nmux --version-json failed: {}",
         String::from_utf8_lossy(&client_output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&client_output.stdout).trim(),
-        format!(
-            "{{\"binary\":\"nmux\",\"version\":\"{}\"}}",
-            env!("CARGO_PKG_VERSION")
-        )
-    );
+    assert_version_json(&client_output.stdout);
 
     let daemon_socket_path = test_socket_path();
     let daemon_output = daemon_command()
@@ -297,13 +299,7 @@ fn version_json_flags_report_binary_versions_without_side_effects() {
         "nmux daemon --version-json failed: {}",
         String::from_utf8_lossy(&daemon_output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&daemon_output.stdout).trim(),
-        format!(
-            "{{\"binary\":\"nmux\",\"version\":\"{}\"}}",
-            env!("CARGO_PKG_VERSION")
-        )
-    );
+    assert_version_json(&daemon_output.stdout);
     assert!(
         !daemon_socket_path.exists(),
         "nmux daemon --version-json should not bind a socket path"
@@ -670,10 +666,7 @@ fn no_bind_daemon_flags_skip_daemon_mode_validation() {
         "nmux daemon --version should exit before daemon-mode validation: {}",
         String::from_utf8_lossy(&version_output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&version_output.stdout).trim(),
-        concat!("nmux ", env!("CARGO_PKG_VERSION"))
-    );
+    assert_version_line(&version_output.stdout);
     assert!(
         !version_socket_path.exists(),
         "nmux daemon --version should not bind a socket path"

@@ -161,6 +161,10 @@ nix develop . -c cargo run --bin nmux -- daemon --version-json
 nix develop . -c cargo run --bin nmux -- version --json
 ```
 
+Plain version output keeps the Cargo package version and adds a concise build
+suffix. JSON version output also includes `channel`, `commit`, and
+`build_date` fields for release and nightly provenance.
+
 Start a one-shot daemon with the default local shell:
 
 ```sh

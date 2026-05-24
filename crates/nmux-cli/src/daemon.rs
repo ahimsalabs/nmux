@@ -12,7 +12,6 @@ use nmux_core::session::Session;
 use nmux_core::terminal::{PaneTerminalEngines, TerminalEngineKind};
 use nmux_proto::protocol;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RESIZE_POLICY_NAMES: &[&str] = &["fixed", "leader", "active-client", "manual"];
 const SPLIT_AXIS_NAMES: &[&str] = &["horizontal", "vertical"];
 const HOST_KIND_NAMES: &[&str] = &["local", "sandbox", "container"];
@@ -30,10 +29,11 @@ where
     }
 
     if args.version || args.version_json {
+        let build = local::BuildInfo::current();
         if args.version_json {
-            println!("{}", local::version_json("nmux", VERSION));
+            println!("{}", local::version_json("nmux", build));
         } else {
-            println!("nmux {VERSION}");
+            println!("{}", build.version_line("nmux"));
         }
         return Ok(());
     }

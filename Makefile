@@ -181,8 +181,14 @@ local-smoke: check-toolchain
 	require_output "$$client6_out" 'managed-json-ready' 'managed start JSON command output'; \
 	require_output "$$info_nmux_version_json" '"binary":"nmux"' 'nmux version-json binary'; \
 	require_output "$$info_nmux_version_json" '"version":"' 'nmux version-json version'; \
+	require_output "$$info_nmux_version_json" '"channel":"' 'nmux version-json channel'; \
+	require_output "$$info_nmux_version_json" '"commit":"' 'nmux version-json commit'; \
+	require_output "$$info_nmux_version_json" '"build_date":"' 'nmux version-json build date'; \
 	require_output "$$info_daemon_version_json" '"binary":"nmux"' 'daemon version-json binary'; \
 	require_output "$$info_daemon_version_json" '"version":"' 'daemon version-json version'; \
+	require_output "$$info_daemon_version_json" '"channel":"' 'daemon version-json channel'; \
+	require_output "$$info_daemon_version_json" '"commit":"' 'daemon version-json commit'; \
+	require_output "$$info_daemon_version_json" '"build_date":"' 'daemon version-json build date'; \
 	require_output "$$info_nmux_socket_json" "\"NMUX_SOCKET\":\"$$socket\"" 'nmux print-socket-json socket path'; \
 	require_output "$$info_nmux_socket_json" '"source":"--socket"' 'nmux print-socket-json source'; \
 	require_output "$$info_daemon_socket_json" "\"NMUX_SOCKET\":\"$$socket\"" 'daemon print-socket-json socket path'; \
