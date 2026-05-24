@@ -256,6 +256,7 @@ name = "nmux-core"
 version = "0.1.0"
 dependencies = [
  "flatbuffers",
+ "libc",
  "libghostty-vt",
  "nmux-proto",
  "portable-pty",

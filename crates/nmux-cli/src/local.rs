@@ -24,6 +24,9 @@ use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 
 const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
 const INPUT_MODIFIER_MASK: u32 = 0x0f;
+const LIVE_IDLE_POLL_TIMEOUT: Duration = Duration::from_millis(20);
+const LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT: Duration = Duration::from_millis(20);
+const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(3);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SocketIdentity {
@@ -523,169 +526,209 @@ fn serve_live_attached_client(
     }
     let mut known_surface_version = session.surface_version(&pane_id).unwrap_or_default();
 
-    for _ in 0..cycles {
-        let input = loop {
-            match read_optional_live_client_frame_from_stream(stream)? {
-                LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
-                    if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
-                        write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
-                        if error == protocol::ErrorCode::StaleVersion {
-                            continue;
+    let mut completed_cycles = 0;
+    while completed_cycles < cycles {
+        let mut count_cycle = true;
+        let mut readiness =
+            poll_live_client_sources(stream, host.notify_fd(), LIVE_IDLE_POLL_TIMEOUT)?;
+        if let Some(notify_fd) = host.notify_fd()
+            && readiness.host_output
+        {
+            drain_notify_fd(notify_fd)?;
+        }
+        if readiness.host_output && !readiness.client_input {
+            let client_readiness =
+                poll_live_client_sources(stream, None, LIVE_POST_INPUT_POLL_TIMEOUT)?;
+            readiness.client_input = client_readiness.client_input;
+        }
+
+        let mut inputs = Vec::new();
+        if readiness.client_input {
+            loop {
+                match read_live_client_frame_from_stream(stream)? {
+                    LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
+                        count_cycle = false;
+                        if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
+                            write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
+                            if error == protocol::ErrorCode::StaleVersion {
+                                continue;
+                            }
+                            return Ok(());
                         }
-                        return Ok(());
-                    }
-                    let Some(chunk) = session.scrollback_chunk_frame_for_pane(
-                        "local-client",
-                        seq,
-                        &fetch.pane_id,
-                        fetch.start_line,
-                        fetch.line_count,
-                    ) else {
-                        write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
-                        return Ok(());
-                    };
-                    wire::write_default_frame(stream, &chunk)?;
-                    seq += 1;
-                }
-                LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
-                    if !Session::input_allowed(&actor) {
-                        write_protocol_error(
-                            stream,
-                            session,
-                            &mut seq,
-                            protocol::ErrorCode::PermissionDenied,
-                            "resize rejected: actor is read-only",
-                            Some(&resize.pane_id),
-                            0,
-                        )?;
-                        return Ok(());
-                    }
-                    if session.surface_version(&resize.pane_id).is_none() {
-                        write_pane_not_found_error(stream, session, &mut seq, &resize.pane_id)?;
-                        return Ok(());
-                    }
-                    let policy = session
-                        .pane_resize_policy(&resize.pane_id)
-                        .unwrap_or(protocol::ResizePolicy::Fixed);
-                    if !Session::resize_intent_allowed(policy, resize.reason) {
-                        continue;
-                    }
-                    if let Err(err) = host.resize_pane(&resize.pane_id, resize.cols, resize.rows) {
-                        write_protocol_error(
-                            stream,
-                            session,
-                            &mut seq,
-                            protocol::ErrorCode::Unknown,
-                            &format!("resize failed: {err}"),
-                            Some(&resize.pane_id),
-                            0,
-                        )?;
-                        return Ok(());
-                    }
-                    if session.commit_pane_resize_with_engine(
-                        &resize.pane_id,
-                        resize.cols,
-                        resize.rows,
-                        engines.engine_mut(&resize.pane_id),
-                    ) {
-                        let workspace_frame = session.workspace_tree_frame("local-client", seq);
-                        wire::write_default_frame(stream, &workspace_frame)?;
+                        let Some(chunk) = session.scrollback_chunk_frame_for_pane(
+                            "local-client",
+                            seq,
+                            &fetch.pane_id,
+                            fetch.start_line,
+                            fetch.line_count,
+                        ) else {
+                            write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
+                            return Ok(());
+                        };
+                        wire::write_default_frame(stream, &chunk)?;
                         seq += 1;
                     }
-                }
-                LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
-                    if Session::input_allowed(&actor) {
-                        break Some(input);
-                    } else {
-                        write_protocol_error(
-                            stream,
-                            session,
-                            &mut seq,
-                            protocol::ErrorCode::PermissionDenied,
-                            "input rejected: actor is read-only",
-                            Some(&input.pane_id),
-                            input.input_seq,
-                        )?;
-                        return Ok(());
-                    }
-                }
-                LiveClientRead::NoFrame => break None,
-                LiveClientRead::Closed => return Ok(()),
-            }
-        };
-        if Session::input_allowed(&actor) {
-            if let Some(input) = input {
-                if session.surface_version(&input.pane_id).is_none() {
-                    write_pane_not_found_error_with_input_seq(
-                        stream,
-                        session,
-                        &mut seq,
-                        &input.pane_id,
-                        input.input_seq,
-                    )?;
-                    return Ok(());
-                }
-                if let Some(rejection) = input.forwarding_rejection(session) {
-                    write_protocol_error(
-                        stream,
-                        session,
-                        &mut seq,
-                        protocol::ErrorCode::PermissionDenied,
-                        rejection.message(),
-                        Some(&input.pane_id),
-                        input.input_seq,
-                    )?;
-                    return Ok(());
-                } else {
-                    let bytes = match input.forwarded_bytes(session, engines) {
-                        Ok(bytes) => bytes,
-                        Err(err) => {
+                    LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
+                        count_cycle = false;
+                        if !Session::input_allowed(&actor) {
+                            write_protocol_error(
+                                stream,
+                                session,
+                                &mut seq,
+                                protocol::ErrorCode::PermissionDenied,
+                                "resize rejected: actor is read-only",
+                                Some(&resize.pane_id),
+                                0,
+                            )?;
+                            return Ok(());
+                        }
+                        if session.surface_version(&resize.pane_id).is_none() {
+                            write_pane_not_found_error(stream, session, &mut seq, &resize.pane_id)?;
+                            return Ok(());
+                        }
+                        let policy = session
+                            .pane_resize_policy(&resize.pane_id)
+                            .unwrap_or(protocol::ResizePolicy::Fixed);
+                        if !Session::resize_intent_allowed(policy, resize.reason) {
+                            continue;
+                        }
+                        if let Err(err) =
+                            host.resize_pane(&resize.pane_id, resize.cols, resize.rows)
+                        {
                             write_protocol_error(
                                 stream,
                                 session,
                                 &mut seq,
                                 protocol::ErrorCode::Unknown,
-                                &err.to_string(),
+                                &format!("resize failed: {err}"),
+                                Some(&resize.pane_id),
+                                0,
+                            )?;
+                            return Ok(());
+                        }
+                        if session.commit_pane_resize_with_engine(
+                            &resize.pane_id,
+                            resize.cols,
+                            resize.rows,
+                            engines.engine_mut(&resize.pane_id),
+                        ) {
+                            let workspace_frame = session.workspace_tree_frame("local-client", seq);
+                            wire::write_default_frame(stream, &workspace_frame)?;
+                            seq += 1;
+                        }
+                    }
+                    LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
+                        count_cycle = true;
+                        if Session::input_allowed(&actor) {
+                            inputs.push(input);
+                        } else {
+                            write_protocol_error(
+                                stream,
+                                session,
+                                &mut seq,
+                                protocol::ErrorCode::PermissionDenied,
+                                "input rejected: actor is read-only",
                                 Some(&input.pane_id),
                                 input.input_seq,
                             )?;
                             return Ok(());
                         }
-                    };
-                    if let Err(err) = host.write_input(&input.pane_id, &bytes) {
-                        write_protocol_error(
-                            stream,
-                            session,
-                            &mut seq,
-                            protocol::ErrorCode::Unknown,
-                            &format!("input forwarding failed: {err}"),
-                            Some(&input.pane_id),
-                            input.input_seq,
-                        )?;
-                        return Ok(());
                     }
+                    LiveClientRead::NoFrame => break,
+                    LiveClientRead::Closed => return Ok(()),
                 }
-                if let Err(err) =
-                    poll_pane_output_with_host_until_quiet(session, engines, host, &input.pane_id)
-                {
-                    write_host_output_error(stream, session, &mut seq, &input.pane_id, err)?;
-                    return Ok(());
-                }
-            } else {
-                if let Err(err) =
-                    poll_pane_output_with_host_until_quiet(session, engines, host, &pane_id)
-                {
-                    write_host_output_error(stream, session, &mut seq, &pane_id, err)?;
-                    return Ok(());
+
+                if !stream_readable_within(stream, Duration::ZERO)? {
+                    break;
                 }
             }
-        } else {
-            if let Err(err) =
-                poll_pane_output_with_host_until_quiet(session, engines, host, &pane_id)
-            {
-                write_host_output_error(stream, session, &mut seq, &pane_id, err)?;
+        }
+
+        let mut input_pane_id = None;
+        for input in inputs {
+            input_pane_id = Some(input.pane_id.clone());
+            if session.surface_version(&input.pane_id).is_none() {
+                write_pane_not_found_error_with_input_seq(
+                    stream,
+                    session,
+                    &mut seq,
+                    &input.pane_id,
+                    input.input_seq,
+                )?;
                 return Ok(());
             }
+            if let Some(rejection) = input.forwarding_rejection(session) {
+                write_protocol_error(
+                    stream,
+                    session,
+                    &mut seq,
+                    protocol::ErrorCode::PermissionDenied,
+                    rejection.message(),
+                    Some(&input.pane_id),
+                    input.input_seq,
+                )?;
+                return Ok(());
+            }
+            let bytes = match input.forwarded_bytes(session, engines) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    write_protocol_error(
+                        stream,
+                        session,
+                        &mut seq,
+                        protocol::ErrorCode::Unknown,
+                        &err.to_string(),
+                        Some(&input.pane_id),
+                        input.input_seq,
+                    )?;
+                    return Ok(());
+                }
+            };
+            if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+                write_protocol_error(
+                    stream,
+                    session,
+                    &mut seq,
+                    protocol::ErrorCode::Unknown,
+                    &format!("input forwarding failed: {err}"),
+                    Some(&input.pane_id),
+                    input.input_seq,
+                )?;
+                return Ok(());
+            }
+        }
+
+        if input_pane_id.is_some()
+            && !readiness.host_output
+            && let Some(notify_fd) = host.notify_fd()
+        {
+            let readiness =
+                poll_live_client_sources(stream, Some(notify_fd), LIVE_POST_INPUT_POLL_TIMEOUT)?;
+            if readiness.host_output {
+                drain_notify_fd(notify_fd)?;
+            }
+        }
+
+        let output_pane_id = input_pane_id.as_deref().unwrap_or(&pane_id);
+        let quiet_timeout = if input_pane_id.is_some() {
+            LIVE_POST_INPUT_POLL_TIMEOUT
+        } else {
+            LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
+        };
+        let output_result = if host.notify_fd().is_some() {
+            poll_pane_output_with_host_until_poll_quiet(
+                session,
+                engines,
+                host,
+                output_pane_id,
+                quiet_timeout,
+            )
+        } else {
+            poll_pane_output_with_host_until_quiet(session, engines, host, output_pane_id)
+        };
+        if let Err(err) = output_result {
+            write_host_output_error(stream, session, &mut seq, output_pane_id, err)?;
+            return Ok(());
         }
 
         let current = session.surface_version(&pane_id).unwrap_or_default();
@@ -701,26 +744,18 @@ fn serve_live_attached_client(
             }
             known_surface_version = current;
         }
+        if count_cycle {
+            completed_cycles += 1;
+        }
     }
 
     Ok(())
 }
 
-fn read_optional_live_client_frame_from_stream(
+fn read_live_client_frame_from_stream(
     stream: &mut UnixStream,
 ) -> Result<LiveClientRead, Box<dyn std::error::Error>> {
-    let previous_timeout = match stream.read_timeout() {
-        Ok(timeout) => timeout,
-        Err(err) if socket_closed_error(&err) => return Ok(LiveClientRead::Closed),
-        Err(err) => return Err(err.into()),
-    };
-    if let Err(err) = stream.set_read_timeout(Some(Duration::from_millis(20))) {
-        if socket_closed_error(&err) {
-            return Ok(LiveClientRead::Closed);
-        }
-        return Err(err.into());
-    }
-    let read_result = match wire::read_default_frame(stream) {
+    match wire::read_default_frame(stream) {
         Ok(frame) => {
             let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
             match envelope.body_type() {
@@ -755,12 +790,92 @@ fn read_optional_live_client_frame_from_stream(
             Ok(LiveClientRead::Closed)
         }
         Err(err) => Err(err.into()),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LiveReadiness {
+    client_input: bool,
+    host_output: bool,
+}
+
+fn poll_live_client_sources(
+    stream: &UnixStream,
+    notify_fd: Option<std::os::fd::RawFd>,
+    timeout: Duration,
+) -> io::Result<LiveReadiness> {
+    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let mut fds = vec![libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    }];
+    if let Some(fd) = notify_fd {
+        fds.push(libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        });
+    }
+
+    loop {
+        let result = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
+        if result >= 0 {
+            break;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+
+    Ok(LiveReadiness {
+        client_input: fds
+            .first()
+            .is_some_and(|fd| fd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0),
+        host_output: fds
+            .get(1)
+            .is_some_and(|fd| fd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0),
+    })
+}
+
+fn drain_notify_fd(fd: std::os::fd::RawFd) -> io::Result<()> {
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let count = unsafe { libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
+        if count > 0 {
+            continue;
+        }
+        if count == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if matches!(
+            error.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+        ) {
+            return Ok(());
+        }
+        return Err(error);
+    }
+}
+
+fn poll_notify_fd(fd: std::os::fd::RawFd, timeout: Duration) -> io::Result<bool> {
+    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let mut pollfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
     };
-    match (read_result, stream.set_read_timeout(previous_timeout)) {
-        (Err(err), _) => Err(err),
-        (Ok(read), Ok(())) => Ok(read),
-        (Ok(read), Err(err)) if socket_closed_error(&err) => Ok(read),
-        (Ok(_), Err(err)) => Err(err.into()),
+    loop {
+        let result = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+        if result >= 0 {
+            return Ok(result > 0);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
     }
 }
 
@@ -1195,6 +1310,61 @@ fn poll_pane_output_with_host_until_quiet(
             return Ok(changed);
         }
         thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn poll_pane_output_with_host_until_poll_quiet(
+    session: &mut Session,
+    engines: &mut PaneTerminalEngines,
+    host: &mut dyn ProcessHostOutput,
+    pane_id: &str,
+    quiet_timeout: Duration,
+) -> Result<bool, HostError> {
+    let Some(notify_fd) = host.notify_fd() else {
+        return poll_pane_output_with_host_until_quiet(session, engines, host, pane_id);
+    };
+    let deadline = Instant::now() + Duration::from_millis(120);
+    let mut quiet_since = None;
+    let mut changed = false;
+
+    loop {
+        if let Err(error) = drain_notify_fd(notify_fd) {
+            return Err(HostError::Io {
+                pane_id: pane_id.to_owned(),
+                operation: "drain_notify_fd".to_owned(),
+                message: error.to_string(),
+            });
+        }
+        if poll_pane_output_with_host_and_engines(session, engines, host, pane_id)? {
+            changed = true;
+            quiet_since = None;
+        } else if changed {
+            let quiet_start = quiet_since.get_or_insert_with(Instant::now);
+            if quiet_start.elapsed() >= quiet_timeout {
+                return Ok(true);
+            }
+        } else if Instant::now() >= deadline {
+            return Ok(false);
+        }
+
+        if Instant::now() >= deadline {
+            return Ok(changed);
+        }
+
+        let timeout = if changed {
+            quiet_timeout
+        } else {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(LIVE_IDLE_POLL_TIMEOUT)
+        };
+        if let Err(error) = poll_notify_fd(notify_fd, timeout) {
+            return Err(HostError::Io {
+                pane_id: pane_id.to_owned(),
+                operation: "poll_notify_fd".to_owned(),
+                message: error.to_string(),
+            });
+        }
     }
 }
 

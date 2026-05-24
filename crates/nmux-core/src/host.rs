@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::io::{self, Read, Write};
+use std::os::fd::RawFd;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
@@ -184,6 +185,10 @@ pub trait ProcessHost {
 
 pub trait ProcessOutput {
     fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError>;
+
+    fn notify_fd(&self) -> Option<RawFd> {
+        None
+    }
 }
 
 #[derive(Debug, Default)]
@@ -212,6 +217,12 @@ struct LocalProcess {
 #[derive(Default)]
 pub struct LocalPtyHost {
     processes: HashMap<String, LocalPtyProcess>,
+    notify_pipe: Option<NotifyPipe>,
+}
+
+struct NotifyPipe {
+    read_fd: RawFd,
+    write_fd: RawFd,
 }
 
 struct LocalPtyProcess {
@@ -282,6 +293,15 @@ impl LocalPtyHost {
         }
     }
 
+    fn ensure_notify_pipe(&mut self, pane_id: &str) -> Result<&NotifyPipe, HostError> {
+        if self.notify_pipe.is_none() {
+            self.notify_pipe = Some(
+                NotifyPipe::new().map_err(|error| Self::io_error(pane_id, "notify_pipe", error))?,
+            );
+        }
+        Ok(self.notify_pipe.as_ref().expect("notify pipe initialized"))
+    }
+
     fn drain_pumped_output(process: &mut LocalPtyProcess, bytes: &mut [u8]) -> usize {
         while let Ok(chunk) = process.output.try_recv() {
             process.pending_output.extend(chunk);
@@ -298,10 +318,89 @@ impl LocalPtyHost {
     }
 }
 
+impl NotifyPipe {
+    fn new() -> io::Result<Self> {
+        let mut fds = [-1; 2];
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        for fd in fds {
+            if let Err(error) = set_fd_nonblocking(fd) {
+                unsafe {
+                    libc::close(fds[0]);
+                    libc::close(fds[1]);
+                }
+                return Err(error);
+            }
+        }
+        Ok(Self {
+            read_fd: fds[0],
+            write_fd: fds[1],
+        })
+    }
+
+    fn duplicate_writer(&self) -> io::Result<NotifyPipeWriter> {
+        let fd = unsafe { libc::dup(self.write_fd) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if let Err(error) = set_fd_nonblocking(fd) {
+            unsafe {
+                libc::close(fd);
+            }
+            return Err(error);
+        }
+        Ok(NotifyPipeWriter { fd })
+    }
+}
+
+impl Drop for NotifyPipe {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.read_fd);
+            libc::close(self.write_fd);
+        }
+    }
+}
+
+struct NotifyPipeWriter {
+    fd: RawFd,
+}
+
+impl NotifyPipeWriter {
+    fn notify(&self) {
+        let byte = [1_u8];
+        let _ = unsafe { libc::write(self.fd, byte.as_ptr().cast(), byte.len()) };
+    }
+}
+
+impl Drop for NotifyPipeWriter {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.fd);
+        }
+    }
+}
+
+fn set_fd_nonblocking(fd: RawFd) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 impl ProcessOutput for LocalPtyHost {
     fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
         let process = self.process_mut(pane_id)?;
         Ok(Self::drain_pumped_output(process, bytes))
+    }
+
+    fn notify_fd(&self) -> Option<RawFd> {
+        self.notify_pipe.as_ref().map(|pipe| pipe.read_fd)
     }
 }
 
@@ -354,6 +453,10 @@ impl ProcessHost for LocalPtyHost {
             .try_clone_reader()
             .map_err(|error| Self::io_error(pane_id, "try_clone_reader", error))?;
         let (output_sender, output) = mpsc::channel();
+        let notify_writer = self
+            .ensure_notify_pipe(pane_id)?
+            .duplicate_writer()
+            .map_err(|error| Self::io_error(pane_id, "notify_pipe", error))?;
         let pump = thread::spawn(move || {
             let mut buffer = [0_u8; 4096];
             loop {
@@ -363,6 +466,7 @@ impl ProcessHost for LocalPtyHost {
                         if output_sender.send(buffer[..count].to_vec()).is_err() {
                             break;
                         }
+                        notify_writer.notify();
                     }
                     Err(_) => break,
                 }
