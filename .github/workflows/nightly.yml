@@ -88,13 +88,16 @@ jobs:
         if: matrix.cross
         run: rustup target add ${{ matrix.target }}
 
-      - name: Install cargo-zigbuild
-        if: matrix.cross
+      - name: Install Zig
         run: |
           python3 -m pip install ziglang==0.15.2
           mkdir -p "$HOME/.local/bin"
           ln -sf "$(python3 -c 'import shutil; print(shutil.which("python-zig"))')" "$HOME/.local/bin/zig"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install cargo-zigbuild
+        if: matrix.cross
+        run: |
           cargo install cargo-zigbuild
 
       - name: Set build metadata
