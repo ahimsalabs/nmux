@@ -67,7 +67,10 @@ The initial integration corpus lives in `fixtures/renderer-equivalence/*.json`
 so each fixture's stimulus and canonical expected state can grow without
 burying fixture semantics in test code.
 Set `NMUX_RENDERER_EQUIVALENCE_ARTIFACT_DIR=target/renderer-equivalence` to
-write one captured JSON artifact per fixture.
+write one raw `nmux --json` artifact plus one deterministic
+`*.canonical.json` nmux-state projection per fixture. The canonical artifacts
+are the current expected-vs-actual comparison shape and are intended as the
+handoff point for a later oracle renderer comparison.
 
 This is nmux-side fixture evidence only. It is intentionally not wired into the
 normal default gate, and it does not satisfy the oracle renderer or pixel/state

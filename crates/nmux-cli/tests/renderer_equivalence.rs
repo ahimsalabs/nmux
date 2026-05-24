@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -67,16 +67,16 @@ fn run_fixture(fixture: RendererFixture) {
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 
     let stdout = String::from_utf8(client.stdout).expect("json stdout is utf-8");
-    write_artifact_if_requested(&fixture.name, &stdout);
-
     let decoded: Value = serde_json::from_str(&stdout).expect("decode nmux json");
     let workspace = materialize_workspace(&decoded);
+    let surface = materialize_surface(&decoded);
+    let scrollback = materialize_scrollback(&decoded);
+    write_artifacts_if_requested(&fixture.name, &stdout, &workspace, &surface, &scrollback);
+
     assert_eq!(workspace, fixture.expected_workspace);
 
-    let surface = materialize_surface(&decoded);
     assert_eq!(surface, fixture.expected_surface);
 
-    let scrollback = materialize_scrollback(&decoded);
     assert_eq!(scrollback, fixture.expected_scrollback);
     for needle in fixture.absent_substrings {
         assert_absent(&stdout, &needle);
@@ -406,14 +406,114 @@ fn wait_for_socket(path: &Path) {
     panic!("socket did not appear: {}", path.display());
 }
 
-fn write_artifact_if_requested(fixture_name: &str, json: &str) {
+fn write_artifacts_if_requested(
+    fixture_name: &str,
+    raw_json: &str,
+    workspace: &CanonicalWorkspace,
+    surface: &CanonicalSurface,
+    scrollback: &[CanonicalRow],
+) {
     let Some(dir) = std::env::var_os("NMUX_RENDERER_EQUIVALENCE_ARTIFACT_DIR") else {
         return;
     };
     let dir = workspace_path(PathBuf::from(dir));
     fs::create_dir_all(&dir).expect("create renderer-equivalence artifact dir");
-    fs::write(dir.join(format!("{fixture_name}.json")), json)
-        .expect("write renderer-equivalence artifact");
+    fs::write(dir.join(format!("{fixture_name}.json")), raw_json)
+        .expect("write raw renderer-equivalence artifact");
+    let canonical = json!({
+        "workspace": canonical_workspace_json(workspace),
+        "terminal": canonical_terminal_json(surface),
+        "surface": canonical_surface_json(surface),
+        "scrollback": canonical_rows_json(scrollback),
+    });
+    let canonical_json = serde_json::to_string_pretty(&canonical)
+        .expect("encode canonical renderer-equivalence artifact");
+    fs::write(
+        dir.join(format!("{fixture_name}.canonical.json")),
+        format!("{canonical_json}\n"),
+    )
+    .expect("write canonical renderer-equivalence artifact");
+}
+
+fn canonical_workspace_json(workspace: &CanonicalWorkspace) -> Value {
+    json!({
+        "session_id": workspace.session_id,
+        "tab_id": workspace.tab_id,
+        "pane_id": workspace.pane_id,
+        "cols": workspace.cols,
+        "rows": workspace.rows,
+        "resize_policy": workspace.resize_policy,
+    })
+}
+
+fn canonical_terminal_json(surface: &CanonicalSurface) -> Value {
+    json!({
+        "title": surface.title,
+        "working_directory": surface.working_directory,
+        "surface_kind": surface.surface_kind,
+        "cursor": {
+            "row": surface.cursor.row,
+            "col": surface.cursor.col,
+            "visible": surface.cursor.visible,
+            "shape": surface.cursor.shape,
+            "blinking": surface.cursor.blinking,
+        },
+        "modes": {
+            "bracketed_paste": surface.modes.bracketed_paste,
+            "mouse_tracking": surface.modes.mouse_tracking,
+            "focus_reporting": surface.modes.focus_reporting,
+            "application_keypad": surface.modes.application_keypad,
+            "application_cursor": surface.modes.application_cursor,
+            "origin": surface.modes.origin,
+            "wraparound": surface.modes.wraparound,
+            "mouse_tracking_mode": surface.modes.mouse_tracking_mode,
+            "mouse_format": surface.modes.mouse_format,
+        },
+    })
+}
+
+fn canonical_surface_json(surface: &CanonicalSurface) -> Value {
+    json!({
+        "styles": surface
+            .styles
+            .iter()
+            .map(canonical_style_json)
+            .collect::<Vec<_>>(),
+        "row_updates": canonical_rows_json(&surface.rows),
+    })
+}
+
+fn canonical_style_json(style: &CanonicalStyle) -> Value {
+    json!({
+        "fg_rgba": style.fg_rgba,
+        "bg_rgba": style.bg_rgba,
+        "underline_rgba": style.underline_rgba,
+        "flags": style.flags,
+    })
+}
+
+fn canonical_rows_json(rows: &[CanonicalRow]) -> Value {
+    Value::Array(rows.iter().map(canonical_row_json).collect())
+}
+
+fn canonical_row_json(row: &CanonicalRow) -> Value {
+    json!({
+        "text": row.text,
+        "semantic_prompt": row.semantic_prompt,
+        "dirty": row.dirty,
+        "kitty_virtual_placeholder": row.kitty_virtual_placeholder,
+        "runs": row.runs.iter().map(canonical_run_json).collect::<Vec<_>>(),
+    })
+}
+
+fn canonical_run_json(run: &CanonicalRun) -> Value {
+    json!({
+        "text": run.text,
+        "cell_widths": run.cell_widths,
+        "style_id": run.style_id,
+        "flags": run.flags,
+        "semantic_content": run.semantic_content,
+    })
 }
 
 fn workspace_path(path: PathBuf) -> PathBuf {
