@@ -36,3 +36,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0026: Native VT CI Promotion Criteria](0026-native-vt-ci-promotion-criteria.md) | Accepted |
 | [0027: Speculative Local Echo Boundary](0027-speculative-local-echo-boundary.md) | Proposed |
 | [0028: Runtime Control Commands](0028-runtime-control-commands.md) | Accepted |
+| [0029: Token-Authenticated TCP Transport](0029-token-authenticated-tcp-transport.md) | Accepted |

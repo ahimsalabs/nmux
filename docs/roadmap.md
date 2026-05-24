@@ -2,9 +2,9 @@
 
 ## Current target
 
-See [WORK.md](../WORK.md) for the active priority list. The next major features
-are multi-pane, multi-tab, simultaneous multi-client, scriptable CLI, and
-remote transport — in that order.
+See [WORK.md](../WORK.md) for the active priority list. The local multiplexer
+MVP is implemented: panes, tabs, concurrent clients, scriptable commands, and
+token-authenticated TCP transport all have runnable CLI coverage.
 
 ## Milestones
 
@@ -36,7 +36,8 @@ Sequential two-client attach with presence, actor IDs, read-only enforcement.
 ### M6: Process Host Boundary — done
 
 `ProcessHost` trait with local PTY host via `portable-pty`.
-Container/sandbox variants exist in type system but aren't functional.
+Container and sandbox host choices lower to explicit runtime process
+boundaries.
 
 ### M7: Ghostty Frontend Boundary — done
 
@@ -83,14 +84,16 @@ evidence tracked in [default-engine-promotion.md](default-engine-promotion.md).
 Renderer equivalence, frontend hydration, and protocol extensions are separate
 tracks.
 
+### M15: Usable Local Multiplexer MVP — done
+
+Local daemon/client workflows support pane splitting, tab creation/switching,
+concurrent attached clients, scriptable pane/tab commands, pane send/snapshot,
+record/replay, token-authenticated TCP attach, and container/sandbox host
+selection.
+
 ## Not yet started
 
-- Multi-pane (splitting, focus routing, multi-pane rendering)
-- Multi-tab (tab creation, switching, closing)
-- Simultaneous multi-client (concurrent broadcast, not sequential)
-- Scriptable CLI workspace management
-- Remote network transport (QUIC/TCP/SSH bootstrap)
-- Container/sandbox hosts (functional, not just type stubs)
 - Proxy daemon (aggregate multiple upstream nmuxd instances)
+- QUIC or SSH-bootstrap remote transport beyond the current token TCP listener
 - Web/mobile frontends
 - Permissions system beyond read-only/read-write
