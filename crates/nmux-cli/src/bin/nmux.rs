@@ -1442,7 +1442,8 @@ fn print_live_surface(
 ) {
     if redraw {
         let has_status_bar = redraw_state.is_some();
-        let text = redraw_text_with_context(workspace, metadata, surface_text, None, has_status_bar);
+        let text =
+            redraw_text_with_context(workspace, metadata, surface_text, None, has_status_bar);
         if let Some(state) = redraw_state {
             state.render_diff(workspace, &text);
         } else {
@@ -1597,11 +1598,7 @@ impl RedrawState {
 
     /// Render the full surface text differentially: only write rows that changed.
     /// Row 1 is always the status bar; content starts at row 2.
-    fn render_diff(
-        &mut self,
-        workspace: &local::WorkspaceSummary,
-        surface_text: &str,
-    ) {
+    fn render_diff(&mut self, workspace: &local::WorkspaceSummary, surface_text: &str) {
         print!("{}", self.render_diff_text(workspace, surface_text));
     }
 
@@ -1670,15 +1667,8 @@ impl RedrawState {
     }
 
     /// Full repaint for initial frame (no previous state to diff against).
-    fn render_initial(
-        &mut self,
-        workspace: &local::WorkspaceSummary,
-        surface_text: &str,
-    ) {
-        print!(
-            "{}",
-            self.render_initial_text(workspace, surface_text)
-        );
+    fn render_initial(&mut self, workspace: &local::WorkspaceSummary, surface_text: &str) {
+        print!("{}", self.render_initial_text(workspace, surface_text));
     }
 
     fn render_initial_text(

@@ -4544,8 +4544,9 @@ mod tests {
                 _output: &[u8],
             ) -> Option<TerminalUpdate> {
                 // Return rows + 1 lines (e.g., 25 for a 24-row pane).
-                let mut lines: Vec<String> =
-                    (0..input.rows as usize + 1).map(|i| format!("row-{i}")).collect();
+                let mut lines: Vec<String> = (0..input.rows as usize + 1)
+                    .map(|i| format!("row-{i}"))
+                    .collect();
                 // Pad with empties if input already had fewer.
                 while lines.len() < input.rows as usize + 1 {
                     lines.push(String::new());
