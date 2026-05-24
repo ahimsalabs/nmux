@@ -13,6 +13,7 @@ const PACKAGING_PROVENANCE_MANIFEST_DEFAULT: &str =
 const PACKAGING_LAYOUT_DEFAULT: &str = "target/packaging-libghostty-vt/package";
 const PACKAGING_ARCHIVE_DEFAULT: &str =
     "target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz";
+const PROMOTION_COLD_DEPS_DIR_DEFAULT: &str = "target/promotion-cold-deps";
 const PROMOTION_EVIDENCE_DIR_DEFAULT: &str = "target/promotion-evidence";
 const LIBGHOSTTY_VT_SOURCE: &str = r#"source = "git+https://github.com/uzaaft/libghostty-rs.git?rev=31d1f70004ff80727e36437cd540984f927333ce#31d1f70004ff80727e36437cd540984f927333ce""#;
 const RUNTIME_LIBRARY_STRATEGY: &str = "runtime_library_strategy=staged libghostty-vt native library artifacts for packaging evidence; nmux must not dynamically depend on libghostty-vt";
@@ -37,6 +38,7 @@ fn run() -> Result<()> {
         "packaging-archive-verify" => packaging_archive_verify(),
         "packaging-layout-verify" => packaging_layout_verify(),
         "packaging-provenance-manifest-verify" => packaging_provenance_manifest_verify(),
+        "promotion-cold-deps-verify" => promotion_cold_deps_verify(),
         "promotion-evidence-verify" => promotion_evidence_verify(),
         "static-link-verify" => static_link_verify(),
         "source-fetch-offline-probe-verify" => source_fetch_offline_probe_verify(),
@@ -46,7 +48,7 @@ fn run() -> Result<()> {
 }
 
 fn usage_error() -> Result<()> {
-    Err("usage: xtask <packaging-archive-verify|packaging-layout-verify|packaging-provenance-manifest-verify|promotion-evidence-verify|static-link-verify|source-fetch-offline-probe-verify|source-fetch-provenance-verify>".into())
+    Err("usage: xtask <packaging-archive-verify|packaging-layout-verify|packaging-provenance-manifest-verify|promotion-cold-deps-verify|promotion-evidence-verify|static-link-verify|source-fetch-offline-probe-verify|source-fetch-provenance-verify>".into())
 }
 
 fn static_link_verify() -> Result<()> {
@@ -700,6 +702,120 @@ fn packaging_archive_verify_at(archive: &Path, archive_sha_file: &Path) -> Resul
     )?;
     packaging_layout_verify_for_dir(&pkg_dir)?;
     println!("packaging_archive_verified={}", archive.display());
+    Ok(())
+}
+
+fn promotion_cold_deps_verify() -> Result<()> {
+    println!("verifying isolated Cargo dependency/source-fetch sample");
+    let report_dir = Path::new(PROMOTION_COLD_DEPS_DIR_DEFAULT);
+    let report = report_dir.join("REPORT.txt");
+    let report_text = read_required_text(&report, "cold-deps artifact")?;
+    let log_path = PathBuf::from(
+        field_value(&report_text, "log=")
+            .ok_or_else(|| format!("missing record in {}: log path", report.display()))?,
+    );
+    let log_text = read_required_text(&log_path, "cold-deps artifact")?;
+
+    require_exact(
+        &report_text,
+        "nmux isolated Cargo dependency/source-fetch sample",
+        "report title",
+        &report,
+    )?;
+    for (prefix, description) in [
+        ("started_at_utc=", "start timestamp"),
+        ("completed_at_utc=", "completion timestamp"),
+    ] {
+        require_line_where(
+            &report_text,
+            |line| line.strip_prefix(prefix).is_some_and(is_utc_timestamp),
+            description,
+            &report,
+        )?;
+    }
+    for (line, description) in [
+        (
+            "sample_scope=isolated repo-owned CARGO_HOME and CARGO_TARGET_DIR; Nix store, source checkout, and network state may still be warm",
+            "sample scope",
+        ),
+        ("GHOSTTY_SOURCE_DIR=unset", "Ghostty source env"),
+        ("GIT_CONFIG_GLOBAL=/dev/null", "Git config isolation"),
+        ("command=just check-all", "sample command"),
+        ("result=passed", "sample result"),
+        ("log=target/promotion-cold-deps/RUN.log", "run log path"),
+    ] {
+        require_exact(&report_text, line, description, &report)?;
+    }
+    for (prefix, description) in [
+        ("CARGO_HOME=", "isolated Cargo home"),
+        ("CARGO_TARGET_DIR=", "isolated target dir"),
+    ] {
+        require_line_where(
+            &report_text,
+            |line| {
+                line.strip_prefix(prefix).is_some_and(|value| {
+                    value.ends_with(if prefix == "CARGO_HOME=" {
+                        "/target/promotion-cold-deps/cargo-home"
+                    } else {
+                        "/target/promotion-cold-deps/target"
+                    })
+                })
+            },
+            description,
+            &report,
+        )?;
+    }
+    require_line_where(
+        &report_text,
+        |line| {
+            line.strip_prefix("elapsed_seconds=")
+                .is_some_and(is_decimal)
+        },
+        "elapsed seconds",
+        &report,
+    )?;
+
+    let log_real = require_time_p_value(&log_text, "real", &log_path)?;
+    let log_user = require_time_p_value(&log_text, "user", &log_path)?;
+    let log_sys = require_time_p_value(&log_text, "sys", &log_path)?;
+    for (line, description) in [
+        (
+            format!("check_all_real_seconds={log_real}"),
+            "real timing matches log",
+        ),
+        (
+            format!("check_all_user_seconds={log_user}"),
+            "user timing matches log",
+        ),
+        (
+            format!("check_all_sys_seconds={log_sys}"),
+            "sys timing matches log",
+        ),
+    ] {
+        require_exact(&report_text, &line, description, &report)?;
+    }
+    for (line, description) in [
+        (
+            "flatc --json --strict-json --no-warnings -o /tmp schema/nmux.fbs",
+            "schema check ran",
+        ),
+        (
+            "RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test --workspace",
+            "default Ghostty workspace tests ran",
+        ),
+        (
+            "cargo test -p nmux-core --no-default-features",
+            "no-default-features core tests ran",
+        ),
+        (
+            "cargo test -p nmux-cli --no-default-features",
+            "no-default-features cli tests ran",
+        ),
+    ] {
+        require_exact(&log_text, line, description, &log_path)?;
+    }
+
+    println!("promotion_cold_deps_verified={}", report.display());
     Ok(())
 }
 

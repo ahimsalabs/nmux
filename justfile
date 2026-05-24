@@ -145,7 +145,7 @@ promotion-cold-deps-sample: toolchain-info
     @scripts/promotion-cold-deps-sample.sh
 
 promotion-cold-deps-verify:
-    @scripts/promotion-cold-deps-verify.sh
+    cargo run -p xtask -- promotion-cold-deps-verify
 
 promotion-local-sample:
     #!/usr/bin/env bash
