@@ -21,16 +21,21 @@ fn run_fixture(fixture: RendererFixture) {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
-        .args([
-            "--socket",
-            socket_path.to_str().expect("socket path"),
-            "--one-shot",
-            "--terminal-engine",
-            "libghostty-vt",
-            "--command",
-            fixture.command.as_str(),
-        ])
+    let mut server_command = Command::new(env!("CARGO_BIN_EXE_nmuxd"));
+    server_command.args([
+        "--socket",
+        socket_path.to_str().expect("socket path"),
+        "--one-shot",
+        "--terminal-engine",
+        "libghostty-vt",
+    ]);
+    if let Some(size) = fixture.initial_size {
+        let cols = size.cols.to_string();
+        let rows = size.rows.to_string();
+        server_command.args(["--cols", cols.as_str(), "--rows", rows.as_str()]);
+    }
+    let mut server = server_command
+        .args(["--command", fixture.command.as_str()])
         .spawn()
         .expect("spawn nmuxd");
 
@@ -82,10 +87,17 @@ fn run_fixture(fixture: RendererFixture) {
 struct RendererFixture {
     name: String,
     command: String,
+    initial_size: Option<FixtureSize>,
     expected_workspace: CanonicalWorkspace,
     expected_surface: CanonicalSurface,
     expected_scrollback: Vec<CanonicalRow>,
     absent_substrings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct FixtureSize {
+    cols: u64,
+    rows: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -193,6 +205,7 @@ fn load_fixture_path(path: &Path) -> RendererFixture {
             .unwrap_or_else(|| panic!("fixture path has no utf-8 stem: {}", path.display()))
             .to_owned(),
         command: string_field(&decoded, "command"),
+        initial_size: decoded.get("initial_size").map(materialize_fixture_size),
         expected_workspace: materialize_workspace(expected),
         expected_surface: materialize_surface(expected),
         expected_scrollback: expected
@@ -214,6 +227,13 @@ fn load_fixture_path(path: &Path) -> RendererFixture {
                     .to_owned()
             })
             .collect(),
+    }
+}
+
+fn materialize_fixture_size(size: &Value) -> FixtureSize {
+    FixtureSize {
+        cols: numeric_field(size, "cols"),
+        rows: numeric_field(size, "rows"),
     }
 }
 

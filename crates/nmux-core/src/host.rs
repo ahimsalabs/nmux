@@ -51,6 +51,7 @@ pub struct CommandSpec {
     pub args: Vec<String>,
     pub working_dir: Option<String>,
     pub env: Vec<(String, String)>,
+    pub initial_size: Option<(u32, u32)>,
 }
 
 impl CommandSpec {
@@ -60,6 +61,7 @@ impl CommandSpec {
             args: Vec::new(),
             working_dir: None,
             env: Vec::new(),
+            initial_size: None,
         }
     }
 
@@ -96,6 +98,11 @@ impl CommandSpec {
             env.into_iter()
                 .map(|(key, value)| (key.into(), value.into())),
         );
+        self
+    }
+
+    pub fn with_initial_size(mut self, cols: u32, rows: u32) -> Self {
+        self.initial_size = Some((cols, rows));
         self
     }
 }
@@ -316,10 +323,11 @@ impl ProcessHost for LocalPtyHost {
         }
 
         let pty_system = native_pty_system();
+        let (cols, rows) = spec.command.initial_size.unwrap_or((80, 24));
         let pair = pty_system
             .openpty(PtySize {
-                rows: 24,
-                cols: 80,
+                rows: u16::try_from(rows).unwrap_or(u16::MAX),
+                cols: u16::try_from(cols).unwrap_or(u16::MAX),
                 pixel_width: 0,
                 pixel_height: 0,
             })

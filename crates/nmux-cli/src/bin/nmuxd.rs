@@ -75,6 +75,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(command) = args.command.as_deref() {
         session.tabs[0].root.host.command = CommandSpec::new("sh").with_args(["-lc", &command]);
     }
+    if let Some((cols, rows)) = args.initial_size {
+        session.tabs[0].root.cols = cols;
+        session.tabs[0].root.rows = rows;
+        session.tabs[0].root.host.command.initial_size = Some((cols, rows));
+    }
     if let Some(working_dir) = args.working_dir.as_ref() {
         session.tabs[0].root.host.command.working_dir = Some(working_dir.clone());
     }
@@ -223,6 +228,7 @@ struct Args {
     command: Option<String>,
     working_dir: Option<String>,
     env: Vec<(String, String)>,
+    initial_size: Option<(u32, u32)>,
     resize_policy: protocol::ResizePolicy,
     terminal_engine_kind: TerminalEngineKind,
 }
@@ -319,6 +325,10 @@ struct RawArgs {
         allow_hyphen_values = true
     )]
     env: Vec<(String, String)>,
+    #[arg(long = "cols", value_name = "COUNT", value_parser = parse_cols_arg)]
+    cols: Option<u32>,
+    #[arg(long = "rows", value_name = "COUNT", value_parser = parse_rows_arg)]
+    rows: Option<u32>,
     #[arg(
         long = "resize-policy",
         value_name = "fixed|leader|active-client|manual"
@@ -354,6 +364,11 @@ where
         .resize_policy
         .map(protocol::ResizePolicy::from)
         .unwrap_or(protocol::ResizePolicy::Fixed);
+    let initial_size = match (raw.cols, raw.rows) {
+        (Some(cols), Some(rows)) => Some((cols, rows)),
+        (None, None) => None,
+        _ => return Err("--cols and --rows must be provided together".into()),
+    };
     let terminal_engine_kind = raw
         .terminal_engine_kind
         .map(TerminalEngineArg::into_terminal_engine_kind)
@@ -376,6 +391,7 @@ where
             live_clients,
         })?;
         validate_working_dir_arg(working_dir.as_deref())?;
+        validate_initial_size(initial_size)?;
     }
 
     Ok(Args {
@@ -396,6 +412,7 @@ where
         command: raw.command,
         working_dir,
         env: raw.env,
+        initial_size,
         resize_policy,
         terminal_engine_kind,
     })
@@ -520,6 +537,14 @@ fn parse_live_clients_arg(value: &str) -> Result<usize, String> {
     parse_numeric_arg("--live-clients", value.to_owned())
 }
 
+fn parse_cols_arg(value: &str) -> Result<u32, String> {
+    parse_numeric_arg("--cols", value.to_owned())
+}
+
+fn parse_rows_arg(value: &str) -> Result<u32, String> {
+    parse_numeric_arg("--rows", value.to_owned())
+}
+
 fn clap_error_message(error: clap::Error) -> String {
     let first_line = error.to_string();
     let first_line = first_line
@@ -555,6 +580,15 @@ fn validate_working_dir_arg(path: Option<&str>) -> Result<(), String> {
         fs::metadata(path).map_err(|err| format!("--cwd must be an existing directory: {err}"))?;
     if !metadata.is_dir() {
         return Err("--cwd must be an existing directory".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_initial_size(size: Option<(u32, u32)>) -> Result<(), String> {
+    if size.is_some_and(|(cols, rows)| {
+        cols == 0 || rows == 0 || cols > u16::MAX as u32 || rows > u16::MAX as u32
+    }) {
+        return Err("--cols and --rows must be between 1 and 65535".to_owned());
     }
     Ok(())
 }
@@ -616,6 +650,8 @@ Options:
   --command SHELL                       Run a shell command in the pane PTY
   --cwd DIR                             Run the pane command from existing DIR
   --env KEY=VALUE                       Add an environment variable to the pane command
+  --cols COUNT                          Initial pane PTY columns; both dimensions required
+  --rows COUNT                          Initial pane PTY rows; both dimensions required
   --resize-policy fixed|leader|active-client|manual
                                          Publish and enforce pane resize policy
   --terminal-engine interim|libghostty-vt
@@ -668,7 +704,8 @@ mod tests {
     use super::{
         Args, DaemonModeArgs, SocketCleanup, args_from_iter, format_daemon_choices_json,
         format_ready_error_json, format_ready_json, parse_env_assignment, parse_numeric_arg,
-        parse_resize_policy, parse_terminal_engine_kind, usage, validate_mode_args,
+        parse_resize_policy, parse_terminal_engine_kind, usage, validate_initial_size,
+        validate_mode_args,
     };
     use nmux_cli::local;
     use nmux_core::terminal::TerminalEngineKind;
@@ -761,6 +798,7 @@ mod tests {
             command: None,
             working_dir: None,
             env: Vec::new(),
+            initial_size: None,
             resize_policy: protocol::ResizePolicy::ActiveClient,
             terminal_engine_kind: TerminalEngineKind::InterimText,
         };
@@ -810,6 +848,10 @@ mod tests {
             "/tmp",
             "--env",
             "NMUX_TEST=one=two",
+            "--cols",
+            "100",
+            "--rows",
+            "30",
             "--resize-policy",
             "active-client",
             "--terminal-engine",
@@ -826,6 +868,7 @@ mod tests {
             args.env,
             vec![("NMUX_TEST".to_owned(), "one=two".to_owned())]
         );
+        assert_eq!(args.initial_size, Some((100, 30)));
         assert_eq!(args.resize_policy, protocol::ResizePolicy::ActiveClient);
         assert_eq!(args.terminal_engine_kind, TerminalEngineKind::InterimText);
     }
@@ -845,6 +888,8 @@ mod tests {
         assert!(usage.contains("--live-clients COUNT"));
         assert!(usage.contains("--cwd DIR"));
         assert!(usage.contains("--env KEY=VALUE"));
+        assert!(usage.contains("--cols COUNT"));
+        assert!(usage.contains("--rows COUNT"));
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
         assert!(usage.contains("--terminal-engine interim|libghostty-vt"));
         assert!(usage.contains("libghostty-vt requires building nmux"));
@@ -922,6 +967,25 @@ mod tests {
         let err = parse_numeric_arg::<usize>("--live-cycles", "many".to_owned())
             .expect_err("invalid live cycle count should include flag name");
         assert!(err.contains("--live-cycles requires a valid number"));
+    }
+
+    #[test]
+    fn initial_size_validation_requires_pair_and_valid_range() {
+        let err = match args_from_iter(["nmuxd", "--one-shot", "--cols", "80"]) {
+            Ok(_) => panic!("missing rows should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("--cols and --rows must be provided together"));
+
+        assert_eq!(validate_initial_size(Some((80, 24))), Ok(()));
+        assert_eq!(
+            validate_initial_size(Some((0, 24))),
+            Err("--cols and --rows must be between 1 and 65535".to_owned())
+        );
+        assert_eq!(
+            validate_initial_size(Some((80, 65536))),
+            Err("--cols and --rows must be between 1 and 65535".to_owned())
+        );
     }
 
     #[test]
