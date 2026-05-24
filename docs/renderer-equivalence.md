@@ -49,7 +49,7 @@ terminal state.
 
 ## Current Harness
 
-`make renderer-equivalence-smoke` runs focused feature-gated corpus projection
+`just renderer-equivalence-smoke` runs focused feature-gated corpus projection
 checks. The `nmux-core --features libghostty-vt` corpus proves that
 representative server-owned terminal state for styled text, default text, wide
 cells, title metadata, bracketed paste mode, mouse tracking mode, and hyperlink
@@ -83,8 +83,8 @@ write one raw `nmux --json` artifact plus one deterministic
 `*.canonical.json` nmux-state projection per fixture. The canonical artifacts
 are the current expected-vs-actual comparison shape and are intended as the
 handoff point for a later oracle renderer comparison.
-`make renderer-equivalence-artifacts` generates those canonical artifacts under
-`target/renderer-equivalence` by default. `make renderer-equivalence-compare
+`just renderer-equivalence-artifacts` generates those canonical artifacts under
+`target/renderer-equivalence` by default. `just renderer-equivalence-compare
 RENDERER_EQUIVALENCE_ORACLE_DIR=/path/to/oracle` reruns the CLI fixture corpus
 and compares each generated canonical projection with a matching
 `<fixture>.canonical.json` in the supplied oracle directory.

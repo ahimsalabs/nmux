@@ -68,7 +68,7 @@ interim renderer limitations called out, initial scrollback in live mode.
 
 Default socket path, managed `--start`/`--shell`, persisted state reattach,
 bounded/unbounded sequential clients, JSON output, `NMUX_*` context, connect
-timeout, `--ready-json`, input/resize validation, `make local-smoke`.
+timeout, `--ready-json`, input/resize validation, `just local-smoke`.
 
 ### M13: Backend libghostty-vt Extraction — done (opt-in)
 

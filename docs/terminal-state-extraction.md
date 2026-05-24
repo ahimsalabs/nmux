@@ -13,7 +13,7 @@ cross-cutting pre-schema protocol tracks live in
 the `libghostty-vt-sys` pinned-source native build path, or a
 `GHOSTTY_SOURCE_DIR` checkout when supplied. ADR 0018 keeps the default
 `nmux daemon` engine as `interim` while requiring the full feature-enabled
-`make check-ghostty-vt` gate for related changes.
+`just check-ghostty-vt` gate for related changes.
 
 ## Current nmux Surface
 
@@ -252,15 +252,15 @@ metadata, style-table full-refresh reattach, and restored
 alternate-screen scrollback omission. Client-side tests assert decoded surface
 patches and scrollback chunks preserve structured `CellRun` style IDs, cell
 widths, hyperlink-presence flags, and semantic content rather than collapsing
-to text-only fallback rows. `make check-ghostty-vt` runs the full `nmux-core`
+to text-only fallback rows. `just check-ghostty-vt` runs the full `nmux-core`
 and `nmux-cli` test suites with `--features libghostty-vt` and
 `RUST_TEST_THREADS=1`, so ordinary feature-sensitive tests are part of the
 opt-in gate. ADR 0018 keeps the default
 engine `interim`, and ADR 0023 keeps `libghostty-vt` opt-in after M13 until a
 later decision explicitly accepts the native Ghostty/Zig build cost in normal
-development, CI, and packaging. `make check-all` is the explicit combined gate
+development, CI, and packaging. `just check-all` is the explicit combined gate
 for release-style validation and default-engine-promotion evidence; it does not
-change the regular meaning of `make check`. Record that evidence in
+change the regular meaning of `just check`. Record that evidence in
 [the default-engine promotion tracker](default-engine-promotion.md).
 
 The `libghostty-vt` terminal is allocated in a stable heap location before

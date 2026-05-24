@@ -12,14 +12,14 @@ a packaging baseline.
 - `libghostty-vt-sys` is pinned through `Cargo.lock` and fetches a pinned
   Ghostty source tree for the native VT library unless `GHOSTTY_SOURCE_DIR`
   points at an existing local Ghostty checkout.
-- `make check-ghostty-vt` sets `RUST_TEST_THREADS=1` for the current
+- `just check-ghostty-vt` sets `RUST_TEST_THREADS=1` for the current
   FFI-backed native-VT evidence gate and `GIT_CONFIG_GLOBAL=/dev/null` so
   local Git URL rewrite rules do not alter that HTTPS fetch.
-- `make check-ghostty-vt` also validates `GHOSTTY_SOURCE_DIR` before running the
+- `just check-ghostty-vt` also validates `GHOSTTY_SOURCE_DIR` before running the
   native build: when the variable is set, it must point at an existing readable
   source directory; when it is unset, the build uses the pinned
   `libghostty-vt-sys` fetch path.
-- `make toolchain-info` and `make promotion-sample` report the source mode as
+- `just toolchain-info` and `just promotion-sample` report the source mode as
   `ghostty_source_mode=pinned-fetch` or `ghostty_source_mode=local`, along with
   whether the local directory is present.
 - Generated Ghostty build output under `target/` is build output, not nmux
@@ -34,10 +34,10 @@ Use the narrowest source-fetch evidence target that matches the question:
 
 | Question | Command |
 | --- | --- |
-| Which source mode and locked packages are active? | `nix develop . -c make source-fetch-provenance-sample` |
-| Can an existing copied or bundled provenance report be checked without regenerating it? | `nix develop . -c make SOURCE_FETCH_REPORT=/path/to/SOURCE_FETCH.txt source-fetch-provenance-verify` |
-| Can current caches compile opt-in native VT offline? | `nix develop . -c make source-fetch-offline-probe` |
-| Can an existing copied or bundled offline probe be checked without rerunning it? | `nix develop . -c make SOURCE_FETCH_OFFLINE_PROBE_REPORT=/path/to/OFFLINE_PROBE.txt SOURCE_FETCH_OFFLINE_PROBE_LOG=/path/to/OFFLINE_PROBE.log source-fetch-offline-probe-verify` |
+| Which source mode and locked packages are active? | `nix develop . -c just source-fetch-provenance-sample` |
+| Can an existing copied or bundled provenance report be checked without regenerating it? | `nix develop . -c just SOURCE_FETCH_REPORT=/path/to/SOURCE_FETCH.txt source-fetch-provenance-verify` |
+| Can current caches compile opt-in native VT offline? | `nix develop . -c just source-fetch-offline-probe` |
+| Can an existing copied or bundled offline probe be checked without rerunning it? | `nix develop . -c just SOURCE_FETCH_OFFLINE_PROBE_REPORT=/path/to/OFFLINE_PROBE.txt SOURCE_FETCH_OFFLINE_PROBE_LOG=/path/to/OFFLINE_PROBE.log source-fetch-offline-probe-verify` |
 
 The provenance report is written to
 `target/source-fetch-provenance/SOURCE_FETCH.txt` and includes the active source
@@ -75,15 +75,15 @@ source policies, and record the consequences:
 
 That decision also needs offline-build behavior, cache invalidation, provenance,
 license-review scope, and binary packaging expectations. Until then, the
-default engine remains `interim`, and `make check` remains independent of the
+default engine remains `interim`, and `just check` remains independent of the
 native Ghostty/Zig build.
 See [packaging.md](packaging.md) for the matching binary distribution questions.
 
 Local package provenance samples record the active source mode,
 `GHOSTTY_SOURCE_DIR` value, and locked `libghostty-vt`/`libghostty-vt-sys`
-package records. `make packaging-provenance-verify` asserts those records are
+package records. `just packaging-provenance-verify` asserts those records are
 present before archive packaging continues, and
-`make packaging-provenance-manifest-verify` can check copied or bundled
+`just packaging-provenance-manifest-verify` can check copied or bundled
 manifest evidence without rebuilding. That record is not enough to settle the
 source policy for default or packaged builds. A later promotion decision still
 needs to choose how the pinned Ghostty source, local-source overrides, offline

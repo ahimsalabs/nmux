@@ -38,10 +38,10 @@ available from [nightly releases](https://github.com/ahimsalabs/nmux/releases/ta
 
 ```sh
 # build
-nix develop . -c make check
+nix develop . -c just check
 
 # smoke test
-nix develop . -c make local-smoke
+nix develop . -c just local-smoke
 
 # interactive shell (one command)
 nix develop . -c cargo run --bin nmux
@@ -54,15 +54,15 @@ nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw  # shell 
 
 Nix examples assume `nix-command` and `flakes` are enabled. If not:
 ```sh
-nix --extra-experimental-features 'nix-command flakes' develop . -c make local-smoke
+nix --extra-experimental-features 'nix-command flakes' develop . -c just local-smoke
 ```
 
 ## Checks
 
 | Work | Commands |
 | --- | --- |
-| Default engine | `nix develop . -c make check && nix develop . -c make local-smoke` |
-| Interim/no-default-features | `nix develop . -c make check-interim` |
+| Default engine | `nix develop . -c just check && nix develop . -c just local-smoke` |
+| Interim/no-default-features | `nix develop . -c just check-interim` |
 
 ## Project structure
 

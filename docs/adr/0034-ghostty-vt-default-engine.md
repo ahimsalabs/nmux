@@ -25,7 +25,7 @@ normal product path.
 Make `libghostty-vt` the default Cargo feature and the default daemon runtime
 engine when that feature is built. Keep `nmux daemon --terminal-engine interim`
 as an explicit legacy/debug choice, and keep `cargo test --no-default-features`
-covered by `make check-interim`.
+covered by `just check-interim`.
 
 Resize-driven surface dimension changes require a full surface snapshot rather
 than a patch, because `PaneSurfacePatch` does not carry new pane dimensions.

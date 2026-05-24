@@ -204,7 +204,7 @@ session or the daemon returns `ErrorCode::SessionNotFound`.
 Validate the schema with:
 
 ```sh
-nix develop . -c make check-schema
+nix develop . -c just check-schema
 ```
 
 The `check-schema` target runs `flatc` against [schema/nmux.fbs](../schema/nmux.fbs). Schema edits should stay append-friendly unless an ADR explicitly changes the compatibility posture.
@@ -212,7 +212,7 @@ The `check-schema` target runs `flatc` against [schema/nmux.fbs](../schema/nmux.
 Generate Rust protocol bindings with:
 
 ```sh
-nix develop . -c make generate-schema
+nix develop . -c just generate-schema
 ```
 
 The Rust core consumes the generated bindings through the `nmux-proto` crate.

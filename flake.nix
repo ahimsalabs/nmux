@@ -223,7 +223,7 @@
               pkgs.cargo
               pkgs.cargo-zigbuild
               pkgs.flatbuffers
-              pkgs.gnumake
+              pkgs.just
               pkgs.nixfmt
               pkgs.rustc
               pkgs.rustfmt

@@ -31,18 +31,18 @@ shape should not enter the default developer loop by accident.
 
 ## Decision
 
-Keep `libghostty-vt` opt-in for default development, regular `make check`, and
+Keep `libghostty-vt` opt-in for default development, regular `just check`, and
 the default `nmuxd --terminal-engine interim` path.
 
 Strengthen the opt-in verification gate instead:
 
-- `make check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
+- `just check-ghostty-vt` runs the full `nmux-core` and `nmux-cli` package test
   suites with `--features libghostty-vt` and `RUST_TEST_THREADS=1`.
 - The gate keeps `GIT_CONFIG_GLOBAL=/dev/null` so local Git URL rewrites do not
   break the pinned HTTPS Ghostty fetch.
 - M13 changes that touch terminal extraction, terminal modes, structured input
   encoding, live attach behavior, cached client state, or feature-sensitive CLI
-  parsing should run `make check-ghostty-vt` before commit.
+  parsing should run `just check-ghostty-vt` before commit.
 
 Promoting `libghostty-vt` into regular CI or making it the documented/default
 engine requires a later decision. That decision should have evidence for:

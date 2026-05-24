@@ -128,5 +128,5 @@ ADR records:
 - compatibility and decoder validation rules;
 - interaction with attach, reconnect, scrollback, cached state, and live
   streaming;
-- test coverage required in `make check` and, when `libghostty-vt` state is
-  involved, `make check-ghostty-vt`.
+- test coverage required in `just check` and, when `libghostty-vt` state is
+  involved, `just check-ghostty-vt`.

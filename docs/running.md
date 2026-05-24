@@ -16,7 +16,7 @@ into a new daemon.
 Run the default end-to-end smoke first:
 
 ```sh
-nix develop . -c make local-smoke
+nix develop . -c just local-smoke
 ```
 
 A successful run ends with:
@@ -98,16 +98,16 @@ render returned `ScrollbackChunk` objects.
 Run the default-engine checks:
 
 ```sh
-nix develop . -c make check
-nix develop . -c make local-smoke
+nix develop . -c just check
+nix develop . -c just local-smoke
 ```
 
 See [docs/contributor-workflow.md](contributor-workflow.md) for which checks
 apply to default-engine work, terminal-correctness work, and promotion evidence.
 Use [docs/toolchain.md](toolchain.md) for the complete Nix command list,
-including `make check-ghostty-vt`, `make check-all`, source-fetch verifiers,
+including `just check-ghostty-vt`, `just check-all`, source-fetch verifiers,
 and packaging/promotion evidence targets.
-`make local-smoke` starts a temporary local daemon, sends live stdin through a
+`just local-smoke` starts a temporary local daemon, sends live stdin through a
 client, reattaches a read-only client with persisted state, verifies the echoed
 output remains visible, verifies nested `nmux --print-context` receives the
 pane identity environment, verifies JSON informational flags and daemon
@@ -135,7 +135,7 @@ Run the timed default-plus-opt-in backend `libghostty-vt` validation sample
 when gathering local default-engine-promotion evidence:
 
 ```sh
-nix develop . -c make promotion-sample
+nix develop . -c just promotion-sample
 ```
 
 Record promotion evidence in
@@ -560,10 +560,10 @@ remain intentionally withheld until the expected backend behavior and nmux
 protocol shape are clear.
 
 ```sh
-nix develop . -c make check-ghostty-vt
+nix develop . -c just check-ghostty-vt
 ```
 
-The target is now a compatibility alias for `make check`, which runs the
+The target is now a compatibility alias for `just check`, which runs the
 default-feature workspace tests with `RUST_TEST_THREADS=1` and
 `GIT_CONFIG_GLOBAL=/dev/null`. The serial test-harness setting is part of the
 current FFI-backed native-VT gate. The Git setting is not logically required by
@@ -571,7 +571,7 @@ nmux; it avoids a local Git configuration that rewrites GitHub HTTPS URLs to
 SSH. The `libghostty-vt-sys` build script fetches Ghostty from an HTTPS URL
 unless `GHOSTTY_SOURCE_DIR` points at an existing Ghostty checkout.
 
-For interim-only validation, run `nix develop . -c make check-interim`.
+For interim-only validation, run `nix develop . -c just check-interim`.
 
 ## Presence And Attach Modes
 

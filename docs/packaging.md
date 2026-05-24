@@ -38,14 +38,14 @@ Use the narrowest packaging target that matches the evidence question:
 
 | Question | Command |
 | --- | --- |
-| Do default and opt-in release binaries build and report versions locally? | `nix develop . -c make packaging-sample` |
-| Does the local opt-in layout stage wrappers and runtime libraries correctly? | `nix develop . -c make packaging-layout-sample` then `nix develop . -c make packaging-layout-verify` |
-| Does the staged layout have the required local provenance records? | `nix develop . -c make packaging-provenance-sample` then `nix develop . -c make packaging-provenance-verify` |
-| Can an existing copied or bundled provenance manifest be checked without rebuilding? | `nix develop . -c make packaging-provenance-manifest-verify` |
-| Does the staged layout archive and verify as a self-contained artifact? | `nix develop . -c make packaging-archive-sample` then `nix develop . -c make packaging-archive-verify` |
-| Can the relocated archive serve a real opt-in native-VT pane? | `nix develop . -c make packaging-archive-runtime-smoke` |
+| Do default and opt-in release binaries build and report versions locally? | `nix develop . -c just packaging-sample` |
+| Does the local opt-in layout stage wrappers and runtime libraries correctly? | `nix develop . -c just packaging-layout-sample` then `nix develop . -c just packaging-layout-verify` |
+| Does the staged layout have the required local provenance records? | `nix develop . -c just packaging-provenance-sample` then `nix develop . -c just packaging-provenance-verify` |
+| Can an existing copied or bundled provenance manifest be checked without rebuilding? | `nix develop . -c just packaging-provenance-manifest-verify` |
+| Does the staged layout archive and verify as a self-contained artifact? | `nix develop . -c just packaging-archive-sample` then `nix develop . -c just packaging-archive-verify` |
+| Can the relocated archive serve a real opt-in native-VT pane? | `nix develop . -c just packaging-archive-runtime-smoke` |
 
-The target prints `make toolchain-info`, validates the optional native-VT
+The target prints `just toolchain-info`, validates the optional native-VT
 toolchain preflight, builds the default release `nmux` binary into
 `target/packaging-default`, builds opt-in `--features libghostty-vt` release
 `nmux` into `target/packaging-libghostty-vt`, then prints artifact paths,
@@ -64,7 +64,7 @@ packaging sample proves the release binaries build in that environment; it does
 not answer install paths, signing/notarization, update channels, target support,
 or native-library provenance by itself.
 
-`make packaging-layout-sample` builds on `make packaging-sample` and stages an
+`just packaging-layout-sample` builds on `just packaging-sample` and stages an
 opt-in local package layout at `target/packaging-libghostty-vt/package`:
 
 - `bin/nmux` wrapper script;
@@ -77,7 +77,7 @@ The wrappers resolve their own directory, set `DYLD_LIBRARY_PATH` and
 native VT build, but it is still not a signed, installed, notarized, or
 platform-native package.
 
-`make packaging-layout-verify` is the no-rebuild staged-layout verifier. By
+`just packaging-layout-verify` is the no-rebuild staged-layout verifier. By
 default it checks `target/packaging-libghostty-vt/package`, but
 `PACKAGING_LAYOUT=/path/to/package` can point it at an existing or copied staged
 layout. The verifier requires the wrapper scripts, libexec binaries, package
@@ -87,7 +87,7 @@ metadata; and runs wrapped `nmux --version` with
 library-path environment variables unset. It does not validate provenance
 hashes, archive bytes, or daemon/client runtime behavior.
 
-`make packaging-provenance-sample` writes
+`just packaging-provenance-sample` writes
 `target/packaging-libghostty-vt/package/PROVENANCE.txt` for that staged layout.
 The staged layout also includes `PACKAGE_METADATA.txt` with the local archive
 format, host target, opt-in terminal-engine status, source mode, and wrapper
@@ -99,32 +99,32 @@ native runtime-library artifacts, best-effort dynamic dependency output from
 libghostty-vt`. This is local provenance evidence, not a release signing or
 supply-chain attestation format.
 
-`make packaging-provenance-verify` regenerates that manifest and fails if the
+`just packaging-provenance-verify` regenerates that manifest and fails if the
 required toolchain, source-mode, locked native-VT package, staged-file,
 runtime-library, per-binary `libghostty-vt` dynamic-dependency, or cargo-tree
 records are missing. Archive packaging depends on this verifier, so
-`make packaging-archive-sample` and `make packaging-archive-runtime-smoke`
+`just packaging-archive-sample` and `just packaging-archive-runtime-smoke`
 cannot pass with a structurally incomplete local provenance manifest.
 
-`make packaging-provenance-manifest-verify` checks an existing manifest without
+`just packaging-provenance-manifest-verify` checks an existing manifest without
 rebuilding. By default it checks
 `target/packaging-libghostty-vt/package/PROVENANCE.txt`, but
 `PACKAGING_PROVENANCE_MANIFEST=/path/to/PACKAGE_PROVENANCE.txt` can point it at
-copied, bundled, or downloaded promotion evidence. `make
+copied, bundled, or downloaded promotion evidence. `just
 promotion-evidence-verify` uses this path for bundled `PACKAGE_PROVENANCE.txt`
 so it validates the evidence under review rather than regenerating local
 package provenance first.
 
-`make packaging-archive-sample` writes
+`just packaging-archive-sample` writes
 `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` and
 a matching `.sha256` file, extracts the archive under
 `target/packaging-libghostty-vt/archive/check`, and verifies the wrapped
 `nmux --version` from the extracted layout. It
-then runs `make packaging-archive-verify` against the produced archive and
+then runs `just packaging-archive-verify` against the produced archive and
 sidecar hash. This is a local release-artifact smoke check; it is still not a
 signed, notarized, published, or platform-native package.
 
-`make packaging-archive-verify` is the no-rebuild archive verifier. By default
+`just packaging-archive-verify` is the no-rebuild archive verifier. By default
 it checks the archive at
 `target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz` and
 its `.sha256` file, but `PACKAGING_ARCHIVE=/path/to/archive.tar.gz` and
@@ -134,11 +134,11 @@ sidecar hash, rejects unsafe archive paths, extracts into a temporary directory,
 requires the package metadata/provenance/cargo-tree files, validates staged
 file hashes against the extracted files, requires bundled `libghostty-vt`
 runtime libraries and dynamic dependency records, and then runs
-`make packaging-layout-verify` against the extracted layout so wrapper shape,
+`just packaging-layout-verify` against the extracted layout so wrapper shape,
 layout metadata, runtime-library presence, and wrapped binary version checks
 are covered by the same staged-layout verifier.
 
-`make packaging-archive-runtime-smoke` builds on the archive sample, extracts
+`just packaging-archive-runtime-smoke` builds on the archive sample, extracts
 the archive into a fresh `/tmp` install root outside `target/`, unsets
 `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH`, and runs the wrapped
 `nmux daemon --terminal-engine libghostty-vt --one-shot` plus wrapped `nmux` client
@@ -172,8 +172,8 @@ requirement, packaging work must satisfy
 - what archive/package format is published per supported target;
 - whether `nmux daemon --terminal-engine libghostty-vt` is enabled in shipped
   binaries or reserved for developer builds;
-- how release checks map to `make check`, `make check-ghostty-vt`, and
-  `make check-all`.
+- how release checks map to `just check`, `just check-ghostty-vt`, and
+  `just check-all`.
 
 Until those answers are recorded, packaged/default builds should keep the
 `interim` engine as the normal path and treat `libghostty-vt` as opt-in

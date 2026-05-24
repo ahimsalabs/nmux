@@ -10,8 +10,8 @@ Accepted.
 
 ## Context
 
-ADR 0018 keeps `libghostty-vt` out of regular `make check` and default CI while
-still requiring a full opt-in `make check-ghostty-vt` gate for feature-sensitive
+ADR 0018 keeps `libghostty-vt` out of regular `just check` and default CI while
+still requiring a full opt-in `just check-ghostty-vt` gate for feature-sensitive
 changes. That opt-in gate currently runs the native-VT feature suites with
 `RUST_TEST_THREADS=1`. ADR 0023 keeps the post-M13 default engine as `interim`
 until build, CI, source-fetch, packaging, and workflow costs are accepted
@@ -19,7 +19,7 @@ deliberately.
 
 The repository now has a GitHub Actions default-engine job for pull requests and
 pushes to `main`, plus a manual `workflow_dispatch` promotion evidence job that
-runs `make promotion-evidence-bundle`. That manual job is useful evidence, but
+runs `just promotion-evidence-bundle`. That manual job is useful evidence, but
 a regular or required native-VT CI gate would have different consequences:
 network fetch behavior, cache misses, Zig/native build provisioning, runner
 cost, artifact provenance, and failure triage become part of every protected
@@ -34,7 +34,7 @@ prove these criteria:
   and pull-request events run each job.
 - The required gate remains clear about whether it proves default-engine
   behavior, native-VT correctness, packaging readiness, or release readiness.
-- CI records `make toolchain-info`, source mode, `GHOSTTY_SOURCE_DIR`,
+- CI records `just toolchain-info`, source mode, `GHOSTTY_SOURCE_DIR`,
   `GIT_CONFIG_GLOBAL`, runner OS/image, and cache state for native-VT jobs.
 - Native build timing is recorded for cache-hit and cache-miss runs on every
   required runner class.
@@ -53,7 +53,7 @@ prove these criteria:
   also changes the default engine decision.
 
 Until a later ADR satisfies those criteria and updates the workflow, the GitHub
-Actions required path remains default-engine `make check` plus `make
+Actions required path remains default-engine `just check` plus `just
 local-smoke`, and the native-VT promotion job remains manual evidence
 collection.
 

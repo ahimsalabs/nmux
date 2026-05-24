@@ -44,7 +44,7 @@ specific native VT source policy and prove these criteria:
   source material or implementation guidance.
 
 Until a later ADR satisfies those criteria and chooses a concrete policy, the
-default engine remains `interim`, regular `make check` remains independent of
+default engine remains `interim`, regular `just check` remains independent of
 the native Ghostty/Zig build, and packaged/default builds must not rely on an
 implicit native VT source-fetch assumption.
 

@@ -10,7 +10,7 @@ nmux is a portable Ghostty-style terminal workspace. The current architecture ce
 
 [WORK.md](../../WORK.md) identifies libghostty as the canonical terminal-state and snapshot engine. The roadmap's next implementation step is to add a minimal codegen/build path for the chosen implementation language and then build the first local daemon/client skeleton.
 
-The repository currently has an initial Go FlatBuffers bootstrap: `go.mod`, `go.sum`, generated files under `internal/protocol/flat/protocol`, and Makefile targets for Go code generation and tests. That bootstrap validated the schema direction, but it should not decide the implementation runtime by accident.
+The repository currently has an initial Go FlatBuffers bootstrap: `go.mod`, `go.sum`, generated files under `internal/protocol/flat/protocol`, and justfile targets for Go code generation and tests. That bootstrap validated the schema direction, but it should not decide the implementation runtime by accident.
 
 An oracle architecture check was run on 2026-05-21 for the Go-vs-Rust core decision. Its recommendation was to migrate the nmux core/daemon to Rust while treating the existing Go FlatBuffers bootstrap as temporary tooling until the Rust workspace is ready.
 
@@ -47,7 +47,7 @@ This decision does not change ADR 0001. It supports it: Rust is the runtime for 
 
 The roadmap should treat Rust as the chosen implementation language for M1 and later core work.
 
-The development environment should include Rust tooling, and `make check` should move from Go test targets to Rust build/test targets once the Rust workspace replaces the temporary bootstrap.
+The development environment should include Rust tooling, and `just check` should move from Go test targets to Rust build/test targets once the Rust workspace replaces the temporary bootstrap.
 
 Generated FlatBuffers bindings should move from Go to Rust for the core. Other language bindings may still be generated later for clients, compatibility tools, or SDKs.
 
@@ -61,7 +61,7 @@ A follow-up implementation commit should:
 
 - add `Cargo.toml` and `Cargo.lock` for the Rust workspace or crate layout
 - update `flake.nix` to provide Rust tooling
-- change `Makefile` schema generation from Go codegen to Rust-oriented generation or Rust build integration
+- change `justfile` schema generation from Go codegen to Rust-oriented generation or Rust build integration
 - replace `internal/protocol/flat/protocol` with Rust-generated or Rust-consumed protocol bindings
 - remove `go.mod` and `go.sum` once no Go targets remain
 - update [docs/roadmap.md](../roadmap.md) to identify Rust as the chosen implementation language

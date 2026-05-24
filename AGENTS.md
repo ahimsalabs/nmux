@@ -175,7 +175,7 @@ Ask yourself:
 3. **Am I stuck in a loop?** If the last 10 commits are all in the same file
    or the same narrow area, step back and pick a different item.
 4. **Is WORK.md still accurate?** Remove completed items, update priorities.
-5. **Do tests pass?** Run `make check && make local-smoke` if you haven't
+5. **Do tests pass?** Run `just check && just local-smoke` if you haven't
    recently.
 
 If the answer to #1 is "mostly docs", the next 10 commits must be mostly
@@ -185,13 +185,13 @@ feature code. This is a hard rule.
 
 | Work | Commands |
 | --- | --- |
-| Default engine | `nix develop . -c make check` and `nix develop . -c make local-smoke` |
-| Schema changes | `nix develop . -c make generate-schema`, then the matching gate |
-| Opt-in libghostty-vt | `nix develop . -c make check` and `nix develop . -c make check-ghostty-vt` |
+| Default engine | `nix develop . -c just check` and `nix develop . -c just local-smoke` |
+| Schema changes | `nix develop . -c just generate-schema`, then the matching gate |
+| Opt-in libghostty-vt | `nix develop . -c just check` and `nix develop . -c just check-ghostty-vt` |
 
-`make check` runs FlatBuffers schema validation and `cargo test --workspace`.
-`make local-smoke` runs a real daemon/client smoke over a temporary socket.
-`make check-ghostty-vt` runs the opt-in feature suites with `RUST_TEST_THREADS=1`.
+`just check` runs FlatBuffers schema validation and `cargo test --workspace`.
+`just local-smoke` runs a real daemon/client smoke over a temporary socket.
+`just check-ghostty-vt` runs the opt-in feature suites with `RUST_TEST_THREADS=1`.
 
 For narrower iteration, use targeted `cargo test` inside `nix develop . -c ...`,
 then run the full gate before committing.
