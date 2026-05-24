@@ -23,7 +23,8 @@ Current post-M14 state:
   live attach, read-only reattach, cached state, daemon-owned scrollback
   range and tail fetches, structured input/control intents, script-facing JSON attach/live
   output with structured surface and scrollback payloads, daemon cwd/env
-  command configuration, default socket workflows, and `make local-smoke`.
+  command configuration, default socket workflows, poll-driven live PTY wakeups,
+  and `make local-smoke`.
 - Opt-in correctness path: `libghostty-vt` is imported and feature-tested for
   backend-owned terminal-state extraction, but remains outside the normal
   default engine, regular CI gate, and release baseline.
@@ -261,6 +262,11 @@ Done:
 - README, running docs, and the terminal extraction checklist use post-M14 language for roadmap focus, implemented `libghostty-vt` mapping, attached-pane authority during reconnect, explicit scrollback range semantics, and a first-reader quick-start path before deeper protocol or evidence detail.
 - `nmux --live --redraw --key TEXT --speculative-echo` provides an experimental client-local overlay for one outstanding printable append prediction from confirmed cursor state, with focused live CLI coverage proving the underlined redraw repaint can appear before server confirmation while leaving confirmed cache, protocol, scrollback, and daemon terminal state authoritative; repeated misses temporarily suppress prediction with a short skipped-key recovery path, and raw stdin-byte mode remains outside the first SLE scope.
 - Renderer-equivalence tooling now has a first oracle-directory comparison interface: `make renderer-equivalence-artifacts` writes nmux canonical projections, while `make renderer-equivalence-compare RENDERER_EQUIVALENCE_ORACLE_DIR=...` compares live CLI fixture output against matching `<fixture>.canonical.json` files. This is harness plumbing, not trusted renderer evidence until the oracle directory is produced by an accepted renderer path.
+- Local live attach now wakes from daemon-owned PTY output through a
+  `LocalPtyHost` self-pipe and `poll(2)` rather than relying on a sleep loop or
+  client socket read timeout; background output keeps the existing logical-line
+  coalescing window, while post-input output uses a shorter poll-backed settle
+  window for lower keystroke-to-screen latency.
 - [Toolchain notes](toolchain.md) document the supported Nix path, Makefile
   tool preflight, and non-Nix requirements checklist; promotion still needs
   platform-specific validation, repeated CI evidence with cache classification,

@@ -38,8 +38,9 @@ What works today: local `nmuxd`/`nmux` workflows over a Unix socket, one-shot
 attach, live attach, read-only reattach, explicit input and resize intents,
 persisted client render state, daemon-owned scrollback fetches, nested
 `NMUX_*` context reporting, daemon command cwd/env configuration,
-default-engine CI, an experimental redraw-only speculative local echo overlay
-for simple printable live input, and an opt-in
+default-engine CI, poll-driven live PTY wakeups over the local Unix socket, an
+experimental redraw-only speculative local echo overlay for simple printable
+live input, and an opt-in
 `libghostty-vt` correctness path with promotion evidence bundles.
 
 What is not default-ready: the default engine is still the interim text surface,
