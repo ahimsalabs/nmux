@@ -6060,7 +6060,7 @@ fn live_libghostty_vt_current_surface_reattach_forwards_sgr_pixel_mouse_press() 
             "--terminal-engine",
             "libghostty-vt",
             "--command",
-            "stty -icanon -echo min 0 time 20; printf '\\033[?1000h\\033[?1006h\\033[?1016hready\n'; bytes=$(dd bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
+            "stty -icanon -echo min 1 time 20; printf '\\033[?1000h\\033[?1006h\\033[?1016hready\n'; bytes=$(dd bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'mouse:%s\n' \"$bytes\"",
         ])
         .spawn()
         .expect("spawn daemon");
@@ -6963,7 +6963,13 @@ fn live_read_only_cli_observes_output_without_input() {
 #[test]
 fn live_cli_renders_split_pty_writes_as_one_logical_line() {
     let socket_path = test_socket_path();
+    let ready_path = socket_path.with_extension("ready");
     let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&ready_path);
+    let command = format!(
+        "printf a; sleep 0.05; printf b; sleep 0.05; printf c; printf '\\n'; touch {}; sleep 1",
+        shell_quote(ready_path.to_str().expect("ready path"))
+    );
 
     let mut server = daemon_command()
         .args([
@@ -6972,13 +6978,13 @@ fn live_cli_renders_split_pty_writes_as_one_logical_line() {
             "--live-cycles",
             "1",
             "--command",
-            "printf a; sleep 0.05; printf b; sleep 0.05; printf c; printf '\\n'; sleep 1",
+            &command,
         ])
         .spawn()
         .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
-    thread::sleep(Duration::from_millis(200));
+    wait_for_path(&ready_path);
 
     let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
@@ -6995,6 +7001,7 @@ fn live_cli_renders_split_pty_writes_as_one_logical_line() {
 
     let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&ready_path);
 
     assert!(
         client.status.success(),
@@ -7010,7 +7017,13 @@ fn live_cli_renders_split_pty_writes_as_one_logical_line() {
 #[test]
 fn live_redraw_cli_renders_split_pty_writes_as_one_logical_line() {
     let socket_path = test_socket_path();
+    let ready_path = socket_path.with_extension("ready");
     let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&ready_path);
+    let command = format!(
+        "printf a; sleep 0.05; printf b; sleep 0.05; printf c; printf '\\n'; touch {}; sleep 1",
+        shell_quote(ready_path.to_str().expect("ready path"))
+    );
 
     let mut server = daemon_command()
         .args([
@@ -7019,13 +7032,13 @@ fn live_redraw_cli_renders_split_pty_writes_as_one_logical_line() {
             "--live-cycles",
             "1",
             "--command",
-            "printf a; sleep 0.05; printf b; sleep 0.05; printf c; printf '\\n'; sleep 1",
+            &command,
         ])
         .spawn()
         .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
-    thread::sleep(Duration::from_millis(200));
+    wait_for_path(&ready_path);
 
     let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
@@ -7043,6 +7056,7 @@ fn live_redraw_cli_renders_split_pty_writes_as_one_logical_line() {
 
     let server_status = server.wait().expect("wait for daemon");
     let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&ready_path);
 
     assert!(
         client.status.success(),
@@ -7354,6 +7368,17 @@ fn wait_for_socket(path: &Path) {
         thread::sleep(Duration::from_millis(20));
     }
     panic!("socket did not appear: {}", path.display());
+}
+
+fn wait_for_path(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if path.exists() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!("path did not appear: {}", path.display());
 }
 
 fn wait_for_child_exit(
