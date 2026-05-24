@@ -3821,22 +3821,34 @@ impl SpeculativeEchoOverlay {
     }
 
     pub fn render(&self, surface: &ClientPaneSurface) -> Option<String> {
-        self.render_with_speculative_style(surface, false, false)
+        self.render_with_speculative_style(
+            surface,
+            PredictionDecoration::Plain,
+            SpeculativeSurfaceStyle::PlainText,
+        )
     }
 
     pub fn render_underlined(&self, surface: &ClientPaneSurface) -> Option<String> {
-        self.render_with_speculative_style(surface, true, false)
+        self.render_with_speculative_style(
+            surface,
+            PredictionDecoration::Underlined,
+            SpeculativeSurfaceStyle::PlainText,
+        )
     }
 
     pub fn render_underlined_styled(&self, surface: &ClientPaneSurface) -> Option<String> {
-        self.render_with_speculative_style(surface, true, true)
+        self.render_with_speculative_style(
+            surface,
+            PredictionDecoration::Underlined,
+            SpeculativeSurfaceStyle::StructuredSgr,
+        )
     }
 
     fn render_with_speculative_style(
         &self,
         surface: &ClientPaneSurface,
-        underline_prediction: bool,
-        structured_styles: bool,
+        decoration: PredictionDecoration,
+        surface_style: SpeculativeSurfaceStyle,
     ) -> Option<String> {
         let prediction = self.prediction.as_ref()?;
         if prediction.pane_id != surface.pane_id || prediction.base_version != surface.version {
@@ -3850,18 +3862,18 @@ impl SpeculativeEchoOverlay {
         let visible_rows = surface.visible_row_count().max(row_index + 1);
         let mut rows = Vec::with_capacity(visible_rows);
         for current_row in 0..visible_rows {
-            let mut rendered_row = if structured_styles {
-                surface.render_styled_row(current_row)
-            } else {
-                surface.row_text[current_row].clone()
+            let mut rendered_row = match surface_style {
+                SpeculativeSurfaceStyle::PlainText => surface.row_text[current_row].clone(),
+                SpeculativeSurfaceStyle::StructuredSgr => surface.render_styled_row(current_row),
             };
             if current_row == row_index {
-                if underline_prediction {
-                    rendered_row.push_str(Self::UNDERLINE_START);
-                    rendered_row.push_str(&prediction.text);
-                    rendered_row.push_str(Self::UNDERLINE_END);
-                } else {
-                    rendered_row.push_str(&prediction.text);
+                match decoration {
+                    PredictionDecoration::Plain => rendered_row.push_str(&prediction.text),
+                    PredictionDecoration::Underlined => {
+                        rendered_row.push_str(Self::UNDERLINE_START);
+                        rendered_row.push_str(&prediction.text);
+                        rendered_row.push_str(Self::UNDERLINE_END);
+                    }
                 }
             }
             rows.push(rendered_row);
@@ -3947,6 +3959,18 @@ impl SpeculativeEchoOverlay {
             self.suppressed_predictable_keys = 0;
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PredictionDecoration {
+    Plain,
+    Underlined,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SpeculativeSurfaceStyle {
+    PlainText,
+    StructuredSgr,
 }
 
 fn single_predictable_char(text: &str) -> Option<char> {
