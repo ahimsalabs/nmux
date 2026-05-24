@@ -35,6 +35,13 @@ nix develop . -c just check-interim
 That job builds and tests with `--no-default-features`, keeping the explicit
 legacy/debug `interim` backend covered without making it the product default.
 
+The workflow also runs `supply chain review` on every pull request, push to
+`main`, and manual dispatch. It compares the changed range, reports whether
+dependency pins, source-fetch policy, static-link policy, packaging policy, or
+CI policy changed, and prints Cargo lockfile package/source changes. For
+git-sourced dependencies such as `libghostty-vt`, the report includes an
+upstream compare URL when the locked revision changes.
+
 Markdown-only changes under `README.md`, `WORK.md`, `AGENTS.md`, or `docs/`
 take a shorter cached path that runs the same source audit without compiling
 and testing the Rust workspace.

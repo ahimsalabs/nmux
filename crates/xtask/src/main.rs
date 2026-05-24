@@ -43,12 +43,13 @@ fn run() -> Result<()> {
         "static-link-verify" => static_link_verify(),
         "source-fetch-offline-probe-verify" => source_fetch_offline_probe_verify(),
         "source-fetch-provenance-verify" => source_fetch_provenance_verify(),
+        "supply-chain-review" => supply_chain_review(),
         _ => usage_error(),
     }
 }
 
 fn usage_error() -> Result<()> {
-    Err("usage: xtask <packaging-archive-verify|packaging-layout-verify|packaging-provenance-manifest-verify|promotion-cold-deps-verify|promotion-evidence-verify|static-link-verify|source-fetch-offline-probe-verify|source-fetch-provenance-verify>".into())
+    Err("usage: xtask <packaging-archive-verify|packaging-layout-verify|packaging-provenance-manifest-verify|promotion-cold-deps-verify|promotion-evidence-verify|static-link-verify|source-fetch-offline-probe-verify|source-fetch-provenance-verify|supply-chain-review>".into())
 }
 
 fn static_link_verify() -> Result<()> {
@@ -1219,6 +1220,254 @@ fn promotion_evidence_verify() -> Result<()> {
     verify_promotion_open_work(&promotion_open_work)?;
     println!("promotion_evidence_verified={}", summary.display());
     Ok(())
+}
+
+fn supply_chain_review() -> Result<()> {
+    let base = supply_chain_base_ref()?;
+    let head = env::var("SUPPLY_CHAIN_HEAD").unwrap_or_else(|_| "HEAD".to_owned());
+    println!("supply_chain_review_base={base}");
+    println!("supply_chain_review_head={head}");
+
+    let changed_paths = git_changed_paths(&base, &head)?;
+    let sensitive_paths = changed_paths
+        .iter()
+        .filter(|path| supply_chain_sensitive_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    println!(
+        "supply_chain_sensitive_changes={}",
+        if sensitive_paths.is_empty() {
+            "false"
+        } else {
+            "true"
+        }
+    );
+
+    if sensitive_paths.is_empty() {
+        println!("supply_chain_review=not_required");
+        return Ok(());
+    }
+
+    println!("supply_chain_review=required");
+    println!(
+        "supply_chain_review_required_reason=dependency pins, source-fetch policy, static-link policy, or packaging policy changed"
+    );
+    for path in &sensitive_paths {
+        println!("supply_chain_path={path}");
+    }
+
+    if sensitive_paths.iter().any(|path| path == "Cargo.lock") {
+        report_cargo_lock_changes(&base, &head)?;
+    }
+
+    println!(
+        "supply_chain_reviewer_checklist=review changed pins, inspect upstream diffs for git rev updates, verify Cargo.lock and manifests agree, and confirm source/provenance/static-link CI remains green"
+    );
+    Ok(())
+}
+
+fn supply_chain_base_ref() -> Result<String> {
+    if let Ok(base) = env::var("SUPPLY_CHAIN_BASE")
+        && !base.is_empty()
+    {
+        return Ok(base);
+    }
+    if let Ok(base) = env::var("GITHUB_BASE_SHA")
+        && !base.is_empty()
+    {
+        return Ok(base);
+    }
+    git_merge_base("origin/main", "HEAD").or_else(|_| Ok("HEAD^".to_owned()))
+}
+
+fn git_changed_paths(base: &str, head: &str) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .args(["diff", "--name-only", base, head])
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "git diff --name-only {base} {head} failed with status {}",
+            output.status
+        )
+        .into());
+    }
+    let stdout = String::from_utf8(output.stdout)?;
+    Ok(stdout
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+fn supply_chain_sensitive_path(path: &str) -> bool {
+    path == "Cargo.lock"
+        || path == "Cargo.toml"
+        || path == "justfile"
+        || path == ".github/workflows/check.yml"
+        || path == ".github/workflows/nightly.yml"
+        || path.starts_with("crates/") && path.ends_with("/Cargo.toml")
+        || path == "docs/source-fetch-policy.md"
+        || path == "docs/packaging.md"
+        || path.starts_with("docs/adr/0024-")
+        || path.starts_with("docs/adr/0025-")
+        || path.starts_with("docs/adr/0026-")
+        || path.starts_with("scripts/source-fetch-")
+        || path.starts_with("scripts/packaging-")
+        || path.starts_with("scripts/promotion-")
+        || path == "crates/xtask/src/main.rs"
+}
+
+fn report_cargo_lock_changes(base: &str, head: &str) -> Result<()> {
+    let old_lock = git_show_text(base, "Cargo.lock")?;
+    let new_lock = git_show_text(head, "Cargo.lock")?;
+    let old_packages = parse_cargo_lock_packages(&old_lock);
+    let new_packages = parse_cargo_lock_packages(&new_lock);
+
+    for new_package in &new_packages {
+        let matches = old_packages
+            .iter()
+            .filter(|old_package| old_package.name == new_package.name)
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [] => {
+                println!(
+                    "cargo_lock_added={} version={} source={}",
+                    new_package.name,
+                    new_package.version,
+                    new_package.source.as_deref().unwrap_or("path")
+                );
+            }
+            [old_package] => {
+                if old_package.version != new_package.version
+                    || old_package.source != new_package.source
+                {
+                    println!(
+                        "cargo_lock_changed={} old_version={} new_version={} old_source={} new_source={}",
+                        new_package.name,
+                        old_package.version,
+                        new_package.version,
+                        old_package.source.as_deref().unwrap_or("path"),
+                        new_package.source.as_deref().unwrap_or("path")
+                    );
+                    if let (Some(old_source), Some(new_source)) =
+                        (&old_package.source, &new_package.source)
+                        && let Some(compare_url) = git_source_compare_url(old_source, new_source)
+                    {
+                        println!(
+                            "cargo_lock_upstream_compare={} {}",
+                            new_package.name, compare_url
+                        );
+                    }
+                }
+            }
+            _ => {
+                println!("cargo_lock_changed_ambiguous={}", new_package.name);
+            }
+        }
+    }
+
+    for old_package in &old_packages {
+        if !new_packages
+            .iter()
+            .any(|new_package| new_package.name == old_package.name)
+        {
+            println!(
+                "cargo_lock_removed={} version={} source={}",
+                old_package.name,
+                old_package.version,
+                old_package.source.as_deref().unwrap_or("path")
+            );
+        }
+    }
+    Ok(())
+}
+
+fn git_merge_base(left: &str, right: &str) -> Result<String> {
+    let output = Command::new("git")
+        .args(["merge-base", left, right])
+        .output()?;
+    if !output.status.success() {
+        return Err(format!("git merge-base {left} {right} failed").into());
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+}
+
+fn git_show_text(revision: &str, path: &str) -> Result<String> {
+    let spec = format!("{revision}:{path}");
+    let output = Command::new("git").args(["show", &spec]).output()?;
+    if !output.status.success() {
+        return Err(format!("git show {spec} failed with status {}", output.status).into());
+    }
+    Ok(String::from_utf8(output.stdout)?)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LockPackage {
+    name: String,
+    version: String,
+    source: Option<String>,
+}
+
+fn parse_cargo_lock_packages(lock: &str) -> Vec<LockPackage> {
+    lock.split("[[package]]")
+        .skip(1)
+        .filter_map(parse_cargo_lock_package)
+        .collect()
+}
+
+fn parse_cargo_lock_package(block: &str) -> Option<LockPackage> {
+    let name = cargo_lock_string_field(block, "name")?;
+    let version = cargo_lock_string_field(block, "version")?;
+    let source = cargo_lock_string_field(block, "source");
+    Some(LockPackage {
+        name,
+        version,
+        source,
+    })
+}
+
+fn cargo_lock_string_field(block: &str, field: &str) -> Option<String> {
+    let prefix = format!("{field} = ");
+    block
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix(&prefix))
+        .and_then(|value| value.strip_prefix('"')?.strip_suffix('"'))
+        .map(str::to_owned)
+}
+
+fn git_source_compare_url(old_source: &str, new_source: &str) -> Option<String> {
+    let old = parse_git_source(old_source)?;
+    let new = parse_git_source(new_source)?;
+    if old.repo != new.repo || old.rev == new.rev {
+        return None;
+    }
+    github_compare_url(&new.repo, &old.rev, &new.rev)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitSource {
+    repo: String,
+    rev: String,
+}
+
+fn parse_git_source(source: &str) -> Option<GitSource> {
+    let source = source.strip_prefix("git+")?;
+    let (repo, fragment) = source.rsplit_once('#')?;
+    let repo = repo.split_once('?').map_or(repo, |(repo, _)| repo);
+    Some(GitSource {
+        repo: repo.to_owned(),
+        rev: fragment.to_owned(),
+    })
+}
+
+fn github_compare_url(repo: &str, old_rev: &str, new_rev: &str) -> Option<String> {
+    let path = repo.strip_prefix("https://github.com/")?;
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    Some(format!(
+        "https://github.com/{path}/compare/{old_rev}...{new_rev}"
+    ))
 }
 
 fn require_lock_section(report_text: &str, package: &str, report_path: &Path) -> Result<()> {

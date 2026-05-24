@@ -105,6 +105,9 @@ source-audit:
     out="$(nix build ".#checks.$system.source-audit" --no-link --print-out-paths)"
     cat "$out/source-audit.txt"
 
+supply-chain-review:
+    cargo run -p xtask -- supply-chain-review
+
 # --- Smoke & verification ---
 
 local-smoke: check-toolchain

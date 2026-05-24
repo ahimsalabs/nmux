@@ -77,6 +77,36 @@ jobs:
           out="$(nix build ".#checks.${system}.source-audit" --no-link --print-out-paths)"
           cat "$out/source-audit.txt"
 
+  supply-chain-review:
+    name: supply chain review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Determine comparison range
+        shell: bash
+        run: |
+          set -euo pipefail
+          zero_sha="0000000000000000000000000000000000000000"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "$zero_sha" ]; then
+            base="${{ github.event.before }}"
+          else
+            base="$(git rev-parse HEAD^)"
+          fi
+          printf 'SUPPLY_CHAIN_BASE=%s\n' "$base" >> "$GITHUB_ENV"
+          printf 'SUPPLY_CHAIN_HEAD=%s\n' "$GITHUB_SHA" >> "$GITHUB_ENV"
+      - name: Review supply-chain-sensitive changes
+        run: nix develop . -c just supply-chain-review
+
   default-engine:
     name: default engine (${{ matrix.runner }})
     needs: change-scope

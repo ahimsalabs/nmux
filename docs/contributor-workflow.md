@@ -62,6 +62,25 @@ directory exists. A pass with nmux-generated artifacts as the oracle is only a
 harness smoke; do not treat it as trusted renderer evidence or default-engine
 promotion evidence.
 
+## Supply-Chain Pin Changes
+
+Dependency pins are reproducibility and review boundaries. Changes to
+`Cargo.toml`, `Cargo.lock`, `libghostty-vt`/`libghostty-vt-sys` git revisions,
+source-fetch policy, static-link policy, packaging policy, or the CI workflow
+must be reviewed as supply-chain changes, not routine cleanup.
+
+Run:
+
+```sh
+nix develop . -c just supply-chain-review
+```
+
+For git-sourced dependencies, review the upstream compare URL printed by the
+report before accepting the new revision. For registry dependencies, inspect
+the lockfile version/source changes and confirm the manifest diff is expected.
+The GitHub `supply chain review` job prints the same report for pull requests
+and pushes.
+
 ## Promotion Evidence Work
 
 Use this path when collecting evidence for making `libghostty-vt` the default
