@@ -185,6 +185,17 @@ pub struct Cursor {
 
 impl Session {
     pub fn initial() -> Self {
+        let surface_lines = vec![
+            "nmux pane-1".to_owned(),
+            "server-owned terminal state".to_owned(),
+        ];
+        let scrollback_lines = vec![
+            "booting nmux workspace".to_owned(),
+            "nmux pane-1".to_owned(),
+            "server-owned terminal state".to_owned(),
+        ];
+        let surface_row_count = surface_lines.len();
+        let scrollback_row_count = scrollback_lines.len();
         Self {
             id: "local".to_owned(),
             version: 1,
@@ -217,37 +228,29 @@ impl Session {
                     colors: TerminalColors::default(),
                     last_palette_diff: None,
                     styles: vec![PaneStyle::default()],
-                    surface_lines: vec![
-                        "nmux pane-1".to_owned(),
-                        "server-owned terminal state".to_owned(),
-                    ],
+                    surface_lines,
                     surface_row_runs: vec![
                         vec![CellRun::plain("nmux pane-1")],
                         vec![CellRun::plain("server-owned terminal state")],
                     ],
                     surface_semantic_prompts: vec![
-                        protocol::RowSemanticPrompt::None,
-                        protocol::RowSemanticPrompt::None,
+                        protocol::RowSemanticPrompt::None;
+                        surface_row_count
                     ],
-                    surface_dirty_rows: vec![false, false],
-                    surface_kitty_placeholders: vec![false, false],
-                    scrollback_lines: vec![
-                        "booting nmux workspace".to_owned(),
-                        "nmux pane-1".to_owned(),
-                        "server-owned terminal state".to_owned(),
-                    ],
+                    surface_dirty_rows: vec![false; surface_row_count],
+                    surface_kitty_placeholders: vec![false; surface_row_count],
+                    scrollback_lines,
                     scrollback_row_runs: vec![
                         vec![CellRun::plain("booting nmux workspace")],
                         vec![CellRun::plain("nmux pane-1")],
                         vec![CellRun::plain("server-owned terminal state")],
                     ],
                     scrollback_semantic_prompts: vec![
-                        protocol::RowSemanticPrompt::None,
-                        protocol::RowSemanticPrompt::None,
-                        protocol::RowSemanticPrompt::None,
+                        protocol::RowSemanticPrompt::None;
+                        scrollback_row_count
                     ],
-                    scrollback_dirty_rows: vec![false, false, false],
-                    scrollback_kitty_placeholders: vec![false, false, false],
+                    scrollback_dirty_rows: vec![false; scrollback_row_count],
+                    scrollback_kitty_placeholders: vec![false; scrollback_row_count],
                 },
             }],
         }
