@@ -282,6 +282,11 @@ fn terminal_engine_for_kind(kind: TerminalEngineKind) -> Box<dyn TerminalEngine>
     }
 }
 
+#[cfg(feature = "libghostty-vt")]
+pub fn libghostty_vt_supports_kitty_graphics() -> bool {
+    libghostty_vt::build_info::supports_kitty_graphics().unwrap_or(false)
+}
+
 #[derive(Debug, Default)]
 pub struct InterimTextTerminalEngine;
 
@@ -1424,6 +1429,7 @@ mod tests {
     #[cfg(feature = "libghostty-vt")]
     struct CoreRendererFixture {
         name: String,
+        requires_kitty_graphics: bool,
         cols: u32,
         rows: u32,
         terminal_output: Vec<String>,
@@ -1436,6 +1442,9 @@ mod tests {
     #[test]
     fn renderer_equivalence_fixture_corpus_projects_server_owned_surface() {
         for fixture in load_core_renderer_fixtures() {
+            if fixture.requires_kitty_graphics && !super::libghostty_vt_supports_kitty_graphics() {
+                continue;
+            }
             let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
             let empty = Vec::new();
             let mut update = None;
@@ -1543,6 +1552,10 @@ mod tests {
                 .and_then(|stem| stem.to_str())
                 .unwrap_or_else(|| panic!("fixture path has no utf-8 stem: {}", path.display()))
                 .to_owned(),
+            requires_kitty_graphics: decoded
+                .get("requires_kitty_graphics")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             cols: renderer_numeric_field(size, "cols")
                 .try_into()
                 .expect("fixture cols fit u32"),

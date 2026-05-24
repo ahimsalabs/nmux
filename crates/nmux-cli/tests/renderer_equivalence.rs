@@ -13,6 +13,11 @@ static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 #[test]
 fn renderer_equivalence_smoke_captures_structured_nmux_state() {
     for fixture in load_fixtures() {
+        if fixture.requires_kitty_graphics
+            && !nmux_core::terminal::libghostty_vt_supports_kitty_graphics()
+        {
+            continue;
+        }
         run_fixture(fixture);
     }
 }
@@ -87,6 +92,7 @@ fn run_fixture(fixture: RendererFixture) {
 struct RendererFixture {
     name: String,
     command: String,
+    requires_kitty_graphics: bool,
     initial_size: Option<FixtureSize>,
     expected_workspace: CanonicalWorkspace,
     expected_surface: CanonicalSurface,
@@ -219,6 +225,10 @@ fn load_fixture_path(path: &Path) -> RendererFixture {
             .unwrap_or_else(|| panic!("fixture path has no utf-8 stem: {}", path.display()))
             .to_owned(),
         command: string_field(&decoded, "command"),
+        requires_kitty_graphics: decoded
+            .get("requires_kitty_graphics")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         initial_size: decoded.get("initial_size").map(materialize_fixture_size),
         expected_workspace: materialize_workspace(expected),
         expected_surface: materialize_surface(expected),

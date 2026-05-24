@@ -71,6 +71,9 @@ shell command, direct terminal-output chunks, and canonical expected state can
 grow without burying fixture semantics in test code. The core harness replays
 the direct chunks into `libghostty-vt`; the CLI harness runs the shell command
 through a real `nmuxd` and `nmux --json`.
+Fixtures that require optional upstream/native capabilities, currently Kitty
+graphics placeholder metadata, declare that requirement and are skipped when
+`libghostty-vt` reports the capability is unavailable.
 Set `NMUX_RENDERER_EQUIVALENCE_ARTIFACT_DIR=target/renderer-equivalence` to
 write one raw `nmux --json` artifact plus one deterministic
 `*.canonical.json` nmux-state projection per fixture. The canonical artifacts
