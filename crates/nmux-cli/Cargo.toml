@@ -15,6 +15,7 @@ libghostty-vt = ["nmux-core/libghostty-vt"]
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
+crossterm = "0.29"
 flatbuffers = "=25.12.19"
 libc = "0.2"
 nmux-core = { path = "../nmux-core", default-features = false }
