@@ -166,6 +166,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if matches!(args.script_command, Some(ScriptCommand::Replay)) {
+        return run_replay(&args);
+    }
+
     if args.start {
         return run_managed(args);
     }
@@ -237,6 +241,54 @@ fn run_control_command(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+fn run_replay(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let path = args.replay_path.as_deref().ok_or("missing replay path")?;
+    let file = fs::File::open(path)
+        .map_err(|err| format!("failed to open replay file {}: {err}", path.display()))?;
+    let mut rendered_any = false;
+    for (index, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.map_err(|err| {
+            format!(
+                "failed to read replay file {} line {}: {err}",
+                path.display(),
+                index + 1
+            )
+        })?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(&line).map_err(|err| {
+            format!(
+                "failed to parse replay file {} line {} as JSON: {err}",
+                path.display(),
+                index + 1
+            )
+        })?;
+        let event = value.get("event").and_then(serde_json::Value::as_str);
+        let surface_text = match event {
+            Some("attach") => value
+                .pointer("/attach/surface_text")
+                .and_then(serde_json::Value::as_str),
+            Some("surface") => value
+                .get("surface_text")
+                .and_then(serde_json::Value::as_str),
+            _ => None,
+        };
+        if let Some(surface_text) = surface_text {
+            if rendered_any {
+                println!();
+            }
+            print!("{surface_text}");
+            if !surface_text.ends_with('\n') {
+                println!();
+            }
+            rendered_any = true;
+        }
+    }
+    flush_stdout()?;
+    Ok(())
+}
+
 fn run_attach_loop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut client_state = match load_client_state(args.state_path.as_deref()) {
         Ok(state) => state,
@@ -283,6 +335,13 @@ fn run_attach_loop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = match LiveRecorder::open(args.record_path.as_deref()) {
+        Ok(recorder) => recorder,
+        Err(err) => {
+            report_live_setup_error(args, &err)?;
+            return Err(err.into());
+        }
+    };
     let _raw_terminal = match RawTerminalGuard::enable_if_needed(
         RawTerminalModeContext {
             stdin_bytes: args.stdin_bytes,
@@ -404,6 +463,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             return Err(err);
         }
     };
+    let initial_presence = snapshot.presence.clone();
     let attached_pane_id = snapshot.status.pane_id.clone();
     client_state.apply_scope(local::socket_identity(&args.socket_path).ok());
     let mut rendered = match client_state.render_attach(snapshot) {
@@ -480,8 +540,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     })?;
     if args.output_json {
         rendered.scrollback = scrollback;
-        println!("{}", format_live_attach_json(&rendered));
+        let event = format_live_attach_json(&rendered);
+        recorder.record(&event)?;
+        recorder.record(&format_live_presence_json(&initial_presence))?;
+        println!("{event}");
     } else {
+        recorder.record(&format_live_attach_json(&rendered))?;
+        recorder.record(&format_live_presence_json(&initial_presence))?;
         if let Some(mouse_modes) = host_mouse_modes.as_mut() {
             mouse_modes.sync(current_modes)?;
         }
@@ -640,8 +705,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             match local::read_live_surface_update_from_stream(&mut stream)? {
                 local::LiveSurfaceRead::Workspace(workspace) => {
                     current_workspace = workspace;
+                    let event = format_live_workspace_json(&current_workspace);
+                    recorder.record(&event)?;
                     if args.output_json {
-                        println!("{}", format_live_workspace_json(&current_workspace));
+                        println!("{event}");
                     } else if args.redraw {
                         print_live_surface(
                             &current_workspace,
@@ -657,8 +724,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::Presence(presence) => {
+                    let event = format_live_presence_json(&presence);
+                    recorder.record(&event)?;
                     if args.output_json {
-                        println!("{}", format_live_presence_json(&presence));
+                        println!("{event}");
                         flush_stdout()?;
                     }
                 }
@@ -690,16 +759,21 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         rs.record_decode_time(decode_start.elapsed());
                     }
                     if args.output_json {
-                        println!(
-                            "{}",
-                            format_live_surface_update_json(
-                                &current_workspace,
-                                &update_metadata,
-                                &update_surface_text,
-                                &update,
-                            )
+                        let event = format_live_surface_update_json(
+                            &current_workspace,
+                            &update_metadata,
+                            &update_surface_text,
+                            &update,
                         );
+                        recorder.record(&event)?;
+                        println!("{event}");
                     } else {
+                        recorder.record(&format_live_surface_update_json(
+                            &current_workspace,
+                            &update_metadata,
+                            &update_surface_text,
+                            &update,
+                        ))?;
                         print_live_update(
                             &current_workspace,
                             &previous_metadata,
@@ -714,8 +788,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::Error(error) => {
+                    let event = format_live_error_json(&error);
+                    recorder.record(&event)?;
                     if args.output_json {
-                        println!("{}", format_live_error_json(&error));
+                        println!("{event}");
                         flush_stdout()?;
                     }
                     return Err(format!("live server error: {error}").into());
@@ -723,7 +799,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::LiveSurfaceRead::NoFrame => break,
                 local::LiveSurfaceRead::Closed => {
                     eprintln!("nmux: live server closed connection");
-                    return finish_live(args, &client_state, LiveDetachReason::ServerClosed);
+                    return finish_live(
+                        args,
+                        &client_state,
+                        &mut recorder,
+                        LiveDetachReason::ServerClosed,
+                    );
                 }
             }
         }
@@ -742,7 +823,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         cycles += 1;
     };
 
-    finish_live(args, &client_state, detach_reason)
+    finish_live(args, &client_state, &mut recorder, detach_reason)
 }
 
 fn run_managed(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -1023,17 +1104,62 @@ fn save_live_state(
 fn finish_live(
     args: &Args,
     client_state: &local::ClientAttachState,
+    recorder: &mut LiveRecorder,
     reason: LiveDetachReason,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(err) = save_live_state(args, client_state) {
         report_live_setup_error(args, err.as_ref())?;
         return Err(err);
     }
+    let event = format_live_detach_json(reason);
+    recorder.record(&event)?;
     if args.output_json {
-        println!("{}", format_live_detach_json(reason));
+        println!("{event}");
         flush_stdout()?;
     }
     Ok(())
+}
+
+struct LiveRecorder {
+    file: Option<fs::File>,
+    start: Instant,
+}
+
+impl LiveRecorder {
+    fn open(path: Option<&Path>) -> io::Result<Self> {
+        let file = match path {
+            Some(path) => {
+                if let Some(parent) = path.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    fs::create_dir_all(parent)?;
+                }
+                Some(fs::File::create(path)?)
+            }
+            None => None,
+        };
+        Ok(Self {
+            file,
+            start: Instant::now(),
+        })
+    }
+
+    fn record(&mut self, event_json: &str) -> io::Result<()> {
+        let Some(file) = self.file.as_mut() else {
+            return Ok(());
+        };
+        let elapsed_ms = self.start.elapsed().as_millis();
+        if let Some(rest) = event_json.strip_prefix('{') {
+            writeln!(file, "{{\"elapsed_ms\":{elapsed_ms},{rest}")?;
+        } else {
+            writeln!(
+                file,
+                "{{\"elapsed_ms\":{elapsed_ms},\"event\":\"raw\",\"raw\":{}}}",
+                local::json_string(event_json)
+            )?;
+        }
+        file.flush()
+    }
 }
 
 fn repaint_speculative_echo(
@@ -2247,6 +2373,7 @@ struct Args {
     scrollback_tail_count: Option<u32>,
     no_scrollback: bool,
     state_path: Option<PathBuf>,
+    record_path: Option<PathBuf>,
     follow: bool,
     live: bool,
     start: bool,
@@ -2268,6 +2395,7 @@ struct Args {
     script_command: Option<ScriptCommand>,
     script_split_axis: protocol::SplitAxis,
     script_title: Option<String>,
+    replay_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -2386,6 +2514,8 @@ struct RawArgs {
     no_scrollback: bool,
     #[arg(long = "state", value_name = "PATH")]
     state_path: Option<PathBuf>,
+    #[arg(long = "record", value_name = "PATH")]
+    record_path: Option<PathBuf>,
     #[arg(long = "follow", action = ArgAction::SetTrue)]
     follow: bool,
     #[arg(long = "live", action = ArgAction::SetTrue)]
@@ -2457,6 +2587,7 @@ enum ScriptCommand {
     PaneSplit,
     TabNew,
     TabClose,
+    Replay,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2468,6 +2599,10 @@ enum RawCommand {
     Tab {
         #[command(subcommand)]
         command: RawTabCommand,
+    },
+    Replay {
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
     },
 }
 
@@ -2537,6 +2672,7 @@ where
     .map_err(clap_error_message)?;
     let script = normalize_script_command(&mut raw)?;
     let script_command = script.command;
+    let replay_path = script.replay_path;
     let socket_path_set = raw.socket_path.is_some();
     let (socket_path, socket_source) = match raw.socket_path {
         Some(path) => (path, local::SocketPathSource::Explicit),
@@ -2609,7 +2745,8 @@ where
         || raw.print_socket
         || raw.print_socket_json
         || raw.state_info
-        || raw.state_info_json;
+        || raw.state_info_json
+        || matches!(script_command, Some(ScriptCommand::Replay));
     if raw.tcp_endpoint.as_deref().is_some_and(str::is_empty) {
         return Err("--tcp requires a non-empty HOST:PORT".into());
     }
@@ -2701,6 +2838,7 @@ where
             detach_key_set,
             redraw,
             speculative_echo: raw.speculative_echo,
+            record_set: raw.record_path.is_some(),
             live_resize,
             iterations,
             output_json: raw.output_json,
@@ -2765,6 +2903,7 @@ where
         scrollback_tail_count,
         no_scrollback: raw.no_scrollback,
         state_path: raw.state_path,
+        record_path: raw.record_path,
         follow: raw.follow,
         live,
         start,
@@ -2786,6 +2925,7 @@ where
         script_command,
         script_split_axis: script.split_axis,
         script_title: script.title,
+        replay_path,
     })
 }
 
@@ -2794,6 +2934,7 @@ struct NormalizedScriptCommand {
     command: Option<ScriptCommand>,
     split_axis: protocol::SplitAxis,
     title: Option<String>,
+    replay_path: Option<PathBuf>,
 }
 
 fn normalize_script_command(
@@ -2804,9 +2945,21 @@ fn normalize_script_command(
             command: None,
             split_axis: protocol::SplitAxis::None,
             title: None,
+            replay_path: None,
         });
     };
     match command {
+        RawCommand::Replay { path } => {
+            if path.as_os_str().is_empty() {
+                return Err("replay requires a non-empty path".into());
+            }
+            Ok(NormalizedScriptCommand {
+                command: Some(ScriptCommand::Replay),
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                replay_path: Some(path),
+            })
+        }
         RawCommand::Pane { command } => match command {
             RawPaneCommand::Send { pane_id, text } => {
                 if raw.target_pane_id.is_some() {
@@ -2822,6 +2975,7 @@ fn normalize_script_command(
                     command: Some(ScriptCommand::PaneSend),
                     split_axis: protocol::SplitAxis::None,
                     title: None,
+                    replay_path: None,
                 })
             }
             RawPaneCommand::Snapshot { pane_id, json } => {
@@ -2839,6 +2993,7 @@ fn normalize_script_command(
                     command: Some(ScriptCommand::PaneSnapshot),
                     split_axis: protocol::SplitAxis::None,
                     title: None,
+                    replay_path: None,
                 })
             }
             RawPaneCommand::Split { axis, pane_id } => {
@@ -2855,6 +3010,7 @@ fn normalize_script_command(
                     command: Some(ScriptCommand::PaneSplit),
                     split_axis: axis.into(),
                     title: None,
+                    replay_path: None,
                 })
             }
         },
@@ -2877,6 +3033,7 @@ fn normalize_script_command(
                         command: Some(ScriptCommand::TabNew),
                         split_axis: protocol::SplitAxis::None,
                         title,
+                        replay_path: None,
                     })
                 }
                 RawTabCommand::Close { tab_id } => {
@@ -2890,6 +3047,7 @@ fn normalize_script_command(
                         command: Some(ScriptCommand::TabClose),
                         split_axis: protocol::SplitAxis::None,
                         title: None,
+                        replay_path: None,
                     })
                 }
             }
@@ -3933,6 +4091,7 @@ struct ClientModeArgs {
     detach_key_set: bool,
     redraw: bool,
     speculative_echo: bool,
+    record_set: bool,
     live_resize: Option<(u32, u32)>,
     iterations: Option<usize>,
     output_json: bool,
@@ -4003,6 +4162,9 @@ fn validate_mode_args(args: ClientModeArgs) -> Result<(), &'static str> {
     if args.speculative_echo && !args.live {
         return Err("--speculative-echo requires --live");
     }
+    if args.record_set && !args.live {
+        return Err("--record requires --live");
+    }
     if args.speculative_echo && !args.redraw {
         return Err("--speculative-echo requires --redraw");
     }
@@ -4044,6 +4206,7 @@ Usage:
   nmux [OPTIONS] pane split horizontal|vertical [PANE_ID]
   nmux [OPTIONS] tab new [TAB_ID] [--title TITLE]
   nmux [OPTIONS] tab close [TAB_ID]
+  nmux replay PATH
 
 Options:
   --socket PATH              Unix socket path
@@ -4080,6 +4243,7 @@ Options:
   --scrollback-tail COUNT    Request the last COUNT scrollback lines
   --no-scrollback            Skip the post-attach scrollback fetch
   --state PATH               Persist client-side pane surface cache
+  --record PATH              Write timestamped live JSON events to PATH
   --follow                   Reconnect in a polling loop
   --live                     Keep one attach connection open
   --start                    Start a private local nmuxd before attaching
@@ -4107,6 +4271,7 @@ Subcommands:
   pane split AXIS [PANE_ID]       Split a pane horizontally or vertically
   tab new [TAB_ID]                Create and switch to a new tab
   tab close [TAB_ID]              Close a tab, defaulting to the active tab
+  replay PATH                     Print surface frames from a recorded live session
 
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
@@ -4116,6 +4281,7 @@ Notes:
   --print-socket-json prints the resolved socket path and source as JSON.
   --state-info and --state-info-json require --state PATH and do not connect.
   --json emits one object per one-shot/follow attach, or newline-delimited live events.
+  --record writes newline-delimited live events with elapsed_ms timestamps for replay/export tooling.
   --start waits for nmuxd --ready-json and cleans up the private daemon on exit.
   --startup-timeout-ms controls that managed readiness wait and defaults to 5000.
   --shell is shorthand for --start --live --stdin-bytes --redraw using $SHELL or sh.

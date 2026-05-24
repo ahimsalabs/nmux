@@ -45,6 +45,8 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--detach-key ctrl-]|none"));
     assert!(stdout.contains("--detach-key none passes it through"));
     assert!(stdout.contains("--no-scrollback"));
+    assert!(stdout.contains("--record PATH"));
+    assert!(stdout.contains("timestamped live JSON events"));
     assert!(stdout.contains("--cols COUNT"));
     assert!(stdout.contains("Live ResizeIntent columns; both dimensions required"));
     assert!(stdout.contains("--mouse-modifiers MODS"));
@@ -73,6 +75,8 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("nmux --live --no-input"));
     assert!(stdout.contains("nmux --live --stdin-bytes --redraw"));
     assert!(stdout.contains("nmux --shell"));
+    assert!(stdout.contains("nmux replay PATH"));
+    assert!(stdout.contains("Print surface frames from a recorded live session"));
 }
 
 #[test]
@@ -803,6 +807,10 @@ fn nmux_rejects_conflicting_frontend_modes() {
     assert_nmux_rejects(
         &["--detach-key", "none"],
         "nmux: --detach-key requires --stdin-bytes",
+    );
+    assert_nmux_rejects(
+        &["--record", "/tmp/nmux.record"],
+        "nmux: --record requires --live",
     );
     assert_nmux_rejects(
         &["--iterations", "1"],

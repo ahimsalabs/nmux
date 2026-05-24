@@ -382,6 +382,13 @@ corrupt `--state` file or missing daemon socket, for final state-save failures,
 and for protocol errors after attach.
 `--json` is mutually exclusive with `--redraw`.
 
+Add `--record PATH` to live mode to write the same structured event stream to a
+newline-delimited JSON file with an `elapsed_ms` timestamp on each event. The
+record includes the initial attach surface, presence, streamed workspace and
+surface updates, protocol errors, and detach reason. `nmux replay PATH` reads
+that file and prints recorded attach/surface text frames in order; it is a
+surface-state playback aid, not raw PTY replay.
+
 Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start`/`--scrollback-count` or `--scrollback-tail`, unless `--no-scrollback` asks for a current-surface-only attach; the printed header reports the actual returned row range and includes the total when the response is not the tail. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. State saves write a temporary file in the target directory and rename it into place. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
 
 By default, live mode prints each rendered update as plain text. Add `--redraw` to repaint the current client-side pane surface on each update. When stdout is a TTY, `--redraw` uses differential rendering: only rows that actually changed are rewritten via cursor-addressed updates, eliminating full-screen flicker. A latency counter overlay in the top-right corner (inverse video) shows milliseconds between frames. When the `libghostty-vt` engine produces structured style data, the client reconstructs ANSI SGR escape sequences (bold, italic, 24-bit RGB colors) from the protocol's structured `StyleSummary` objects — the client never parses a raw VT byte. Styled output and the latency overlay persist across detach/reattach through the state file. Cursor-only and mode-only patches with unchanged metadata are no-ops in redraw mode. `--redraw` also uses the alternate screen and hides the cursor for the live session, restoring both on exit. Captured or piped stdout falls back to plain clear/home escape output without differential rendering or styling:

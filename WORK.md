@@ -23,8 +23,6 @@ None queued.
 
 - Default engine promotion evidence / packaging / CI bundles
 - Renderer equivalence oracle
-- Streaming playback/replay design for exports, web embeds, timestamp metadata,
-  and presence history (issue #3)
 - Protocol extensions (hyperlink IDs, images, command lifecycle, physical keys)
 - Per-client cursor/mouse overlays; current multiplayer MVP uses actor identity,
   attach focused pane, and the shared daemon-owned terminal cursor (issue #2)

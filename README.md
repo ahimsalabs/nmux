@@ -76,7 +76,7 @@ Direct workspace dependencies:
 | --- | --- | --- | --- |
 | `nmux-proto` | `flatbuffers` | none | none |
 | `nmux-core` | `flatbuffers`, `libc`, `nmux-proto`, `portable-pty` | `serde_json` | `libghostty-vt` |
-| `nmux-cli` | `clap`, `flatbuffers`, `libc`, `nmux-core`, `nmux-proto` | `portable-pty`, `serde_json` | `libghostty-vt` |
+| `nmux-cli` | `clap`, `flatbuffers`, `libc`, `nmux-core`, `nmux-proto`, `serde_json` | `portable-pty` | `libghostty-vt` |
 
 Resolved dependency inventory, including indirect, optional, target-specific,
 and test dependencies:

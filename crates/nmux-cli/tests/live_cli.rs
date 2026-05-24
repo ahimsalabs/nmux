@@ -1982,6 +1982,94 @@ fn live_cli_can_stream_json_events() {
 }
 
 #[test]
+fn live_cli_can_record_timestamped_json_events() {
+    let socket_path = test_socket_path();
+    let record_path = test_state_path();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&record_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "1",
+            "--command",
+            "printf 'record-ready\n'; sleep 0.05; printf 'record-update\n'; sleep 0.2",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--record",
+            record_path.to_str().expect("record path"),
+            "--iterations",
+            "3",
+            "--interval-ms",
+            "50",
+            "--no-scrollback",
+        ])
+        .output()
+        .expect("run nmux --live --record");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux --live --record failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let record = fs::read_to_string(&record_path).expect("read record file");
+    assert!(
+        record
+            .lines()
+            .all(|line| line.starts_with("{\"elapsed_ms\":")),
+        "record events should include elapsed timestamps:\n{record}"
+    );
+    assert!(
+        record.contains("\"event\":\"attach\""),
+        "missing attach event:\n{record}"
+    );
+    assert!(
+        record.contains("\"event\":\"presence\""),
+        "missing presence event:\n{record}"
+    );
+    assert!(
+        record.contains("record-update"),
+        "missing recorded surface text:\n{record}"
+    );
+    assert!(
+        record.contains("\"event\":\"detach\""),
+        "missing detach event:\n{record}"
+    );
+
+    let replay = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args(["replay", record_path.to_str().expect("record path")])
+        .output()
+        .expect("run nmux replay");
+    assert!(
+        replay.status.success(),
+        "nmux replay failed: {}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let replay_stdout = String::from_utf8_lossy(&replay.stdout);
+    assert!(
+        replay_stdout.contains("record-ready") && replay_stdout.contains("record-update"),
+        "replay should print recorded surface text:\n{replay_stdout}"
+    );
+    let _ = fs::remove_file(&record_path);
+}
+
+#[test]
 fn live_json_reports_server_closed_detach() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
