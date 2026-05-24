@@ -132,10 +132,559 @@ pub fn serve_live_n_with_host_and_engines<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
+    if clients > 1 && clients != usize::MAX {
+        return serve_live_concurrent_n_with_host_and_engines(
+            listener,
+            session,
+            host,
+            clients,
+            cycles_per_client,
+            engines,
+        );
+    }
     for _ in 0..clients {
         serve_live_one_with_host_and_engines(listener, session, host, engines, cycles_per_client)?;
     }
     Ok(())
+}
+
+fn serve_live_concurrent_n_with_host_and_engines<H>(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut H,
+    max_clients: usize,
+    cycles_per_client: usize,
+    engines: &mut PaneTerminalEngines,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    listener.set_nonblocking(true)?;
+    let mut accepted_clients = 0_usize;
+    let mut clients = Vec::new();
+
+    while accepted_clients < max_clients || !clients.is_empty() {
+        let readiness = poll_live_concurrent_sources(
+            listener,
+            &clients,
+            host.notify_fd(),
+            LIVE_IDLE_POLL_TIMEOUT,
+        )?;
+        if let Some(notify_fd) = host.notify_fd()
+            && readiness.host_output
+        {
+            drain_notify_fd(notify_fd)?;
+        }
+
+        if readiness.listener && accepted_clients < max_clients {
+            loop {
+                match accept_live_client(listener, session, host, engines) {
+                    Ok(Some(client)) => {
+                        accepted_clients += 1;
+                        clients.push(client);
+                        if accepted_clients >= max_clients {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(err) => {
+                        listener.set_nonblocking(false)?;
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        let mut had_input = false;
+        let mut changed_workspace = false;
+        let mut closed_clients = Vec::new();
+        for client_index in readiness.client_indices {
+            let Some(client) = clients.get_mut(client_index) else {
+                continue;
+            };
+            match drain_live_client_frames(client, session, host, engines) {
+                Ok(ClientDrainStatus::Open {
+                    had_input: client_had_input,
+                    changed_workspace: client_changed_workspace,
+                }) => {
+                    had_input |= client_had_input;
+                    changed_workspace |= client_changed_workspace;
+                }
+                Ok(ClientDrainStatus::Closed) => closed_clients.push(client_index),
+                Err(err) if boxed_socket_closed_error(err.as_ref()) => {
+                    closed_clients.push(client_index);
+                }
+                Err(err) => {
+                    listener.set_nonblocking(false)?;
+                    return Err(err);
+                }
+            }
+        }
+
+        if had_input
+            && !readiness.host_output
+            && let Some(notify_fd) = host.notify_fd()
+        {
+            let readiness = poll_live_concurrent_sources(
+                listener,
+                &clients,
+                Some(notify_fd),
+                LIVE_POST_INPUT_POLL_TIMEOUT,
+            )?;
+            if readiness.host_output {
+                drain_notify_fd(notify_fd)?;
+            }
+        }
+
+        let leaf_pane_ids = session.leaf_pane_ids();
+        let quiet_timeout = if had_input {
+            LIVE_POST_INPUT_POLL_TIMEOUT
+        } else {
+            LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
+        };
+        let output_result = if host.notify_fd().is_some() {
+            poll_panes_output_with_host_until_poll_quiet(
+                session,
+                engines,
+                host,
+                &leaf_pane_ids,
+                quiet_timeout,
+            )
+        } else {
+            poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
+        };
+        if let Err(err) = output_result {
+            let error_pane_id = host_error_pane_id(&err).to_owned();
+            for client in &mut clients {
+                let _ = write_host_output_error(
+                    &mut client.stream,
+                    session,
+                    &mut client.seq,
+                    &error_pane_id,
+                    err.clone(),
+                );
+            }
+            listener.set_nonblocking(false)?;
+            return Ok(());
+        }
+
+        for (index, client) in clients.iter_mut().enumerate() {
+            if changed_workspace {
+                let workspace_frame = session.workspace_tree_frame("local-client", client.seq);
+                if let Err(err) = wire::write_default_frame(&mut client.stream, &workspace_frame) {
+                    if socket_closed_error_from_wire(&err) {
+                        closed_clients.push(index);
+                        continue;
+                    }
+                    listener.set_nonblocking(false)?;
+                    return Err(err.into());
+                }
+                client.seq += 1;
+            }
+            if let Err(err) = write_changed_surface_frames(
+                &mut client.stream,
+                session,
+                &mut client.seq,
+                &leaf_pane_ids,
+                &mut client.known_surface_versions,
+            ) {
+                if boxed_socket_closed_error(err.as_ref()) {
+                    closed_clients.push(index);
+                    continue;
+                }
+                listener.set_nonblocking(false)?;
+                return Err(err);
+            }
+            if had_input {
+                client.completed_cycles = client.completed_cycles.saturating_add(1);
+            }
+            if client.completed_cycles >= cycles_per_client {
+                closed_clients.push(index);
+            }
+        }
+
+        closed_clients.sort_unstable();
+        closed_clients.dedup();
+        for index in closed_clients.into_iter().rev() {
+            if index < clients.len() {
+                clients.remove(index);
+            }
+        }
+    }
+
+    listener.set_nonblocking(false)?;
+    Ok(())
+}
+
+struct LiveAttachedClient {
+    stream: UnixStream,
+    actor: Actor,
+    seq: u64,
+    known_surface_versions: BTreeMap<String, u64>,
+    completed_cycles: usize,
+}
+
+struct LiveConcurrentReadiness {
+    listener: bool,
+    host_output: bool,
+    client_indices: Vec<usize>,
+}
+
+enum ClientDrainStatus {
+    Open {
+        had_input: bool,
+        changed_workspace: bool,
+    },
+    Closed,
+}
+
+fn accept_live_client(
+    listener: &UnixListener,
+    session: &mut Session,
+    host: &mut dyn ProcessHostOutput,
+    engines: &mut PaneTerminalEngines,
+) -> Result<Option<LiveAttachedClient>, Box<dyn std::error::Error>> {
+    let (mut stream, _) = match listener.accept() {
+        Ok(accepted) => accepted,
+        Err(err) if matches!(err.kind(), io::ErrorKind::WouldBlock) => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    stream.set_nonblocking(false)?;
+    let request = read_attach_request(&mut stream)?;
+    let leaf_pane_ids = session.leaf_pane_ids();
+    if let Some(pane_id) = attach_target_pane_id(session, &request) {
+        if let Err(err) =
+            poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
+        {
+            let mut seq = 1;
+            let error_pane_id = host_error_pane_id(&err).to_owned();
+            write_host_output_error(&mut stream, session, &mut seq, &error_pane_id, err)?;
+            return Ok(Some(LiveAttachedClient {
+                stream,
+                actor: request.actor(),
+                seq,
+                known_surface_versions: BTreeMap::new(),
+                completed_cycles: usize::MAX,
+            }));
+        }
+        let mut seq = 1;
+        write_live_attach_initial(&mut stream, session, &request, &pane_id, &mut seq)?;
+        let mut known_surface_versions = known_surface_versions_from_request(&request);
+        if let Some(current) = session.surface_version(&pane_id) {
+            known_surface_versions.insert(pane_id, current);
+        }
+        return Ok(Some(LiveAttachedClient {
+            stream,
+            actor: request.actor(),
+            seq,
+            known_surface_versions,
+            completed_cycles: 0,
+        }));
+    }
+
+    let mut seq = 1;
+    write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
+    Ok(Some(LiveAttachedClient {
+        stream,
+        actor: request.actor(),
+        seq,
+        known_surface_versions: BTreeMap::new(),
+        completed_cycles: usize::MAX,
+    }))
+}
+
+fn write_live_attach_initial(
+    stream: &mut UnixStream,
+    session: &Session,
+    request: &AttachRequest,
+    pane_id: &str,
+    seq: &mut u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workspace_frame = session.workspace_tree_frame("local-client", *seq);
+    wire::write_default_frame(stream, &workspace_frame)?;
+    *seq += 1;
+
+    let actor = request.actor();
+    let presence_frame = session.presence_update_frame("local-client", *seq, &actor);
+    wire::write_default_frame(stream, &presence_frame)?;
+    *seq += 1;
+
+    let response = request.surface_response(session, pane_id);
+    let status_frame = session.attach_status_frame(
+        "local-client",
+        *seq,
+        pane_id,
+        attach_surface_state(response),
+    );
+    wire::write_default_frame(stream, &status_frame)?;
+    *seq += 1;
+    if let Some(response) = response
+        && let Some(surface_frame) = surface_response_frame(session, pane_id, response, *seq)
+    {
+        wire::write_default_frame(stream, &surface_frame)?;
+        *seq += 1;
+    }
+    Ok(())
+}
+
+fn drain_live_client_frames(
+    client: &mut LiveAttachedClient,
+    session: &mut Session,
+    host: &mut dyn ProcessHostOutput,
+    engines: &mut PaneTerminalEngines,
+) -> Result<ClientDrainStatus, Box<dyn std::error::Error>> {
+    let mut had_input = false;
+    let mut changed_workspace = false;
+    loop {
+        match read_live_client_frame_from_stream(&mut client.stream)? {
+            LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
+                if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
+                    write_scrollback_fetch_error(
+                        &mut client.stream,
+                        session,
+                        &mut client.seq,
+                        &fetch,
+                        error,
+                    )?;
+                    if error == protocol::ErrorCode::StaleVersion {
+                        continue;
+                    }
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                let Some(chunk) = session.scrollback_chunk_frame_for_pane(
+                    "local-client",
+                    client.seq,
+                    &fetch.pane_id,
+                    fetch.start_line,
+                    fetch.line_count,
+                ) else {
+                    write_pane_not_found_error(
+                        &mut client.stream,
+                        session,
+                        &mut client.seq,
+                        &fetch.pane_id,
+                    )?;
+                    return Ok(ClientDrainStatus::Closed);
+                };
+                wire::write_default_frame(&mut client.stream, &chunk)?;
+                client.seq += 1;
+            }
+            LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
+                if !Session::input_allowed(&client.actor) {
+                    write_protocol_error(
+                        &mut client.stream,
+                        session,
+                        &mut client.seq,
+                        protocol::ErrorCode::PermissionDenied,
+                        "resize rejected: actor is read-only",
+                        Some(&resize.pane_id),
+                        0,
+                    )?;
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                if session.surface_version(&resize.pane_id).is_none() {
+                    write_pane_not_found_error(
+                        &mut client.stream,
+                        session,
+                        &mut client.seq,
+                        &resize.pane_id,
+                    )?;
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                let policy = session
+                    .pane_resize_policy(&resize.pane_id)
+                    .unwrap_or(protocol::ResizePolicy::Fixed);
+                if Session::resize_intent_allowed(policy, resize.reason) {
+                    if let Err(err) = host.resize_pane(&resize.pane_id, resize.cols, resize.rows) {
+                        write_protocol_error(
+                            &mut client.stream,
+                            session,
+                            &mut client.seq,
+                            protocol::ErrorCode::Unknown,
+                            &format!("resize failed: {err}"),
+                            Some(&resize.pane_id),
+                            0,
+                        )?;
+                        return Ok(ClientDrainStatus::Closed);
+                    }
+                    if session.commit_pane_resize_with_engine(
+                        &resize.pane_id,
+                        resize.cols,
+                        resize.rows,
+                        engines.engine_mut(&resize.pane_id),
+                    ) {
+                        changed_workspace = true;
+                    }
+                }
+            }
+            LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
+                if !Session::input_allowed(&client.actor) {
+                    write_protocol_error(
+                        &mut client.stream,
+                        session,
+                        &mut client.seq,
+                        protocol::ErrorCode::PermissionDenied,
+                        "input rejected: actor is read-only",
+                        Some(&input.pane_id),
+                        input.input_seq,
+                    )?;
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                forward_live_input(
+                    &mut client.stream,
+                    session,
+                    host,
+                    engines,
+                    &mut client.seq,
+                    input,
+                )?;
+                had_input = true;
+            }
+            LiveClientRead::NoFrame => break,
+            LiveClientRead::Closed => return Ok(ClientDrainStatus::Closed),
+        }
+
+        if !stream_readable_within(&client.stream, Duration::ZERO)? {
+            break;
+        }
+    }
+    Ok(ClientDrainStatus::Open {
+        had_input,
+        changed_workspace,
+    })
+}
+
+fn forward_live_input(
+    stream: &mut UnixStream,
+    session: &mut Session,
+    host: &mut dyn ProcessHostOutput,
+    engines: &mut PaneTerminalEngines,
+    seq: &mut u64,
+    input: InputSummary,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if session.surface_version(&input.pane_id).is_none() {
+        write_pane_not_found_error_with_input_seq(
+            stream,
+            session,
+            seq,
+            &input.pane_id,
+            input.input_seq,
+        )?;
+        return Ok(());
+    }
+    if let Some(rejection) = input.forwarding_rejection(session) {
+        write_protocol_error(
+            stream,
+            session,
+            seq,
+            protocol::ErrorCode::PermissionDenied,
+            rejection.message(),
+            Some(&input.pane_id),
+            input.input_seq,
+        )?;
+        return Ok(());
+    }
+    let bytes = match input.forwarded_bytes(session, engines) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            write_protocol_error(
+                stream,
+                session,
+                seq,
+                protocol::ErrorCode::Unknown,
+                &err.to_string(),
+                Some(&input.pane_id),
+                input.input_seq,
+            )?;
+            return Ok(());
+        }
+    };
+    if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+        write_protocol_error(
+            stream,
+            session,
+            seq,
+            protocol::ErrorCode::Unknown,
+            &format!("input forwarding failed: {err}"),
+            Some(&input.pane_id),
+            input.input_seq,
+        )?;
+    }
+    Ok(())
+}
+
+fn poll_live_concurrent_sources(
+    listener: &UnixListener,
+    clients: &[LiveAttachedClient],
+    notify_fd: Option<std::os::fd::RawFd>,
+    timeout: Duration,
+) -> io::Result<LiveConcurrentReadiness> {
+    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let mut fds = Vec::with_capacity(1 + clients.len() + usize::from(notify_fd.is_some()));
+    fds.push(libc::pollfd {
+        fd: listener.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    });
+    for client in clients {
+        fds.push(libc::pollfd {
+            fd: client.stream.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        });
+    }
+    if let Some(fd) = notify_fd {
+        fds.push(libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        });
+    }
+
+    loop {
+        let result = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
+        if result >= 0 {
+            break;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+
+    let listener = fds
+        .first()
+        .is_some_and(|fd| fd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0);
+    let mut client_indices = Vec::new();
+    for index in 0..clients.len() {
+        if fds
+            .get(index + 1)
+            .is_some_and(|fd| fd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0)
+        {
+            client_indices.push(index);
+        }
+    }
+    let host_output = notify_fd.is_some_and(|_| {
+        fds.last()
+            .is_some_and(|fd| fd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0)
+    });
+    Ok(LiveConcurrentReadiness {
+        listener,
+        host_output,
+        client_indices,
+    })
+}
+
+fn socket_closed_error_from_wire(err: &wire::WireError) -> bool {
+    matches!(err, wire::WireError::Io(err) if socket_closed_error(err))
+}
+
+fn boxed_socket_closed_error(err: &(dyn std::error::Error + 'static)) -> bool {
+    err.downcast_ref::<io::Error>()
+        .is_some_and(socket_closed_error)
+        || err
+            .downcast_ref::<wire::WireError>()
+            .is_some_and(socket_closed_error_from_wire)
 }
 
 pub fn serve_n(

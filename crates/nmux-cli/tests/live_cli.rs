@@ -4703,6 +4703,88 @@ fn live_clients_can_reattach_to_persisted_workspace_state() {
 }
 
 #[test]
+fn live_clients_can_observe_shared_input_concurrently() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "2",
+            "--command",
+            "printf 'ready\n'; while IFS= read -r line; do printf 'echo:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let read_only_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--no-input",
+            "--iterations",
+            "3",
+            "--interval-ms",
+            "1000",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn read-only nmux");
+
+    thread::sleep(Duration::from_millis(150));
+
+    let writer_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--key",
+            "shared\n",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run writer nmux");
+
+    let read_only_output = read_only_client
+        .wait_with_output()
+        .expect("wait for read-only nmux");
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        writer_client.status.success(),
+        "writer nmux failed: {}",
+        String::from_utf8_lossy(&writer_client.stderr)
+    );
+    assert!(
+        read_only_output.status.success(),
+        "read-only nmux failed: {}",
+        String::from_utf8_lossy(&read_only_output.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let writer_stdout = String::from_utf8_lossy(&writer_client.stdout);
+    assert!(
+        writer_stdout.contains("echo:shared"),
+        "writer did not render its committed input:\n{writer_stdout}"
+    );
+    let read_only_stdout = String::from_utf8_lossy(&read_only_output.stdout);
+    assert!(
+        read_only_stdout.contains("echo:shared"),
+        "read-only concurrent client did not receive broadcast input state:\n{read_only_stdout}"
+    );
+}
+
+#[test]
 fn live_current_surface_reattach_reports_focus_rejection() {
     let socket_path = test_socket_path();
     let state_path = socket_path.with_extension("state");
