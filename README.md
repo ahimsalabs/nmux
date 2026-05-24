@@ -12,12 +12,13 @@ over FlatBuffers — not client-side PTY replay.
 - Concurrent live clients with shared surface updates and presence identity
 - Scriptable local control: `nmux pane split`, `nmux pane send`, `nmux tab new`
 - Token-authenticated TCP transport for non-Unix-socket experiments
+- Experimental container/sandbox host selection for daemon-started pane commands
 - Opt-in `libghostty-vt` engine for VT-correct terminal state extraction
 - Default `interim` text surface (not VT-correct — a prototype)
 
 ## What it doesn't do yet
 
-- Container/sandbox process hosts
+- Hardened container/sandbox isolation policy
 - Frontend Ghostty renderer
 - Hardened remote transport and production auth
 - Default-engine promotion for `libghostty-vt`

@@ -89,7 +89,8 @@ tracks.
 Local daemon/client workflows support pane splitting, tab creation/switching,
 concurrent attached clients, scriptable pane/tab commands, pane send/snapshot,
 record/replay, token-authenticated TCP attach, and container/sandbox host
-selection.
+selection. ADR 0030 records the experimental recording-format boundary, and
+ADR 0031 records the container/sandbox execution boundary.
 
 ## Not yet started
 
