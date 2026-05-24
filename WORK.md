@@ -12,8 +12,7 @@ see all panes restored.
 
 ## Next features (priority order)
 
-None queued. Close the test gaps below before adding promotion, packaging, or
-evidence infrastructure.
+- Consolidate `nmux`/`nmuxd` into a single binary and refine CLI UX (issue #6)
 
 ## Test gaps to close
 
