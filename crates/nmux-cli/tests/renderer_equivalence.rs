@@ -65,6 +65,9 @@ fn run_fixture(fixture: RendererFixture) {
     write_artifact_if_requested(&fixture.name, &stdout);
 
     let decoded: Value = serde_json::from_str(&stdout).expect("decode nmux json");
+    let workspace = materialize_workspace(&decoded);
+    assert_eq!(workspace, fixture.expected_workspace);
+
     let surface = materialize_surface(&decoded);
     assert_eq!(surface, fixture.expected_surface);
 
@@ -79,9 +82,20 @@ fn run_fixture(fixture: RendererFixture) {
 struct RendererFixture {
     name: String,
     command: String,
+    expected_workspace: CanonicalWorkspace,
     expected_surface: CanonicalSurface,
     expected_scrollback: Vec<CanonicalRow>,
     absent_substrings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct CanonicalWorkspace {
+    session_id: String,
+    tab_id: String,
+    pane_id: String,
+    cols: u64,
+    rows: u64,
+    resize_policy: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -179,6 +193,7 @@ fn load_fixture_path(path: &Path) -> RendererFixture {
             .unwrap_or_else(|| panic!("fixture path has no utf-8 stem: {}", path.display()))
             .to_owned(),
         command: string_field(&decoded, "command"),
+        expected_workspace: materialize_workspace(expected),
         expected_surface: materialize_surface(expected),
         expected_scrollback: expected
             .get("scrollback")
@@ -199,6 +214,18 @@ fn load_fixture_path(path: &Path) -> RendererFixture {
                     .to_owned()
             })
             .collect(),
+    }
+}
+
+fn materialize_workspace(decoded: &Value) -> CanonicalWorkspace {
+    let workspace = decoded.get("workspace").expect("workspace object");
+    CanonicalWorkspace {
+        session_id: string_field(workspace, "session_id"),
+        tab_id: string_field(workspace, "tab_id"),
+        pane_id: string_field(workspace, "pane_id"),
+        cols: numeric_field(workspace, "cols"),
+        rows: numeric_field(workspace, "rows"),
+        resize_policy: string_field(workspace, "resize_policy"),
     }
 }
 

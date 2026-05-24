@@ -1,6 +1,14 @@
 {
   "command": "printf '\\033]0;renderer fixture\\007'; printf '\\033]7;file://localhost/tmp/nmux-renderer\\033\\\\'; printf '\\033[?2004h\\033[?1000h'; printf '\\033[31mred\\033[0m plain'; printf '\\n'; printf 'wide:中'; printf '\\n'; printf '\\033]8;;https://example.invalid\\033\\\\link\\033]8;;\\033\\\\'; printf '\\n'; printf 'main-scroll'; printf '\\n'; printf '\\033[?1049hALT-ONLY\\033[?1049l'; cat >/dev/null",
   "expected": {
+    "workspace": {
+      "session_id": "local",
+      "tab_id": "tab-1",
+      "pane_id": "pane-1",
+      "cols": 80,
+      "rows": 24,
+      "resize_policy": "fixed"
+    },
     "terminal": {
       "title": "renderer fixture",
       "working_directory": "file://localhost/tmp/nmux-renderer",

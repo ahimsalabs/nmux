@@ -1,6 +1,14 @@
 {
   "command": "printf '\\033[?2004h\\033[?1000h\\033[?1006h\\033[?1004h\\033[?1h\\033=\\033[?6h\\033[?7l'; printf 'modes'; printf '\\n'; cat >/dev/null",
   "expected": {
+    "workspace": {
+      "session_id": "local",
+      "tab_id": "tab-1",
+      "pane_id": "pane-1",
+      "cols": 80,
+      "rows": 24,
+      "resize_policy": "fixed"
+    },
     "terminal": {
       "title": "",
       "working_directory": "",

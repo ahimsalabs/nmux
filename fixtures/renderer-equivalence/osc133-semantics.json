@@ -1,6 +1,14 @@
 {
   "command": "printf '\\033]133;A\\033\\\\prompt \\033]133;B\\033\\\\input\\033]133;C\\033\\\\output'; printf '\\n'; cat >/dev/null",
   "expected": {
+    "workspace": {
+      "session_id": "local",
+      "tab_id": "tab-1",
+      "pane_id": "pane-1",
+      "cols": 80,
+      "rows": 24,
+      "resize_policy": "fixed"
+    },
     "terminal": {
       "title": "",
       "working_directory": "",
