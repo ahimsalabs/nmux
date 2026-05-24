@@ -1,0 +1,19 @@
+[package]
+name = "nmux-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+libghostty-vt = ["dep:libghostty-vt"]
+
+[dependencies]
+flatbuffers = "=25.12.19"
+libc = "0.2"
+libghostty-vt = { version = "=0.1.1", optional = true }
+nmux-proto = { path = "../nmux-proto" }
+portable-pty = "0.9.0"
+
+[dev-dependencies]
+serde_json = "1"

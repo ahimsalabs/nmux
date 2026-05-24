@@ -1,0 +1,160 @@
+# AGENTS.md
+
+This file is the operating guide for agents working in this repository.
+
+## Project Shape
+
+nmux is a portable Ghostty-style terminal workspace. The current direction is documented in:
+
+- [README.md](README.md) for user-facing status, first-run commands, and the
+  high-level project shape.
+- [docs/roadmap.md](docs/roadmap.md) for current milestone status and next steps.
+- [WORK.md](WORK.md) for background product and architecture garden notes.
+- [docs/contributor-workflow.md](docs/contributor-workflow.md) for default,
+  opt-in VT, and promotion-evidence check paths.
+- [docs/toolchain.md](docs/toolchain.md) for supported Nix tooling and the
+  non-Nix requirements checklist.
+- [docs/source-fetch-policy.md](docs/source-fetch-policy.md) for opt-in
+  `libghostty-vt-sys` source-fetch rules and remaining promotion blockers.
+- [docs/adr/0024-native-vt-source-policy-criteria.md](docs/adr/0024-native-vt-source-policy-criteria.md)
+  for criteria a future native-VT source-policy promotion decision must satisfy.
+- [docs/packaging.md](docs/packaging.md) for current distribution posture and
+  native-VT packaging questions.
+- [docs/adr/0025-native-vt-packaging-criteria.md](docs/adr/0025-native-vt-packaging-criteria.md)
+  for criteria a future native-VT packaging promotion decision must satisfy.
+- [docs/running.md](docs/running.md) for runnable local workflows, socket
+  behavior, live attach, persisted reattach, scrollback, and opt-in VT examples.
+- [docs/protocol.md](docs/protocol.md) for the FlatBuffers state-sync contract.
+- [docs/protocol-futures.md](docs/protocol-futures.md) for withheld protocol
+  object tracks that need ADRs before schema changes.
+- [docs/default-engine-promotion.md](docs/default-engine-promotion.md) for the
+  evidence required before `libghostty-vt` can become the default engine or a
+  regular CI requirement.
+- [docs/renderer-equivalence.md](docs/renderer-equivalence.md) for the
+  milestone that must pass before stronger default-renderer or frontend
+  rendering claims.
+- [docs/ci.md](docs/ci.md) for the required default-engine GitHub Actions gate
+  and manual promotion evidence bundle workflow.
+- [docs/adr/0026-native-vt-ci-promotion-criteria.md](docs/adr/0026-native-vt-ci-promotion-criteria.md)
+  for criteria a future native-VT CI promotion decision must satisfy.
+- [docs/adr](docs/adr) for durable architecture decisions.
+- [docs/upstream](docs/upstream) for upstream/API gaps that block otherwise
+  desirable local work.
+
+Use `docs/roadmap.md` as the current implementation tracker and next-step source. Treat `WORK.md` as background garden notes. Promote stable decisions into ADRs when they affect protocol shape, process boundaries, terminal-state ownership, adapter boundaries, or licensing posture.
+
+Current sequencing:
+
+- M12 live workspace usability is implemented enough for the local daemon/client workflow to support bounded and unbounded sequential live clients, managed one-shot and live `nmux --start` workflows with validated optional `--cwd` plus `--env` pane launch context and configurable readiness timeout, `nmux --shell` as the one-flag managed interactive shell path, read-only default attach, explicit `AttachStatus` current-surface barriers, active-pane-scoped post-attach input/resize/scrollback control without guessing `pane-1`, optional `nmux --no-scrollback` current-surface-only attaches, configurable byte-stream local detach key, protocol errors for missing active-tab or active-pane metadata, pane/input-attributed protocol `Error` frames, explicit one-shot text/paste/named-key/focus/mouse input on current-surface reattach, explicit resize requests as `UserCommand` resize intents, automatic terminal-size changes as `FrontendViewport` resize intents, scoped cached-surface reattach across one-shot/follow/live paths, follow-mode JSON output plus rejection of input flags, default local socket workflows, `NMUX_*` pane identity environment injection plus `nmux --print-context` inspection for spawned local PTYs, persisted reconnect state, explicit validation, and runnable docs.
+- Local workflow informational flags include text and JSON forms for version, socket resolution, inherited pane context, and managed start output; `make local-smoke` covers the JSON paths as a default-engine user workflow check.
+- M13 backend `libghostty-vt` extraction is done for the opt-in terminal-state correctness milestone. The optional engine is imported, feature-tested, and smoke-tested for daemon-owned VT ingestion, cursor state including blink and decoded enum validation plus real `--state` cursor-only reattach persistence, terminal color state, color-only surface patches with scoped palette diffs, mixed no-row color/mode cache refresh, and real `--state` reattach persistence, terminal title metadata, OSC 7 working-directory metadata, metadata-only `CursorOnly` no-row patches with `--state` reattach persistence, OSC 133 row semantic prompt metadata, OSC 133 per-run semantic content with decoded patch/cache enum validation, row dirty flags, row state hashes, Kitty placeholder metadata, styled visible and scrollback rows, cell widths, graphemes, alternate-screen transitions with scrollback omission and structured main scrollback preservation, styled/wide run state with real `--state` reattach persistence, explicit terminal mode payloads with decoded mouse enum validation, mode-only surface patches with real `--state` reattach persistence, sparse row updates, `ReplaceRows` cache persistence for row metadata and OSC 8 hyperlink run flags with real `--state` reattach persistence, `FullRefreshRequired` snapshot recovery on known-version live reattach, decoded attach/presence identity, workspace/surface/status/scrollback IDs, pane-tree, control-plane enum, input modifier, input payload, error message/pane ID, and pane-scoped client ID validation, `AttachStatus.pane_id`, `surface_version`, and `surface_state` as the authoritative current-surface cache key and post-attach control target with rejection for missing, extra, wrong-kind, or wrong-pane following surface frames, explicit full-object hyperlink tables with emitted hyperlink IDs still zero until `libghostty-vt` exposes structured identity data, terminal-generated PTY reply routing for DECRQM query responses through a real live PTY command, PasteInput forwarding, mode-gated MouseInput forwarding with optional SGR-pixel coordinates, mode-gated FocusInput forwarding, current-surface live key/paste/named-key/focus/mouse forwarding and focus/mouse rejection including current-surface SGR-pixel mouse coverage, common named-key forwarding, mode-aware keypad Enter/digit forwarding, mode-aware cursor-arrow forwarding, engine-backed named-key encoding with modifier preservation, monotonic post-attach envelope/input sequencing across mixed live-style frames, protocol-visible host input/resize/output-poll failures, `PaneNotFound` errors for unknown pane-scoped client intents, validated 1-based contiguous public scrollback ranges, stale scrollback version precondition errors, scoped persisted scrollback range/version metadata, stale scrollback retry, current-surface scrollback fetches, live CLI resize/reattach behavior, and mode-aware key encoding. ADR 0018 keeps the default engine `interim` while requiring full feature-enabled `make check-ghostty-vt` coverage for related changes.
+- M14 is accepted in ADR 0023: `libghostty-vt` remains opt-in until native build cost, regular CI, non-Nix/toolchain provisioning, source-fetch policy, packaging, developer-workflow evidence tracked in `docs/default-engine-promotion.md`, and any renderer-equivalence claims tracked in `docs/renderer-equivalence.md` justify promotion; frontend Ghostty renderer hydration and richer protocol objects are separate tracks with upstream trackers, `docs/protocol-futures.md`, or future ADRs.
+- Frontend Ghostty renderer hydration is a separate upstream/API question; do not reintroduce client-side raw PTY replay to get there.
+
+The current implementation is a Rust workspace:
+
+- `crates/nmux-proto` owns FlatBuffers wire helpers and generated schema bindings.
+- `crates/nmux-core` owns session state, process hosts, the terminal engine boundary, interim text-surface logic, optional `libghostty-vt` extraction, and adapter mapping helpers.
+- `crates/nmux-cli` owns the `nmuxd` daemon, `nmux` client, Unix-socket local transport, and CLI integration tests.
+
+## Working Rules
+
+- Work sequentially. Do not parallelize implementation or documentation steps. If subagents are useful, run them as bounded read-only assistants and integrate their findings in the main worktree yourself.
+- Check `jj status` before starting a step.
+- Commit with `jj` after each coherent implementation or documentation step, after relevant checks pass.
+- After pushing a commit, use `gh` to find the GitHub Actions run and record its
+  run ID or URL. Do not wait for GitHub checks unless the task specifically
+  depends on CI completion; otherwise let them run asynchronously and keep
+  moving on local work.
+- Keep commits small enough that each one has a clear review purpose.
+- Preserve user or agent work already present in the worktree unless explicitly told to change it.
+- Prefer documentation under `docs/` once a note needs to outlive the current scratch plan.
+- Keep `WORK.md`, `README.md`, `docs/roadmap.md`, `docs/running.md`,
+  `docs/default-engine-promotion.md`, and `docs/terminal-state-extraction.md`
+  aligned when user-visible workflow status, promotion evidence, terminal-state
+  coverage, or protocol boundaries change.
+- Record upstream/API blockers under `docs/upstream/` when local implementation
+  would otherwise require raw PTY replay, duplicated terminal-state tracking, or
+  guessing missing `libghostty-vt` data.
+- When adding an ADR under `docs/adr/`, include status and date metadata and
+  update the status table in `docs/adr/README.md` in the same commit.
+- Update this file when repo workflow expectations change.
+- Use subagents only for bounded read-only review, research synthesis, or implementation advice. Do not use them for parallel file edits or competing implementation tracks.
+- Do not inspect or copy generated vendored Ghostty source under `target/`; treat it as build output for the `libghostty-vt` dependency, not as nmux source material.
+- Keep generated protocol bindings in `crates/nmux-proto/src/generated` derived from `schema/nmux.fbs`; do not hand-edit generated files.
+
+## Checks
+
+Use the narrowest Nix-shell gate that matches the work:
+
+| Work | Commands |
+| --- | --- |
+| Default-engine, CLI, local workflow, docs, ADRs | `nix develop . -c make check` and `nix develop . -c make local-smoke` |
+| Optional backend `libghostty-vt` correctness | `nix develop . -c make check` and `nix develop . -c make check-ghostty-vt` |
+| Schema changes | `nix develop . -c make generate-schema`, then the matching default or optional gate |
+| Release-style or default-engine-promotion evidence | Follow [docs/contributor-workflow.md](docs/contributor-workflow.md) and [docs/toolchain.md](docs/toolchain.md). |
+
+The supported development shell provides Rust, `flatc`, Make, and Zig for the
+optional native VT build. `make check` runs FlatBuffers schema validation and
+`cargo test --workspace` against the default `interim` engine. `make
+local-smoke` runs a real default-engine local daemon/client smoke over a
+temporary socket and persisted state file. `make check-ghostty-vt` runs the
+full feature-enabled `nmux-core` and `nmux-cli` suites with
+`RUST_TEST_THREADS=1` and `GIT_CONFIG_GLOBAL=/dev/null`; keep it opt-in unless
+a later ADR promotes the native Ghostty/Zig build path.
+Nix examples assume `nix-command` and `flakes` are enabled; if not, run the
+same commands as
+`nix --extra-experimental-features 'nix-command flakes' develop . -c ...`.
+
+Print active tool versions and source-fetch settings with:
+
+```sh
+nix develop . -c make toolchain-info
+```
+
+For narrower iteration, prefer targeted `cargo test` commands inside
+`nix develop . -c ...`, then run the matching full gate before committing.
+GitHub Actions runs `make check` and `make local-smoke` on pull requests and
+pushes to `main`; the promotion-evidence-bundle job is manual and does not make
+`libghostty-vt` a required CI gate. Use [docs/ci.md](docs/ci.md) when recording
+manual CI promotion evidence.
+
+If `nix develop` itself is unavailable, do not rewrite the flake or check in
+machine-local store paths. Either use an already entered dev shell, or record the
+environmental failure and keep changes scoped to work that can still be
+validated honestly.
+Use [docs/toolchain.md](docs/toolchain.md) when documenting non-Nix equivalents;
+do not treat an unvalidated local setup as default-engine promotion evidence.
+Use [docs/source-fetch-policy.md](docs/source-fetch-policy.md) when changing
+`libghostty-vt-sys` source-fetch behavior; do not inspect or copy generated
+Ghostty build output under `target/`.
+Use [docs/packaging.md](docs/packaging.md) when discussing release binaries or
+native-VT distribution.
+Use [docs/contributor-workflow.md](docs/contributor-workflow.md) when changing
+which work requires `make check`, `make check-ghostty-vt`, or `make check-all`.
+
+## Licensing Rules
+
+- Do not copy code from GPL or AGPL sources into this repository.
+- GPL and AGPL projects may be treated as prior art, references, or isolated adapter targets.
+- Keep any future GPL/AGPL integration behind a process or repository boundary unless the project owner explicitly changes the licensing plan.
+
+## Research Rules
+
+Use `oracle --prompt '...'` for deep protocol, architecture, licensing, or upstream-fact questions that should not be guessed. If oracle quota or external research is unavailable, keep moving on repo-local work that does not depend on the unanswered question. Do not use outside code as implementation source material unless its license is compatible with the intended nmux core licensing posture.
+
+## Documentation Rules
+
+ADRs should use this shape:
+
+- Title with ADR number and decision name.
+- Status.
+- Date.
+- Context.
+- Decision.
+- Consequences.
+- Licensing or compatibility notes when relevant.
+
+Do not rewrite old ADRs to hide history. Add a new ADR that supersedes a prior one when the decision changes.
+Keep `docs/adr/README.md` as a status index, not just a link list, so accepted
+decisions and older proposed records remain visible at a glance.

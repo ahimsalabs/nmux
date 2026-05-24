@@ -1,0 +1,78 @@
+name: check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  default-engine:
+    name: default engine
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Source audit
+        run: |
+          system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+          out="$(nix build ".#checks.${system}.source-audit" --no-link --print-out-paths)"
+          cat "$out/source-audit.txt"
+      - name: Toolchain info
+        run: nix develop . -c make toolchain-info
+      - name: Check
+        run: nix develop . -c make check
+      - name: Local smoke
+        run: nix develop . -c make local-smoke
+
+  promotion-evidence-bundle:
+    name: promotion evidence bundle
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Promotion evidence bundle
+        run: nix develop . -c make promotion-evidence-bundle
+      - name: Upload promotion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmux-promotion-evidence
+          path: target/promotion-evidence
+          if-no-files-found: error
+
+  promotion-evidence-artifact-verify:
+    name: promotion evidence artifact verify
+    if: github.event_name == 'workflow_dispatch'
+    needs: promotion-evidence-bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Download promotion evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: nmux-promotion-evidence
+          path: target/downloaded-promotion-evidence
+      - name: Verify downloaded promotion evidence
+        run: nix develop . -c make PROMOTION_EVIDENCE_DIR=target/downloaded-promotion-evidence promotion-evidence-verify

@@ -1,0 +1,186 @@
+{
+  "command": "printf 'abc'; printf '\\033[2D'; printf 'Z'; printf '\\n'; printf 'combo:e\\314\\201'; printf '\\n'; cat >/dev/null",
+  "terminal_output": [
+    "abc",
+    "\u001b[2D",
+    "Z",
+    "\r\n",
+    "combo:é",
+    "\r\n"
+  ],
+  "expected": {
+    "scrollback": [
+      {
+        "dirty": true,
+        "dirty_hash": 16631391110081340659,
+        "kitty_virtual_placeholder": false,
+        "line": 1,
+        "row_state_hash": 2037537910589449825,
+        "runs": [
+          {
+            "cell_widths": [
+              1,
+              1,
+              1
+            ],
+            "flags": 0,
+            "hyperlink_id": 0,
+            "semantic_content": "output",
+            "style_id": 0,
+            "text": "aZc"
+          }
+        ],
+        "semantic_prompt": "none",
+        "text": "aZc"
+      },
+      {
+        "dirty": true,
+        "dirty_hash": 18203593553516966003,
+        "kitty_virtual_placeholder": false,
+        "line": 2,
+        "row_state_hash": 13179942643548859601,
+        "runs": [
+          {
+            "cell_widths": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "flags": 0,
+            "hyperlink_id": 0,
+            "semantic_content": "output",
+            "style_id": 0,
+            "text": "combo:é"
+          }
+        ],
+        "semantic_prompt": "none",
+        "text": "combo:é"
+      }
+    ],
+    "surface": {
+      "colors": {
+        "cursor_rgba": 0,
+        "cursor_rgba_set": false,
+        "default_bg_rgba": 255,
+        "default_fg_rgba": 4294967295,
+        "palette_len": 256,
+        "palette_prefix": [
+          488579583,
+          3429263103,
+          3049089279,
+          4039537919,
+          2174926591,
+          2996091903,
+          2327754751,
+          3318269695,
+          1717987071,
+          3578680319,
+          3117042431,
+          3888465919,
+          2057755391,
+          3281508607,
+          1891676671,
+          3941264127
+        ]
+      },
+      "row_updates": [
+        {
+          "dirty": true,
+          "dirty_hash": 16631391110081340659,
+          "kitty_virtual_placeholder": false,
+          "row": 0,
+          "row_state_hash": 2037537910589449825,
+          "runs": [
+            {
+              "cell_widths": [
+                1,
+                1,
+                1
+              ],
+              "flags": 0,
+              "hyperlink_id": 0,
+              "semantic_content": "output",
+              "style_id": 0,
+              "text": "aZc"
+            }
+          ],
+          "semantic_prompt": "none",
+          "text": "aZc"
+        },
+        {
+          "dirty": true,
+          "dirty_hash": 18203593553516966003,
+          "kitty_virtual_placeholder": false,
+          "row": 1,
+          "row_state_hash": 13179942643548859601,
+          "runs": [
+            {
+              "cell_widths": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ],
+              "flags": 0,
+              "hyperlink_id": 0,
+              "semantic_content": "output",
+              "style_id": 0,
+              "text": "combo:é"
+            }
+          ],
+          "semantic_prompt": "none",
+          "text": "combo:é"
+        }
+      ],
+      "styles": [
+        {
+          "bg_rgba": 0,
+          "fg_rgba": 0,
+          "flags": 0,
+          "underline_rgba": 0
+        }
+      ]
+    },
+    "terminal": {
+      "cursor": {
+        "blinking": false,
+        "col": 0,
+        "row": 2,
+        "shape": "block",
+        "visible": true
+      },
+      "modes": {
+        "application_cursor": false,
+        "application_keypad": false,
+        "bracketed_paste": false,
+        "focus_reporting": false,
+        "mouse_format": "x10",
+        "mouse_tracking": false,
+        "mouse_tracking_mode": "none",
+        "origin": false,
+        "wraparound": true
+      },
+      "surface_kind": "main",
+      "title": "",
+      "working_directory": ""
+    },
+    "workspace": {
+      "cols": 80,
+      "pane_id": "pane-1",
+      "resize_policy": "fixed",
+      "rows": 24,
+      "session_id": "local",
+      "tab_id": "tab-1"
+    }
+  },
+  "absent_substrings": [
+    "\u001b[2D"
+  ]
+}

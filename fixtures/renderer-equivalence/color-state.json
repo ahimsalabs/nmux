@@ -1,0 +1,154 @@
+{
+  "command": "printf '\\033]12;#ff00ff\\033\\\\'; printf '\\033]4;1;#112233\\033\\\\'; printf '\\033[38;5;1mpalette-red\\033[0m'; printf '\\n'; cat >/dev/null",
+  "terminal_output": [
+    "\u001b]12;#ff00ff\u001b\\",
+    "\u001b]4;1;#112233\u001b\\",
+    "\u001b[38;5;1mpalette-red\u001b[0m",
+    "\r\n"
+  ],
+  "expected": {
+    "scrollback": [
+      {
+        "dirty": true,
+        "dirty_hash": 9538458151471197246,
+        "kitty_virtual_placeholder": false,
+        "line": 1,
+        "row_state_hash": 5579086510261198893,
+        "runs": [
+          {
+            "cell_widths": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "flags": 0,
+            "hyperlink_id": 0,
+            "semantic_content": "output",
+            "style_id": 1,
+            "text": "palette-red"
+          }
+        ],
+        "semantic_prompt": "none",
+        "text": "palette-red"
+      }
+    ],
+    "surface": {
+      "colors": {
+        "cursor_rgba": 4278255615,
+        "cursor_rgba_set": true,
+        "default_bg_rgba": 255,
+        "default_fg_rgba": 4294967295,
+        "palette_len": 256,
+        "palette_prefix": [
+          488579583,
+          287454207,
+          3049089279,
+          4039537919,
+          2174926591,
+          2996091903,
+          2327754751,
+          3318269695,
+          1717987071,
+          3578680319,
+          3117042431,
+          3888465919,
+          2057755391,
+          3281508607,
+          1891676671,
+          3941264127
+        ]
+      },
+      "row_updates": [
+        {
+          "dirty": true,
+          "dirty_hash": 9538458151471197246,
+          "kitty_virtual_placeholder": false,
+          "row": 0,
+          "row_state_hash": 5579086510261198893,
+          "runs": [
+            {
+              "cell_widths": [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ],
+              "flags": 0,
+              "hyperlink_id": 0,
+              "semantic_content": "output",
+              "style_id": 1,
+              "text": "palette-red"
+            }
+          ],
+          "semantic_prompt": "none",
+          "text": "palette-red"
+        }
+      ],
+      "styles": [
+        {
+          "bg_rgba": 0,
+          "fg_rgba": 0,
+          "flags": 0,
+          "underline_rgba": 0
+        },
+        {
+          "bg_rgba": 0,
+          "fg_rgba": 287454207,
+          "flags": 0,
+          "underline_rgba": 0
+        }
+      ]
+    },
+    "terminal": {
+      "cursor": {
+        "blinking": false,
+        "col": 0,
+        "row": 1,
+        "shape": "block",
+        "visible": true
+      },
+      "modes": {
+        "application_cursor": false,
+        "application_keypad": false,
+        "bracketed_paste": false,
+        "focus_reporting": false,
+        "mouse_format": "x10",
+        "mouse_tracking": false,
+        "mouse_tracking_mode": "none",
+        "origin": false,
+        "wraparound": true
+      },
+      "surface_kind": "main",
+      "title": "",
+      "working_directory": ""
+    },
+    "workspace": {
+      "cols": 80,
+      "pane_id": "pane-1",
+      "resize_policy": "fixed",
+      "rows": 24,
+      "session_id": "local",
+      "tab_id": "tab-1"
+    }
+  },
+  "absent_substrings": [
+    "\u001b]12;",
+    "\u001b]4;",
+    "\u001b[38;5;1m"
+  ]
+}

@@ -1,0 +1,394 @@
+namespace nmux.protocol;
+
+enum PaneKind : byte {
+  Pty = 0,
+  Adapter = 1,
+}
+
+enum SplitAxis : byte {
+  None = 0,
+  Horizontal = 1,
+  Vertical = 2,
+}
+
+enum SurfaceKind : byte {
+  Main = 0,
+  Alternate = 1,
+}
+
+enum CursorShape : byte {
+  Block = 0,
+  Beam = 1,
+  Underline = 2,
+}
+
+enum MouseTrackingMode : byte {
+  None = 0,
+  X10 = 1,
+  Normal = 2,
+  Button = 3,
+  Any = 4,
+}
+
+enum MouseFormat : byte {
+  X10 = 0,
+  Utf8 = 1,
+  Sgr = 2,
+  Urxvt = 3,
+  SgrPixels = 4,
+}
+
+enum InputKind : byte {
+  Key = 0,
+  Mouse = 1,
+  Paste = 2,
+  RawBytes = 3,
+  Focus = 4,
+}
+
+enum MouseButton : byte {
+  None = 0,
+  Left = 1,
+  Middle = 2,
+  Right = 3,
+  WheelUp = 4,
+  WheelDown = 5,
+}
+
+enum MouseAction : byte {
+  Press = 0,
+  Release = 1,
+  Motion = 2,
+}
+
+enum ResizeReason : byte {
+  FrontendViewport = 0,
+  UserCommand = 1,
+  Attach = 2,
+  Policy = 3,
+}
+
+enum ResizePolicy : byte {
+  Fixed = 0,
+  Leader = 1,
+  ActiveClient = 2,
+  Manual = 3,
+}
+
+enum PatchKind : byte {
+  ReplaceRows = 0,
+  CursorOnly = 1,
+  ModeOnly = 2,
+  FullRefreshRequired = 3,
+  ColorOnly = 4,
+}
+
+enum ErrorCode : ushort {
+  Unknown = 0,
+  ProtocolVersionUnsupported = 1,
+  SessionNotFound = 2,
+  PaneNotFound = 3,
+  PermissionDenied = 4,
+  StaleVersion = 5,
+}
+
+enum AttachMode : byte {
+  ReadOnly = 0,
+  ReadWrite = 1,
+}
+
+enum AttachSurfaceState : byte {
+  Current = 0,
+  Snapshot = 1,
+  Patch = 2,
+}
+
+enum RowSemanticPrompt : byte {
+  None = 0,
+  Prompt = 1,
+  Continuation = 2,
+}
+
+enum CellSemanticContent : byte {
+  Output = 0,
+  Input = 1,
+  Prompt = 2,
+}
+
+enum PresenceKind : byte {
+  Joined = 0,
+  Updated = 1,
+  Left = 2,
+}
+
+table WorkspaceTreeSnapshot {
+  version:ulong;
+  session_id:string;
+  tabs:[TabNode];
+  active_tab_id:string;
+}
+
+table TabNode {
+  tab_id:string;
+  title:string;
+  root:PaneNode;
+  active_pane_id:string;
+}
+
+table PaneNode {
+  pane_id:string;
+  kind:PaneKind = Pty;
+  split_axis:SplitAxis = None;
+  children:[PaneNode];
+  surface_version:ulong;
+  cols:uint;
+  rows:uint;
+  resize_policy:ResizePolicy = Fixed;
+}
+
+table PaneSurfaceSnapshot {
+  pane_id:string;
+  version:ulong;
+  surface:SurfaceKind = Main;
+  cols:uint;
+  rows:uint;
+  cursor:CursorState;
+  modes:TerminalModeState;
+  metadata:TerminalMetadataState;
+  styles:[Style];
+  rows_data:[SurfaceRow];
+  colors:TerminalColorState;
+  hyperlinks:[Hyperlink];
+}
+
+table PaneSurfacePatch {
+  pane_id:string;
+  base_version:ulong;
+  version:ulong;
+  kind:PatchKind = ReplaceRows;
+  row_updates:[RowUpdate];
+  cursor:CursorState;
+  modes:TerminalModeState;
+  metadata:TerminalMetadataState;
+  colors:TerminalColorState;
+}
+
+table CursorState {
+  row:uint;
+  col:uint;
+  visible:bool = true;
+  shape:CursorShape = Block;
+  blinking:bool = true;
+}
+
+table TerminalModeState {
+  bracketed_paste:bool;
+  mouse_tracking:bool;
+  focus_reporting:bool;
+  application_keypad:bool;
+  application_cursor:bool;
+  origin:bool;
+  wraparound:bool = true;
+  mouse_tracking_mode:MouseTrackingMode = None;
+  mouse_format:MouseFormat = X10;
+}
+
+table TerminalMetadataState {
+  title:string;
+  working_directory:string;
+}
+
+table TerminalColorState {
+  default_fg_rgba:uint;
+  default_bg_rgba:uint;
+  cursor_rgba:uint;
+  cursor_rgba_set:bool;
+  palette_rgba:[uint];
+  palette_diff_start:uint;
+  palette_diff_rgba:[uint];
+}
+
+table SurfaceRow {
+  row:uint;
+  runs:[CellRun];
+  dirty_hash:ulong;
+  semantic_prompt:RowSemanticPrompt = None;
+  dirty:bool;
+  kitty_virtual_placeholder:bool;
+  row_state_hash:ulong;
+}
+
+table RowUpdate {
+  row:uint;
+  runs:[CellRun];
+  dirty_hash:ulong;
+  semantic_prompt:RowSemanticPrompt = None;
+  dirty:bool;
+  kitty_virtual_placeholder:bool;
+  row_state_hash:ulong;
+}
+
+table CellRun {
+  text_utf8:string;
+  cell_widths:[ubyte];
+  style_id:uint;
+  flags:uint;
+  hyperlink_id:uint;
+  semantic_content:CellSemanticContent = Output;
+}
+
+table Style {
+  fg_rgba:uint;
+  bg_rgba:uint;
+  underline_rgba:uint;
+  flags:uint;
+}
+
+table Hyperlink {
+  id:uint;
+  uri:string;
+  osc8_id:string;
+  params:string;
+}
+
+table InputEvent {
+  pane_id:string;
+  actor_id:string;
+  input_seq:ulong;
+  kind:InputKind;
+  key:KeyInput;
+  mouse:MouseInput;
+  paste:PasteInput;
+  raw:RawInput;
+  focus:FocusInput;
+}
+
+table KeyInput {
+  text_utf8:string;
+  key_name:string;
+  modifiers:uint;
+}
+
+table MouseInput {
+  row:uint;
+  col:uint;
+  button:MouseButton = None;
+  modifiers:uint;
+  action:MouseAction = Press;
+  has_pixels:bool;
+  pixel_x:uint;
+  pixel_y:uint;
+}
+
+table PasteInput {
+  text_utf8:string;
+  bracketed:bool = true;
+}
+
+table RawInput {
+  bytes:[ubyte];
+}
+
+table FocusInput {
+  focused:bool;
+}
+
+table ResizeIntent {
+  pane_id:string;
+  actor_id:string;
+  desired_cols:uint;
+  desired_rows:uint;
+  reason:ResizeReason;
+}
+
+table ScrollbackFetch {
+  pane_id:string;
+  actor_id:string;
+  start_line:ulong;
+  line_count:uint;
+  known_scrollback_version:ulong;
+}
+
+table ScrollbackChunk {
+  pane_id:string;
+  scrollback_version:ulong;
+  start_line:ulong;
+  total_lines:ulong;
+  rows:[ScrollbackRow];
+  styles:[Style];
+  colors:TerminalColorState;
+  hyperlinks:[Hyperlink];
+}
+
+table ScrollbackRow {
+  line:ulong;
+  runs:[CellRun];
+  dirty_hash:ulong;
+  semantic_prompt:RowSemanticPrompt = None;
+  dirty:bool;
+  kitty_virtual_placeholder:bool;
+  row_state_hash:ulong;
+}
+
+table PresenceUpdate {
+  actor_id:string;
+  user_id:string;
+  display_name:string;
+  mode:AttachMode = ReadOnly;
+  kind:PresenceKind = Joined;
+  focused_pane_id:string;
+}
+
+table Error {
+  code:ErrorCode = Unknown;
+  message:string;
+  retryable:bool;
+  pane_id:string;
+  input_seq:ulong;
+}
+
+table KnownPaneSurfaceVersion {
+  pane_id:string;
+  version:ulong;
+}
+
+table AttachRequest {
+  actor_id:string;
+  user_id:string;
+  display_name:string;
+  mode:AttachMode = ReadOnly;
+  focused_pane_id:string;
+  known_surfaces:[KnownPaneSurfaceVersion];
+}
+
+table AttachStatus {
+  pane_id:string;
+  surface_version:ulong;
+  surface_state:AttachSurfaceState = Current;
+}
+
+union EnvelopeBody {
+  WorkspaceTreeSnapshot,
+  PaneSurfaceSnapshot,
+  PaneSurfacePatch,
+  InputEvent,
+  ResizeIntent,
+  Error,
+  ScrollbackFetch,
+  ScrollbackChunk,
+  PresenceUpdate,
+  AttachRequest,
+  AttachStatus,
+}
+
+table Envelope {
+  protocol_version:uint;
+  session_id:string;
+  connection_id:string;
+  seq:ulong;
+  ack:ulong;
+  sent_at_mono_ms:ulong;
+  body:EnvelopeBody;
+}
+
+root_type Envelope;
