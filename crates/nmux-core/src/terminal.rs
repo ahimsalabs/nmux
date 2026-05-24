@@ -212,6 +212,7 @@ pub struct MouseTerminalInput {
     pub button: MouseButton,
     pub action: MouseAction,
     pub modifiers: u32,
+    pub mouse_format: protocol::MouseFormat,
     pub cols: u32,
     pub rows: u32,
 }
@@ -329,13 +330,17 @@ impl TerminalEngine for InterimTextTerminalEngine {
 
     fn encode_key_input(&mut self, input: KeyTerminalInput<'_>) -> Option<Vec<u8>> {
         if input.modifiers != 0 {
-            return None;
+            return modified_named_key_bytes(input.key_name, input.modifiers);
         }
         named_key_bytes(
             input.key_name,
             input.application_keypad,
             input.application_cursor,
         )
+    }
+
+    fn encode_mouse_input(&mut self, input: MouseTerminalInput) -> Option<Vec<u8>> {
+        encode_sgr_mouse_input(input)
     }
 }
 
@@ -401,6 +406,81 @@ pub fn named_key_bytes(
         _ => return None,
     };
     Some(bytes.to_vec())
+}
+
+pub fn modified_named_key_bytes(key_name: &str, modifiers: u32) -> Option<Vec<u8>> {
+    if modifiers == 0 || modifiers > 0x0f {
+        return None;
+    }
+    let modifier_param = modifiers.checked_add(1)?;
+    let sequence = match key_name {
+        "arrow-up" => format!("\x1b[1;{modifier_param}A"),
+        "arrow-down" => format!("\x1b[1;{modifier_param}B"),
+        "arrow-right" => format!("\x1b[1;{modifier_param}C"),
+        "arrow-left" => format!("\x1b[1;{modifier_param}D"),
+        "home" => format!("\x1b[1;{modifier_param}H"),
+        "end" => format!("\x1b[1;{modifier_param}F"),
+        "insert" => format!("\x1b[2;{modifier_param}~"),
+        "delete" => format!("\x1b[3;{modifier_param}~"),
+        "page-up" => format!("\x1b[5;{modifier_param}~"),
+        "page-down" => format!("\x1b[6;{modifier_param}~"),
+        "f1" => format!("\x1b[1;{modifier_param}P"),
+        "f2" => format!("\x1b[1;{modifier_param}Q"),
+        "f3" => format!("\x1b[1;{modifier_param}R"),
+        "f4" => format!("\x1b[1;{modifier_param}S"),
+        "f5" => format!("\x1b[15;{modifier_param}~"),
+        "f6" => format!("\x1b[17;{modifier_param}~"),
+        "f7" => format!("\x1b[18;{modifier_param}~"),
+        "f8" => format!("\x1b[19;{modifier_param}~"),
+        "f9" => format!("\x1b[20;{modifier_param}~"),
+        "f10" => format!("\x1b[21;{modifier_param}~"),
+        "f11" => format!("\x1b[23;{modifier_param}~"),
+        "f12" => format!("\x1b[24;{modifier_param}~"),
+        "tab" if modifiers == 1 => "\x1b[Z".to_owned(),
+        _ => return None,
+    };
+    Some(sequence.into_bytes())
+}
+
+fn encode_sgr_mouse_input(input: MouseTerminalInput) -> Option<Vec<u8>> {
+    match input.mouse_format {
+        protocol::MouseFormat::Sgr | protocol::MouseFormat::SgrPixels => {}
+        _ => return None,
+    }
+    if input.row >= input.rows || input.col >= input.cols {
+        return None;
+    }
+    let mut code = match input.button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+        MouseButton::None => 3,
+        MouseButton::WheelUp => 64,
+        MouseButton::WheelDown => 65,
+    };
+    if input.action == MouseAction::Motion {
+        code += 32;
+    }
+    if input.modifiers & 1 != 0 {
+        code += 4;
+    }
+    if input.modifiers & 4 != 0 {
+        code += 8;
+    }
+    if input.modifiers & 2 != 0 {
+        code += 16;
+    }
+    let (x, y) = if input.mouse_format == protocol::MouseFormat::SgrPixels {
+        (input.pixel_x?, input.pixel_y?)
+    } else {
+        (input.col.checked_add(1)?, input.row.checked_add(1)?)
+    };
+    let final_byte = if input.action == MouseAction::Release {
+        'm'
+    } else {
+        'M'
+    };
+    Some(format!("\x1b[<{code};{x};{y}{final_byte}").into_bytes())
 }
 
 fn interim_text_update(
@@ -1353,8 +1433,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        InterimTextTerminalEngine, PaneTerminalEngines, TerminalColors, TerminalCursor,
-        TerminalEngine, TerminalEngineKind, TerminalInput, TerminalModes,
+        InterimTextTerminalEngine, MouseAction, MouseButton, MouseTerminalInput,
+        PaneTerminalEngines, TerminalColors, TerminalCursor, TerminalEngine, TerminalEngineKind,
+        TerminalInput, TerminalModes,
     };
 
     #[cfg(feature = "libghostty-vt")]
@@ -3569,12 +3650,106 @@ mod tests {
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 0,
+                mouse_format: update.modes.mouse_format,
                 cols: 80,
                 rows: 24,
             })
             .expect("encoded mouse input");
 
         assert_eq!(bytes, b"\x1b[<0;1;1M");
+    }
+
+    #[test]
+    fn interim_engine_encodes_modified_named_keys() {
+        let mut engine = super::InterimTextTerminalEngine;
+
+        assert_eq!(
+            engine.encode_key_input(super::KeyTerminalInput {
+                key_name: "arrow-up",
+                modifiers: 2,
+                application_keypad: false,
+                application_cursor: false,
+            }),
+            Some(b"\x1b[1;3A".to_vec())
+        );
+        assert_eq!(
+            engine.encode_key_input(super::KeyTerminalInput {
+                key_name: "delete",
+                modifiers: 3,
+                application_keypad: false,
+                application_cursor: false,
+            }),
+            Some(b"\x1b[3;4~".to_vec())
+        );
+        assert_eq!(
+            engine.encode_key_input(super::KeyTerminalInput {
+                key_name: "tab",
+                modifiers: 1,
+                application_keypad: false,
+                application_cursor: false,
+            }),
+            Some(b"\x1b[Z".to_vec())
+        );
+        assert_eq!(
+            engine.encode_key_input(super::KeyTerminalInput {
+                key_name: "enter",
+                modifiers: 2,
+                application_keypad: false,
+                application_cursor: false,
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn interim_engine_encodes_sgr_mouse_input() {
+        let mut engine = super::InterimTextTerminalEngine;
+
+        assert_eq!(
+            engine.encode_mouse_input(MouseTerminalInput {
+                row: 0,
+                col: 0,
+                pixel_x: None,
+                pixel_y: None,
+                button: MouseButton::Left,
+                action: MouseAction::Press,
+                modifiers: 0,
+                mouse_format: protocol::MouseFormat::Sgr,
+                cols: 80,
+                rows: 24,
+            }),
+            Some(b"\x1b[<0;1;1M".to_vec())
+        );
+        assert_eq!(
+            engine.encode_mouse_input(MouseTerminalInput {
+                row: 4,
+                col: 5,
+                pixel_x: None,
+                pixel_y: None,
+                button: MouseButton::WheelDown,
+                action: MouseAction::Press,
+                modifiers: 2,
+                mouse_format: protocol::MouseFormat::Sgr,
+                cols: 80,
+                rows: 24,
+            }),
+            Some(b"\x1b[<81;6;5M".to_vec())
+        );
+        assert_eq!(
+            engine.encode_mouse_input(MouseTerminalInput {
+                row: 0,
+                col: 0,
+                pixel_x: Some(33),
+                pixel_y: Some(65),
+                button: MouseButton::Left,
+                action: MouseAction::Release,
+                modifiers: 0,
+                mouse_format: protocol::MouseFormat::SgrPixels,
+                cols: 80,
+                rows: 24,
+            }),
+            Some(b"\x1b[<0;33;65m".to_vec())
+        );
     }
 
     #[cfg(feature = "libghostty-vt")]
@@ -3600,6 +3775,7 @@ mod tests {
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 2,
+                mouse_format: protocol::MouseFormat::Sgr,
                 cols: 80,
                 rows: 24,
             })
@@ -3632,6 +3808,7 @@ mod tests {
                 button: MouseButton::Left,
                 action: MouseAction::Press,
                 modifiers: 0,
+                mouse_format: update.modes.mouse_format,
                 cols: 80,
                 rows: 24,
             })

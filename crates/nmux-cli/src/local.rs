@@ -5856,6 +5856,9 @@ impl InputSummary {
                     button: mouse.button,
                     action: mouse.action,
                     modifiers: mouse.modifiers,
+                    mouse_format: session
+                        .pane_mouse_format(&self.pane_id)
+                        .ok_or("mouse input pane is missing")?,
                     cols,
                     rows,
                 })
@@ -10864,17 +10867,17 @@ mod tests {
             &socket_path,
             AttachOptions {
                 input_text: None,
-                key_name: Some("delete".to_owned()),
+                key_name: Some("enter".to_owned()),
                 key_modifiers: 2,
                 ..AttachOptions::default()
             },
         )
-        .expect_err("modified key should report server error");
+        .expect_err("unsupported modified key should report server error");
         let host = server.join().expect("server thread");
 
         assert!(
             err.to_string()
-                .contains("server error: terminal engine cannot encode modified key name: delete"),
+                .contains("server error: terminal engine cannot encode modified key name: enter"),
             "unexpected error: {err}"
         );
         assert!(
@@ -15025,7 +15028,7 @@ mod tests {
     }
 
     #[test]
-    fn modified_named_key_requires_terminal_engine_encoder() {
+    fn modified_named_key_forwards_with_interim_encoder() {
         let session = Session::initial();
         let input = InputSummary {
             pane_id: "pane-1".to_owned(),
@@ -15041,13 +15044,10 @@ mod tests {
             requires_mouse_tracking: false,
         };
 
-        let err = input
+        let bytes = input
             .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
-            .expect_err("modified key unsupported");
-        assert!(
-            err.to_string()
-                .contains("terminal engine cannot encode modified key name: arrow-up")
-        );
+            .expect("modified key supported");
+        assert_eq!(bytes, b"\x1b[1;3A");
     }
 
     #[test]
@@ -15509,6 +15509,43 @@ mod tests {
             protocol::MouseTrackingMode::Any,
             any_motion
         ));
+    }
+
+    #[test]
+    fn mouse_input_forwards_with_interim_sgr_encoder() {
+        let mut session = Session::initial();
+        session.tabs[0].root.modes.mouse_tracking = true;
+        session.tabs[0].root.modes.mouse_tracking_mode = protocol::MouseTrackingMode::Normal;
+        session.tabs[0].root.modes.mouse_format = protocol::MouseFormat::Sgr;
+        let input = InputSummary {
+            pane_id: "pane-1".to_owned(),
+            actor_id: "actor-1".to_owned(),
+            input_seq: 1,
+            text: String::new(),
+            bytes: Vec::new(),
+            paste_text: None,
+            key_name: None,
+            key_modifiers: 0,
+            mouse: Some(MouseSummary {
+                row: 4,
+                col: 5,
+                pixel_x: None,
+                pixel_y: None,
+                button: MouseButton::WheelDown,
+                action: MouseAction::Press,
+                modifiers: 2,
+            }),
+            requires_focus_reporting: false,
+            requires_mouse_tracking: true,
+        };
+
+        assert_eq!(input.forwarding_rejection(&session), None);
+        assert_eq!(
+            input
+                .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
+                .expect("mouse input"),
+            b"\x1b[<81;6;5M"
+        );
     }
 
     #[test]

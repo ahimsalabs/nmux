@@ -3979,7 +3979,7 @@ fn live_cli_commits_explicit_resize_with_manual_policy() {
 }
 
 #[test]
-fn live_cli_reports_structured_input_encoding_errors() {
+fn live_cli_forwards_modified_named_keys() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
@@ -4017,18 +4017,16 @@ fn live_cli_reports_structured_input_encoding_errors() {
     let _ = fs::remove_file(&socket_path);
 
     assert!(
-        !client.status.success(),
-        "nmux unexpectedly succeeded:\n{}",
-        String::from_utf8_lossy(&client.stdout)
+        client.status.success(),
+        "nmux failed:\n{}",
+        String::from_utf8_lossy(&client.stderr)
     );
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 
-    let stderr = String::from_utf8_lossy(&client.stderr);
+    let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stderr.contains(
-            "nmux: live server error: terminal engine cannot encode modified key name: arrow-up"
-        ),
-        "missing structured input error:\n{stderr}"
+        stdout.contains("^[[1;3A"),
+        "missing forwarded Ctrl+ArrowUp bytes:\n{stdout:?}"
     );
 }
 

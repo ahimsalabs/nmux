@@ -373,6 +373,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         .surface_text
         .clone()
         .unwrap_or_else(|| current_workspace.display_line());
+    let mut current_modes = rendered.modes;
     let scrollback = match initial_live_scrollback(
         args,
         &mut stream,
@@ -398,10 +399,18 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let mut host_mouse_modes = HostMouseModeMirror::enable_if_needed(HostMouseModeContext {
+        stdin_bytes: args.stdin_bytes,
+        redraw: args.redraw,
+        stdout_is_tty: stdout_is_tty(),
+    })?;
     if args.output_json {
         rendered.scrollback = scrollback;
         println!("{}", format_live_attach_json(&rendered));
     } else {
+        if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+            mouse_modes.sync(current_modes)?;
+        }
         print_live_rendered(rendered, args.redraw, scrollback, redraw_state.as_mut());
     }
     flush_stdout()?;
@@ -574,6 +583,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         title: update.title.clone(),
                         working_directory: update.working_directory.clone(),
                     };
+                    current_modes = update.modes;
+                    if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+                        mouse_modes.sync(current_modes)?;
+                    }
                     current_surface_text =
                         client_state.render_surface_update_styled(&update, use_styled)?;
                     if let Some(ref mut rs) = redraw_state {
@@ -1134,10 +1147,7 @@ impl RawTerminalGuard {
             return Err(io::Error::last_os_error());
         }
 
-        let mut raw = original;
-        raw.c_lflag = raw_terminal_lflag(raw.c_lflag, local_echo);
-        raw.c_cc[libc::VMIN] = 1;
-        raw.c_cc[libc::VTIME] = 0;
+        let raw = raw_terminal_termios(original, local_echo);
 
         // Safety: raw was derived from a valid termios fetched from stdin.
         if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw) } != 0 {
@@ -1184,6 +1194,85 @@ impl Drop for RedrawTerminalGuard {
     fn drop(&mut self) {
         print!("{REDRAW_TERMINAL_EXIT}");
         let _ = flush_stdout();
+    }
+}
+
+struct HostMouseModeMirror {
+    current: Option<local::TerminalModeSummary>,
+}
+
+impl HostMouseModeMirror {
+    fn enable_if_needed(context: HostMouseModeContext) -> io::Result<Option<Self>> {
+        if !host_mouse_mode_mirror_needed(context) {
+            return Ok(None);
+        }
+        Ok(Some(Self { current: None }))
+    }
+
+    fn sync(&mut self, modes: local::TerminalModeSummary) -> io::Result<()> {
+        if self.current == Some(modes) {
+            return Ok(());
+        }
+        print!("{}", host_mouse_mode_disable_sequence());
+        print!("{}", host_mouse_mode_enable_sequence(modes));
+        flush_stdout()?;
+        self.current = Some(modes);
+        Ok(())
+    }
+}
+
+impl Drop for HostMouseModeMirror {
+    fn drop(&mut self) {
+        print!("{}", host_mouse_mode_disable_sequence());
+        let _ = flush_stdout();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct HostMouseModeContext {
+    stdin_bytes: bool,
+    redraw: bool,
+    stdout_is_tty: bool,
+}
+
+fn host_mouse_mode_mirror_needed(context: HostMouseModeContext) -> bool {
+    context.stdin_bytes && context.redraw && context.stdout_is_tty
+}
+
+fn host_mouse_mode_disable_sequence() -> &'static str {
+    "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1016l"
+}
+
+fn host_mouse_mode_enable_sequence(modes: local::TerminalModeSummary) -> &'static str {
+    if !modes.mouse_tracking {
+        return "";
+    }
+    match (modes.mouse_tracking_mode, modes.mouse_format) {
+        (protocol::MouseTrackingMode::X10, protocol::MouseFormat::Sgr) => "\x1b[?1000h\x1b[?1006h",
+        (protocol::MouseTrackingMode::Normal, protocol::MouseFormat::Sgr) => {
+            "\x1b[?1000h\x1b[?1006h"
+        }
+        (protocol::MouseTrackingMode::Button, protocol::MouseFormat::Sgr) => {
+            "\x1b[?1002h\x1b[?1006h"
+        }
+        (protocol::MouseTrackingMode::Any, protocol::MouseFormat::Sgr) => "\x1b[?1003h\x1b[?1006h",
+        (protocol::MouseTrackingMode::X10, protocol::MouseFormat::SgrPixels) => {
+            "\x1b[?1000h\x1b[?1006h\x1b[?1016h"
+        }
+        (protocol::MouseTrackingMode::Normal, protocol::MouseFormat::SgrPixels) => {
+            "\x1b[?1000h\x1b[?1006h\x1b[?1016h"
+        }
+        (protocol::MouseTrackingMode::Button, protocol::MouseFormat::SgrPixels) => {
+            "\x1b[?1002h\x1b[?1006h\x1b[?1016h"
+        }
+        (protocol::MouseTrackingMode::Any, protocol::MouseFormat::SgrPixels) => {
+            "\x1b[?1003h\x1b[?1006h\x1b[?1016h"
+        }
+        (protocol::MouseTrackingMode::X10, _) => "\x1b[?1000h",
+        (protocol::MouseTrackingMode::Normal, _) => "\x1b[?1000h",
+        (protocol::MouseTrackingMode::Button, _) => "\x1b[?1002h",
+        (protocol::MouseTrackingMode::Any, _) => "\x1b[?1003h",
+        _ => "",
     }
 }
 
@@ -1301,12 +1390,18 @@ fn terminal_size_from_winsize(size: libc::winsize) -> Option<(u32, u32)> {
     Some((u32::from(size.ws_col), u32::from(size.ws_row)))
 }
 
-fn raw_terminal_lflag(flags: libc::tcflag_t, local_echo: LocalEcho) -> libc::tcflag_t {
-    let flags = flags & !libc::ICANON;
+fn raw_terminal_termios(mut termios: libc::termios, local_echo: LocalEcho) -> libc::termios {
+    // Safety: cfmakeraw only mutates the provided termios value.
+    unsafe { libc::cfmakeraw(&mut termios) };
     match local_echo {
-        LocalEcho::Off => flags & !libc::ECHO,
-        LocalEcho::Tty => flags,
+        LocalEcho::Off => {}
+        LocalEcho::Tty => {
+            termios.c_lflag |= libc::ECHO;
+        }
     }
+    termios.c_cc[libc::VMIN] = 1;
+    termios.c_cc[libc::VTIME] = 0;
+    termios
 }
 
 fn stdin_is_tty() -> bool {
@@ -3643,7 +3738,7 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientModeArgs, DetachKey, ExplicitInputModeArgs, FocusEvent,
+        ClientModeArgs, DetachKey, ExplicitInputModeArgs, FocusEvent, HostMouseModeContext,
         InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
         LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
         RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
@@ -3653,12 +3748,13 @@ mod tests {
         format_live_cli_error_json, format_live_detach_json, format_live_error_json,
         format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
         format_scrollback, format_state_info_json, format_state_info_text,
-        interim_surface_fidelity_warning_needed, live_update_print_kind,
-        managed_ready_error_message, parse_detach_key, parse_env_assignment, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, raw_terminal_lflag, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
+        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
+        live_update_print_kind, managed_ready_error_message, parse_detach_key,
+        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        raw_terminal_mode_needed, raw_terminal_termios, redraw_terminal_guard_needed,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -3666,6 +3762,12 @@ mod tests {
     use nmux_cli::local;
     use nmux_proto::protocol;
     use std::path::Path;
+
+    fn zero_termios() -> libc::termios {
+        // Safety: tests assign the termios fields read by raw_terminal_termios
+        // before asserting against the returned value.
+        unsafe { std::mem::zeroed() }
+    }
 
     fn test_surface_update(
         kind: local::SurfaceUpdateKind,
@@ -4528,18 +4630,86 @@ mod tests {
     }
 
     #[test]
-    fn raw_terminal_echo_choice_controls_echo_flag() {
-        let flags = raw_terminal_lflag(libc::ICANON | libc::ECHO, LocalEcho::Off);
-        assert_eq!(flags & libc::ICANON, 0);
-        assert_eq!(flags & libc::ECHO, 0);
+    fn raw_terminal_mode_uses_multiplexer_raw_flags() {
+        let mut original = zero_termios();
+        original.c_lflag = libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN;
+        original.c_iflag = libc::IXON | libc::IXOFF | libc::ICRNL;
+        original.c_oflag = libc::OPOST;
 
-        let flags = raw_terminal_lflag(libc::ICANON | libc::ECHO, LocalEcho::Tty);
-        assert_eq!(flags & libc::ICANON, 0);
-        assert_eq!(flags & libc::ECHO, libc::ECHO);
+        let raw = raw_terminal_termios(original, LocalEcho::Off);
+        assert_eq!(raw.c_lflag & libc::ICANON, 0);
+        assert_eq!(raw.c_lflag & libc::ECHO, 0);
+        assert_eq!(raw.c_lflag & libc::ISIG, 0);
+        assert_eq!(raw.c_lflag & libc::IEXTEN, 0);
+        assert_eq!(raw.c_iflag & libc::IXON, 0);
+        assert_eq!(raw.c_iflag & libc::IXOFF, 0);
+        assert_eq!(raw.c_iflag & libc::ICRNL, 0);
+        assert_eq!(raw.c_oflag & libc::OPOST, 0);
+        assert_eq!(raw.c_cc[libc::VMIN], 1);
+        assert_eq!(raw.c_cc[libc::VTIME], 0);
 
-        let flags = raw_terminal_lflag(libc::ICANON, LocalEcho::Tty);
-        assert_eq!(flags & libc::ICANON, 0);
-        assert_eq!(flags & libc::ECHO, 0);
+        let raw = raw_terminal_termios(original, LocalEcho::Tty);
+        assert_eq!(raw.c_lflag & libc::ICANON, 0);
+        assert_eq!(raw.c_lflag & libc::ECHO, libc::ECHO);
+    }
+
+    #[test]
+    fn host_mouse_mode_mirror_is_limited_to_interactive_redraw_byte_mode() {
+        assert!(host_mouse_mode_mirror_needed(HostMouseModeContext {
+            stdin_bytes: true,
+            redraw: true,
+            stdout_is_tty: true,
+        }));
+        assert!(!host_mouse_mode_mirror_needed(HostMouseModeContext {
+            stdin_bytes: false,
+            redraw: true,
+            stdout_is_tty: true,
+        }));
+        assert!(!host_mouse_mode_mirror_needed(HostMouseModeContext {
+            stdin_bytes: true,
+            redraw: false,
+            stdout_is_tty: true,
+        }));
+        assert!(!host_mouse_mode_mirror_needed(HostMouseModeContext {
+            stdin_bytes: true,
+            redraw: true,
+            stdout_is_tty: false,
+        }));
+    }
+
+    #[test]
+    fn host_mouse_mode_sequences_mirror_daemon_modes() {
+        assert_eq!(
+            host_mouse_mode_disable_sequence(),
+            "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1016l"
+        );
+        assert_eq!(
+            host_mouse_mode_enable_sequence(local::TerminalModeSummary {
+                mouse_tracking: false,
+                mouse_tracking_mode: protocol::MouseTrackingMode::None,
+                mouse_format: protocol::MouseFormat::X10,
+                ..local::TerminalModeSummary::default()
+            }),
+            ""
+        );
+        assert_eq!(
+            host_mouse_mode_enable_sequence(local::TerminalModeSummary {
+                mouse_tracking: true,
+                mouse_tracking_mode: protocol::MouseTrackingMode::Normal,
+                mouse_format: protocol::MouseFormat::Sgr,
+                ..local::TerminalModeSummary::default()
+            }),
+            "\x1b[?1000h\x1b[?1006h"
+        );
+        assert_eq!(
+            host_mouse_mode_enable_sequence(local::TerminalModeSummary {
+                mouse_tracking: true,
+                mouse_tracking_mode: protocol::MouseTrackingMode::Any,
+                mouse_format: protocol::MouseFormat::SgrPixels,
+                ..local::TerminalModeSummary::default()
+            }),
+            "\x1b[?1003h\x1b[?1006h\x1b[?1016h"
+        );
     }
 
     #[test]

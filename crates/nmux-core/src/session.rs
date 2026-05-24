@@ -609,6 +609,10 @@ impl Session {
             .map(|pane| pane.modes.mouse_tracking_mode)
     }
 
+    pub fn pane_mouse_format(&self, pane_id: &str) -> Option<protocol::MouseFormat> {
+        self.pane(pane_id).map(|pane| pane.modes.mouse_format)
+    }
+
     pub fn pane_size(&self, pane_id: &str) -> Option<(u32, u32)> {
         self.pane(pane_id).map(|pane| (pane.cols, pane.rows))
     }
