@@ -815,9 +815,26 @@ fn active_pane_id(session: &Session) -> Option<&str> {
     session.active_pane_id()
 }
 
-fn attach_target_pane_id(session: &Session, request: &AttachRequest) -> Option<String> {
+fn attach_target_pane_id(session: &mut Session, request: &AttachRequest) -> Option<String> {
     match request.focused_pane_id.as_deref() {
-        Some(pane_id) => session.surface_version(pane_id).map(|_| pane_id.to_owned()),
+        Some(target_id) => {
+            if session.surface_version(target_id).is_some() {
+                return Some(target_id.to_owned());
+            }
+            let pane_id = session
+                .tabs
+                .iter()
+                .find(|tab| tab.id == target_id)
+                .and_then(|tab| {
+                    session
+                        .surface_version(&tab.active_pane_id)
+                        .map(|_| tab.active_pane_id.clone())
+                })?;
+            if session.active_tab_id != target_id {
+                let _ = session.switch_tab(target_id);
+            }
+            Some(pane_id)
+        }
         None => active_pane_id(session).map(ToOwned::to_owned),
     }
 }

@@ -316,7 +316,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
-    options.request.focused_pane_id = args.target_pane_id.clone();
+    options.request.focused_pane_id = args
+        .target_pane_id
+        .clone()
+        .or_else(|| args.target_tab_id.clone());
     if args.stdin_input || args.stdin_bytes || (args.live_resize.is_some() && !args.no_input) {
         options.request.mode = AttachMode::ReadWrite;
     } else if options.input_text.is_none()
@@ -1477,7 +1480,10 @@ fn attach_once(
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
-    options.request.focused_pane_id = args.target_pane_id.clone();
+    options.request.focused_pane_id = args
+        .target_pane_id
+        .clone()
+        .or_else(|| args.target_tab_id.clone());
     if args.follow
         || (options.input_text.is_none()
             && options.key_name.is_none()
@@ -2093,6 +2099,7 @@ struct Args {
     socket_path: PathBuf,
     socket_source: local::SocketPathSource,
     target_pane_id: Option<String>,
+    target_tab_id: Option<String>,
     input_text: Option<String>,
     key_name: Option<String>,
     key_names: Vec<String>,
@@ -2163,6 +2170,8 @@ struct RawArgs {
     socket_path: Option<PathBuf>,
     #[arg(long = "pane", value_name = "PANE_ID", allow_hyphen_values = true)]
     target_pane_id: Option<String>,
+    #[arg(long = "tab", value_name = "TAB_ID", allow_hyphen_values = true)]
+    target_tab_id: Option<String>,
     #[arg(long = "key", value_name = "TEXT", allow_hyphen_values = true)]
     key_text: Option<String>,
     #[arg(
@@ -2361,6 +2370,12 @@ where
     if raw.target_pane_id.as_deref().is_some_and(str::is_empty) {
         return Err("--pane requires a non-empty pane ID".into());
     }
+    if raw.target_tab_id.as_deref().is_some_and(str::is_empty) {
+        return Err("--tab requires a non-empty tab ID".into());
+    }
+    if raw.target_pane_id.is_some() && raw.target_tab_id.is_some() {
+        return Err("--pane cannot be combined with --tab".into());
+    }
     let mut input_text = raw.key_text;
     if key_name_set || paste_set || focus_set || mouse_set || raw.no_input || raw.follow {
         input_text = None;
@@ -2477,6 +2492,7 @@ where
         socket_path,
         socket_source,
         target_pane_id: raw.target_pane_id,
+        target_tab_id: raw.target_tab_id,
         input_text,
         key_name,
         key_names,
@@ -3634,6 +3650,7 @@ Usage:
 Options:
   --socket PATH              Unix socket path
   --pane PANE_ID             Attach to and send input to PANE_ID
+  --tab TAB_ID               Attach to and make TAB_ID active
   --print-context            Print inherited nmux pane context and exit
   --print-context-json       Print inherited nmux pane context as JSON and exit
   --print-socket             Print the resolved socket path and exit
@@ -4005,6 +4022,25 @@ mod tests {
         assert!(!args.print_socket_json);
         assert!(!args.state_info);
         assert!(!args.state_info_json);
+    }
+
+    #[test]
+    fn tab_arg_selects_target_tab_and_conflicts_with_pane_arg() {
+        let args = args_from_iter(["--tab", "tab-2"]).expect("args");
+        assert_eq!(args.target_tab_id.as_deref(), Some("tab-2"));
+        assert_eq!(args.target_pane_id, None);
+
+        let err = match args_from_iter(["--tab", ""]) {
+            Ok(_) => panic!("empty tab should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(err, "--tab requires a non-empty tab ID");
+
+        let err = match args_from_iter(["--pane", "pane-1", "--tab", "tab-2"]) {
+            Ok(_) => panic!("pane and tab should conflict"),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(err, "--pane cannot be combined with --tab");
     }
 
     #[test]
@@ -5830,6 +5866,7 @@ mod tests {
         assert!(usage.contains("--print-socket-json"));
         assert!(usage.contains("--state-info"));
         assert!(usage.contains("--state-info-json"));
+        assert!(usage.contains("--tab TAB_ID"));
         assert!(usage.contains("--start"));
         assert!(usage.contains("--command SHELL"));
         assert!(usage.contains("--cwd DIR"));

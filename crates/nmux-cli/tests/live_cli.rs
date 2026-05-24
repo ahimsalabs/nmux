@@ -379,6 +379,63 @@ fn one_shot_multi_tab_daemon_attaches_active_tab() {
 }
 
 #[test]
+fn one_shot_cli_can_switch_to_requested_tab() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let command = "printf 'tab-env:%s\\n' \"$NMUX_PANE_ID\"; cat >/dev/null";
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--one-shot",
+            "--tabs",
+            "2",
+            "--command",
+            command,
+        ])
+        .spawn()
+        .expect("spawn multi-tab nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--tab",
+            "tab-2",
+            "--json",
+        ])
+        .output()
+        .expect("run nmux --tab tab-2 --json");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux --tab tab-2 --json failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("\"tab_id\":\"tab-2\""),
+        "requested tab attach should switch workspace to tab-2:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"pane_id\":\"tab-2-pane-1\""),
+        "requested tab attach should report tab-2 active pane:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("tab-env:tab-2-pane-1"),
+        "requested tab attach should render tab-2 output:\n{stdout}"
+    );
+}
+
+#[test]
 fn one_shot_cli_can_print_attach_json() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
