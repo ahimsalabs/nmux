@@ -19,6 +19,23 @@ fn assert_default_workspace_attached(stdout: &str, context: &str) {
     );
 }
 
+fn assert_split_pty_writes_render_as_one_line(stdout: &str) {
+    assert!(
+        stdout.lines().any(|line| line == "abc"),
+        "missing split-write line:\n{stdout}"
+    );
+    for fragment in ["a", "b", "c", "ab"] {
+        assert!(
+            !stdout.lines().any(|line| line == fragment),
+            "split-write fragment {fragment:?} rendered as its own line:\n{stdout}"
+        );
+    }
+    assert!(
+        !stdout.contains("\na\nb\nc\n"),
+        "split writes rendered as separate rows:\n{stdout}"
+    );
+}
+
 #[test]
 fn one_shot_cli_receives_nmux_pane_environment() {
     let socket_path = test_socket_path();
@@ -5632,6 +5649,101 @@ fn live_read_only_cli_observes_output_without_input() {
         stdout.contains("tick-two"),
         "missing second observed tick:\n{stdout}"
     );
+}
+
+#[test]
+fn live_cli_renders_split_pty_writes_as_one_logical_line() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf a; sleep 0.05; printf b; sleep 0.05; printf c; printf '\\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(200));
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert_split_pty_writes_render_as_one_line(&stdout);
+}
+
+#[test]
+fn live_redraw_cli_renders_split_pty_writes_as_one_logical_line() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf a; sleep 0.05; printf b; sleep 0.05; printf c; printf '\\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(200));
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--redraw",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert_split_pty_writes_render_as_one_line(&stdout);
 }
 
 #[test]

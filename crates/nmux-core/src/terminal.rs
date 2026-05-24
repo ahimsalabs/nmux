@@ -287,8 +287,8 @@ pub struct InterimTextTerminalEngine;
 
 impl TerminalEngine for InterimTextTerminalEngine {
     fn apply_output(&mut self, input: TerminalInput<'_>, output: &[u8]) -> Option<TerminalUpdate> {
-        let mut scrollback_lines = input.scrollback_lines.to_vec();
-        scrollback_lines.extend(text_lines_from_pty_output(output));
+        let (scrollback_lines, cursor_col) =
+            merge_interim_pty_output(input.scrollback_lines, input.cursor.col > 0, output);
 
         Some(interim_text_update(
             input.surface,
@@ -299,6 +299,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
             input.colors,
             input.rows,
             scrollback_lines,
+            cursor_col,
         ))
     }
 
@@ -317,6 +318,7 @@ impl TerminalEngine for InterimTextTerminalEngine {
             input.colors,
             rows,
             input.scrollback_lines.to_vec(),
+            input.cursor.col,
         ))
     }
 
@@ -405,12 +407,13 @@ fn interim_text_update(
     colors: TerminalColors,
     rows: u32,
     scrollback_lines: Vec<String>,
+    cursor_col: u32,
 ) -> TerminalUpdate {
     let visible_start = scrollback_lines.len().saturating_sub(rows as usize);
     let surface_lines = scrollback_lines[visible_start..].to_vec();
     let cursor = TerminalCursor {
         row: surface_lines.len().saturating_sub(1) as u32,
-        col: 0,
+        col: cursor_col,
         visible: previous_cursor.visible,
         shape: previous_cursor.shape,
         blinking: previous_cursor.blinking,
@@ -457,23 +460,65 @@ pub(crate) fn cell_runs_text(runs: &[CellRun]) -> String {
     text
 }
 
-fn text_lines_from_pty_output(output: &[u8]) -> Vec<String> {
+fn merge_interim_pty_output(
+    previous_lines: &[String],
+    append_to_previous_line: bool,
+    output: &[u8],
+) -> (Vec<String>, u32) {
+    let mut lines = previous_lines.to_vec();
     let text = String::from_utf8_lossy(output);
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let mut lines = text
-        .lines()
-        .map(|line| {
-            line.chars()
-                .filter(|ch| *ch == '\t' || !ch.is_control())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>();
+    let mut current = String::new();
+    let mut appending = append_to_previous_line && !lines.is_empty();
+    let mut cursor_col = if appending {
+        line_width(lines.last().expect("line exists"))
+    } else {
+        0
+    };
+    let mut saw_output = false;
+    let mut ended_with_newline = false;
 
-    if lines.is_empty() {
-        lines.push(String::new());
+    for ch in text.chars() {
+        saw_output = true;
+        if ch == '\n' {
+            if appending {
+                appending = false;
+            } else {
+                lines.push(std::mem::take(&mut current));
+            }
+            current.clear();
+            cursor_col = 0;
+            ended_with_newline = true;
+            continue;
+        }
+
+        ended_with_newline = false;
+        if ch != '\t' && ch.is_control() {
+            continue;
+        }
+
+        if appending {
+            let line = lines.last_mut().expect("line exists");
+            line.push(ch);
+            cursor_col = line_width(line);
+        } else {
+            current.push(ch);
+            cursor_col = line_width(&current);
+        }
     }
 
-    lines
+    if !appending && (!current.is_empty() || (!saw_output && lines.is_empty())) {
+        lines.push(current);
+    }
+    if ended_with_newline {
+        cursor_col = 0;
+    }
+
+    (lines, cursor_col)
+}
+
+fn line_width(line: &str) -> u32 {
+    line.chars().count().try_into().unwrap_or(u32::MAX)
 }
 
 #[cfg(feature = "libghostty-vt")]
@@ -1345,7 +1390,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "libghostty-vt")]
     fn terminal_input_from_update<'a>(update: &'a super::TerminalUpdate) -> TerminalInput<'a> {
         TerminalInput {
             pane_id: "pane-1",
@@ -1602,6 +1646,56 @@ mod tests {
         );
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
         assert_eq!(update.title, "existing title");
+    }
+
+    #[test]
+    fn interim_text_engine_merges_split_pty_writes_until_newline() {
+        let mut engine = InterimTextTerminalEngine;
+        let scrollback_lines = vec!["existing".to_owned()];
+        let input = TerminalInput {
+            pane_id: "pane-1",
+            cols: 80,
+            rows: 24,
+            surface: protocol::SurfaceKind::Main,
+            cursor: TerminalCursor {
+                row: 0,
+                col: 0,
+                visible: true,
+                shape: protocol::CursorShape::Block,
+                blinking: true,
+            },
+            modes: TerminalModes::default(),
+            title: "",
+            working_directory: "",
+            colors: TerminalColors::default(),
+            styles: &[],
+            surface_lines: &[],
+            surface_row_runs: &[],
+            surface_semantic_prompts: &[],
+            surface_dirty_rows: &[],
+            surface_kitty_placeholders: &[],
+            scrollback_lines: &scrollback_lines,
+            scrollback_row_runs: &[],
+            scrollback_semantic_prompts: &[],
+            scrollback_dirty_rows: &[],
+            scrollback_kitty_placeholders: &[],
+        };
+
+        let first = engine.apply_output(input, b"a").expect("first update");
+        assert_eq!(first.scrollback_lines, vec!["existing", "a"]);
+        assert_eq!(first.cursor.col, 1);
+
+        let second = engine
+            .apply_output(terminal_input_from_update(&first), b"b")
+            .expect("second update");
+        assert_eq!(second.scrollback_lines, vec!["existing", "ab"]);
+        assert_eq!(second.cursor.col, 2);
+
+        let third = engine
+            .apply_output(terminal_input_from_update(&second), b"c\n")
+            .expect("third update");
+        assert_eq!(third.scrollback_lines, vec!["existing", "abc"]);
+        assert_eq!(third.cursor.col, 0);
     }
 
     #[test]
