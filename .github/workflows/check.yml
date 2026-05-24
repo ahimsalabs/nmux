@@ -108,8 +108,9 @@ jobs:
             ~/.cargo/git
             ~/.cargo/registry
             target
-          key: nmux-${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: nmux-${{ runner.os }}-cargo-ghostty-default-v2-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'justfile', 'scripts/static-link-verify.sh', '.github/workflows/check.yml') }}
           restore-keys: |
+            nmux-${{ runner.os }}-cargo-ghostty-default-v2-
             nmux-${{ runner.os }}-cargo-
       - name: Source audit
         run: |
@@ -150,8 +151,9 @@ jobs:
             ~/.cargo/git
             ~/.cargo/registry
             target
-          key: nmux-${{ runner.os }}-cargo-interim-${{ hashFiles('Cargo.lock') }}
+          key: nmux-${{ runner.os }}-cargo-interim-v2-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'justfile', '.github/workflows/check.yml') }}
           restore-keys: |
+            nmux-${{ runner.os }}-cargo-interim-v2-
             nmux-${{ runner.os }}-cargo-interim-
       - name: Toolchain info
         run: nix develop . -c just toolchain-info
