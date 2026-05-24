@@ -556,7 +556,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let socket_scope = local::socket_identity(&args.socket_path).ok();
-    if let Err(err) = stream.set_read_timeout(Some(Duration::from_millis(args.interval_ms))) {
+    let live_poll_timeout = Duration::from_millis(args.interval_ms);
+    let setup_read_timeout = connect_timeout_duration(args).unwrap_or(live_poll_timeout);
+    if let Err(err) = stream.set_read_timeout(Some(setup_read_timeout)) {
         report_live_setup_error(args, &err)?;
         return Err(err.into());
     }
@@ -676,7 +678,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         use_styled,
     );
     let mut current_modes = rendered.modes;
-    let scrollback = match initial_live_scrollback(
+    let (scrollback, pending_surface_updates) = match initial_live_scrollback(
         args,
         &mut stream,
         &mut client_sequence,
@@ -727,6 +729,63 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     flush_stdout()?;
+
+    for update in pending_surface_updates {
+        let decode_start = Instant::now();
+        speculative_echo.reconcile_update(&update);
+        let previous_metadata = current_surface_metadata.clone();
+        let update_metadata = local::TerminalMetadataSummary {
+            title: update.title.clone(),
+            working_directory: update.working_directory.clone(),
+        };
+        let update_surface_text = client_state.render_surface_update_styled(&update, use_styled)?;
+        current_pane_surfaces.insert(update.pane_id.clone(), update_surface_text.clone());
+        if update.pane_id == current_workspace.pane_id {
+            current_surface_metadata = update_metadata.clone();
+            current_modes = update.modes;
+            if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+                mouse_modes.sync(current_modes)?;
+            }
+            current_surface_text = update_surface_text.clone();
+        } else if let Some(active_text) = current_pane_surfaces.get(&current_workspace.pane_id) {
+            current_surface_text = active_text.clone();
+        }
+        if let Some(ref mut rs) = redraw_state {
+            rs.record_decode_time(decode_start.elapsed());
+        }
+        if args.output_json {
+            let event = format_live_surface_update_json(
+                &current_workspace,
+                &update_metadata,
+                &update_surface_text,
+                &update,
+            );
+            recorder.record(&event)?;
+            println!("{event}");
+        } else {
+            recorder.record(&format_live_surface_update_json(
+                &current_workspace,
+                &update_metadata,
+                &update_surface_text,
+                &update,
+            ))?;
+            print_live_update(
+                &current_workspace,
+                &previous_metadata,
+                &current_surface_metadata,
+                &current_surface_text,
+                &update,
+                args.redraw,
+                redraw_state.as_mut(),
+                Some(&current_pane_surfaces),
+            );
+        }
+        flush_stdout()?;
+    }
+    if let Err(err) = stream.set_read_timeout(Some(live_poll_timeout)) {
+        report_live_setup_error(args, &err)?;
+        return Err(err.into());
+    }
 
     let cycle_limit = args.iterations.or_else(|| {
         (!args.stdin_input && !args.stdin_bytes && options.request.mode == AttachMode::ReadWrite)
@@ -1428,11 +1487,18 @@ fn initial_live_scrollback(
     pane_id: &str,
     client_state: &local::ClientAttachState,
     socket_scope: Option<local::SocketIdentity>,
-) -> Result<Option<local::ScrollbackChunkSummary>, Box<dyn std::error::Error>> {
+) -> Result<
+    (
+        Option<local::ScrollbackChunkSummary>,
+        Vec<local::SurfaceUpdate>,
+    ),
+    Box<dyn std::error::Error>,
+> {
     if args.no_scrollback {
-        return Ok(None);
+        return Ok((None, Vec::new()));
     }
-    Ok(Some(local::fetch_scrollback_chunk_with_selection(
+    let mut pending_updates = Vec::new();
+    let scrollback = local::fetch_scrollback_chunk_with_selection_and_pending_updates(
         stream,
         sequence,
         pane_id,
@@ -1444,7 +1510,9 @@ fn initial_live_scrollback(
                 .cached_scrollback_version_for_scope(socket_scope, pane_id, start_line, line_count)
                 .unwrap_or(0)
         },
-    )?))
+        Some(&mut pending_updates),
+    )?;
+    Ok((Some(scrollback), pending_updates))
 }
 
 fn spawn_stdin_line_reader() -> mpsc::Receiver<StdinLineRead> {

@@ -2873,7 +2873,7 @@ pub fn read_scrollback_fetch_from_stream(
 pub fn read_scrollback_chunk_from_stream(
     stream: &mut UnixStream,
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
-    match read_scrollback_response_from_stream(stream)? {
+    match read_scrollback_response_from_stream(stream, None)? {
         ScrollbackRead::Chunk(chunk) => Ok(chunk),
         ScrollbackRead::Error(error) => Err(server_error(error)),
     }
@@ -2886,7 +2886,20 @@ pub fn read_scrollback_chunk_with_stale_retry(
     start_line: u64,
     line_count: u32,
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
-    match read_scrollback_response_from_stream(stream)? {
+    read_scrollback_chunk_with_stale_retry_and_pending_updates(
+        stream, sequence, pane_id, start_line, line_count, None,
+    )
+}
+
+fn read_scrollback_chunk_with_stale_retry_and_pending_updates(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    start_line: u64,
+    line_count: u32,
+    mut pending_updates: Option<&mut Vec<SurfaceUpdate>>,
+) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
+    match read_scrollback_response_from_stream(stream, pending_updates.as_deref_mut())? {
         ScrollbackRead::Chunk(chunk) => Ok(chunk),
         ScrollbackRead::Error(error) if error.code == protocol::ErrorCode::StaleVersion => {
             send_scrollback_fetch_with_known_version(
@@ -2901,7 +2914,7 @@ pub fn read_scrollback_chunk_with_stale_retry(
                     known_scrollback_version: 0,
                 },
             )?;
-            match read_scrollback_response_from_stream(stream)? {
+            match read_scrollback_response_from_stream(stream, pending_updates.as_deref_mut())? {
                 ScrollbackRead::Chunk(chunk) => Ok(chunk),
                 ScrollbackRead::Error(error) => Err(server_error(error)),
             }
@@ -2919,6 +2932,28 @@ pub fn fetch_scrollback_chunk_with_selection(
     tail_count: Option<u32>,
     known_version_for: impl Fn(u64, u32) -> u64,
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
+    fetch_scrollback_chunk_with_selection_and_pending_updates(
+        stream,
+        sequence,
+        pane_id,
+        start_line,
+        line_count,
+        tail_count,
+        known_version_for,
+        None,
+    )
+}
+
+pub fn fetch_scrollback_chunk_with_selection_and_pending_updates(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    start_line: u64,
+    line_count: u32,
+    tail_count: Option<u32>,
+    known_version_for: impl Fn(u64, u32) -> u64,
+    mut pending_updates: Option<&mut Vec<SurfaceUpdate>>,
+) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
     let (start_line, line_count) = if let Some(tail_count) = tail_count {
         send_scrollback_fetch_with_known_version(
             stream,
@@ -2932,7 +2967,14 @@ pub fn fetch_scrollback_chunk_with_selection(
                 known_scrollback_version: 0,
             },
         )?;
-        let probe = read_scrollback_chunk_with_stale_retry(stream, sequence, pane_id, 1, 1)?;
+        let probe = read_scrollback_chunk_with_stale_retry_and_pending_updates(
+            stream,
+            sequence,
+            pane_id,
+            1,
+            1,
+            pending_updates.as_deref_mut(),
+        )?;
         let tail_count_u64 = u64::from(tail_count);
         let start_line = if probe.total_lines > tail_count_u64 {
             probe.total_lines - tail_count_u64 + 1
@@ -2955,11 +2997,19 @@ pub fn fetch_scrollback_chunk_with_selection(
             known_scrollback_version: known_version_for(start_line, line_count),
         },
     )?;
-    read_scrollback_chunk_with_stale_retry(stream, sequence, pane_id, start_line, line_count)
+    read_scrollback_chunk_with_stale_retry_and_pending_updates(
+        stream,
+        sequence,
+        pane_id,
+        start_line,
+        line_count,
+        pending_updates.as_deref_mut(),
+    )
 }
 
 fn read_scrollback_response_from_stream(
     stream: &mut UnixStream,
+    mut pending_updates: Option<&mut Vec<SurfaceUpdate>>,
 ) -> Result<ScrollbackRead, Box<dyn std::error::Error>> {
     loop {
         let frame = wire::read_default_frame(stream)?;
@@ -2971,6 +3021,15 @@ fn read_scrollback_response_from_stream(
             protocol::EnvelopeBody::Error => {
                 let error = error_summary_from_frame(&frame)?;
                 return Ok(ScrollbackRead::Error(error));
+            }
+            protocol::EnvelopeBody::PaneSurfaceSnapshot
+            | protocol::EnvelopeBody::PaneSurfacePatch
+                if pending_updates.is_some() =>
+            {
+                pending_updates
+                    .as_deref_mut()
+                    .expect("pending updates checked")
+                    .push(surface_update_from_frame(&frame)?);
             }
             protocol::EnvelopeBody::PresenceUpdate => {}
             other => return Err(format!("unexpected envelope body: {other:?}").into()),

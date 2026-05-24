@@ -13,7 +13,7 @@ PACKAGING_ARCHIVE_SHA256 ?= $(PACKAGING_ARCHIVE).sha256
 RENDERER_EQUIVALENCE_ARTIFACT_DIR ?= target/renderer-equivalence
 RENDERER_EQUIVALENCE_ORACLE_DIR ?=
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema local-smoke packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-manifest-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample renderer-equivalence-artifacts renderer-equivalence-compare renderer-equivalence-smoke require-cargo require-flatc require-ghostty-source require-zig rust-test source-audit source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema local-smoke packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-manifest-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample renderer-equivalence-artifacts renderer-equivalence-compare renderer-equivalence-smoke require-cargo require-flatc require-ghostty-source require-zig rust-test source-audit source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify static-link-verify toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -199,6 +199,26 @@ local-smoke: check-toolchain
 check-ghostty-vt: check-vt-toolchain
 	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt
 	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-cli --features libghostty-vt
+
+static-link-verify: check-vt-toolchain
+	@echo "building libghostty-vt release binary for static-link verification"
+	GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/static-link-verify cargo build -p nmux-cli --release --bin nmux --features libghostty-vt
+	@bin=target/static-link-verify/release/nmux; \
+	deps=target/static-link-verify/DYNAMIC_DEPS.txt; \
+	if command -v otool >/dev/null 2>&1; then \
+		otool -L "$$bin" > "$$deps"; \
+	elif command -v ldd >/dev/null 2>&1; then \
+		ldd "$$bin" > "$$deps"; \
+	else \
+		echo "dynamic dependency inspector unavailable" >&2; \
+		exit 1; \
+	fi; \
+	if grep -Ei 'libghostty-vt|ghostty-vt' "$$deps"; then \
+		echo "release nmux dynamically depends on libghostty-vt; static linking is required" >&2; \
+		exit 1; \
+	fi; \
+	printf 'static_link_verified=%s\n' "$$bin"; \
+	printf 'dynamic_dependency_report=%s\n' "$$deps"
 
 renderer-equivalence-smoke: check-vt-toolchain
 	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt renderer_equivalence
@@ -773,7 +793,7 @@ promotion-evidence-verify:
 	require_line "$$source_fetch" '^Cargo\.lock sha256=[0-9a-f]{64}$$' 'source-fetch Cargo.lock hash'; \
 	require_line "$$source_fetch" '^\[cargo_lock:libghostty-vt\]$$' 'source-fetch libghostty-vt record'; \
 	require_line "$$source_fetch" '^name = "libghostty-vt"$$' 'source-fetch libghostty-vt package name'; \
-	require_line "$$source_fetch" '^checksum = "[0-9a-f]{64}"$$' 'source-fetch package checksum'; \
+	require_line "$$source_fetch" '^source = "git\+https://github\.com/uzaaft/libghostty-rs\.git\?rev=31d1f70004ff80727e36437cd540984f927333ce#31d1f70004ff80727e36437cd540984f927333ce"$$' 'source-fetch pinned libghostty-vt revision'; \
 	require_line "$$source_fetch" '^\[cargo_lock:libghostty-vt-sys\]$$' 'source-fetch libghostty-vt-sys record'; \
 	require_line "$$source_fetch" '^name = "libghostty-vt-sys"$$' 'source-fetch libghostty-vt-sys package name'; \
 	require_line "$$run_log" '^== promotion local sample: source-fetch provenance ==$$' 'source-fetch provenance run-log section'; \
@@ -999,7 +1019,7 @@ source-fetch-provenance-verify:
 	require_line "$$report" '^ghostty_source_dir_status=(unset|present|missing)$$' 'Ghostty source dir status'; \
 	require_exact "$$report" '[cargo_lock:libghostty-vt]' 'libghostty-vt section'; \
 	require_line "$$report" '^name = "libghostty-vt"$$' 'libghostty-vt package name'; \
-	require_line "$$report" '^checksum = "[0-9a-f]{64}"$$' 'libghostty-vt checksum'; \
+	require_line "$$report" '^source = "git\+https://github\.com/uzaaft/libghostty-rs\.git\?rev=31d1f70004ff80727e36437cd540984f927333ce#31d1f70004ff80727e36437cd540984f927333ce"$$' 'libghostty-vt pinned revision'; \
 	require_lock_section libghostty-vt; \
 	require_exact "$$report" '[cargo_lock:libghostty-vt-sys]' 'libghostty-vt-sys section'; \
 	require_line "$$report" '^name = "libghostty-vt-sys"$$' 'libghostty-vt-sys package name'; \
