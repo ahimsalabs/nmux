@@ -1597,9 +1597,7 @@ fn split_stdin_bytes_for_detach(input: &[u8], detach_byte: Option<u8>) -> (Optio
     }
 }
 
-struct RawTerminalGuard {
-    original: libc::termios,
-}
+struct RawTerminalGuard;
 
 impl RawTerminalGuard {
     fn enable_if_needed(
@@ -1610,29 +1608,19 @@ impl RawTerminalGuard {
             return Ok(None);
         }
 
-        let mut original = empty_termios();
-        // Safety: STDIN_FILENO is a valid process file descriptor when isatty
-        // succeeded, and original points to valid writable storage.
-        if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut original) } != 0 {
-            return Err(io::Error::last_os_error());
+        terminal::enable_raw_mode()?;
+        if let Err(err) = apply_raw_terminal_fixups(local_echo) {
+            let _ = terminal::disable_raw_mode();
+            return Err(err);
         }
 
-        let raw = raw_terminal_termios(original, local_echo);
-
-        // Safety: raw was derived from a valid termios fetched from stdin.
-        if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        Ok(Some(Self { original }))
+        Ok(Some(Self))
     }
 }
 
 impl Drop for RawTerminalGuard {
     fn drop(&mut self) {
-        // Safety: original was captured from STDIN_FILENO by tcgetattr. Drop
-        // must not panic, so restoration errors are intentionally ignored.
-        let _ = unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.original) };
+        let _ = terminal::disable_raw_mode();
     }
 }
 
@@ -1843,9 +1831,30 @@ fn terminal_size() -> io::Result<Option<(u32, u32)>> {
     Ok(Some((u32::from(cols), u32::from(rows))))
 }
 
-fn raw_terminal_termios(mut termios: libc::termios, local_echo: LocalEcho) -> libc::termios {
-    // Safety: cfmakeraw only mutates the provided termios value.
-    unsafe { libc::cfmakeraw(&mut termios) };
+fn apply_raw_terminal_fixups(local_echo: LocalEcho) -> io::Result<()> {
+    let mut termios = read_stdin_termios()?;
+    termios = raw_terminal_fixup_termios(termios, local_echo);
+
+    // Safety: termios was fetched from STDIN_FILENO and only adjusted by this
+    // process before being applied back to the same descriptor.
+    if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn read_stdin_termios() -> io::Result<libc::termios> {
+    let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+    // Safety: STDIN_FILENO is a valid process file descriptor when raw mode is
+    // enabled, and termios points to writable storage initialized by tcgetattr.
+    if unsafe { libc::tcgetattr(libc::STDIN_FILENO, termios.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // Safety: successful tcgetattr initialized the termios storage.
+    Ok(unsafe { termios.assume_init() })
+}
+
+fn raw_terminal_fixup_termios(mut termios: libc::termios, local_echo: LocalEcho) -> libc::termios {
     termios.c_iflag &= !libc::IXOFF;
     match local_echo {
         LocalEcho::Off => {}
@@ -1853,8 +1862,6 @@ fn raw_terminal_termios(mut termios: libc::termios, local_echo: LocalEcho) -> li
             termios.c_lflag |= libc::ECHO;
         }
     }
-    termios.c_cc[libc::VMIN] = 1;
-    termios.c_cc[libc::VTIME] = 0;
     termios
 }
 
@@ -1864,12 +1871,6 @@ fn stdin_is_tty() -> bool {
 
 fn stdout_is_tty() -> bool {
     io::stdout().is_tty()
-}
-
-fn empty_termios() -> libc::termios {
-    // Safety: termios is a plain C struct that is immediately initialized by
-    // tcgetattr before use.
-    unsafe { std::mem::zeroed() }
 }
 
 fn attach_once(
@@ -5003,8 +5004,8 @@ mod tests {
         interim_surface_fidelity_warning_needed, live_update_print_kind,
         managed_ready_error_message, parse_detach_key, parse_env_assignment, parse_focus_event,
         parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_mode_needed,
-        raw_terminal_termios, redraw_terminal_guard_needed, redraw_workspace_surface_text,
+        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
+        raw_terminal_mode_needed, redraw_terminal_guard_needed, redraw_workspace_surface_text,
         sigwinch_resize_needed, split_stdin_bytes_for_detach, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
@@ -5016,7 +5017,7 @@ mod tests {
     use std::path::Path;
 
     fn zero_termios() -> libc::termios {
-        // Safety: tests assign the termios fields read by raw_terminal_termios
+        // Safety: tests assign the termios fields read by raw_terminal_fixup_termios
         // before asserting against the returned value.
         unsafe { std::mem::zeroed() }
     }
@@ -6087,27 +6088,25 @@ mod tests {
     }
 
     #[test]
-    fn raw_terminal_mode_uses_multiplexer_raw_flags() {
+    fn raw_terminal_mode_fixup_clears_flow_control_and_handles_local_echo() {
         let mut original = zero_termios();
-        original.c_lflag = libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN;
+        original.c_lflag = libc::ICANON | libc::ISIG | libc::IEXTEN;
         original.c_iflag = libc::IXON | libc::IXOFF | libc::ICRNL;
         original.c_oflag = libc::OPOST;
 
-        let raw = raw_terminal_termios(original, LocalEcho::Off);
-        assert_eq!(raw.c_lflag & libc::ICANON, 0);
+        let raw = raw_terminal_fixup_termios(original, LocalEcho::Off);
+        assert_eq!(raw.c_lflag & libc::ICANON, libc::ICANON);
         assert_eq!(raw.c_lflag & libc::ECHO, 0);
-        assert_eq!(raw.c_lflag & libc::ISIG, 0);
-        assert_eq!(raw.c_lflag & libc::IEXTEN, 0);
-        assert_eq!(raw.c_iflag & libc::IXON, 0);
+        assert_eq!(raw.c_lflag & libc::ISIG, libc::ISIG);
+        assert_eq!(raw.c_lflag & libc::IEXTEN, libc::IEXTEN);
+        assert_eq!(raw.c_iflag & libc::IXON, libc::IXON);
         assert_eq!(raw.c_iflag & libc::IXOFF, 0);
-        assert_eq!(raw.c_iflag & libc::ICRNL, 0);
-        assert_eq!(raw.c_oflag & libc::OPOST, 0);
-        assert_eq!(raw.c_cc[libc::VMIN], 1);
-        assert_eq!(raw.c_cc[libc::VTIME], 0);
+        assert_eq!(raw.c_iflag & libc::ICRNL, libc::ICRNL);
+        assert_eq!(raw.c_oflag & libc::OPOST, libc::OPOST);
 
-        let raw = raw_terminal_termios(original, LocalEcho::Tty);
-        assert_eq!(raw.c_lflag & libc::ICANON, 0);
+        let raw = raw_terminal_fixup_termios(original, LocalEcho::Tty);
         assert_eq!(raw.c_lflag & libc::ECHO, libc::ECHO);
+        assert_eq!(raw.c_iflag & libc::IXOFF, 0);
     }
 
     #[test]
