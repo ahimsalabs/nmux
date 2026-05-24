@@ -21,7 +21,7 @@ cp "$lib_dir"/libghostty-vt* "$pkg_dir/lib/"
     printf 'terminal_engine=%s\n' 'libghostty-vt'
     printf 'terminal_engine_status=%s\n' 'opt-in'
     printf 'binaries=%s\n' 'nmux'
-    printf 'runtime_library_strategy=%s\n' 'bundled dynamic libghostty-vt libraries loaded by wrapper-managed DYLD_LIBRARY_PATH/LD_LIBRARY_PATH'
+    printf 'runtime_library_strategy=%s\n' 'staged libghostty-vt native library artifacts for packaging evidence; nmux must not dynamically depend on libghostty-vt'
     printf 'source_mode=%s\n' "$([ -n "${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"
     printf 'GHOSTTY_SOURCE_DIR=%s\n' "${GHOSTTY_SOURCE_DIR:-unset}"
 } > "$pkg_dir/PACKAGE_METADATA.txt"

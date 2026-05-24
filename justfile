@@ -199,13 +199,13 @@ packaging-provenance-verify: packaging-provenance-sample
     @just packaging-provenance-manifest-verify
 
 packaging-provenance-manifest-verify:
-    @scripts/packaging-provenance-manifest-verify.sh
+    cargo run -p xtask -- packaging-provenance-manifest-verify
 
 packaging-archive-sample: packaging-provenance-verify
     @scripts/packaging-archive-sample.sh
 
 packaging-archive-verify:
-    @scripts/packaging-archive-verify.sh
+    cargo run -p xtask -- packaging-archive-verify
 
 packaging-archive-runtime-smoke: packaging-archive-sample
     @scripts/packaging-archive-runtime-smoke.sh

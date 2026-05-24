@@ -58,7 +58,7 @@ require_line "$metadata" '^target_host=.+$' 'target host'
 require_line "$metadata" '^terminal_engine=libghostty-vt$' 'terminal engine'
 require_line "$metadata" '^terminal_engine_status=opt-in$' 'terminal engine status'
 require_line "$metadata" '^binaries=nmux$' 'binary list'
-require_line "$metadata" '^runtime_library_strategy=bundled dynamic libghostty-vt libraries loaded by wrapper-managed DYLD_LIBRARY_PATH/LD_LIBRARY_PATH$' 'runtime-library strategy'
+require_line "$metadata" '^runtime_library_strategy=staged libghostty-vt native library artifacts for packaging evidence; nmux must not dynamically depend on libghostty-vt$' 'runtime-library strategy'
 require_line "$metadata" '^source_mode=(pinned-fetch|local)$' 'source mode'
 require_line "$metadata" '^GHOSTTY_SOURCE_DIR=.+$' 'GHOSTTY_SOURCE_DIR'
 for bin in nmux; do

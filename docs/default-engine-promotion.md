@@ -160,8 +160,8 @@ engine or a regular CI requirement.
   runtime-library artifacts, and dynamic dependency output.
 - `just packaging-provenance-verify` regenerates that manifest and fails if the
   required toolchain, source-mode, locked native-VT package, staged-file,
-  runtime-library, per-binary `libghostty-vt` dynamic-dependency, or cargo-tree
-  records are missing.
+  runtime-library, dynamic dependency inspection, static-link expectation, or
+  cargo-tree records are missing.
 - `just packaging-provenance-manifest-verify` validates an existing provenance
   manifest without rebuilding. Override `PACKAGING_PROVENANCE_MANIFEST` for
   copied, bundled, or downloaded `PACKAGE_PROVENANCE.txt` evidence.
@@ -170,8 +170,8 @@ engine or a regular CI requirement.
   archive, and then runs the no-rebuild archive verifier.
 - `just packaging-archive-verify` validates an already-produced archive plus
   sidecar hash without rebuilding, including extracted layout, package metadata,
-  provenance file hashes, native runtime library, dynamic dependency records,
-  and the staged-layout verifier against the extracted layout.
+  provenance file hashes, native runtime library, static-link expectation, and
+  the staged-layout verifier against the extracted layout.
 - `just packaging-archive-runtime-smoke` extracts the archive into a fresh
   `/tmp` install root with `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` unset,
   then starts the wrapped opt-in `libghostty-vt` daemon and attaches the wrapped

@@ -101,8 +101,8 @@ supply-chain attestation format.
 
 `just packaging-provenance-verify` regenerates that manifest and fails if the
 required toolchain, source-mode, locked native-VT package, staged-file,
-runtime-library, per-binary `libghostty-vt` dynamic-dependency, or cargo-tree
-records are missing. Archive packaging depends on this verifier, so
+runtime-library, dynamic dependency inspection, static-link expectation, or
+cargo-tree records are missing. Archive packaging depends on this verifier, so
 `just packaging-archive-sample` and `just packaging-archive-runtime-smoke`
 cannot pass with a structurally incomplete local provenance manifest.
 
@@ -133,10 +133,10 @@ or downloaded artifact. The verifier checks the archive bytes against the
 sidecar hash, rejects unsafe archive paths, extracts into a temporary directory,
 requires the package metadata/provenance/cargo-tree files, validates staged
 file hashes against the extracted files, requires bundled `libghostty-vt`
-runtime libraries and dynamic dependency records, and then runs
-`just packaging-layout-verify` against the extracted layout so wrapper shape,
-layout metadata, runtime-library presence, and wrapped binary version checks
-are covered by the same staged-layout verifier.
+runtime libraries, verifies `nmux` has no dynamic `libghostty-vt` dependency,
+and then applies the staged-layout checks to the extracted layout so wrapper
+shape, layout metadata, runtime-library presence, and wrapped binary version
+checks are covered by the same rules.
 
 `just packaging-archive-runtime-smoke` builds on the archive sample, extracts
 the archive into a fresh `/tmp` install root outside `target/`, unsets
