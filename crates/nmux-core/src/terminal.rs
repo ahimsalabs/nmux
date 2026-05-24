@@ -1561,6 +1561,7 @@ mod tests {
         let decoded: Value = serde_json::from_str(&json)
             .unwrap_or_else(|error| panic!("decode renderer fixture {}: {error}", path.display()));
         let expected = decoded.get("expected").expect("expected fixture object");
+        let expected_core = decoded.get("expected_core").unwrap_or(expected);
         let workspace = expected
             .get("workspace")
             .expect("expected workspace object");
@@ -1583,16 +1584,19 @@ mod tests {
                 .expect("fixture rows fit u32"),
             resize: decoded.get("resize").map(materialize_renderer_fixture_size),
             terminal_output: renderer_string_or_array_field(&decoded, "terminal_output"),
-            expected_terminal: expected
+            expected_terminal: expected_core
                 .get("terminal")
+                .or_else(|| expected.get("terminal"))
                 .expect("expected terminal object")
                 .clone(),
-            expected_surface: expected
+            expected_surface: expected_core
                 .get("surface")
+                .or_else(|| expected.get("surface"))
                 .expect("expected surface object")
                 .clone(),
-            expected_scrollback: expected
+            expected_scrollback: expected_core
                 .get("scrollback")
+                .or_else(|| expected.get("scrollback"))
                 .expect("expected scrollback rows")
                 .clone(),
         }

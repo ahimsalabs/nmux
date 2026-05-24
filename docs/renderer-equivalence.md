@@ -66,7 +66,9 @@ cell widths including combining-mark clusters, hyperlink-presence flags, OSC
 including blink state and in-place cursor-editing output, terminal modes,
 title/OSC 7 metadata, initial workspace geometry, explicit post-output resize
 reflow behavior, main screen restoration after alternate screen, and omission
-of raw control text.
+of raw control text. The corpus also covers attach while the alternate screen
+is still active, pinning `surface_kind: "alternate"` and the visible alternate
+rows separately from preserved main-screen scrollback.
 The corpus lives in `fixtures/renderer-equivalence/*.json` so each fixture's
 shell command, direct terminal-output chunks, optional resize, and canonical
 expected state can grow without burying fixture semantics in test code. The core
