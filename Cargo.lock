@@ -247,6 +247,7 @@ dependencies = [
  "libc",
  "nmux-core",
  "nmux-proto",
+ "portable-pty",
  "serde_json",
 ]
 

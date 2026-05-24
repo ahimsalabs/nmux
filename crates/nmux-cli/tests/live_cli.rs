@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -8,9 +8,22 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+
 static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 const DEFAULT_WORKSPACE_SUMMARY: &str =
     "session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed";
+
+struct PtyCommandOutput {
+    success: bool,
+    output: String,
+}
+
+struct PtyCommand {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    output_rx: mpsc::Receiver<Vec<u8>>,
+    reader_thread: thread::JoinHandle<()>,
+}
 
 fn assert_default_workspace_attached(stdout: &str, context: &str) {
     assert!(
@@ -34,6 +47,55 @@ fn assert_split_pty_writes_render_as_one_line(stdout: &str) {
         !stdout.contains("\na\nb\nc\n"),
         "split writes rendered as separate rows:\n{stdout}"
     );
+}
+
+fn spawn_nmux_client_in_pty(args: &[&str]) -> PtyCommand {
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: 24,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .expect("open client pty");
+    let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_nmux"));
+    command.args(args);
+    let child = pair
+        .slave
+        .spawn_command(command)
+        .expect("spawn nmux in pty");
+    drop(pair.slave);
+
+    let mut reader = pair.master.try_clone_reader().expect("clone pty reader");
+    let (output_tx, output_rx) = mpsc::channel();
+    let reader_thread = thread::spawn(move || {
+        let mut output = Vec::new();
+        reader.read_to_end(&mut output).expect("read pty output");
+        output_tx.send(output).ok();
+    });
+
+    PtyCommand {
+        child,
+        output_rx,
+        reader_thread,
+    }
+}
+
+impl PtyCommand {
+    fn wait(mut self) -> PtyCommandOutput {
+        let status = self.child.wait().expect("wait for nmux in pty");
+        let output = self
+            .output_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("collect pty output");
+        self.reader_thread.join().expect("join pty reader");
+
+        PtyCommandOutput {
+            success: status.success(),
+            output: String::from_utf8_lossy(&output).into_owned(),
+        }
+    }
 }
 
 #[test]
@@ -5854,6 +5916,74 @@ fn live_redraw_cli_renders_split_pty_writes_as_one_logical_line() {
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert_split_pty_writes_render_as_one_line(&stdout);
+}
+
+#[test]
+fn live_redraw_tty_uses_alternate_screen_and_logical_lines() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'ready\n'; sleep 0.05; printf a; sleep 0.01; printf b; sleep 0.01; printf c; printf '\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let output = spawn_nmux_client_in_pty(&[
+        "--socket",
+        socket_path.to_str().expect("socket path"),
+        "--live",
+        "--redraw",
+        "--iterations",
+        "30",
+        "--interval-ms",
+        "50",
+    ])
+    .wait();
+
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(output.success, "nmux failed:\n{}", output.output);
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    assert!(
+        output.output.contains("\x1b[?1049h\x1b[?25l"),
+        "missing alternate-screen entry:\n{}",
+        output.output
+    );
+    assert!(
+        output.output.contains("\x1b[?25h\x1b[?1049l"),
+        "missing alternate-screen exit:\n{}",
+        output.output
+    );
+    assert!(
+        output.output.contains("\x1b[2J\x1b[H"),
+        "missing initial redraw clear/home:\n{}",
+        output.output
+    );
+    assert!(
+        output.output.contains("\x1b[7m") && output.output.contains(" rows "),
+        "missing redraw stats overlay:\n{}",
+        output.output
+    );
+    assert!(
+        output.output.contains("abc"),
+        "missing split-write logical line:\n{}",
+        output.output
+    );
+    assert!(
+        !output.output.contains("\na\nb\nc\n") && !output.output.contains("\r\na\r\nb\r\nc\r\n"),
+        "split writes rendered as separate rows:\n{}",
+        output.output
+    );
 }
 
 #[test]
