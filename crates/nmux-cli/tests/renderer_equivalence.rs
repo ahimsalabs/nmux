@@ -12,7 +12,12 @@ static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn renderer_equivalence_smoke_captures_structured_nmux_state() {
-    let fixture = load_fixture("libghostty-vt-smoke");
+    for fixture in load_fixtures() {
+        run_fixture(fixture);
+    }
+}
+
+fn run_fixture(fixture: RendererFixture) {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
 
@@ -57,7 +62,7 @@ fn renderer_equivalence_smoke_captures_structured_nmux_state() {
     assert!(server_status.success(), "nmuxd failed: {server_status}");
 
     let stdout = String::from_utf8(client.stdout).expect("json stdout is utf-8");
-    write_artifact_if_requested(&stdout);
+    write_artifact_if_requested(&fixture.name, &stdout);
 
     let decoded: Value = serde_json::from_str(&stdout).expect("decode nmux json");
     let surface = materialize_surface(&decoded);
@@ -72,6 +77,7 @@ fn renderer_equivalence_smoke_captures_structured_nmux_state() {
 
 #[derive(Debug)]
 struct RendererFixture {
+    name: String,
     command: String,
     expected_surface: CanonicalSurface,
     expected_scrollback: Vec<CanonicalRow>,
@@ -123,16 +129,44 @@ struct CanonicalRun {
     flags: u64,
 }
 
-fn load_fixture(name: &str) -> RendererFixture {
-    let path = workspace_path(PathBuf::from(format!(
-        "fixtures/renderer-equivalence/{name}.json"
-    )));
+fn load_fixtures() -> Vec<RendererFixture> {
+    let dir = workspace_path(PathBuf::from("fixtures/renderer-equivalence"));
+    let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("read renderer fixture dir {}: {error}", dir.display()))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|error| panic!("read renderer fixture dir entry: {error}"))
+                .path()
+        })
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect();
+    paths.sort();
+    assert!(
+        !paths.is_empty(),
+        "renderer fixture dir {} has no json fixtures",
+        dir.display()
+    );
+    paths
+        .into_iter()
+        .map(|path| load_fixture_path(&path))
+        .collect()
+}
+
+fn load_fixture_path(path: &Path) -> RendererFixture {
     let json = fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("read renderer fixture {}: {error}", path.display()));
     let decoded: Value = serde_json::from_str(&json)
         .unwrap_or_else(|error| panic!("decode renderer fixture {}: {error}", path.display()));
     let expected = decoded.get("expected").expect("expected fixture object");
     RendererFixture {
+        name: path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_else(|| panic!("fixture path has no utf-8 stem: {}", path.display()))
+            .to_owned(),
         command: string_field(&decoded, "command"),
         expected_surface: materialize_surface(expected),
         expected_scrollback: expected
@@ -290,13 +324,13 @@ fn wait_for_socket(path: &Path) {
     panic!("socket did not appear: {}", path.display());
 }
 
-fn write_artifact_if_requested(json: &str) {
+fn write_artifact_if_requested(fixture_name: &str, json: &str) {
     let Some(dir) = std::env::var_os("NMUX_RENDERER_EQUIVALENCE_ARTIFACT_DIR") else {
         return;
     };
     let dir = workspace_path(PathBuf::from(dir));
     fs::create_dir_all(&dir).expect("create renderer-equivalence artifact dir");
-    fs::write(dir.join("libghostty-vt-smoke.json"), json)
+    fs::write(dir.join(format!("{fixture_name}.json")), json)
         .expect("write renderer-equivalence artifact");
 }
 

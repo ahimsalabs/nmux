@@ -1,0 +1,56 @@
+{
+  "command": "printf '\\033[?2004h\\033[?1000h\\033[?1006h\\033[?1004h\\033[?1h\\033=\\033[?6h\\033[?7l'; printf 'modes'; printf '\\n'; cat >/dev/null",
+  "expected": {
+    "terminal": {
+      "title": "",
+      "working_directory": "",
+      "surface_kind": "main",
+      "cursor": {
+        "row": 1,
+        "col": 0,
+        "visible": true,
+        "shape": "block"
+      },
+      "modes": {
+        "bracketed_paste": true,
+        "mouse_tracking": true,
+        "focus_reporting": true,
+        "application_keypad": true,
+        "application_cursor": true,
+        "origin": true,
+        "wraparound": false,
+        "mouse_tracking_mode": "normal",
+        "mouse_format": "sgr"
+      }
+    },
+    "surface": {
+      "row_updates": [
+        {
+          "text": "modes",
+          "runs": [
+            {
+              "text": "modes",
+              "cell_widths": [1, 1, 1, 1, 1],
+              "style_id": 0,
+              "flags": 0
+            }
+          ]
+        }
+      ]
+    },
+    "scrollback": [
+      {
+        "text": "modes",
+        "runs": [
+          {
+            "text": "modes",
+            "cell_widths": [1, 1, 1, 1, 1],
+            "style_id": 0,
+            "flags": 0
+          }
+        ]
+      }
+    ]
+  },
+  "absent_substrings": ["\u001b[?2004h", "\u001b[?1006h"]
+}
