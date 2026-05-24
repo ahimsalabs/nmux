@@ -38,9 +38,11 @@ What works today: local `nmuxd`/`nmux` workflows over a Unix socket, one-shot
 attach, live attach, read-only reattach, explicit input and resize intents,
 persisted client render state, daemon-owned scrollback fetches, nested
 `NMUX_*` context reporting, daemon command cwd/env configuration,
-default-engine CI, poll-driven live PTY wakeups over the local Unix socket, an
-experimental redraw-only speculative local echo overlay for simple printable
-live input, and an opt-in
+default-engine CI, poll-driven live PTY wakeups over the local Unix socket,
+interactive `--shell` raw stdin with modified named-key and SGR mouse
+forwarding through daemon-owned mode gates, host-terminal mouse reporting in
+redraw byte mode, an experimental redraw-only speculative local echo overlay
+for simple printable live input, and an opt-in
 `libghostty-vt` correctness path with promotion evidence bundles.
 
 What is not default-ready: the default engine is still the interim text surface,
@@ -309,7 +311,7 @@ printf 'ping\npong\n' | nix develop . -c cargo run --bin nmux -- --socket /tmp/n
 
 For interactive `--stdin-bytes`, Ctrl-] detaches the client by default; add
 `--detach-key none` when the pane program should receive that byte instead.
-Add `--redraw` to repaint the workspace summary and current pane surface in place on each live update; when stdout is a TTY, redraw uses the alternate screen and restores it on exit. Interactive byte mode uses noncanonical stdin, defaults local echo off, can preserve the TTY echo setting with `--local-echo tty`, and sends TTY-size resize intents on `SIGWINCH` unless explicit `--cols` and `--rows` are provided. `nmux --live --cols/--rows` sends a post-start user-command resize intent, so it can commit a resize without sending pane input even when the daemon publishes `resize=manual`; `nmuxd --cols/--rows` sets the initial PTY and workspace pane size before the pane command starts.
+Add `--redraw` to repaint the workspace summary and current pane surface in place on each live update; when stdout is a TTY, redraw uses the alternate screen and restores it on exit. Interactive byte mode uses raw stdin, defaults local echo off, can preserve the TTY echo setting with `--local-echo tty`, and sends TTY-size resize intents on `SIGWINCH` unless explicit `--cols` and `--rows` are provided. In redraw byte mode the client mirrors daemon-published mouse tracking onto the host terminal, so `--shell` can receive terminal-emitted mouse/scroll sequences and forward them through daemon-owned mode checks. `nmux --live --cols/--rows` sends a post-start user-command resize intent, so it can commit a resize without sending pane input even when the daemon publishes `resize=manual`; `nmuxd --cols/--rows` sets the initial PTY and workspace pane size before the pane command starts.
 Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and `--cols`/`--rows` are rejected unless `--live` is set.
 
 Resize policy smoke:
