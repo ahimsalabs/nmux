@@ -35,6 +35,7 @@ fn run() -> Result<()> {
 
     match command.as_str() {
         "packaging-archive-verify" => packaging_archive_verify(),
+        "packaging-layout-verify" => packaging_layout_verify(),
         "packaging-provenance-manifest-verify" => packaging_provenance_manifest_verify(),
         "promotion-evidence-verify" => promotion_evidence_verify(),
         "static-link-verify" => static_link_verify(),
@@ -45,7 +46,7 @@ fn run() -> Result<()> {
 }
 
 fn usage_error() -> Result<()> {
-    Err("usage: xtask <packaging-archive-verify|packaging-provenance-manifest-verify|promotion-evidence-verify|static-link-verify|source-fetch-offline-probe-verify|source-fetch-provenance-verify>".into())
+    Err("usage: xtask <packaging-archive-verify|packaging-layout-verify|packaging-provenance-manifest-verify|promotion-evidence-verify|static-link-verify|source-fetch-offline-probe-verify|source-fetch-provenance-verify>".into())
 }
 
 fn static_link_verify() -> Result<()> {
@@ -568,6 +569,16 @@ fn packaging_archive_verify() -> Result<()> {
             )
         }));
     packaging_archive_verify_at(&archive, &archive_sha_file)
+}
+
+fn packaging_layout_verify() -> Result<()> {
+    println!("verifying existing opt-in libghostty-vt package layout");
+    let pkg_dir = PathBuf::from(
+        env::var("PACKAGING_LAYOUT").unwrap_or_else(|_| PACKAGING_LAYOUT_DEFAULT.into()),
+    );
+    packaging_layout_verify_for_dir(&pkg_dir)?;
+    println!("packaging_layout_verified={}", pkg_dir.display());
+    Ok(())
 }
 
 fn packaging_archive_verify_at(archive: &Path, archive_sha_file: &Path) -> Result<()> {
@@ -1333,14 +1344,23 @@ fn packaging_layout_verify_for_dir(pkg_dir: &Path) -> Result<()> {
         r#"exec "$bin_dir/../libexec/nmux" "$@""#,
         "relative libexec handoff",
     )?;
-    let status = Command::new(pkg_dir.join("bin/nmux"))
+    let output = Command::new(pkg_dir.join("bin/nmux"))
         .arg("--version")
         .env_remove("DYLD_LIBRARY_PATH")
         .env_remove("LD_LIBRARY_PATH")
-        .status()?;
-    if !status.success() {
-        return Err(format!("packaged nmux --version failed with status {status}").into());
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "packaged nmux --version failed with status {}",
+            output.status
+        )
+        .into());
     }
+    let version = String::from_utf8(output.stdout)?;
+    println!(
+        "packaged libghostty-vt nmux version: {}",
+        version.trim_end()
+    );
     Ok(())
 }
 

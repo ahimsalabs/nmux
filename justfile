@@ -190,7 +190,7 @@ packaging-layout-sample: packaging-sample
     @scripts/packaging-layout-sample.sh
 
 packaging-layout-verify:
-    @scripts/packaging-layout-verify.sh
+    cargo run -p xtask -- packaging-layout-verify
 
 packaging-provenance-sample: packaging-layout-sample
     @scripts/packaging-provenance-sample.sh
