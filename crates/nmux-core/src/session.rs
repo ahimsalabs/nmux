@@ -481,6 +481,22 @@ impl Session {
         true
     }
 
+    pub fn close_tab(&mut self, tab_id: &str) -> bool {
+        if self.tabs.len() <= 1 {
+            return false;
+        }
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return false;
+        };
+        self.tabs.remove(index);
+        if self.active_tab_id == tab_id {
+            let next_index = index.min(self.tabs.len() - 1);
+            self.active_tab_id = self.tabs[next_index].id.clone();
+        }
+        self.version = self.version.saturating_add(1);
+        true
+    }
+
     pub fn focus_pane(&mut self, pane_id: &str) -> bool {
         let Some(tab_index) = self
             .tabs
@@ -2602,6 +2618,46 @@ mod tests {
             tab.root().expect("tab-2 root").pane_id(),
             Some("tab-2-pane-1")
         );
+    }
+
+    #[test]
+    fn close_tab_removes_tab_and_selects_neighbor() {
+        let mut session = Session::initial();
+        assert!(!session.close_tab("tab-1"));
+        assert!(session.add_tab(
+            "tab-2",
+            "logs",
+            "tab-2-pane-1",
+            HostSpec::local("local-2", CommandSpec::new("sh"))
+        ));
+        assert!(session.add_tab(
+            "tab-3",
+            "shell",
+            "tab-3-pane-1",
+            HostSpec::local("local-3", CommandSpec::new("sh"))
+        ));
+        assert!(session.switch_tab("tab-2"));
+
+        assert!(session.close_tab("tab-2"));
+        assert_eq!(session.version, 5);
+        assert_eq!(session.active_tab_id, "tab-3");
+        assert_eq!(session.active_pane_id(), Some("tab-3-pane-1"));
+        assert_eq!(
+            session.leaf_pane_ids(),
+            vec!["pane-1".to_owned(), "tab-3-pane-1".to_owned()]
+        );
+        assert!(!session.close_tab("missing"));
+
+        let frame = session.workspace_tree_frame("conn-1", 7);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope
+            .body_as_workspace_tree_snapshot()
+            .expect("snapshot");
+        assert_eq!(snapshot.active_tab_id(), Some("tab-3"));
+        let tabs = snapshot.tabs().expect("tabs");
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs.get(0).tab_id(), Some("tab-1"));
+        assert_eq!(tabs.get(1).tab_id(), Some("tab-3"));
     }
 
     #[test]
