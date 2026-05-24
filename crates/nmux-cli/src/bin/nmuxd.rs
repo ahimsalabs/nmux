@@ -14,6 +14,7 @@ use nmux_proto::protocol;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RESIZE_POLICY_NAMES: &[&str] = &["fixed", "leader", "active-client", "manual"];
+const SPLIT_AXIS_NAMES: &[&str] = &["horizontal", "vertical"];
 const TERMINAL_ENGINE_NAMES: &[&str] = &["interim", "libghostty-vt"];
 
 fn main() {
@@ -91,24 +92,43 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .env
             .extend(args.env.iter().cloned());
     }
-    session.set_pane_resize_policy("pane-1", args.resize_policy);
-    let pane_id = "pane-1";
+    if let Some(axis) = args.initial_split {
+        let host = session
+            .pane_host("pane-1")
+            .ok_or("initial pane missing host")?
+            .clone();
+        if !session.split_active_pane(axis, "pane-2", host) {
+            return Err("failed to create initial split pane".into());
+        }
+    }
+    let pane_ids = session.leaf_pane_ids();
     let inherited_origin = inherited_nmux_origin();
-    session.set_pane_nmux_environment(
-        pane_id,
-        args.socket_path.display().to_string(),
-        inherited_origin.as_deref(),
-    );
-    let host_spec = session.tabs[0].root.host.clone();
+    for pane_id in &pane_ids {
+        session.set_pane_resize_policy(pane_id, args.resize_policy);
+        session.set_pane_nmux_environment(
+            pane_id,
+            args.socket_path.display().to_string(),
+            inherited_origin.as_deref(),
+        );
+    }
     let mut pty_host = LocalPtyHost::default();
-    if let Err(err) = pty_host.start_pane(pane_id, &host_spec) {
-        report_ready_json_error(&args, &err)?;
-        return Err(Box::new(err));
+    for pane_id in &pane_ids {
+        let host_spec = session
+            .pane_host(pane_id)
+            .ok_or_else(|| format!("pane {pane_id} missing host"))?
+            .clone();
+        if let Err(err) = pty_host.start_pane(pane_id, &host_spec) {
+            report_ready_json_error(&args, &err)?;
+            return Err(Box::new(err));
+        }
     }
     let mut terminal_engines = PaneTerminalEngines::new(args.terminal_engine_kind);
-    if let Err(err) =
-        wait_for_pane_output(&mut session, &mut pty_host, pane_id, &mut terminal_engines)
-    {
+    if let Err(err) = wait_for_panes_output(
+        &mut session,
+        &mut pty_host,
+        &pane_ids,
+        &mut terminal_engines,
+    ) {
         report_ready_json_error(&args, err.as_ref())?;
         return Err(err);
     }
@@ -132,7 +152,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             cycles,
             &mut terminal_engines,
         );
-        let stop_result = pty_host.stop_pane(pane_id);
+        let stop_result = stop_panes(&mut pty_host, &pane_ids);
         serve_result?;
         stop_result?;
         return Ok(());
@@ -146,7 +166,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             1,
             &mut terminal_engines,
         );
-        let stop_result = pty_host.stop_pane(pane_id);
+        let stop_result = stop_panes(&mut pty_host, &pane_ids);
         serve_result?;
         stop_result?;
         return Ok(());
@@ -194,18 +214,32 @@ impl Drop for SocketCleanup {
     }
 }
 
-fn wait_for_pane_output(
+fn wait_for_panes_output(
     session: &mut Session,
     output: &mut LocalPtyHost,
-    pane_id: &str,
+    pane_ids: &[String],
     engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let deadline = Instant::now() + Duration::from_millis(200);
     while Instant::now() < deadline {
-        if local::poll_pane_output_with_engines(session, engines, output, pane_id)? {
-            break;
+        let mut changed = false;
+        for pane_id in pane_ids {
+            changed |= local::poll_pane_output_with_engines(session, engines, output, pane_id)?;
+        }
+        if changed {
+            return Ok(());
         }
         thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+}
+
+fn stop_panes(
+    host: &mut LocalPtyHost,
+    pane_ids: &[String],
+) -> Result<(), nmux_core::host::HostError> {
+    for pane_id in pane_ids {
+        host.stop_pane(pane_id)?;
     }
     Ok(())
 }
@@ -229,6 +263,7 @@ struct Args {
     working_dir: Option<String>,
     env: Vec<(String, String)>,
     initial_size: Option<(u32, u32)>,
+    initial_split: Option<protocol::SplitAxis>,
     resize_policy: protocol::ResizePolicy,
     terminal_engine_kind: TerminalEngineKind,
 }
@@ -249,6 +284,21 @@ impl From<ResizePolicyArg> for protocol::ResizePolicy {
             ResizePolicyArg::Leader => protocol::ResizePolicy::Leader,
             ResizePolicyArg::ActiveClient => protocol::ResizePolicy::ActiveClient,
             ResizePolicyArg::Manual => protocol::ResizePolicy::Manual,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum SplitAxisArg {
+    Horizontal,
+    Vertical,
+}
+
+impl From<SplitAxisArg> for protocol::SplitAxis {
+    fn from(value: SplitAxisArg) -> Self {
+        match value {
+            SplitAxisArg::Horizontal => protocol::SplitAxis::Horizontal,
+            SplitAxisArg::Vertical => protocol::SplitAxis::Vertical,
         }
     }
 }
@@ -329,6 +379,8 @@ struct RawArgs {
     cols: Option<u32>,
     #[arg(long = "rows", value_name = "COUNT", value_parser = parse_rows_arg)]
     rows: Option<u32>,
+    #[arg(long = "split", value_name = "horizontal|vertical")]
+    initial_split: Option<SplitAxisArg>,
     #[arg(
         long = "resize-policy",
         value_name = "fixed|leader|active-client|manual"
@@ -369,6 +421,7 @@ where
         (None, None) => None,
         _ => return Err("--cols and --rows must be provided together".into()),
     };
+    let initial_split = raw.initial_split.map(protocol::SplitAxis::from);
     let terminal_engine_kind = raw
         .terminal_engine_kind
         .map(TerminalEngineArg::into_terminal_engine_kind)
@@ -413,6 +466,7 @@ where
         working_dir,
         env: raw.env,
         initial_size,
+        initial_split,
         resize_policy,
         terminal_engine_kind,
     })
@@ -420,6 +474,7 @@ where
 
 fn format_daemon_choices_json() -> String {
     let resize_policies = format_json_string_array(RESIZE_POLICY_NAMES);
+    let split_axes = format_json_string_array(SPLIT_AXIS_NAMES);
     let terminal_engines = TERMINAL_ENGINE_NAMES
         .iter()
         .map(|name| {
@@ -431,7 +486,9 @@ fn format_daemon_choices_json() -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
-    format!("{{\"resize_policies\":{resize_policies},\"terminal_engines\":[{terminal_engines}]}}")
+    format!(
+        "{{\"resize_policies\":{resize_policies},\"split_axes\":{split_axes},\"terminal_engines\":[{terminal_engines}]}}"
+    )
 }
 
 fn format_ready_json(args: &Args) -> String {
@@ -652,6 +709,7 @@ Options:
   --env KEY=VALUE                       Add an environment variable to the pane command
   --cols COUNT                          Initial pane PTY columns; both dimensions required
   --rows COUNT                          Initial pane PTY rows; both dimensions required
+  --split horizontal|vertical           Start with pane-1 split into pane-1 and pane-2
   --resize-policy fixed|leader|active-client|manual
                                          Publish and enforce pane resize policy
   --terminal-engine interim|libghostty-vt
@@ -771,6 +829,7 @@ mod tests {
                 "\"resize_policies\":[\"fixed\",\"leader\",\"active-client\",\"manual\"]"
             )
         );
+        assert!(json.contains("\"split_axes\":[\"horizontal\",\"vertical\"]"));
         assert!(json.contains("{\"name\":\"interim\",\"available\":true}"));
         #[cfg(feature = "libghostty-vt")]
         assert!(json.contains("{\"name\":\"libghostty-vt\",\"available\":true}"));
@@ -799,6 +858,7 @@ mod tests {
             working_dir: None,
             env: Vec::new(),
             initial_size: None,
+            initial_split: None,
             resize_policy: protocol::ResizePolicy::ActiveClient,
             terminal_engine_kind: TerminalEngineKind::InterimText,
         };
@@ -852,6 +912,8 @@ mod tests {
             "100",
             "--rows",
             "30",
+            "--split",
+            "vertical",
             "--resize-policy",
             "active-client",
             "--terminal-engine",
@@ -869,6 +931,7 @@ mod tests {
             vec![("NMUX_TEST".to_owned(), "one=two".to_owned())]
         );
         assert_eq!(args.initial_size, Some((100, 30)));
+        assert_eq!(args.initial_split, Some(protocol::SplitAxis::Vertical));
         assert_eq!(args.resize_policy, protocol::ResizePolicy::ActiveClient);
         assert_eq!(args.terminal_engine_kind, TerminalEngineKind::InterimText);
     }
@@ -890,6 +953,7 @@ mod tests {
         assert!(usage.contains("--env KEY=VALUE"));
         assert!(usage.contains("--cols COUNT"));
         assert!(usage.contains("--rows COUNT"));
+        assert!(usage.contains("--split horizontal|vertical"));
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
         assert!(usage.contains("--terminal-engine interim|libghostty-vt"));
         assert!(usage.contains("libghostty-vt requires building nmux"));

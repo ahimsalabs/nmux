@@ -1765,8 +1765,15 @@ pub fn workspace_summary_from_frame(
         let root = tab.root().ok_or("workspace tab has no root pane")?;
         validate_pane_node(root)?;
     }
-    let tab = tabs.get(0);
-    let pane = tab.root().ok_or("workspace tab has no root pane")?;
+    let active_tab_id = required_string(snapshot.active_tab_id(), "workspace active_tab_id")?;
+    let tab = (0..tabs.len())
+        .map(|index| tabs.get(index))
+        .find(|tab| tab.tab_id() == Some(active_tab_id.as_str()))
+        .ok_or_else(|| format!("workspace active tab not found: {active_tab_id}"))?;
+    let active_pane_id = required_string(tab.active_pane_id(), "workspace active_pane_id")?;
+    let root = tab.root().ok_or("workspace tab has no root pane")?;
+    let pane = find_pane_node(root, &active_pane_id)
+        .ok_or_else(|| format!("workspace active pane not found: {active_pane_id}"))?;
 
     Ok(WorkspaceSummary {
         session_id: required_string(snapshot.session_id(), "workspace session_id")?,
@@ -3055,6 +3062,22 @@ fn validate_pane_node(pane: protocol::PaneNode<'_>) -> Result<(), Box<dyn std::e
         }
     }
     Ok(())
+}
+
+fn find_pane_node<'a>(
+    pane: protocol::PaneNode<'a>,
+    pane_id: &str,
+) -> Option<protocol::PaneNode<'a>> {
+    if pane.pane_id() == Some(pane_id) {
+        return Some(pane);
+    }
+    let children = pane.children()?;
+    for index in 0..children.len() {
+        if let Some(found) = find_pane_node(children.get(index), pane_id) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn validate_resize_reason(

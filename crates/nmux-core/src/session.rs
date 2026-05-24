@@ -676,6 +676,18 @@ impl Session {
         self.pane(pane_id).map(|pane| (pane.cols, pane.rows))
     }
 
+    pub fn leaf_pane_ids(&self) -> Vec<String> {
+        let mut pane_ids = Vec::new();
+        for tab in &self.tabs {
+            collect_leaf_pane_ids(&tab.root, &mut pane_ids);
+        }
+        pane_ids
+    }
+
+    pub fn pane_host(&self, pane_id: &str) -> Option<&HostSpec> {
+        self.pane(pane_id).map(|pane| &pane.host)
+    }
+
     pub fn pane_application_keypad(&self, pane_id: &str) -> bool {
         self.pane(pane_id)
             .is_some_and(|pane| pane.modes.application_keypad)
@@ -1669,6 +1681,16 @@ fn pane_node_mut<'a>(pane: &'a mut Pane, pane_id: &str) -> Option<&'a mut Pane> 
         .find_map(|child| pane_node_mut(child, pane_id))
 }
 
+fn collect_leaf_pane_ids(pane: &Pane, pane_ids: &mut Vec<String>) {
+    if pane.children.is_empty() {
+        pane_ids.push(pane.id.clone());
+        return;
+    }
+    for child in &pane.children {
+        collect_leaf_pane_ids(child, pane_ids);
+    }
+}
+
 fn split_pane_node(
     pane: &mut Pane,
     pane_id: &str,
@@ -1688,6 +1710,7 @@ fn split_pane_node(
         let mut existing = pane.clone();
         existing.cols = first_cols;
         existing.rows = first_rows;
+        existing.host.command.initial_size = Some((first_cols, first_rows));
         existing.surface_version = existing.surface_version.saturating_add(1);
         existing.last_patch_kind = protocol::PatchKind::FullRefreshRequired;
         existing.last_row_update_indices = all_row_indices(existing.surface_lines.len());
@@ -1734,6 +1757,9 @@ fn split_child_sizes(
 }
 
 fn new_pane_from_template(id: &str, host: HostSpec, cols: u32, rows: u32) -> Pane {
+    let mut host = host;
+    host.id = id.to_owned();
+    host.command.initial_size = Some((cols, rows));
     let surface_lines = vec![
         format!("nmux {id}"),
         "server-owned terminal state".to_owned(),
@@ -2402,6 +2428,26 @@ mod tests {
         assert_eq!(session.pane_size("pane-2"), Some((40, 24)));
         assert_eq!(session.surface_version("pane-1"), Some(3));
         assert_eq!(session.surface_version("pane-2"), Some(1));
+        assert_eq!(
+            session.leaf_pane_ids(),
+            vec!["pane-1".to_owned(), "pane-2".to_owned()]
+        );
+        assert_eq!(
+            session
+                .pane_host("pane-1")
+                .expect("pane-1 host")
+                .command
+                .initial_size,
+            Some((40, 24))
+        );
+        assert_eq!(
+            session
+                .pane_host("pane-2")
+                .expect("pane-2 host")
+                .command
+                .initial_size,
+            Some((40, 24))
+        );
         assert_eq!(
             session.pane_surface("pane-2").expect("new pane").lines,
             vec![
