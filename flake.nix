@@ -66,7 +66,7 @@
         version = packageVersion;
         src = cleanSrc pkgs;
         strictDeps = true;
-        cargoExtraArgs = "-p nmux-cli --bins";
+        cargoExtraArgs = "-p nmux-cli --bin nmux";
         nativeBuildInputs = defaultNativeBuildInputs pkgs;
       };
 
@@ -180,13 +180,11 @@
         pkgs: package:
         pkgs.runCommand "nmux-package-smoke" { } ''
           test -x ${package}/bin/nmux
-          test -x ${package}/bin/nmuxd
           ${package}/bin/nmux --version | grep -F 'nmux ${packageVersion}'
-          ${package}/bin/nmuxd --version | grep -F 'nmuxd ${packageVersion}'
 
           mkdir -p "$out"
           {
-            printf 'nmux_package_binaries=passed\n'
+            printf 'nmux_package_binary=passed\n'
             printf 'nmux_package_version=passed\n'
           } > "$out/package-smoke.txt"
         '';

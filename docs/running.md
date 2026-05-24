@@ -48,9 +48,10 @@ finished. This uses the default `interim` engine and the shared default socket
 path unless `--socket` or `NMUX_SOCKET` selects a different local workspace.
 Use `--session NAME` or `-s NAME` on `nmux daemon` to publish a non-default
 session name; clients can target the same daemon with `nmux --session NAME`,
-`nmux attach NAME`, or `nmux new NAME` for managed private sessions. The current
-daemon still owns one session, so a mismatched target name fails clearly rather
-than selecting from a multi-session server.
+`nmux attach NAME`, `nmux new NAME` for managed private sessions, or
+`nmux kill NAME` to stop the matching daemon-owned session. The current daemon
+still owns one session, so a mismatched target name fails clearly rather than
+selecting from a multi-session server.
 
 For a private local workspace owned by one client command, use `--start`:
 

@@ -304,6 +304,82 @@ fn nmux_daemon_alias_serves_list_subcommands() {
 }
 
 #[test]
+fn nmux_kill_stops_named_daemon_and_rejects_wrong_session() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "daemon",
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--live-forever",
+            "--command",
+            "printf 'kill-ready\\n'; sleep 30",
+        ])
+        .spawn()
+        .expect("spawn nmux daemon");
+
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(150));
+
+    let wrong_session = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "kill",
+            "other",
+        ])
+        .output()
+        .expect("run nmux kill other");
+    assert!(
+        !wrong_session.status.success(),
+        "wrong-session kill unexpectedly succeeded:\n{}",
+        String::from_utf8_lossy(&wrong_session.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&wrong_session.stderr).contains("session not found: other"),
+        "wrong-session kill should report server error:\n{}",
+        String::from_utf8_lossy(&wrong_session.stderr)
+    );
+    assert!(
+        server.try_wait().expect("poll daemon").is_none(),
+        "wrong-session kill should leave daemon running"
+    );
+
+    let kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "kill",
+            "work",
+        ])
+        .output()
+        .expect("run nmux kill work");
+    assert!(
+        kill.status.success(),
+        "nmux kill work failed: {}",
+        String::from_utf8_lossy(&kill.stderr)
+    );
+    assert!(
+        kill.stdout.is_empty(),
+        "nmux kill should be quiet on success:\n{}",
+        String::from_utf8_lossy(&kill.stdout)
+    );
+
+    let server_status =
+        wait_for_child_exit(&mut server, Duration::from_secs(5)).expect("daemon exited after kill");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        server_status.success(),
+        "nmux daemon should exit cleanly after kill: {server_status}"
+    );
+}
+
+#[test]
 fn live_redraw_split_daemon_renders_pane_layout() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
@@ -939,16 +1015,17 @@ fn scriptable_cli_splits_panes_and_manages_tabs() {
 }
 
 #[test]
-fn tcp_transport_can_attach_with_token_auth() {
+fn tcp_transport_can_attach_with_positional_remote_and_token_env() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
     let addr = listener.local_addr().expect("tcp addr").to_string();
     drop(listener);
 
-    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
-            "--tcp-listen",
+            "daemon",
+            "--listen",
             &addr,
-            "--tcp-token",
+            "--token",
             "test-token",
             "--one-shot",
             "--command",
@@ -958,17 +1035,10 @@ fn tcp_transport_can_attach_with_token_auth() {
         .expect("spawn tcp nmuxd");
 
     let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
-        .args([
-            "--tcp",
-            &addr,
-            "--tcp-token",
-            "test-token",
-            "--connect-timeout-ms",
-            "2000",
-            "--json",
-        ])
+        .args([&addr, "--connect-timeout-ms", "2000", "--json"])
+        .env("NMUX_TOKEN", "test-token")
         .output()
-        .expect("run nmux over tcp");
+        .expect("run nmux over positional tcp");
 
     let server_status = server.wait().expect("wait for tcp nmuxd");
 
@@ -7259,6 +7329,20 @@ fn wait_for_socket(path: &Path) {
         thread::sleep(Duration::from_millis(20));
     }
     panic!("socket did not appear: {}", path.display());
+}
+
+fn wait_for_child_exit(
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> Option<std::process::ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("poll child") {
+            return Some(status);
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    None
 }
 
 #[cfg(feature = "libghostty-vt")]

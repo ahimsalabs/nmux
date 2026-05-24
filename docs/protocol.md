@@ -20,6 +20,8 @@ state-sync envelope bodies:
 - `InputEvent` for key, raw byte, paste, focus, and mouse input from an actor
   to a pane.
 - `ResizeIntent` for client-originated size requests.
+- `ControlCommand` for workspace control requests: pane split, tab creation,
+  tab close, and session kill.
 - `PresenceUpdate` for actor join/leave-style presence events. Decoders require
   non-empty actor, user, display, and present focused-pane IDs.
 - `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time. Decoded attach requests reject missing or empty identity strings and known-surface pane IDs instead of substituting local defaults.
@@ -188,6 +190,14 @@ intents for unknown panes, missing active-tab or active-pane metadata during
 attach, and unauthorized control intents return protocol `Error` frames instead
 of hanging, silently omitting a response, or falling through to process host
 behavior.
+
+`ControlCommand` carries `actor_id`, a client-local `command_seq`, the command
+kind, and optional target fields. Pane split uses `pane_id` and `split_axis`;
+tab new/close use `tab_id` and optional `title`; session kill uses
+`session_id`. Successful mutating commands return `WorkspaceTreeSnapshot`.
+`SessionKill` also asks the daemon to stop the targeted session after sending
+that acknowledgement. A non-empty `session_id` must match the daemon-owned
+session or the daemon returns `ErrorCode::SessionNotFound`.
 
 ## Validation
 

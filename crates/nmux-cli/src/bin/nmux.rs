@@ -191,9 +191,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some(ScriptCommand::SessionList) => return run_session_list(&args),
         Some(ScriptCommand::PaneList) => return run_pane_list(&args),
         Some(ScriptCommand::PaneSend) => return run_pane_send(&args),
-        Some(ScriptCommand::PaneSplit | ScriptCommand::TabNew | ScriptCommand::TabClose) => {
-            return run_control_command(&args);
-        }
+        Some(
+            ScriptCommand::PaneSplit
+            | ScriptCommand::TabNew
+            | ScriptCommand::TabClose
+            | ScriptCommand::SessionKill,
+        ) => return run_control_command(&args),
         Some(ScriptCommand::TabList) => return run_tab_list(&args),
         _ => {}
     }
@@ -365,6 +368,7 @@ fn run_control_command(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         Some(ScriptCommand::PaneSplit) => protocol::ControlCommandKind::PaneSplit,
         Some(ScriptCommand::TabNew) => protocol::ControlCommandKind::TabNew,
         Some(ScriptCommand::TabClose) => protocol::ControlCommandKind::TabClose,
+        Some(ScriptCommand::SessionKill) => protocol::ControlCommandKind::SessionKill,
         _ => return Err("missing control command".into()),
     };
     let command = local::ControlCommandSummary {
@@ -375,6 +379,7 @@ fn run_control_command(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         tab_id: args.target_tab_id.clone(),
         split_axis: args.script_split_axis,
         title: args.script_title.clone(),
+        session_id: args.target_session_id.clone(),
     };
     let result = if args.tcp_endpoint.is_some() {
         connect_to_daemon(args)
@@ -386,6 +391,8 @@ fn run_control_command(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         Ok(workspace) => {
             if args.output_json {
                 println!("{{\"workspace\":{}}}", format_workspace_json(&workspace));
+            } else if args.script_command == Some(ScriptCommand::SessionKill) {
+                return Ok(());
             } else {
                 println!("{}", workspace.display_line());
             }
@@ -2618,7 +2625,12 @@ struct RawArgs {
     state_info_json: bool,
     #[arg(long = "socket", value_name = "PATH")]
     socket_path: Option<PathBuf>,
-    #[arg(short = 's', long = "session", value_name = "NAME", allow_hyphen_values = true)]
+    #[arg(
+        short = 's',
+        long = "session",
+        value_name = "NAME",
+        allow_hyphen_values = true
+    )]
     target_session_id: Option<String>,
     #[arg(long = "tcp", value_name = "HOST:PORT", allow_hyphen_values = true)]
     tcp_endpoint: Option<String>,
@@ -2781,6 +2793,7 @@ enum ScriptCommand {
     TabList,
     TabNew,
     TabClose,
+    SessionKill,
     Replay,
 }
 
@@ -3266,7 +3279,9 @@ fn normalize_script_command(
             if raw.target_session_id.is_some() && session.is_some() {
                 return Err("--session cannot be combined with attach SESSION".into());
             }
-            raw.target_session_id = session;
+            if let Some(session) = session {
+                raw.target_session_id = Some(session);
+            }
             Ok(NormalizedScriptCommand {
                 command: None,
                 split_axis: protocol::SplitAxis::None,
@@ -3281,7 +3296,9 @@ fn normalize_script_command(
             if raw.target_session_id.is_some() && session.is_some() {
                 return Err("--session cannot be combined with new SESSION".into());
             }
-            raw.target_session_id = session;
+            if let Some(session) = session {
+                raw.target_session_id = Some(session);
+            }
             raw.start = true;
             raw.live = true;
             raw.stdin_bytes = true;
@@ -3297,7 +3314,20 @@ fn normalize_script_command(
             if session.as_deref().is_some_and(str::is_empty) {
                 return Err("kill requires a non-empty session name".into());
             }
-            Err("session kill is not implemented yet".into())
+            if raw.target_session_id.is_some() && session.is_some() {
+                return Err("--session cannot be combined with kill SESSION".into());
+            }
+            if let Some(session) = session {
+                raw.target_session_id = Some(session);
+            }
+            raw.no_input = true;
+            raw.no_scrollback = true;
+            Ok(NormalizedScriptCommand {
+                command: Some(ScriptCommand::SessionKill),
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                replay_path: None,
+            })
         }
         RawCommand::SendKeys { target, keys } => {
             if raw.target_pane_id.is_some() || target.is_some() {
@@ -4584,8 +4614,8 @@ Usage:
   nmux [OPTIONS]
   nmux [OPTIONS] [user@]HOST[:PORT]
   nmux daemon [DAEMON_OPTIONS]
-  nmux attach
-  nmux new
+  nmux attach [SESSION]
+  nmux new [SESSION]
   nmux ls
   nmux kill [SESSION]
   nmux [OPTIONS] pane ls [--json]
@@ -4660,10 +4690,10 @@ Options:
 
 Subcommands:
   daemon [OPTIONS]                Run the daemon in the foreground
-  attach                          Attach to the default local session
-  new                             Start a private live shell session
+  attach [SESSION]                Attach to the default or named local session
+  new [SESSION]                   Start a private live shell session
   ls                              List the current local session
-  kill [SESSION]                  Reserved for session shutdown
+  kill [SESSION]                  Stop the default or named local session
   pane ls [--json]                List panes in the active tab
   pane send PANE_ID TEXT          Send text input to a pane
   pane read PANE_ID [--json]      Print a pane surface, optionally as JSON
@@ -5109,6 +5139,31 @@ mod tests {
         assert_eq!(new_named.target_session_id.as_deref(), Some("work"));
         assert!(new_named.start);
         assert!(new_named.live);
+
+        let kill_default = args_from_iter(["kill"]).expect("kill args");
+        assert_eq!(
+            kill_default.script_command,
+            Some(ScriptCommand::SessionKill)
+        );
+        assert_eq!(kill_default.target_session_id, None);
+        assert!(kill_default.no_input);
+        assert!(kill_default.no_scrollback);
+
+        let kill_named = args_from_iter(["kill", "work"]).expect("kill named args");
+        assert_eq!(kill_named.script_command, Some(ScriptCommand::SessionKill));
+        assert_eq!(kill_named.target_session_id.as_deref(), Some("work"));
+        assert!(kill_named.no_input);
+        assert!(kill_named.no_scrollback);
+
+        let kill_global = args_from_iter(["--session", "work", "kill"]).expect("kill -s args");
+        assert_eq!(kill_global.script_command, Some(ScriptCommand::SessionKill));
+        assert_eq!(kill_global.target_session_id.as_deref(), Some("work"));
+
+        let err = match args_from_iter(["--session", "work", "kill", "other"]) {
+            Ok(_) => panic!("duplicated session target should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(err, "--session cannot be combined with kill SESSION");
     }
 
     #[test]

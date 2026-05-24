@@ -925,13 +925,14 @@ impl ::flatbuffers::SimpleToVerifyInSlice for ResizeReason {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_CONTROL_COMMAND_KIND: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_CONTROL_COMMAND_KIND: i8 = 2;
+pub const ENUM_MAX_CONTROL_COMMAND_KIND: i8 = 3;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_CONTROL_COMMAND_KIND: [ControlCommandKind; 3] = [
+pub const ENUM_VALUES_CONTROL_COMMAND_KIND: [ControlCommandKind; 4] = [
   ControlCommandKind::PaneSplit,
   ControlCommandKind::TabNew,
   ControlCommandKind::TabClose,
+  ControlCommandKind::SessionKill,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -942,13 +943,15 @@ impl ControlCommandKind {
   pub const PaneSplit: Self = Self(0);
   pub const TabNew: Self = Self(1);
   pub const TabClose: Self = Self(2);
+  pub const SessionKill: Self = Self(3);
 
   pub const ENUM_MIN: i8 = 0;
-  pub const ENUM_MAX: i8 = 2;
+  pub const ENUM_MAX: i8 = 3;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::PaneSplit,
     Self::TabNew,
     Self::TabClose,
+    Self::SessionKill,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -956,6 +959,7 @@ impl ControlCommandKind {
       Self::PaneSplit => Some("PaneSplit"),
       Self::TabNew => Some("TabNew"),
       Self::TabClose => Some("TabClose"),
+      Self::SessionKill => Some("SessionKill"),
       _ => None,
     }
   }
@@ -5535,6 +5539,7 @@ impl<'a> ControlCommand<'a> {
   pub const VT_TAB_ID: ::flatbuffers::VOffsetT = 12;
   pub const VT_SPLIT_AXIS: ::flatbuffers::VOffsetT = 14;
   pub const VT_TITLE: ::flatbuffers::VOffsetT = 16;
+  pub const VT_SESSION_ID: ::flatbuffers::VOffsetT = 18;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5547,6 +5552,7 @@ impl<'a> ControlCommand<'a> {
   ) -> ::flatbuffers::WIPOffset<ControlCommand<'bldr>> {
     let mut builder = ControlCommandBuilder::new(_fbb);
     builder.add_command_seq(args.command_seq);
+    if let Some(x) = args.session_id { builder.add_session_id(x); }
     if let Some(x) = args.title { builder.add_title(x); }
     if let Some(x) = args.tab_id { builder.add_tab_id(x); }
     if let Some(x) = args.pane_id { builder.add_pane_id(x); }
@@ -5606,6 +5612,13 @@ impl<'a> ControlCommand<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ControlCommand::VT_TITLE, None)}
   }
+  #[inline]
+  pub fn session_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ControlCommand::VT_SESSION_ID, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for ControlCommand<'_> {
@@ -5621,6 +5634,7 @@ impl ::flatbuffers::Verifiable for ControlCommand<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("tab_id", Self::VT_TAB_ID, false)?
      .visit_field::<SplitAxis>("split_axis", Self::VT_SPLIT_AXIS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("title", Self::VT_TITLE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("session_id", Self::VT_SESSION_ID, false)?
      .finish();
     Ok(())
   }
@@ -5633,6 +5647,7 @@ pub struct ControlCommandArgs<'a> {
     pub tab_id: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub split_axis: SplitAxis,
     pub title: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub session_id: Option<::flatbuffers::WIPOffset<&'a str>>,
 }
 impl<'a> Default for ControlCommandArgs<'a> {
   #[inline]
@@ -5645,6 +5660,7 @@ impl<'a> Default for ControlCommandArgs<'a> {
       tab_id: None,
       split_axis: SplitAxis::None,
       title: None,
+      session_id: None,
     }
   }
 }
@@ -5683,6 +5699,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ControlCommandBuilder<'a, 'b,
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ControlCommand::VT_TITLE, title);
   }
   #[inline]
+  pub fn add_session_id(&mut self, session_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ControlCommand::VT_SESSION_ID, session_id);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ControlCommandBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     ControlCommandBuilder {
@@ -5707,6 +5727,7 @@ impl ::core::fmt::Debug for ControlCommand<'_> {
       ds.field("tab_id", &self.tab_id());
       ds.field("split_axis", &self.split_axis());
       ds.field("title", &self.title());
+      ds.field("session_id", &self.session_id());
       ds.finish()
   }
 }

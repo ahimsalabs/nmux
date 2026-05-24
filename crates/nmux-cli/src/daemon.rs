@@ -199,8 +199,12 @@ where
                 &mut terminal_engines,
             ),
         };
-        let stop_result = stop_panes(&mut pty_host, &pane_ids);
-        serve_result?;
+        let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
+        if let Err(err) = serve_result
+            && !local::is_session_shutdown(err.as_ref())
+        {
+            return Err(err);
+        }
         stop_result?;
         return Ok(());
     }
@@ -224,21 +228,25 @@ where
                 &mut terminal_engines,
             ),
         };
-        let stop_result = stop_panes(&mut pty_host, &pane_ids);
-        serve_result?;
+        let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
+        if let Err(err) = serve_result
+            && !local::is_session_shutdown(err.as_ref())
+        {
+            return Err(err);
+        }
         stop_result?;
         return Ok(());
     }
 
     loop {
-        match &listener {
+        let serve_result = match &listener {
             DaemonListener::Unix { listener, .. } => local::serve_n_with_host_and_engines(
                 listener,
                 &mut session,
                 &mut pty_host,
                 1,
                 &mut terminal_engines,
-            )?,
+            ),
             DaemonListener::Tcp(listener) => serve_tcp_n(
                 listener,
                 &args,
@@ -247,7 +255,14 @@ where
                 1,
                 None,
                 &mut terminal_engines,
-            )?,
+            ),
+        };
+        if let Err(err) = serve_result {
+            if local::is_session_shutdown(err.as_ref()) {
+                stop_panes(&mut pty_host, &session.leaf_pane_ids())?;
+                return Ok(());
+            }
+            return Err(err);
         }
     }
 }
@@ -471,7 +486,12 @@ struct RawArgs {
     ready_json: bool,
     #[arg(long = "socket", value_name = "PATH")]
     socket_path: Option<PathBuf>,
-    #[arg(short = 's', long = "session", value_name = "NAME", allow_hyphen_values = true)]
+    #[arg(
+        short = 's',
+        long = "session",
+        value_name = "NAME",
+        allow_hyphen_values = true
+    )]
     session_id: Option<String>,
     #[arg(
         long = "tcp-listen",

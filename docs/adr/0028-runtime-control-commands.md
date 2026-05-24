@@ -13,9 +13,10 @@ terminal input bytes and not attach options.
 ## Decision
 
 Add a small `ControlCommand` FlatBuffers envelope body for local client requests
-that mutate workspace structure. The initial command kinds are pane split, tab
-new, and tab close; the daemon replies with the existing
-`WorkspaceTreeSnapshot` on success and existing `Error` frames on failure.
+that mutate workspace structure or session lifecycle. The initial command kinds
+are pane split, tab new, tab close, and session kill; the daemon replies with
+the existing `WorkspaceTreeSnapshot` on success and existing `Error` frames on
+failure.
 
 ## Consequences
 

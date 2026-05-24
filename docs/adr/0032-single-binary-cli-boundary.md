@@ -35,6 +35,8 @@ The CLI grows noun-verb commands around the protocol that already exists:
 - `nmux pane read` is the preferred spelling for `pane snapshot`;
 - `nmux pane ls`, `nmux tab ls`, and `nmux ls` expose the currently visible
   daemon state without adding a new protocol object;
+- `nmux kill [SESSION]` sends a session-kill control command to the targeted
+  daemon and exits that daemon cleanly when the session name matches;
 - `nmux send-keys [-t PANE] KEYS...` provides a tmux-familiar text-input alias.
 
 Direct TCP remote attach is exposed as `nmux [user@]HOST[:PORT]`. A host with

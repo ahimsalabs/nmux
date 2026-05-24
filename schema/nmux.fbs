@@ -72,6 +72,7 @@ enum ControlCommandKind : byte {
   PaneSplit = 0,
   TabNew = 1,
   TabClose = 2,
+  SessionKill = 3,
 }
 
 enum ResizePolicy : byte {
@@ -315,6 +316,7 @@ table ControlCommand {
   tab_id:string;
   split_axis:SplitAxis = None;
   title:string;
+  session_id:string;
 }
 
 table ScrollbackFetch {

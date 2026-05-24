@@ -6,28 +6,37 @@ use nmux_proto::{protocol, wire};
 
 use super::{ControlCommandSummary, write_protocol_error};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ControlCommandOutcome {
+    Continue,
+    Shutdown,
+}
+
 pub(super) fn serve_control_command(
     stream: &mut UnixStream,
     command: ControlCommandSummary,
     session: &mut Session,
     host: Option<&mut dyn ProcessHost>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<ControlCommandOutcome, Box<dyn std::error::Error>> {
     let mut seq = 1;
     match apply_control_command(session, host, &command) {
-        Ok(()) => {
+        Ok(outcome) => {
             let workspace_frame = session.workspace_tree_frame("local-client", seq);
             wire::write_default_frame(stream, &workspace_frame)?;
-            Ok(())
+            Ok(outcome)
         }
-        Err(error) => write_protocol_error(
-            stream,
-            session,
-            &mut seq,
-            error.code,
-            &error.message,
-            error.pane_id.as_deref(),
-            command.command_seq,
-        ),
+        Err(error) => {
+            write_protocol_error(
+                stream,
+                session,
+                &mut seq,
+                error.code,
+                &error.message,
+                error.pane_id.as_deref(),
+                command.command_seq,
+            )?;
+            Ok(ControlCommandOutcome::Continue)
+        }
     }
 }
 
@@ -35,7 +44,7 @@ fn apply_control_command(
     session: &mut Session,
     host: Option<&mut dyn ProcessHost>,
     command: &ControlCommandSummary,
-) -> Result<(), ControlCommandError> {
+) -> Result<ControlCommandOutcome, ControlCommandError> {
     match command.kind {
         protocol::ControlCommandKind::PaneSplit => {
             let Some(host) = host else {
@@ -44,7 +53,8 @@ fn apply_control_command(
                     command.pane_id.clone(),
                 ));
             };
-            apply_pane_split_command(session, host, command)
+            apply_pane_split_command(session, host, command)?;
+            Ok(ControlCommandOutcome::Continue)
         }
         protocol::ControlCommandKind::TabNew => {
             let Some(host) = host else {
@@ -53,14 +63,38 @@ fn apply_control_command(
                     None,
                 ));
             };
-            apply_tab_new_command(session, host, command)
+            apply_tab_new_command(session, host, command)?;
+            Ok(ControlCommandOutcome::Continue)
         }
-        protocol::ControlCommandKind::TabClose => apply_tab_close_command(session, host, command),
+        protocol::ControlCommandKind::TabClose => {
+            apply_tab_close_command(session, host, command)?;
+            Ok(ControlCommandOutcome::Continue)
+        }
+        protocol::ControlCommandKind::SessionKill => {
+            apply_session_kill_command(session, command)?;
+            Ok(ControlCommandOutcome::Shutdown)
+        }
         _ => Err(ControlCommandError::unknown(
             format!("unknown control command kind {}", command.kind.0),
             command.pane_id.clone(),
         )),
     }
+}
+
+fn apply_session_kill_command(
+    session: &Session,
+    command: &ControlCommandSummary,
+) -> Result<(), ControlCommandError> {
+    if let Some(session_id) = command.session_id.as_deref()
+        && session_id != session.id
+    {
+        return Err(ControlCommandError {
+            code: protocol::ErrorCode::SessionNotFound,
+            message: format!("session not found: {session_id}"),
+            pane_id: None,
+        });
+    }
+    Ok(())
 }
 
 fn apply_pane_split_command(

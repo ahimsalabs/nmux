@@ -12,7 +12,7 @@ see all panes restored.
 
 ## Next features (priority order)
 
-- Consolidate `nmux`/`nmuxd` into a single binary and refine CLI UX (issue #6)
+None queued.
 
 ## Test gaps to close
 

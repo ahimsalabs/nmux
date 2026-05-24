@@ -38,7 +38,7 @@ pub use client_state::{
     ClientAttachState, ClientPaneScrollback, ClientStateSummary, ClientStateSurfaceSummary,
     SocketIdentitySummary,
 };
-use control::serve_control_command;
+use control::{ControlCommandOutcome, serve_control_command};
 use surface::*;
 pub use surface::{
     CachedSurfaceSummary, CellRunSummary, ClientPaneSurface, CursorSummary, HyperlinkSummary,
@@ -55,6 +55,21 @@ const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(3);
 pub trait ProcessHostOutput: ProcessHost + ProcessOutput {}
 
 impl<T> ProcessHostOutput for T where T: ProcessHost + ProcessOutput {}
+
+#[derive(Debug)]
+pub struct SessionShutdown;
+
+impl fmt::Display for SessionShutdown {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("session shutdown requested")
+    }
+}
+
+impl std::error::Error for SessionShutdown {}
+
+pub fn is_session_shutdown(error: &(dyn std::error::Error + 'static)) -> bool {
+    error.is::<SessionShutdown>()
+}
 
 pub fn serve_one(
     listener: &UnixListener,
@@ -223,6 +238,10 @@ where
                             break;
                         }
                     }
+                    Ok(Some(LiveClientAccept::Shutdown)) => {
+                        listener.set_nonblocking(false)?;
+                        return Err(SessionShutdown.into());
+                    }
                     Ok(None) => break,
                     Err(err) => {
                         listener.set_nonblocking(false)?;
@@ -364,6 +383,7 @@ struct LiveAttachedClient {
 enum LiveClientAccept {
     Attached(LiveAttachedClient),
     Command,
+    Shutdown,
 }
 
 struct LiveConcurrentReadiness {
@@ -395,8 +415,10 @@ fn accept_live_client(
     let request = match read_client_initial_frame(&mut stream)? {
         ClientInitialFrame::Attach(request) => request,
         ClientInitialFrame::Control(command) => {
-            serve_control_command(&mut stream, command, session, Some(host))?;
-            return Ok(Some(LiveClientAccept::Command));
+            return match serve_control_command(&mut stream, command, session, Some(host))? {
+                ControlCommandOutcome::Continue => Ok(Some(LiveClientAccept::Command)),
+                ControlCommandOutcome::Shutdown => Ok(Some(LiveClientAccept::Shutdown)),
+            };
         }
     };
     let leaf_pane_ids = session.leaf_pane_ids();
@@ -850,7 +872,10 @@ where
     let request = match read_client_initial_frame(&mut stream)? {
         ClientInitialFrame::Attach(request) => request,
         ClientInitialFrame::Control(command) => {
-            return serve_control_command(&mut stream, command, session, Some(host));
+            return match serve_control_command(&mut stream, command, session, Some(host))? {
+                ControlCommandOutcome::Continue => Ok(()),
+                ControlCommandOutcome::Shutdown => Err(SessionShutdown.into()),
+            };
         }
     };
     let Some(pane_id) = attach_target_pane_id(session, &request) else {
@@ -877,7 +902,10 @@ fn serve_next(
             serve_attached_client(&mut stream, request, session, None, engines)
         }
         ClientInitialFrame::Control(command) => {
-            serve_control_command(&mut stream, command, session, None)
+            match serve_control_command(&mut stream, command, session, None)? {
+                ControlCommandOutcome::Continue => Ok(()),
+                ControlCommandOutcome::Shutdown => Err(SessionShutdown.into()),
+            }
         }
     }
 }
@@ -892,7 +920,10 @@ fn serve_next_with_output(
     let request = match read_client_initial_frame(&mut stream)? {
         ClientInitialFrame::Attach(request) => request,
         ClientInitialFrame::Control(command) => {
-            return serve_control_command(&mut stream, command, session, None);
+            return match serve_control_command(&mut stream, command, session, None)? {
+                ControlCommandOutcome::Continue => Ok(()),
+                ControlCommandOutcome::Shutdown => Err(SessionShutdown.into()),
+            };
         }
     };
     if let Some(output) = output.as_deref_mut() {
@@ -950,7 +981,10 @@ where
     let request = match read_client_initial_frame(&mut stream)? {
         ClientInitialFrame::Attach(request) => request,
         ClientInitialFrame::Control(command) => {
-            return serve_control_command(&mut stream, command, session, Some(host));
+            return match serve_control_command(&mut stream, command, session, Some(host))? {
+                ControlCommandOutcome::Continue => Ok(()),
+                ControlCommandOutcome::Shutdown => Err(SessionShutdown.into()),
+            };
         }
     };
     let Some(pane_id) = attach_target_pane_id(session, &request) else {
@@ -3527,6 +3561,7 @@ fn control_command_from_frame(frame: &[u8]) -> io::Result<ControlCommandSummary>
         tab_id: optional_io_string(command.tab_id(), "control tab_id")?,
         split_axis: validate_split_axis_io(command.split_axis())?,
         title: optional_io_string(command.title(), "control title")?,
+        session_id: optional_io_string(command.session_id(), "control session_id")?,
     })
 }
 
@@ -3603,6 +3638,7 @@ pub struct ControlCommandSummary {
     pub tab_id: Option<String>,
     pub split_axis: protocol::SplitAxis,
     pub title: Option<String>,
+    pub session_id: Option<String>,
 }
 
 impl ControlCommandSummary {
@@ -3621,6 +3657,10 @@ impl ControlCommandSummary {
             .title
             .as_ref()
             .map(|title| builder.create_string(title));
+        let session_id = self
+            .session_id
+            .as_ref()
+            .map(|session_id| builder.create_string(session_id));
         let command = protocol::ControlCommand::create(
             &mut builder,
             &protocol::ControlCommandArgs {
@@ -3631,6 +3671,7 @@ impl ControlCommandSummary {
                 tab_id,
                 split_axis: self.split_axis,
                 title,
+                session_id,
             },
         );
         let session_id = builder.create_string("local");
