@@ -267,7 +267,7 @@ impl Default for TerminalEngineKind {
 
 fn terminal_engine_for_kind(kind: TerminalEngineKind) -> Box<dyn TerminalEngine> {
     match kind {
-        TerminalEngineKind::InterimText => Box::new(InterimTextTerminalEngine),
+        TerminalEngineKind::InterimText => Box::new(InterimTextTerminalEngine::default()),
         #[cfg(feature = "libghostty-vt")]
         TerminalEngineKind::LibghosttyVt => Box::new(ghostty_vt::LibghosttyVtTerminalEngine::new()),
     }
@@ -279,17 +279,23 @@ pub fn libghostty_vt_supports_kitty_graphics() -> bool {
 }
 
 #[derive(Debug, Default)]
-pub struct InterimTextTerminalEngine;
+pub struct InterimTextTerminalEngine {
+    parser: InterimAnsiParser,
+}
 
 impl TerminalEngine for InterimTextTerminalEngine {
     fn apply_output(&mut self, input: TerminalInput<'_>, output: &[u8]) -> Option<TerminalUpdate> {
-        let (scrollback_lines, cursor_col) =
-            merge_interim_pty_output(input.scrollback_lines, input.cursor.col > 0, output);
+        let parser_output = self.parser.consume(output, input.modes);
+        let (scrollback_lines, cursor_col) = merge_interim_pty_output(
+            input.scrollback_lines,
+            input.cursor.col > 0,
+            &parser_output.text,
+        );
 
         Some(interim_text_update(InterimTextUpdateInput {
             surface: input.surface,
             previous_cursor: input.cursor,
-            modes: input.modes,
+            modes: parser_output.modes,
             title: input.title,
             working_directory: input.working_directory,
             colors: input.colors,
@@ -331,6 +337,173 @@ impl TerminalEngine for InterimTextTerminalEngine {
 
     fn encode_mouse_input(&mut self, input: MouseTerminalInput) -> Option<Vec<u8>> {
         encode_sgr_mouse_input(input)
+    }
+}
+
+#[derive(Debug, Default)]
+struct InterimAnsiParser {
+    state: InterimAnsiState,
+}
+
+#[derive(Debug, Default)]
+enum InterimAnsiState {
+    #[default]
+    Ground,
+    Escape,
+    Csi(Vec<u8>),
+    Osc {
+        escape_pending: bool,
+    },
+    StringControl {
+        escape_pending: bool,
+    },
+}
+
+struct InterimAnsiOutput {
+    text: Vec<u8>,
+    modes: TerminalModes,
+}
+
+impl InterimAnsiParser {
+    fn consume(&mut self, bytes: &[u8], mut modes: TerminalModes) -> InterimAnsiOutput {
+        let mut text = Vec::with_capacity(bytes.len());
+        for byte in bytes.iter().copied() {
+            match &mut self.state {
+                InterimAnsiState::Ground => match byte {
+                    0x1b => self.state = InterimAnsiState::Escape,
+                    0x9b => self.state = InterimAnsiState::Csi(Vec::new()),
+                    _ => text.push(byte),
+                },
+                InterimAnsiState::Escape => match byte {
+                    b'[' => self.state = InterimAnsiState::Csi(Vec::new()),
+                    b']' => {
+                        self.state = InterimAnsiState::Osc {
+                            escape_pending: false,
+                        }
+                    }
+                    b'P' | b'X' | b'^' | b'_' => {
+                        self.state = InterimAnsiState::StringControl {
+                            escape_pending: false,
+                        };
+                    }
+                    b'=' => {
+                        modes.application_keypad = true;
+                        self.state = InterimAnsiState::Ground;
+                    }
+                    b'>' => {
+                        modes.application_keypad = false;
+                        self.state = InterimAnsiState::Ground;
+                    }
+                    0x1b => self.state = InterimAnsiState::Escape,
+                    0x30..=0x7e => self.state = InterimAnsiState::Ground,
+                    _ => self.state = InterimAnsiState::Ground,
+                },
+                InterimAnsiState::Csi(buffer) => {
+                    if byte == 0x1b {
+                        self.state = InterimAnsiState::Escape;
+                    } else if (0x40..=0x7e).contains(&byte) {
+                        let params = std::mem::take(buffer);
+                        apply_interim_csi(&mut modes, &params, byte);
+                        self.state = InterimAnsiState::Ground;
+                    } else {
+                        buffer.push(byte);
+                    }
+                }
+                InterimAnsiState::Osc { escape_pending } => {
+                    if *escape_pending {
+                        if byte == b'\\' {
+                            self.state = InterimAnsiState::Ground;
+                        } else {
+                            *escape_pending = byte == 0x1b;
+                        }
+                    } else if byte == 0x07 {
+                        self.state = InterimAnsiState::Ground;
+                    } else if byte == 0x1b {
+                        *escape_pending = true;
+                    }
+                }
+                InterimAnsiState::StringControl { escape_pending } => {
+                    if *escape_pending {
+                        if byte == b'\\' {
+                            self.state = InterimAnsiState::Ground;
+                        } else {
+                            *escape_pending = byte == 0x1b;
+                        }
+                    } else if byte == 0x1b {
+                        *escape_pending = true;
+                    }
+                }
+            }
+        }
+        InterimAnsiOutput { text, modes }
+    }
+}
+
+fn apply_interim_csi(modes: &mut TerminalModes, params: &[u8], final_byte: u8) {
+    match final_byte {
+        b'h' => apply_interim_mode_set(modes, params, true),
+        b'l' => apply_interim_mode_set(modes, params, false),
+        _ => {}
+    }
+}
+
+fn apply_interim_mode_set(modes: &mut TerminalModes, params: &[u8], enabled: bool) {
+    let private = params.first() == Some(&b'?');
+    let params = if private { &params[1..] } else { params };
+    for param in params.split(|byte| *byte == b';') {
+        let Ok(param) = std::str::from_utf8(param) else {
+            continue;
+        };
+        let Ok(code) = param.parse::<u32>() else {
+            continue;
+        };
+        match (private, code) {
+            (true, 1) => modes.application_cursor = enabled,
+            (true, 6) => modes.origin = enabled,
+            (true, 7) => modes.wraparound = enabled,
+            (true, 1000) => {
+                set_interim_mouse_tracking(modes, protocol::MouseTrackingMode::Normal, enabled)
+            }
+            (true, 1002) => {
+                set_interim_mouse_tracking(modes, protocol::MouseTrackingMode::Button, enabled)
+            }
+            (true, 1003) => {
+                set_interim_mouse_tracking(modes, protocol::MouseTrackingMode::Any, enabled)
+            }
+            (true, 1004) => modes.focus_reporting = enabled,
+            (true, 1006) => set_interim_mouse_format(modes, protocol::MouseFormat::Sgr, enabled),
+            (true, 1016) => {
+                set_interim_mouse_format(modes, protocol::MouseFormat::SgrPixels, enabled)
+            }
+            (true, 2004) => modes.bracketed_paste = enabled,
+            _ => {}
+        }
+    }
+}
+
+fn set_interim_mouse_tracking(
+    modes: &mut TerminalModes,
+    mode: protocol::MouseTrackingMode,
+    enabled: bool,
+) {
+    if enabled {
+        modes.mouse_tracking = true;
+        modes.mouse_tracking_mode = mode;
+    } else if modes.mouse_tracking_mode == mode {
+        modes.mouse_tracking = false;
+        modes.mouse_tracking_mode = protocol::MouseTrackingMode::None;
+    }
+}
+
+fn set_interim_mouse_format(
+    modes: &mut TerminalModes,
+    format: protocol::MouseFormat,
+    enabled: bool,
+) {
+    if enabled {
+        modes.mouse_format = format;
+    } else if modes.mouse_format == format {
+        modes.mouse_format = protocol::MouseFormat::X10;
     }
 }
 
@@ -2030,7 +2203,7 @@ mod tests {
 
     #[test]
     fn interim_text_engine_normalizes_process_output() {
-        let mut engine = InterimTextTerminalEngine;
+        let mut engine = InterimTextTerminalEngine::default();
         let scrollback_lines = vec!["existing".to_owned()];
         let input = TerminalInput {
             pane_id: "pane-1",
@@ -2062,7 +2235,7 @@ mod tests {
         };
 
         let update = engine
-            .apply_output(input, b"hello\r\nsecond\x1b[31m line\n")
+            .apply_output(input, b"hello\r\nsecond\x1b[31m line\x1b[0m\n")
             .expect("terminal update");
 
         assert_eq!(
@@ -2070,7 +2243,7 @@ mod tests {
             vec![
                 "existing".to_owned(),
                 "hello".to_owned(),
-                "second[31m line".to_owned()
+                "second line".to_owned()
             ]
         );
         assert_eq!(update.surface_lines, update.scrollback_lines);
@@ -2090,7 +2263,7 @@ mod tests {
 
     #[test]
     fn interim_text_engine_merges_split_pty_writes_until_newline() {
-        let mut engine = InterimTextTerminalEngine;
+        let mut engine = InterimTextTerminalEngine::default();
         let scrollback_lines = vec!["existing".to_owned()];
         let input = TerminalInput {
             pane_id: "pane-1",
@@ -2139,8 +2312,70 @@ mod tests {
     }
 
     #[test]
+    fn interim_text_engine_consumes_split_control_sequences() {
+        let mut engine = InterimTextTerminalEngine::default();
+        let scrollback_lines = Vec::new();
+        let input = TerminalInput {
+            pane_id: "pane-1",
+            cols: 80,
+            rows: 24,
+            surface: protocol::SurfaceKind::Main,
+            cursor: TerminalCursor {
+                row: 0,
+                col: 0,
+                visible: true,
+                shape: protocol::CursorShape::Block,
+                blinking: true,
+            },
+            modes: TerminalModes::default(),
+            title: "",
+            working_directory: "",
+            colors: TerminalColors::default(),
+            styles: &[],
+            surface_lines: &[],
+            surface_row_runs: &[],
+            surface_semantic_prompts: &[],
+            surface_dirty_rows: &[],
+            surface_kitty_placeholders: &[],
+            scrollback_lines: &scrollback_lines,
+            scrollback_row_runs: &[],
+            scrollback_semantic_prompts: &[],
+            scrollback_dirty_rows: &[],
+            scrollback_kitty_placeholders: &[],
+        };
+
+        let first = engine
+            .apply_output(input, b"ready\n\x1b[")
+            .expect("first update");
+        let second = engine
+            .apply_output(
+                terminal_input_from_update(&first),
+                b"?2004h\x1b[?1000h\x1b[?1006h",
+            )
+            .expect("second update");
+        let third = engine
+            .apply_output(
+                terminal_input_from_update(&second),
+                b"\x1b]0;ignored title\x07done\n",
+            )
+            .expect("third update");
+
+        assert_eq!(
+            third.scrollback_lines,
+            vec!["ready".to_owned(), "done".to_owned()]
+        );
+        assert!(third.modes.bracketed_paste);
+        assert!(third.modes.mouse_tracking);
+        assert_eq!(
+            third.modes.mouse_tracking_mode,
+            protocol::MouseTrackingMode::Normal
+        );
+        assert_eq!(third.modes.mouse_format, protocol::MouseFormat::Sgr);
+    }
+
+    #[test]
     fn interim_text_engine_keeps_visible_tail() {
-        let mut engine = InterimTextTerminalEngine;
+        let mut engine = InterimTextTerminalEngine::default();
         let scrollback_lines = vec!["one".to_owned(), "two".to_owned()];
         let input = TerminalInput {
             pane_id: "pane-1",
@@ -2197,7 +2432,7 @@ mod tests {
 
     #[test]
     fn interim_text_engine_resizes_visible_tail() {
-        let mut engine = InterimTextTerminalEngine;
+        let mut engine = InterimTextTerminalEngine::default();
         let scrollback_lines = vec!["one".to_owned(), "two".to_owned(), "three".to_owned()];
         let input = TerminalInput {
             pane_id: "pane-1",
@@ -3655,7 +3890,7 @@ mod tests {
 
     #[test]
     fn interim_engine_encodes_modified_named_keys() {
-        let mut engine = super::InterimTextTerminalEngine;
+        let mut engine = super::InterimTextTerminalEngine::default();
 
         assert_eq!(
             engine.encode_key_input(super::KeyTerminalInput {
@@ -3697,7 +3932,7 @@ mod tests {
 
     #[test]
     fn interim_engine_encodes_sgr_mouse_input() {
-        let mut engine = super::InterimTextTerminalEngine;
+        let mut engine = super::InterimTextTerminalEngine::default();
 
         assert_eq!(
             engine.encode_mouse_input(MouseTerminalInput {

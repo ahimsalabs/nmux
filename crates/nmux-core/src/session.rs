@@ -279,7 +279,7 @@ impl Session {
     }
 
     pub fn apply_pane_output(&mut self, pane_id: &str, output: &[u8]) -> bool {
-        let mut engine = InterimTextTerminalEngine;
+        let mut engine = InterimTextTerminalEngine::default();
         self.apply_pane_output_with_engine(pane_id, output, &mut engine)
     }
 
@@ -323,7 +323,7 @@ impl Session {
     }
 
     pub fn commit_pane_resize(&mut self, pane_id: &str, cols: u32, rows: u32) -> bool {
-        let mut engine = InterimTextTerminalEngine;
+        let mut engine = InterimTextTerminalEngine::default();
         self.commit_pane_resize_with_engine(pane_id, cols, rows, &mut engine)
     }
 
