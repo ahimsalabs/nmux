@@ -50,6 +50,10 @@ fn assert_split_pty_writes_render_as_one_line(stdout: &str) {
 }
 
 fn spawn_nmux_client_in_pty(args: &[&str]) -> PtyCommand {
+    spawn_nmux_client_in_pty_with_env(args, &[])
+}
+
+fn spawn_nmux_client_in_pty_with_env(args: &[&str], env: &[(&str, &str)]) -> PtyCommand {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -61,6 +65,9 @@ fn spawn_nmux_client_in_pty(args: &[&str]) -> PtyCommand {
         .expect("open client pty");
     let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_nmux"));
     command.args(args);
+    for (key, value) in env {
+        command.env(key, value);
+    }
     let child = pair
         .slave
         .spawn_command(command)
@@ -89,6 +96,10 @@ fn daemon_command() -> Command {
 }
 
 impl PtyCommand {
+    fn kill(&mut self) {
+        self.child.kill().expect("kill nmux in pty");
+    }
+
     fn wait(mut self) -> PtyCommandOutput {
         let status = self.child.wait().expect("wait for nmux in pty");
         let output = self
@@ -1951,6 +1962,71 @@ fn managed_shell_cli_runs_private_live_daemon() {
     assert!(
         stdout.contains("shell:shell"),
         "missing shell input echo:\n{stdout}"
+    );
+}
+
+#[test]
+fn bare_tty_nmux_starts_shared_default_session_and_can_reattach() {
+    let socket_path = test_socket_path();
+    let shell_path = socket_path.with_extension("shell");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+    fs::write(
+        &shell_path,
+        "#!/bin/sh\nprintf 'test-shell-ready\\n'\nwhile :; do sleep 1; done\n",
+    )
+    .expect("write test shell");
+    fs::set_permissions(&shell_path, fs::Permissions::from_mode(0o755)).expect("chmod test shell");
+    let socket = socket_path.to_str().expect("socket path");
+    let shell = shell_path.to_str().expect("shell path");
+
+    let mut client =
+        spawn_nmux_client_in_pty_with_env(&[], &[("NMUX_SOCKET", socket), ("SHELL", shell)]);
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(200));
+    client.kill();
+    let _ = client.wait();
+    thread::sleep(Duration::from_millis(200));
+
+    let reattach = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .args([
+            "--live",
+            "--no-input",
+            "--no-scrollback",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "100",
+        ])
+        .output()
+        .expect("reattach to bare nmux daemon");
+
+    assert!(
+        reattach.status.success(),
+        "reattach failed: {}\n{}",
+        String::from_utf8_lossy(&reattach.stderr),
+        String::from_utf8_lossy(&reattach.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&reattach.stdout).contains("session=local"),
+        "reattach did not see shared session:\n{}",
+        String::from_utf8_lossy(&reattach.stdout)
+    );
+
+    let kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill bare nmux daemon");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+
+    assert!(
+        kill.status.success(),
+        "kill failed: {}\n{}",
+        String::from_utf8_lossy(&kill.stderr),
+        String::from_utf8_lossy(&kill.stdout)
     );
 }
 

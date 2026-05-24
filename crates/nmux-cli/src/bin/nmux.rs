@@ -216,12 +216,27 @@ fn run_default(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
     args.stdin_bytes = true;
     args.redraw = true;
     args.interval_ms = 16;
-    if args.socket_path.exists() {
-        run_live(&args)
-    } else {
-        args.start = true;
-        run_managed(args)
+    if !args.socket_path.exists() {
+        let shell = std::env::var("SHELL")
+            .ok()
+            .filter(|command| !command.trim().is_empty())
+            .unwrap_or_else(|| "sh".to_owned());
+        let command = format!("exec {} -i", shell_quote_for_sh(&shell));
+        if let Err(err) = PersistentDaemon::start(
+            &args.socket_path,
+            args.target_session_id.as_deref(),
+            &command,
+            Duration::from_millis(args.startup_timeout_ms),
+        ) {
+            report_live_setup_error(&args, err.as_ref())?;
+            return Err(err);
+        }
     }
+    run_live(&args)
+}
+
+fn shell_quote_for_sh(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn attach_for_listing(args: &Args) -> Result<local::RenderedAttach, Box<dyn std::error::Error>> {
@@ -1142,6 +1157,8 @@ struct ManagedDaemon {
     child: Child,
 }
 
+struct PersistentDaemon;
+
 #[derive(Clone, Copy)]
 enum ManagedDaemonMode {
     OneShot,
@@ -1167,90 +1184,192 @@ impl ManagedDaemon {
         env: &[(String, String)],
         startup_timeout: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            child: start_daemon_for_attach(
+                socket_path,
+                mode,
+                session_id,
+                command,
+                working_dir,
+                env,
+                startup_timeout,
+            )?,
+        })
+    }
+}
+
+impl PersistentDaemon {
+    fn start(
+        socket_path: &Path,
+        session_id: Option<&str>,
+        command: &str,
+        startup_timeout: Duration,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let nmux = nmux_binary_path()?;
-        let socket_path = socket_path
+        let socket_arg = socket_path
             .to_str()
-            .ok_or("managed socket path is not UTF-8")?;
+            .ok_or("daemon socket path is not UTF-8")?;
         let mut command_args = vec![
-            "daemon".to_owned(),
-            "--socket".to_owned(),
-            socket_path.to_owned(),
-            "--ready-json".to_owned(),
-            mode.flag().to_owned(),
-            "--command".to_owned(),
-            command.to_owned(),
+            "daemon",
+            "--socket",
+            socket_arg,
+            "--live-forever",
+            "--command",
+            command,
         ];
         if let Some(session_id) = session_id {
-            command_args.push("--session".to_owned());
-            command_args.push(session_id.to_owned());
+            command_args.push("--session");
+            command_args.push(session_id);
         }
-        if let Some(working_dir) = working_dir {
-            command_args.push("--cwd".to_owned());
-            command_args.push(working_dir.to_owned());
+        let args = command_args
+            .into_iter()
+            .map(shell_quote_for_sh)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let script = format!(
+            "nohup {} {args} >/dev/null 2>&1 &",
+            shell_quote_for_sh(&nmux.display().to_string())
+        );
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|err| format!("failed to start daemon launcher: {err}"))?;
+        if !status.success() {
+            return Err(format!("daemon launcher failed: {status}").into());
         }
-        for (key, value) in env {
-            command_args.push("--env".to_owned());
-            command_args.push(format!("{key}={value}"));
-        }
-        let mut child = Command::new(nmux)
-            .args(command_args)
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|err| format!("failed to start managed daemon: {err}"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or("managed daemon stdout was not captured")?;
-        let (ready_tx, ready_rx) = mpsc::channel();
-        thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            let mut line = String::new();
-            let result = match reader.read_line(&mut line) {
-                Ok(0) => Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "managed daemon exited before readiness",
-                )),
-                Ok(_) => Ok(line),
-                Err(err) => Err(err),
-            };
-            let _ = ready_tx.send(result);
-        });
-
-        let line = match ready_rx.recv_timeout(startup_timeout) {
-            Ok(Ok(line)) => line,
-            Ok(Err(err)) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                let _ = child.wait();
-                return Err("managed daemon exited before readiness".into());
-            }
-            Ok(Err(err)) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("failed to read managed daemon readiness: {err}").into());
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
-                    "managed daemon did not become ready within {} ms",
-                    startup_timeout.as_millis()
-                )
-                .into());
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("managed daemon readiness reader stopped unexpectedly".into());
-            }
-        };
-        if line.contains("\"event\":\"ready\"") {
-            return Ok(Self { child });
-        }
-        let _ = child.wait();
-        if let Some(message) = managed_ready_error_message(&line) {
-            return Err(format!("managed daemon startup failed: {message}").into());
-        }
-        Err(format!("managed daemon startup failed: {}", line.trim()).into())
+        wait_for_daemon_socket(socket_path, startup_timeout)?;
+        Ok(Self)
     }
+}
+
+fn wait_for_daemon_socket(
+    socket_path: &Path,
+    startup_timeout: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + startup_timeout;
+    while Instant::now() < deadline {
+        if socket_path.exists() {
+            thread::sleep(Duration::from_millis(1000));
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    Err(format!(
+        "daemon did not bind {} within {} ms",
+        socket_path.display(),
+        startup_timeout.as_millis()
+    )
+    .into())
+}
+
+fn wait_for_daemon_ready(
+    child: &mut Child,
+    startup_timeout: Duration,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{label} stdout was not captured"))?;
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let reader_label = label.to_owned();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let result = match reader.read_line(&mut line) {
+            Ok(0) => Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!("{reader_label} exited before readiness"),
+            )),
+            Ok(_) => Ok(line),
+            Err(err) => Err(err),
+        };
+        let _ = ready_tx.send(result);
+    });
+
+    let line = match ready_rx.recv_timeout(startup_timeout) {
+        Ok(Ok(line)) => line,
+        Ok(Err(err)) if err.kind() == io::ErrorKind::UnexpectedEof => {
+            let _ = child.wait();
+            return Err(format!("{label} exited before readiness").into());
+        }
+        Ok(Err(err)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("failed to read {label} readiness: {err}").into());
+        }
+        Err(RecvTimeoutError::Timeout) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "{label} did not become ready within {} ms",
+                startup_timeout.as_millis()
+            )
+            .into());
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("{label} readiness reader stopped unexpectedly").into());
+        }
+    };
+    if line.contains("\"event\":\"ready\"") {
+        return Ok(());
+    }
+    let _ = child.wait();
+    if let Some(message) = managed_ready_error_message(&line) {
+        return Err(format!("{label} startup failed: {message}").into());
+    }
+    Err(format!("{label} startup failed: {}", line.trim()).into())
+}
+
+fn start_daemon_for_attach(
+    socket_path: &Path,
+    mode: ManagedDaemonMode,
+    session_id: Option<&str>,
+    command: &str,
+    working_dir: Option<&str>,
+    env: &[(String, String)],
+    startup_timeout: Duration,
+) -> Result<Child, Box<dyn std::error::Error>> {
+    let nmux = nmux_binary_path()?;
+    let socket_path = socket_path
+        .to_str()
+        .ok_or("managed socket path is not UTF-8")?;
+    let mut command_args = vec![
+        "daemon".to_owned(),
+        "--socket".to_owned(),
+        socket_path.to_owned(),
+        "--ready-json".to_owned(),
+        mode.flag().to_owned(),
+        "--command".to_owned(),
+        command.to_owned(),
+    ];
+    if let Some(session_id) = session_id {
+        command_args.push("--session".to_owned());
+        command_args.push(session_id.to_owned());
+    }
+    if let Some(working_dir) = working_dir {
+        command_args.push("--cwd".to_owned());
+        command_args.push(working_dir.to_owned());
+    }
+    for (key, value) in env {
+        command_args.push("--env".to_owned());
+        command_args.push(format!("{key}={value}"));
+    }
+    let mut child = Command::new(nmux)
+        .args(command_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| format!("failed to start daemon: {err}"))?;
+    wait_for_daemon_ready(&mut child, startup_timeout, "managed daemon")?;
+    Ok(child)
 }
 
 impl Drop for ManagedDaemon {
@@ -4783,6 +4902,7 @@ Notes:
   [user@]HOST[:PORT] is direct TCP today; host without a port uses 7007.
   Remote TCP requires --token, --tcp-token, or NMUX_TOKEN.
   --tcp cannot be combined with --socket, --start, or --shell.
+  Bare interactive nmux attaches to the shared local session, starting it if missing.
   --print-context prints inherited NMUX_* pane identity without connecting.
   --print-context-json prints the same inherited context as a JSON object.
   --print-socket-json prints the resolved socket path and source as JSON.

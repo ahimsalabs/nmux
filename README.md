@@ -43,13 +43,13 @@ nix develop . -c just check
 # smoke test
 nix develop . -c just local-smoke
 
-# interactive shell (one command)
+# interactive shell; rerun this command to reattach
 nix develop . -c cargo run --bin nmux
 
 # or manual: daemon in shell 1, client in shell 2
 nix develop . -c cargo run --bin nmux -- daemon --live-forever  # shell 1
 nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw  # shell 2
-# Ctrl-] detaches the client; Ctrl-C stops the daemon
+# Ctrl-] detaches the client; `nmux kill` stops the default daemon
 ```
 
 Nix examples assume `nix-command` and `flakes` are enabled. If not:

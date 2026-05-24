@@ -31,7 +31,19 @@ local_smoke_managed_start=passed
 local_smoke=passed
 ```
 
-For a persistent local workspace, start the daemon in one shell and attach from
+For the default local workspace, run `nmux` directly. In an interactive TTY it
+starts the shared local daemon when needed, attaches with live byte input and
+redraw, and leaves the daemon running when you detach:
+
+```sh
+nix develop . -c cargo run --bin nmux
+```
+
+Rerun the same command from another terminal to reattach. Detach the live
+client with Ctrl-] by default, or pass `--detach-key none` to forward that byte
+to the pane. Stop the shared daemon with `nmux kill` when finished.
+
+For manual daemon control, start the daemon in one shell and attach from
 another:
 
 ```sh
@@ -41,11 +53,9 @@ nix develop . -c cargo run --bin nmux -- daemon --live-forever
 nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 ```
 
-Detach the live client with Ctrl-] by default, or pass `--detach-key none` to
-forward that byte to the pane; stop the daemon in shell 1 with Ctrl-C when
-finished. This uses the default `libghostty-vt` engine in default-feature
-builds and the shared default socket path unless `--socket` or `NMUX_SOCKET`
-selects a different local workspace.
+This uses the default `libghostty-vt` engine in default-feature builds and the
+shared default socket path unless `--socket` or `NMUX_SOCKET` selects a
+different local workspace.
 Use `--session NAME` or `-s NAME` on `nmux daemon` to publish a non-default
 session name; clients can target the same daemon with `nmux --session NAME`,
 `nmux attach NAME`, `nmux new NAME` for managed private sessions, or
@@ -56,7 +66,6 @@ selecting from a multi-session server.
 For a private local workspace owned by one client command, use `--start`:
 
 ```sh
-nix develop . -c cargo run --bin nmux
 nix develop . -c cargo run --bin nmux -- --start --command "printf 'hello from pty\n'; cat >/dev/null"
 nix develop . -c cargo run --bin nmux -- --start --cwd "$PWD" --env NMUX_DEMO=1 --command 'printf "cwd:%s env:%s\n" "$PWD" "$NMUX_DEMO"; cat >/dev/null'
 nix develop . -c cargo run --bin nmux -- --start --startup-timeout-ms 10000 --command "$SHELL"
@@ -76,9 +85,10 @@ kills the private daemon and reports setup failure. With `--json`, managed
 startup failures are reported as client JSON error objects using the daemon
 readiness error message rather than nesting daemon JSON inside a string.
 Bare interactive `nmux` uses the same live byte-input redraw path. It attaches
-to the default socket when one exists, otherwise it starts a private shell.
-`nmux --shell` forces the private-shell form and expands to `--start --live
---stdin-bytes --redraw`. In that path the client uses raw stdin, mirrors daemon-published
+to the default socket when one exists, otherwise it starts a persistent shared
+local daemon and attaches to it. `nmux --shell` forces the private-shell form
+and expands to `--start --live --stdin-bytes --redraw`. In that path the client
+uses raw stdin, mirrors daemon-published
 mouse tracking onto the host terminal, and forwards modified named keys plus
 SGR mouse/scroll input through the same daemon-owned gates used by explicit
 `--key-name` and `--mouse` input.
@@ -284,8 +294,8 @@ working directory or repeatable `--env KEY=VALUE` when the managed pane command
 needs launch context without a separate daemon shell. Add
 `--startup-timeout-ms MS` when slow local startup needs a longer private-daemon
 readiness window than the default 5000 ms.
-Use `nmux --shell` for the common local interactive form without spelling the
-managed daemon, live attach, byte input, and redraw flags separately.
+Use `nmux --shell` when you specifically want a private interactive shell that
+is cleaned up with the client.
 
 By default, `nmux daemon` and `nmux` use the same local socket path. The precedence
 is explicit `--socket`, then a valid absolute `NMUX_SOCKET`, then
