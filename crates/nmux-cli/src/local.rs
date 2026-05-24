@@ -3748,6 +3748,12 @@ impl SpeculativeEchoOverlay {
         if update.version <= prediction.base_version {
             return SpeculativeEchoReconcile::Pending;
         }
+        if update
+            .cursor
+            .is_some_and(|cursor| cursor.row != prediction.row || cursor.col < prediction.col)
+        {
+            return self.clear_mismatched();
+        }
         let Some(row) = update
             .row_updates
             .iter()
@@ -8318,6 +8324,46 @@ mod tests {
             SpeculativeEchoReconcile::Mismatched
         );
         assert_eq!(overlay.prediction, None);
+    }
+
+    #[test]
+    fn speculative_echo_clears_on_incompatible_cursor_update() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "ab")],
+        );
+        snapshot.cursor = Some(CursorSummary {
+            row: 0,
+            col: 2,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: false,
+        });
+        let surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut overlay = SpeculativeEchoOverlay::default();
+        assert_eq!(
+            overlay.predict_printable_key(&surface, 1, "c").as_deref(),
+            Some("abc")
+        );
+
+        let mut cursor_only = surface_update(SurfaceUpdateKind::Patch, 2, Some(1), Vec::new());
+        cursor_only.patch_kind = Some(protocol::PatchKind::CursorOnly);
+        cursor_only.cursor = Some(CursorSummary {
+            row: 1,
+            col: 0,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: false,
+        });
+
+        assert_eq!(
+            overlay.reconcile_update(&cursor_only),
+            SpeculativeEchoReconcile::Mismatched
+        );
+        assert_eq!(overlay.prediction, None);
+        assert!(overlay.render(&surface).is_none());
     }
 
     #[test]
