@@ -1953,7 +1953,13 @@ where
     let scrollback_tail_count = raw.scrollback_tail;
     let live_cols = raw.live_cols;
     let live_rows = raw.live_rows;
-    let interval_ms = raw.interval_ms.unwrap_or(1000);
+    let interval_ms = raw.interval_ms.unwrap_or(if raw.stdin_bytes {
+        // Interactive byte input needs fast polling for responsive rendering
+        // (~60 fps).
+        16
+    } else {
+        1000
+    });
     let connect_timeout_ms = raw.connect_timeout_ms;
     let startup_timeout_ms = raw
         .startup_timeout_ms
