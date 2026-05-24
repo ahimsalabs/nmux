@@ -92,10 +92,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .env
             .extend(args.env.iter().cloned());
     }
-    if let Some(axis) = args.initial_split {
+    for tab_number in 2..=args.initial_tabs {
+        let pane_id = format!("tab-{tab_number}-pane-1");
+        let tab_id = format!("tab-{tab_number}");
         let host = session
             .pane_host("pane-1")
             .ok_or("initial pane missing host")?
+            .clone();
+        if !session.add_tab(tab_id.clone(), tab_id, pane_id, host) {
+            return Err(format!("failed to create initial tab {tab_number}").into());
+        }
+    }
+    if let Some(tab_id) = args.active_tab_id.as_deref() {
+        if !session.switch_tab(tab_id) && session.active_tab_id != tab_id {
+            return Err(format!("failed to switch to initial tab {tab_id}").into());
+        }
+    }
+    if let Some(axis) = args.initial_split {
+        let active_pane_id = session
+            .active_pane_id()
+            .ok_or("active pane missing before initial split")?
+            .to_owned();
+        let host = session
+            .pane_host(&active_pane_id)
+            .ok_or("active pane missing host")?
             .clone();
         if !session.split_active_pane(axis, "pane-2", host) {
             return Err("failed to create initial split pane".into());
@@ -263,6 +283,8 @@ struct Args {
     working_dir: Option<String>,
     env: Vec<(String, String)>,
     initial_size: Option<(u32, u32)>,
+    initial_tabs: usize,
+    active_tab_id: Option<String>,
     initial_split: Option<protocol::SplitAxis>,
     resize_policy: protocol::ResizePolicy,
     terminal_engine_kind: TerminalEngineKind,
@@ -379,6 +401,10 @@ struct RawArgs {
     cols: Option<u32>,
     #[arg(long = "rows", value_name = "COUNT", value_parser = parse_rows_arg)]
     rows: Option<u32>,
+    #[arg(long = "tabs", value_name = "COUNT", value_parser = parse_tabs_arg)]
+    initial_tabs: Option<usize>,
+    #[arg(long = "active-tab", value_name = "TAB_ID")]
+    active_tab_id: Option<String>,
     #[arg(long = "split", value_name = "horizontal|vertical")]
     initial_split: Option<SplitAxisArg>,
     #[arg(
@@ -421,6 +447,13 @@ where
         (None, None) => None,
         _ => return Err("--cols and --rows must be provided together".into()),
     };
+    let initial_tabs = raw.initial_tabs.unwrap_or(1);
+    let active_tab_id = match raw.active_tab_id {
+        Some(value) if value.is_empty() => {
+            return Err("--active-tab requires a non-empty tab ID".into());
+        }
+        value => value,
+    };
     let initial_split = raw.initial_split.map(protocol::SplitAxis::from);
     let terminal_engine_kind = raw
         .terminal_engine_kind
@@ -445,6 +478,7 @@ where
         })?;
         validate_working_dir_arg(working_dir.as_deref())?;
         validate_initial_size(initial_size)?;
+        validate_initial_tabs(initial_tabs, active_tab_id.as_deref())?;
     }
 
     Ok(Args {
@@ -466,6 +500,8 @@ where
         working_dir,
         env: raw.env,
         initial_size,
+        initial_tabs,
+        active_tab_id,
         initial_split,
         resize_policy,
         terminal_engine_kind,
@@ -602,6 +638,32 @@ fn parse_rows_arg(value: &str) -> Result<u32, String> {
     parse_numeric_arg("--rows", value.to_owned())
 }
 
+fn parse_tabs_arg(value: &str) -> Result<usize, String> {
+    parse_numeric_arg("--tabs", value.to_owned())
+}
+
+fn validate_initial_tabs(
+    initial_tabs: usize,
+    active_tab_id: Option<&str>,
+) -> Result<(), &'static str> {
+    if initial_tabs == 0 {
+        return Err("--tabs must be greater than 0");
+    }
+    let Some(active_tab_id) = active_tab_id else {
+        return Ok(());
+    };
+    let Some(tab_number) = active_tab_id.strip_prefix("tab-") else {
+        return Err("--active-tab must name an initial tab created by --tabs");
+    };
+    let Ok(tab_number) = tab_number.parse::<usize>() else {
+        return Err("--active-tab must name an initial tab created by --tabs");
+    };
+    if tab_number == 0 || tab_number > initial_tabs {
+        return Err("--active-tab must name an initial tab created by --tabs");
+    }
+    Ok(())
+}
+
 fn clap_error_message(error: clap::Error) -> String {
     let first_line = error.to_string();
     let first_line = first_line
@@ -709,6 +771,8 @@ Options:
   --env KEY=VALUE                       Add an environment variable to the pane command
   --cols COUNT                          Initial pane PTY columns; both dimensions required
   --rows COUNT                          Initial pane PTY rows; both dimensions required
+  --tabs COUNT                          Start with COUNT tabs
+  --active-tab TAB_ID                   Select the initial active tab
   --split horizontal|vertical           Start with pane-1 split into pane-1 and pane-2
   --resize-policy fixed|leader|active-client|manual
                                          Publish and enforce pane resize policy
@@ -763,7 +827,7 @@ mod tests {
         Args, DaemonModeArgs, SocketCleanup, args_from_iter, format_daemon_choices_json,
         format_ready_error_json, format_ready_json, parse_env_assignment, parse_numeric_arg,
         parse_resize_policy, parse_terminal_engine_kind, usage, validate_initial_size,
-        validate_mode_args,
+        validate_initial_tabs, validate_mode_args,
     };
     use nmux_cli::local;
     use nmux_core::terminal::TerminalEngineKind;
@@ -858,6 +922,8 @@ mod tests {
             working_dir: None,
             env: Vec::new(),
             initial_size: None,
+            initial_tabs: 1,
+            active_tab_id: None,
             initial_split: None,
             resize_policy: protocol::ResizePolicy::ActiveClient,
             terminal_engine_kind: TerminalEngineKind::InterimText,
@@ -912,6 +978,10 @@ mod tests {
             "100",
             "--rows",
             "30",
+            "--tabs",
+            "2",
+            "--active-tab",
+            "tab-2",
             "--split",
             "vertical",
             "--resize-policy",
@@ -931,6 +1001,8 @@ mod tests {
             vec![("NMUX_TEST".to_owned(), "one=two".to_owned())]
         );
         assert_eq!(args.initial_size, Some((100, 30)));
+        assert_eq!(args.initial_tabs, 2);
+        assert_eq!(args.active_tab_id.as_deref(), Some("tab-2"));
         assert_eq!(args.initial_split, Some(protocol::SplitAxis::Vertical));
         assert_eq!(args.resize_policy, protocol::ResizePolicy::ActiveClient);
         assert_eq!(args.terminal_engine_kind, TerminalEngineKind::InterimText);
@@ -953,6 +1025,8 @@ mod tests {
         assert!(usage.contains("--env KEY=VALUE"));
         assert!(usage.contains("--cols COUNT"));
         assert!(usage.contains("--rows COUNT"));
+        assert!(usage.contains("--tabs COUNT"));
+        assert!(usage.contains("--active-tab TAB_ID"));
         assert!(usage.contains("--split horizontal|vertical"));
         assert!(usage.contains("--resize-policy fixed|leader|active-client|manual"));
         assert!(usage.contains("--terminal-engine interim|libghostty-vt"));
@@ -1031,6 +1105,29 @@ mod tests {
         let err = parse_numeric_arg::<usize>("--live-cycles", "many".to_owned())
             .expect_err("invalid live cycle count should include flag name");
         assert!(err.contains("--live-cycles requires a valid number"));
+    }
+
+    #[test]
+    fn initial_tab_validation_rejects_missing_or_out_of_range_active_tab() {
+        assert_eq!(
+            validate_initial_tabs(0, None),
+            Err("--tabs must be greater than 0")
+        );
+        assert_eq!(
+            validate_initial_tabs(2, Some("logs")),
+            Err("--active-tab must name an initial tab created by --tabs")
+        );
+        assert_eq!(
+            validate_initial_tabs(2, Some("tab-3")),
+            Err("--active-tab must name an initial tab created by --tabs")
+        );
+        assert_eq!(validate_initial_tabs(2, Some("tab-2")), Ok(()));
+
+        let err = match args_from_iter(["nmuxd", "--one-shot", "--active-tab", ""]) {
+            Ok(_) => panic!("empty active tab should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("--active-tab requires a non-empty tab ID"));
     }
 
     #[test]

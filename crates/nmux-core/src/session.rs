@@ -430,6 +430,57 @@ impl Session {
             .then_some(tab.active_pane_id.as_str())
     }
 
+    pub fn add_tab(
+        &mut self,
+        tab_id: impl Into<String>,
+        title: impl Into<String>,
+        pane_id: impl Into<String>,
+        host: HostSpec,
+    ) -> bool {
+        let tab_id = tab_id.into();
+        let title = title.into();
+        let pane_id = pane_id.into();
+        if tab_id.is_empty()
+            || pane_id.is_empty()
+            || self.tabs.iter().any(|tab| tab.id == tab_id)
+            || self.pane(&pane_id).is_some()
+        {
+            return false;
+        }
+        let Some((cols, rows)) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == self.active_tab_id)
+            .map(|tab| (tab.root.cols, tab.root.rows))
+        else {
+            return false;
+        };
+
+        self.tabs.push(Tab {
+            id: tab_id,
+            title,
+            active_pane_id: pane_id.clone(),
+            root: new_pane_from_template(&pane_id, host, cols, rows),
+        });
+        self.version = self.version.saturating_add(1);
+        true
+    }
+
+    pub fn switch_tab(&mut self, tab_id: &str) -> bool {
+        let Some(tab) = self.tabs.iter().find(|tab| tab.id == tab_id) else {
+            return false;
+        };
+        if self.pane_in_tab(tab, &tab.active_pane_id).is_none() {
+            return false;
+        }
+        if self.active_tab_id == tab_id {
+            return false;
+        }
+        self.active_tab_id = tab_id.to_owned();
+        self.version = self.version.saturating_add(1);
+        true
+    }
+
     pub fn focus_pane(&mut self, pane_id: &str) -> bool {
         let Some(tab_index) = self
             .tabs
@@ -2497,6 +2548,60 @@ mod tests {
         assert_eq!(session.tabs[0].active_pane_id, "pane-1");
         assert!(!session.focus_pane("missing"));
         assert_eq!(session.active_pane_id(), Some("pane-1"));
+    }
+
+    #[test]
+    fn add_and_switch_tab_updates_workspace_tree_active_tab() {
+        let mut session = Session::initial();
+
+        assert!(session.add_tab(
+            "tab-2",
+            "logs",
+            "tab-2-pane-1",
+            HostSpec::local("local-2", CommandSpec::new("sh"))
+        ));
+        assert_eq!(session.version, 2);
+        assert_eq!(session.active_tab_id, "tab-1");
+        assert_eq!(
+            session.leaf_pane_ids(),
+            vec!["pane-1".to_owned(), "tab-2-pane-1".to_owned()]
+        );
+        assert!(!session.add_tab(
+            "tab-2",
+            "duplicate",
+            "tab-3-pane-1",
+            HostSpec::local("local-3", CommandSpec::new("sh"))
+        ));
+        assert!(!session.add_tab(
+            "tab-3",
+            "duplicate pane",
+            "pane-1",
+            HostSpec::local("local-3", CommandSpec::new("sh"))
+        ));
+
+        assert!(session.switch_tab("tab-2"));
+        assert_eq!(session.version, 3);
+        assert_eq!(session.active_tab_id, "tab-2");
+        assert_eq!(session.active_pane_id(), Some("tab-2-pane-1"));
+        assert!(!session.switch_tab("missing"));
+
+        let frame = session.workspace_tree_frame("conn-1", 7);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope
+            .body_as_workspace_tree_snapshot()
+            .expect("snapshot");
+        assert_eq!(snapshot.version(), 3);
+        assert_eq!(snapshot.active_tab_id(), Some("tab-2"));
+        let tabs = snapshot.tabs().expect("tabs");
+        assert_eq!(tabs.len(), 2);
+        let tab = tabs.get(1);
+        assert_eq!(tab.tab_id(), Some("tab-2"));
+        assert_eq!(tab.title(), Some("logs"));
+        assert_eq!(tab.active_pane_id(), Some("tab-2-pane-1"));
+        assert_eq!(
+            tab.root().expect("tab-2 root").pane_id(),
+            Some("tab-2-pane-1")
+        );
     }
 
     #[test]
