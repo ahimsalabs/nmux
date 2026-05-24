@@ -98,8 +98,13 @@ a live PTY workflow runner. Use `nix develop . -c make check` and `nix develop
 PTY and Unix-socket behavior outside the sandboxed package derivation.
 `make renderer-equivalence-smoke` is a focused opt-in fixture projection check
 for renderer-equivalence work. It exercises both a core `TerminalUpdate` corpus
-and a real `nmuxd`/`nmux --json` artifact smoke. It is not a trusted renderer
-oracle comparison and is not part of the normal default gate.
+and a real `nmuxd`/`nmux --json` artifact smoke. Use
+`make renderer-equivalence-artifacts` to write nmux canonical artifacts, or
+`make renderer-equivalence-compare
+RENDERER_EQUIVALENCE_ORACLE_DIR=/path/to/oracle` to compare the CLI corpus with
+an external directory of matching `<fixture>.canonical.json` files. A self-compare
+is only a harness smoke; it is not trusted renderer evidence and is not part of
+the normal default gate.
 See [contributor-workflow.md](contributor-workflow.md) for choosing between
 those gates.
 

@@ -117,7 +117,9 @@ fn run_fixture(fixture: RendererFixture) {
     let workspace = materialize_workspace(&decoded);
     let surface = materialize_surface(&decoded);
     let scrollback = materialize_scrollback(&decoded);
-    write_artifacts_if_requested(&fixture.name, &stdout, &workspace, &surface, &scrollback);
+    let canonical = canonical_artifact_json(&workspace, &surface, &scrollback);
+    write_artifacts_if_requested(&fixture.name, &stdout, &canonical);
+    compare_oracle_if_requested(&fixture.name, &canonical);
 
     assert_eq!(workspace, fixture.expected_workspace);
 
@@ -515,13 +517,7 @@ fn wait_for_socket(path: &Path) {
     panic!("socket did not appear: {}", path.display());
 }
 
-fn write_artifacts_if_requested(
-    fixture_name: &str,
-    raw_json: &str,
-    workspace: &CanonicalWorkspace,
-    surface: &CanonicalSurface,
-    scrollback: &[CanonicalRow],
-) {
+fn write_artifacts_if_requested(fixture_name: &str, raw_json: &str, canonical: &Value) {
     let Some(dir) = std::env::var_os("NMUX_RENDERER_EQUIVALENCE_ARTIFACT_DIR") else {
         return;
     };
@@ -529,19 +525,53 @@ fn write_artifacts_if_requested(
     fs::create_dir_all(&dir).expect("create renderer-equivalence artifact dir");
     fs::write(dir.join(format!("{fixture_name}.json")), raw_json)
         .expect("write raw renderer-equivalence artifact");
-    let canonical = json!({
-        "workspace": canonical_workspace_json(workspace),
-        "terminal": canonical_terminal_json(surface),
-        "surface": canonical_surface_json(surface),
-        "scrollback": canonical_rows_json(scrollback),
-    });
-    let canonical_json = serde_json::to_string_pretty(&canonical)
+    let canonical_json = serde_json::to_string_pretty(canonical)
         .expect("encode canonical renderer-equivalence artifact");
     fs::write(
         dir.join(format!("{fixture_name}.canonical.json")),
         format!("{canonical_json}\n"),
     )
     .expect("write canonical renderer-equivalence artifact");
+}
+
+fn compare_oracle_if_requested(fixture_name: &str, actual: &Value) {
+    let Some(dir) = std::env::var_os("NMUX_RENDERER_EQUIVALENCE_ORACLE_DIR") else {
+        return;
+    };
+    compare_oracle_fixture(fixture_name, actual, &workspace_path(PathBuf::from(dir)));
+}
+
+fn compare_oracle_fixture(fixture_name: &str, actual: &Value, oracle_dir: &Path) {
+    let oracle_path = oracle_dir.join(format!("{fixture_name}.canonical.json"));
+    let oracle_json = fs::read_to_string(&oracle_path).unwrap_or_else(|error| {
+        panic!(
+            "read renderer-equivalence oracle {}: {error}",
+            oracle_path.display()
+        )
+    });
+    let expected: Value = serde_json::from_str(&oracle_json).unwrap_or_else(|error| {
+        panic!(
+            "decode renderer-equivalence oracle {}: {error}",
+            oracle_path.display()
+        )
+    });
+    assert_eq!(
+        actual, &expected,
+        "renderer-equivalence oracle mismatch for {fixture_name}"
+    );
+}
+
+fn canonical_artifact_json(
+    workspace: &CanonicalWorkspace,
+    surface: &CanonicalSurface,
+    scrollback: &[CanonicalRow],
+) -> Value {
+    json!({
+        "workspace": canonical_workspace_json(workspace),
+        "terminal": canonical_terminal_json(surface),
+        "surface": canonical_surface_json(surface),
+        "scrollback": canonical_rows_json(scrollback),
+    })
 }
 
 fn canonical_workspace_json(workspace: &CanonicalWorkspace) -> Value {
@@ -651,4 +681,65 @@ fn assert_absent(haystack: &str, needle: &str) {
         !haystack.contains(needle),
         "unexpected {needle:?}:\n{haystack}"
     );
+}
+
+#[test]
+fn renderer_equivalence_oracle_fixture_accepts_matching_canonical_json() {
+    let dir = test_socket_path().with_extension("oracle");
+    fs::create_dir_all(&dir).expect("create oracle dir");
+    let actual = json!({
+        "workspace": {
+            "session_id": "local",
+            "tab_id": "tab-1",
+            "pane_id": "pane-1",
+            "cols": 80,
+            "rows": 24,
+            "resize_policy": "fixed",
+        },
+        "terminal": {
+            "title": "",
+            "working_directory": "",
+            "surface_kind": "main",
+            "cursor": {
+                "row": 0,
+                "col": 0,
+                "visible": true,
+                "shape": "block",
+                "blinking": true,
+            },
+            "modes": {
+                "bracketed_paste": false,
+                "mouse_tracking": false,
+                "focus_reporting": false,
+                "application_keypad": false,
+                "application_cursor": false,
+                "origin": false,
+                "wraparound": true,
+                "mouse_tracking_mode": "none",
+                "mouse_format": "x10",
+            },
+        },
+        "surface": {
+            "colors": {
+                "default_fg_rgba": 0,
+                "default_bg_rgba": 0,
+                "cursor_rgba": 0,
+                "cursor_rgba_set": false,
+                "palette_len": 0,
+                "palette_prefix": [],
+            },
+            "styles": [],
+            "row_updates": [],
+        },
+        "scrollback": [],
+    });
+    fs::write(
+        dir.join("smoke.canonical.json"),
+        serde_json::to_string_pretty(&actual).expect("encode oracle"),
+    )
+    .expect("write oracle");
+
+    compare_oracle_fixture("smoke", &actual, &dir);
+
+    let _ = fs::remove_dir_all(&dir);
 }

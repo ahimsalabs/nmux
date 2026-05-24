@@ -59,8 +59,12 @@ when changing terminal engine behavior.
 `make renderer-equivalence-smoke` is narrower: it runs the current
 renderer-equivalence fixture corpus projection through the opt-in
 `libghostty-vt` path, including a real `nmuxd`/`nmux --json` artifact smoke.
-Use it while building renderer-equivalence evidence, but do not treat a pass as
-a trusted renderer oracle comparison or as default-engine promotion evidence.
+Use `make renderer-equivalence-artifacts` to write canonical nmux projections,
+and `make renderer-equivalence-compare
+RENDERER_EQUIVALENCE_ORACLE_DIR=/path/to/oracle` once an external oracle
+directory exists. A pass with nmux-generated artifacts as the oracle is only a
+harness smoke; do not treat it as trusted renderer evidence or default-engine
+promotion evidence.
 
 ## Promotion Evidence Work
 

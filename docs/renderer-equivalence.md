@@ -81,10 +81,16 @@ write one raw `nmux --json` artifact plus one deterministic
 `*.canonical.json` nmux-state projection per fixture. The canonical artifacts
 are the current expected-vs-actual comparison shape and are intended as the
 handoff point for a later oracle renderer comparison.
+`make renderer-equivalence-artifacts` generates those canonical artifacts under
+`target/renderer-equivalence` by default. `make renderer-equivalence-compare
+RENDERER_EQUIVALENCE_ORACLE_DIR=/path/to/oracle` reruns the CLI fixture corpus
+and compares each generated canonical projection with a matching
+`<fixture>.canonical.json` in the supplied oracle directory.
 
 This is nmux-side fixture evidence only. It is intentionally not wired into the
-normal default gate, and it does not satisfy the oracle renderer or pixel/state
-comparison requirements above.
+normal default gate. Comparing against a directory produced by nmux itself is
+only a harness smoke; it does not satisfy the trusted oracle renderer or
+pixel/state comparison requirements above.
 
 ## Open Questions
 

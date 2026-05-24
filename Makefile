@@ -10,8 +10,10 @@ PACKAGING_LAYOUT ?= target/packaging-libghostty-vt/package
 PACKAGING_PROVENANCE_MANIFEST ?= target/packaging-libghostty-vt/package/PROVENANCE.txt
 PACKAGING_ARCHIVE ?= target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz
 PACKAGING_ARCHIVE_SHA256 ?= $(PACKAGING_ARCHIVE).sha256
+RENDERER_EQUIVALENCE_ARTIFACT_DIR ?= target/renderer-equivalence
+RENDERER_EQUIVALENCE_ORACLE_DIR ?=
 
-.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema local-smoke packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-manifest-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample renderer-equivalence-smoke require-cargo require-flatc require-ghostty-source require-zig rust-test source-audit source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
+.PHONY: check check-all check-ghostty-vt check-schema check-toolchain check-vt-toolchain generate-schema local-smoke packaging-archive-runtime-smoke packaging-archive-sample packaging-archive-verify packaging-layout-sample packaging-layout-verify packaging-provenance-manifest-verify packaging-provenance-sample packaging-provenance-verify packaging-sample promotion-cold-deps-sample promotion-cold-deps-verify promotion-cold-target-sample promotion-evidence-bundle promotion-evidence-verify promotion-local-sample promotion-sample renderer-equivalence-artifacts renderer-equivalence-compare renderer-equivalence-smoke require-cargo require-flatc require-ghostty-source require-zig rust-test source-audit source-fetch-offline-probe source-fetch-offline-probe-verify source-fetch-provenance-sample source-fetch-provenance-verify toolchain-info
 
 check: check-toolchain check-schema rust-test
 
@@ -201,6 +203,14 @@ check-ghostty-vt: check-vt-toolchain
 renderer-equivalence-smoke: check-vt-toolchain
 	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-core --features libghostty-vt renderer_equivalence
 	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test -p nmux-cli --features libghostty-vt --test renderer_equivalence
+
+renderer-equivalence-artifacts: check-vt-toolchain
+	rm -rf "$(RENDERER_EQUIVALENCE_ARTIFACT_DIR)"
+	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null NMUX_RENDERER_EQUIVALENCE_ARTIFACT_DIR="$(RENDERER_EQUIVALENCE_ARTIFACT_DIR)" cargo test -p nmux-cli --features libghostty-vt --test renderer_equivalence
+
+renderer-equivalence-compare: check-vt-toolchain
+	@test -n "$(RENDERER_EQUIVALENCE_ORACLE_DIR)" || { echo "set RENDERER_EQUIVALENCE_ORACLE_DIR=/path/to/oracle-canonical-artifacts" >&2; exit 1; }
+	RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null NMUX_RENDERER_EQUIVALENCE_ORACLE_DIR="$(RENDERER_EQUIVALENCE_ORACLE_DIR)" cargo test -p nmux-cli --features libghostty-vt --test renderer_equivalence
 
 promotion-sample: toolchain-info
 	time -p $(MAKE) check-all
