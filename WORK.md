@@ -17,8 +17,6 @@ evidence infrastructure.
 
 ## Test gaps to close
 
-- Protocol robustness: corrupt FlatBuffer payloads, version mismatch, partial
-  frames, mid-connection disconnect
 - Multi-pane session unit tests (currently only single-pane)
 - macOS CI job (primary dev platform, CI only runs ubuntu-latest)
 - Wire `check-ghostty-vt` into CI (tests exist but aren't in check.yml)

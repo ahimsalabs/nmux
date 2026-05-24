@@ -15241,6 +15241,17 @@ mod tests {
     }
 
     #[test]
+    fn live_surface_read_reports_closed_on_mid_connection_disconnect() {
+        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        drop(server);
+
+        assert_eq!(
+            read_live_surface_update_from_stream(&mut client).expect("read closed"),
+            LiveSurfaceRead::Closed
+        );
+    }
+
+    #[test]
     fn client_frame_sequence_increments_envelope_and_input_sequences() {
         let (mut client, mut server) = UnixStream::pair().expect("socket pair");
         let mut sequence = ClientFrameSequence::default();

@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::{self, Read, Write};
 
-use crate::protocol;
+use crate::{PROTOCOL_VERSION, protocol};
 
 pub const DEFAULT_MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 
@@ -9,6 +9,7 @@ pub const DEFAULT_MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 pub enum WireError {
     Io(io::Error),
     FrameTooLarge { len: usize, max: usize },
+    ProtocolVersionUnsupported { version: u32, supported: u32 },
     InvalidFlatbuffer(flatbuffers::InvalidFlatbuffer),
 }
 
@@ -22,6 +23,10 @@ impl fmt::Display for WireError {
                     "wire frame too large: {len} bytes exceeds {max} byte limit"
                 )
             }
+            Self::ProtocolVersionUnsupported { version, supported } => write!(
+                f,
+                "unsupported protocol version: {version}; supported version is {supported}"
+            ),
             Self::InvalidFlatbuffer(err) => write!(f, "invalid flatbuffer frame: {err}"),
         }
     }
@@ -32,7 +37,7 @@ impl std::error::Error for WireError {
         match self {
             Self::Io(err) => Some(err),
             Self::InvalidFlatbuffer(err) => Some(err),
-            Self::FrameTooLarge { .. } => None,
+            Self::FrameTooLarge { .. } | Self::ProtocolVersionUnsupported { .. } => None,
         }
     }
 }
@@ -66,7 +71,7 @@ pub fn read_frame<R: Read>(reader: &mut R, max_len: usize) -> Result<Vec<u8>, Wi
     frame.resize(4 + payload_len, 0);
     reader.read_exact(&mut frame[4..])?;
 
-    protocol::size_prefixed_root_as_envelope(&frame)?;
+    validate_protocol_version(&frame)?;
     Ok(frame)
 }
 
@@ -87,7 +92,7 @@ pub fn write_frame<W: Write>(
         });
     }
 
-    protocol::size_prefixed_root_as_envelope(frame)?;
+    validate_protocol_version(frame)?;
     writer.write_all(frame)?;
     Ok(())
 }
@@ -100,6 +105,17 @@ pub fn write_default_frame<W: Write>(writer: &mut W, frame: &[u8]) -> Result<(),
     write_frame(writer, frame, DEFAULT_MAX_FRAME_LEN)
 }
 
+fn validate_protocol_version(frame: &[u8]) -> Result<(), WireError> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.protocol_version() != PROTOCOL_VERSION {
+        return Err(WireError::ProtocolVersionUnsupported {
+            version: envelope.protocol_version(),
+            supported: PROTOCOL_VERSION,
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{self, Cursor};
@@ -107,9 +123,11 @@ mod tests {
     use flatbuffers::FlatBufferBuilder;
 
     use super::*;
-    use crate::{PROTOCOL_VERSION, protocol};
-
     fn workspace_frame() -> Vec<u8> {
+        workspace_frame_with_version(PROTOCOL_VERSION)
+    }
+
+    fn workspace_frame_with_version(protocol_version: u32) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
 
         let session_id = builder.create_string("local");
@@ -131,7 +149,7 @@ mod tests {
         let envelope = protocol::Envelope::create(
             &mut builder,
             &protocol::EnvelopeArgs {
-                protocol_version: PROTOCOL_VERSION,
+                protocol_version,
                 session_id: Some(envelope_session_id),
                 connection_id: Some(connection_id),
                 seq: 1,
@@ -180,6 +198,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_corrupt_payload() {
+        let mut reader = Cursor::new([1, 0, 0, 0, 0]);
+        let err = read_frame(&mut reader, DEFAULT_MAX_FRAME_LEN).expect_err("corrupt payload");
+
+        assert!(matches!(err, WireError::InvalidFlatbuffer(_)));
+    }
+
+    #[test]
+    fn rejects_truncated_prefix() {
+        let mut reader = Cursor::new([1, 0]);
+        let err = read_frame(&mut reader, DEFAULT_MAX_FRAME_LEN).expect_err("truncated prefix");
+
+        assert!(matches!(
+            err,
+            WireError::Io(ref io_err) if io_err.kind() == io::ErrorKind::UnexpectedEof
+        ));
+    }
+
+    #[test]
     fn rejects_truncated_payload() {
         let frame = workspace_frame();
         let truncated = &frame[..frame.len() - 1];
@@ -189,6 +226,32 @@ mod tests {
         assert!(matches!(
             err,
             WireError::Io(ref io_err) if io_err.kind() == io::ErrorKind::UnexpectedEof
+        ));
+    }
+
+    #[test]
+    fn rejects_protocol_version_mismatch_on_read_and_write() {
+        let frame = workspace_frame_with_version(PROTOCOL_VERSION + 1);
+        let mut reader = Cursor::new(frame.clone());
+        let read_err =
+            read_frame(&mut reader, DEFAULT_MAX_FRAME_LEN).expect_err("version mismatch rejected");
+        assert!(matches!(
+            read_err,
+            WireError::ProtocolVersionUnsupported {
+                version,
+                supported
+            } if version == PROTOCOL_VERSION + 1 && supported == PROTOCOL_VERSION
+        ));
+
+        let mut written = Vec::new();
+        let write_err =
+            write_frame(&mut written, &frame, DEFAULT_MAX_FRAME_LEN).expect_err("write rejected");
+        assert!(matches!(
+            write_err,
+            WireError::ProtocolVersionUnsupported {
+                version,
+                supported
+            } if version == PROTOCOL_VERSION + 1 && supported == PROTOCOL_VERSION
         ));
     }
 }
