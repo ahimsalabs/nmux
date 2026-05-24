@@ -271,7 +271,14 @@ impl PaneTerminalEngines {
 
 impl Default for TerminalEngineKind {
     fn default() -> Self {
-        Self::InterimText
+        #[cfg(feature = "libghostty-vt")]
+        {
+            Self::LibghosttyVt
+        }
+        #[cfg(not(feature = "libghostty-vt"))]
+        {
+            Self::InterimText
+        }
     }
 }
 

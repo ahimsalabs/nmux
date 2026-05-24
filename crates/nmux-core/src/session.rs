@@ -2026,6 +2026,9 @@ fn apply_terminal_update(
     let working_directory_changed = pane.terminal_working_directory != update.working_directory;
     let colors_changed = pane.colors != update.colors;
     let palette_diff = palette_diff(&pane.colors.palette_rgba, &update.colors.palette_rgba);
+    let updated_surface_row_count = update.surface_lines.len().min(pane.rows as usize);
+    let row_count_changed =
+        force_surface_version && pane.surface_lines.len() != updated_surface_row_count;
     let rows_changed = pane.surface_lines != update.surface_lines;
     let surface_kind_changed = pane.surface != update.surface;
     let styles_changed = pane.styles != update.styles;
@@ -2098,6 +2101,7 @@ fn apply_terminal_update(
         pane.surface_version = pane.surface_version.saturating_add(1);
         let patch_kind = terminal_patch_kind(
             update.patch_kind,
+            row_count_changed,
             rows_changed,
             row_runs_changed,
             semantic_prompts_changed,
@@ -2119,6 +2123,9 @@ fn apply_terminal_update(
         };
         pane.last_row_update_indices = if pane.last_patch_kind == protocol::PatchKind::ReplaceRows {
             row_update_indices
+                .into_iter()
+                .filter(|row| (*row as usize) < max_rows)
+                .collect()
         } else {
             Vec::new()
         };
@@ -2146,6 +2153,7 @@ fn palette_diff(old: &[u32], new: &[u32]) -> Option<PaletteDiff> {
 
 fn terminal_patch_kind(
     requested: protocol::PatchKind,
+    row_count_changed: bool,
     rows_changed: bool,
     row_runs_changed: bool,
     semantic_prompts_changed: bool,
@@ -2164,7 +2172,11 @@ fn terminal_patch_kind(
         || semantic_prompts_changed
         || dirty_rows_changed
         || kitty_placeholders_changed;
-    if surface_kind_changed || styles_changed || (colors_changed && rows_or_row_metadata_changed) {
+    if row_count_changed
+        || surface_kind_changed
+        || styles_changed
+        || (colors_changed && rows_or_row_metadata_changed)
+    {
         protocol::PatchKind::FullRefreshRequired
     } else if rows_or_row_metadata_changed {
         protocol::PatchKind::ReplaceRows

@@ -13,15 +13,14 @@ over FlatBuffers — not client-side PTY replay.
 - Scriptable control: `nmux pane split`, `nmux pane send`, `nmux tab new`, `nmux kill`
 - Token-authenticated TCP transport for non-Unix-socket experiments
 - Experimental container/sandbox host selection for daemon-started pane commands
-- Opt-in `libghostty-vt` engine for VT-correct terminal state extraction
-- Default `interim` text surface (not VT-correct — a prototype)
+- Default `libghostty-vt` engine for VT-correct terminal state extraction
+- Explicit `interim` text surface for legacy/debug use
 
 ## What it doesn't do yet
 
 - Hardened container/sandbox isolation policy
 - Frontend Ghostty renderer
 - Hardened remote transport and production auth
-- Default-engine promotion for `libghostty-vt`
 
 See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
 
@@ -63,7 +62,7 @@ nix --extra-experimental-features 'nix-command flakes' develop . -c make local-s
 | Work | Commands |
 | --- | --- |
 | Default engine | `nix develop . -c make check && nix develop . -c make local-smoke` |
-| Opt-in libghostty-vt | above + `nix develop . -c make check-ghostty-vt` |
+| Interim/no-default-features | `nix develop . -c make check-interim` |
 
 ## Project structure
 

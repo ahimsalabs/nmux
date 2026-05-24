@@ -9907,9 +9907,9 @@ mod tests {
         let update =
             read_optional_surface_update_from_stream(&mut stream).expect("optional surface update");
         let update = update.expect("resize surface update");
-        assert_eq!(update.kind, SurfaceUpdateKind::Patch);
+        assert_eq!(update.kind, SurfaceUpdateKind::Snapshot);
         assert_eq!(update.version, 3);
-        assert_eq!(update.base_version, Some(2));
+        assert_eq!(update.base_version, None);
         assert_eq!(
             update.cursor,
             Some(CursorSummary {

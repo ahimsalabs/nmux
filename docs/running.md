@@ -43,8 +43,9 @@ nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 
 Detach the live client with Ctrl-] by default, or pass `--detach-key none` to
 forward that byte to the pane; stop the daemon in shell 1 with Ctrl-C when
-finished. This uses the default `interim` engine and the shared default socket
-path unless `--socket` or `NMUX_SOCKET` selects a different local workspace.
+finished. This uses the default `libghostty-vt` engine in default-feature
+builds and the shared default socket path unless `--socket` or `NMUX_SOCKET`
+selects a different local workspace.
 Use `--session NAME` or `-s NAME` on `nmux daemon` to publish a non-default
 session name; clients can target the same daemon with `nmux --session NAME`,
 `nmux attach NAME`, `nmux new NAME` for managed private sessions, or
@@ -120,7 +121,7 @@ For scripts that start a daemon and then attach a client, add `--ready-json` to
 initial pane has started:
 
 ```json
-{"event":"ready","NMUX_SOCKET":"/tmp/nmux.sock","source":"--socket","mode":"live-forever","terminal_engine":"interim","resize_policy":"fixed"}
+{"event":"ready","NMUX_SOCKET":"/tmp/nmux.sock","source":"--socket","mode":"live-forever","terminal_engine":"libghostty-vt","resize_policy":"fixed"}
 ```
 
 If startup fails before that point, `--ready-json` prints an error event before
@@ -496,34 +497,30 @@ When an unbounded live client exits because the daemon closes the live socket, t
 
 The read-only client attaches once, sends no input or resize control intents, and prints streamed surface updates when the daemon observes process output. If `--iterations` is omitted, it keeps polling until the daemon closes the live connection.
 
-The default engine is not a full terminal emulator yet. The interim text surface
-only converts simple output bytes into backend-owned visible rows and
-scrollback, so ANSI styling, cursor motion, alternate screen behavior, images,
-and grapheme/cell-width correctness are not complete in the default path. The
-default workflow proves the local state-sync spine: server-owned workspace
-state, server-owned pane surface state derived from a local PTY, server-owned
-scrollback ranges, FlatBuffers envelope framing, client-side rendering from
-decoded state objects, and client-to-daemon input/control forwarding.
-`nmux daemon --terminal-engine interim` selects this current implementation explicitly. Backend `libghostty-vt` extraction is imported behind the `libghostty-vt` Cargo feature, but the default build keeps the interim engine to avoid making the native Ghostty/Zig build part of every development loop. ADR 0023 keeps that opt-in split after the M13 extraction milestone until native build cost, regular CI, non-Nix/toolchain provisioning, source-fetch policy, packaging, and workflow costs are accepted deliberately.
+The default engine is `libghostty-vt` when nmux is built with default Cargo
+features. PTY bytes stay in `nmux daemon`, and daemon-owned Ghostty VT state is
+mapped into nmux snapshots, patches, and scrollback chunks. Builds made with
+`--no-default-features` fall back to the legacy/debug interim text surface, and
+default-feature builds can still select it explicitly with
+`nmux daemon --terminal-engine interim`.
 
-## Optional libghostty-vt Build
+## libghostty-vt Build
 
-The experimental backend VT engine is gated behind the `libghostty-vt` Cargo
+The backend VT engine is enabled by default through the `libghostty-vt` Cargo
 feature. The dev shell pins Zig 0.15 because the Ghostty commit used by
 `libghostty-vt-sys` requires that Zig version.
 
-The opt-in engine keeps PTY bytes in `nmux daemon` and maps Ghostty state back into
-nmux snapshots, patches, and scrollback chunks. The local CLI prints non-empty
-terminal title and OSC 7 working-directory metadata alongside the rendered pane
-surface, including redraw output.
+The backend engine keeps PTY bytes in `nmux daemon` and maps Ghostty state back
+into nmux snapshots, patches, and scrollback chunks. The local CLI prints
+non-empty terminal title and OSC 7 working-directory metadata alongside the
+rendered pane surface, including redraw output.
 
-To smoke the opt-in engine manually, build the daemon with the Cargo feature
-and select the engine at runtime:
+To smoke the default engine manually:
 
 ```sh
 rm -f /tmp/nmux-vt.sock
 # shell 1
-nix develop . -c env GIT_CONFIG_GLOBAL=/dev/null cargo run -p nmux-cli --features libghostty-vt --bin nmux -- daemon --socket /tmp/nmux-vt.sock --terminal-engine libghostty-vt --one-shot --command "printf '\033[31mvt engine\033[0m\n'; cat >/dev/null"
+nix develop . -c env GIT_CONFIG_GLOBAL=/dev/null cargo run -p nmux-cli --bin nmux -- daemon --socket /tmp/nmux-vt.sock --one-shot --command "printf '\033[31mvt engine\033[0m\n'; cat >/dev/null"
 # shell 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux-vt.sock
 ```
@@ -562,17 +559,15 @@ protocol shape are clear.
 nix develop . -c make check-ghostty-vt
 ```
 
-The target runs full `nmux-core` and `nmux-cli` test suites with
-`--features libghostty-vt`, sets `RUST_TEST_THREADS=1`, and sets
+The target is now a compatibility alias for `make check`, which runs the
+default-feature workspace tests with `RUST_TEST_THREADS=1` and
 `GIT_CONFIG_GLOBAL=/dev/null`. The serial test-harness setting is part of the
-current FFI-backed native-VT evidence gate. The Git setting is not logically
-required by nmux; it avoids a local Git configuration that rewrites GitHub
-HTTPS URLs to SSH. The
-`libghostty-vt-sys` build script fetches Ghostty from an HTTPS URL unless
-`GHOSTTY_SOURCE_DIR` points at an existing Ghostty checkout.
-This source-fetch path is acceptable for opt-in local validation, but packaged
-or default-engine builds still need the policy decision tracked in
-[docs/source-fetch-policy.md](source-fetch-policy.md).
+current FFI-backed native-VT gate. The Git setting is not logically required by
+nmux; it avoids a local Git configuration that rewrites GitHub HTTPS URLs to
+SSH. The `libghostty-vt-sys` build script fetches Ghostty from an HTTPS URL
+unless `GHOSTTY_SOURCE_DIR` points at an existing Ghostty checkout.
+
+For interim-only validation, run `nix develop . -c make check-interim`.
 
 ## Presence And Attach Modes
 

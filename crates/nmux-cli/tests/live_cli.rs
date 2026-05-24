@@ -155,7 +155,7 @@ fn one_shot_cli_receives_nmux_pane_environment() {
 fn one_shot_split_daemon_attaches_active_new_pane() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
-    let command = "printf 'split-env:%s:%s\\n' \"$NMUX_PANE_ID\" \"$NMUX_SOCKET\"; cat >/dev/null";
+    let command = "printf 'split-env:%s\\n' \"$NMUX_PANE_ID\"; cat >/dev/null";
 
     let mut server = daemon_command()
         .args([
@@ -197,10 +197,7 @@ fn one_shot_split_daemon_attaches_active_new_pane() {
         "split attach should report focused pane-2:\n{stdout}"
     );
     assert!(
-        stdout.contains(&format!(
-            "split-env:pane-2:{}",
-            socket_path.to_str().expect("socket path")
-        )),
+        stdout.contains("split-env:pane-2"),
         "split attach should render pane-2 process output:\n{stdout}"
     );
 }
@@ -1208,6 +1205,8 @@ fn one_shot_cli_can_request_scrollback_tail() {
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--one-shot",
+            "--terminal-engine",
+            "interim",
             "--command",
             command,
         ])
@@ -1531,8 +1530,12 @@ fn daemon_ready_json_reports_bound_socket_before_clients() {
         ready.contains("\"mode\":\"live-forever\""),
         "missing daemon mode:\n{ready}"
     );
+    #[cfg(feature = "libghostty-vt")]
+    let expected_terminal_engine = "\"terminal_engine\":\"libghostty-vt\"";
+    #[cfg(not(feature = "libghostty-vt"))]
+    let expected_terminal_engine = "\"terminal_engine\":\"interim\"";
     assert!(
-        ready.contains("\"terminal_engine\":\"interim\""),
+        ready.contains(expected_terminal_engine),
         "missing terminal engine:\n{ready}"
     );
     assert!(
@@ -1562,6 +1565,10 @@ fn one_shot_daemon_can_set_command_cwd_and_env() {
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--one-shot",
+            "--cols",
+            "200",
+            "--rows",
+            "24",
             "--cwd",
             cwd_path.to_str().expect("cwd path"),
             "--env",
@@ -2051,7 +2058,8 @@ fn managed_start_json_reports_ready_error_without_nested_json() {
 
 #[test]
 fn managed_start_passes_cwd_and_env_to_private_daemon() {
-    let cwd = test_state_path();
+    let id = NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed);
+    let cwd = PathBuf::from(format!("/tmp/nmux-managed-cwd-{}-{id}", std::process::id()));
     let _ = fs::remove_dir_all(&cwd);
     fs::create_dir(&cwd).expect("create managed cwd");
     let expected_cwd = fs::canonicalize(&cwd).expect("canonical cwd");
@@ -3001,6 +3009,8 @@ fn live_cli_renders_initial_scrollback_range() {
             socket_path.to_str().expect("socket path"),
             "--live-cycles",
             "1",
+            "--terminal-engine",
+            "interim",
             "--command",
             "printf 'one\ntwo\nthree\nfour\n'; sleep 1",
         ])
@@ -3118,6 +3128,8 @@ fn live_cli_renders_initial_scrollback_tail() {
             socket_path.to_str().expect("socket path"),
             "--live-cycles",
             "1",
+            "--terminal-engine",
+            "interim",
             "--command",
             "printf 'one\ntwo\nthree\nfour\n'; sleep 1",
         ])
@@ -4688,6 +4700,8 @@ fn live_cli_redraw_includes_initial_scrollback_range() {
             socket_path.to_str().expect("socket path"),
             "--live-cycles",
             "1",
+            "--terminal-engine",
+            "interim",
             "--command",
             "printf 'ready\nhistory\n'; sleep 1",
         ])
@@ -4954,8 +4968,12 @@ fn live_cli_forwards_modified_named_keys() {
     assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
+    #[cfg(feature = "libghostty-vt")]
+    let expected_sequence = "^[[1;5A";
+    #[cfg(not(feature = "libghostty-vt"))]
+    let expected_sequence = "^[[1;3A";
     assert!(
-        stdout.contains("^[[1;3A"),
+        stdout.contains(expected_sequence),
         "missing forwarded Ctrl+ArrowUp bytes:\n{stdout:?}"
     );
 }

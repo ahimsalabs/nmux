@@ -630,7 +630,7 @@ where
         .map(TerminalEngineArg::into_terminal_engine_kind)
         .transpose()
         .map_err(|err| format!("--terminal-engine {err}"))?
-        .unwrap_or(TerminalEngineKind::InterimText);
+        .unwrap_or_default();
     let tcp_listen = match raw.tcp_listen {
         Some(value) if value.is_empty() => {
             return Err("--tcp-listen requires a non-empty HOST:PORT".into());
@@ -1080,6 +1080,7 @@ Notes:
   When started inside nmux, NMUX_ORIGIN is appended for child pane commands.
   --host container uses $NMUX_CONTAINER_RUNTIME or docker, and passes pane cwd/env into the runtime.
   --host sandbox currently uses macOS sandbox-exec and reports an unsupported host on other platforms.
+  Default terminal engine: libghostty-vt when built with the libghostty-vt feature, otherwise interim.
   libghostty-vt requires building nmux with the libghostty-vt feature.
 
 Examples:
@@ -1324,6 +1325,13 @@ mod tests {
     }
 
     #[test]
+    fn args_default_terminal_engine_uses_build_default() {
+        let args = args_from_iter(["nmux daemon", "--one-shot"]).expect("args");
+
+        assert_eq!(args.terminal_engine_kind, TerminalEngineKind::default());
+    }
+
+    #[test]
     fn initial_host_kind_updates_pane_host_spec() {
         let mut host = HostSpec::local("local", CommandSpec::new("sh"));
         let args = args_from_iter([
@@ -1375,6 +1383,7 @@ mod tests {
         assert!(usage.contains("--container-image IMAGE"));
         assert!(usage.contains("--terminal-engine interim|libghostty-vt"));
         assert!(usage.contains("--host container uses $NMUX_CONTAINER_RUNTIME"));
+        assert!(usage.contains("Default terminal engine: libghostty-vt"));
         assert!(usage.contains("libghostty-vt requires building nmux"));
         assert!(usage.contains("--ready-json does not exit"));
         assert!(usage.contains("Existing socket paths are not replaced automatically"));
