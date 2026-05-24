@@ -22,8 +22,9 @@ use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 
 pub use crate::json::{json_string, socket_path_json, version_json};
 pub use crate::socket::{
-    SocketIdentity, SocketPathSource, bind_listener, connect_to_daemon,
-    connect_to_daemon_with_timeout, default_socket_path, default_socket_path_and_source,
+    SocketIdentity, SocketPathSource, accept_authenticated_tcp_client, bind_listener,
+    bind_tcp_listener, connect_to_daemon, connect_to_daemon_with_timeout, connect_to_tcp_daemon,
+    connect_to_tcp_daemon_with_timeout, default_socket_path, default_socket_path_and_source,
     socket_identity,
 };
 pub use crate::speculative_echo::{
@@ -822,6 +823,34 @@ where
     Ok(())
 }
 
+pub fn serve_stream_with_host_and_engines<H>(
+    mut stream: UnixStream,
+    session: &mut Session,
+    host: &mut H,
+    engines: &mut PaneTerminalEngines,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    let request = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach(request) => request,
+        ClientInitialFrame::Control(command) => {
+            return serve_control_command(&mut stream, command, session, Some(host));
+        }
+    };
+    let Some(pane_id) = attach_target_pane_id(session, &request) else {
+        let mut seq = 1;
+        write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
+        return Ok(());
+    };
+    if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
+        let mut seq = 1;
+        write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
+        return Ok(());
+    }
+    serve_attached_client(&mut stream, request, session, Some(host), engines)
+}
+
 fn serve_next(
     listener: &UnixListener,
     session: &mut Session,
@@ -875,24 +904,8 @@ fn serve_next_with_host<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
-    let (mut stream, _) = listener.accept()?;
-    let request = match read_client_initial_frame(&mut stream)? {
-        ClientInitialFrame::Attach(request) => request,
-        ClientInitialFrame::Control(command) => {
-            return serve_control_command(&mut stream, command, session, Some(host));
-        }
-    };
-    let Some(pane_id) = attach_target_pane_id(session, &request) else {
-        let mut seq = 1;
-        write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
-        return Ok(());
-    };
-    if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
-        let mut seq = 1;
-        write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
-        return Ok(());
-    }
-    serve_attached_client(&mut stream, request, session, Some(host), engines)
+    let (stream, _) = listener.accept()?;
+    serve_stream_with_host_and_engines(stream, session, host, engines)
 }
 
 fn serve_live_one_with_host_and_engines<H>(
@@ -905,7 +918,20 @@ fn serve_live_one_with_host_and_engines<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
-    let (mut stream, _) = listener.accept()?;
+    let (stream, _) = listener.accept()?;
+    serve_live_stream_with_host_and_engines(stream, session, host, engines, cycles)
+}
+
+pub fn serve_live_stream_with_host_and_engines<H>(
+    mut stream: UnixStream,
+    session: &mut Session,
+    host: &mut H,
+    engines: &mut PaneTerminalEngines,
+    cycles: usize,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    H: ProcessHost + ProcessOutput,
+{
     let request = match read_client_initial_frame(&mut stream)? {
         ClientInitialFrame::Attach(request) => request,
         ClientInitialFrame::Control(command) => {
@@ -2296,10 +2322,17 @@ pub fn attach_with_client_options(
     path: &Path,
     options: AttachOptions,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
-    let mut stream = match options.connect_timeout {
+    let stream = match options.connect_timeout {
         Some(timeout) => connect_to_daemon_with_timeout(path, timeout)?,
         None => connect_to_daemon(path)?,
     };
+    attach_with_client_options_from_stream(stream, options)
+}
+
+pub fn attach_with_client_options_from_stream(
+    mut stream: UnixStream,
+    options: AttachOptions,
+) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
     let mode = options.request.mode;
     write_attach_request(&mut stream, &options.request)?;
     let mut sequence = ClientFrameSequence::default();
@@ -2381,15 +2414,34 @@ pub fn attach_render_once(
     client_state.render_attach(snapshot)
 }
 
+pub fn attach_render_once_from_stream(
+    stream: UnixStream,
+    mut options: AttachOptions,
+    client_state: &mut ClientAttachState,
+) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
+    options.request.known_surfaces = client_state.known_surfaces_for_scope(None);
+    options.known_scrollback_versions = client_state.known_scrollback_versions_for_scope(None);
+    let snapshot = attach_with_client_options_from_stream(stream, options)?;
+    client_state.apply_scope(None);
+    client_state.render_attach(snapshot)
+}
+
 pub fn run_control_command(
     path: &Path,
     connect_timeout: Option<Duration>,
     command: ControlCommandSummary,
 ) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
-    let mut stream = match connect_timeout {
+    let stream = match connect_timeout {
         Some(timeout) => connect_to_daemon_with_timeout(path, timeout)?,
         None => connect_to_daemon(path)?,
     };
+    run_control_command_on_stream(stream, command)
+}
+
+pub fn run_control_command_on_stream(
+    mut stream: UnixStream,
+    command: ControlCommandSummary,
+) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
     write_control_command(&mut stream, &command)?;
     read_control_command_response(&mut stream)
 }

@@ -215,7 +215,13 @@ fn run_control_command(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         split_axis: args.script_split_axis,
         title: args.script_title.clone(),
     };
-    match local::run_control_command(&args.socket_path, connect_timeout_duration(args), command) {
+    let result = if args.tcp_endpoint.is_some() {
+        connect_to_daemon(args)
+            .and_then(|stream| local::run_control_command_on_stream(stream, command))
+    } else {
+        local::run_control_command(&args.socket_path, connect_timeout_duration(args), command)
+    };
+    match result {
         Ok(workspace) => {
             if args.output_json {
                 println!("{{\"workspace\":{}}}", format_workspace_json(&workspace));
@@ -1564,7 +1570,12 @@ fn attach_once(
         options.mouse = None;
     }
 
-    local::attach_render_once(&args.socket_path, options, client_state)
+    if args.tcp_endpoint.is_some() {
+        let stream = connect_to_daemon(args)?;
+        local::attach_render_once_from_stream(stream, options, client_state)
+    } else {
+        local::attach_render_once(&args.socket_path, options, client_state)
+    }
 }
 
 fn apply_client_identity(args: &Args, request: &mut local::AttachRequest) {
@@ -1574,6 +1585,16 @@ fn apply_client_identity(args: &Args, request: &mut local::AttachRequest) {
 }
 
 fn connect_to_daemon(args: &Args) -> Result<UnixStream, Box<dyn std::error::Error>> {
+    if let Some(endpoint) = args.tcp_endpoint.as_deref() {
+        let token = args
+            .tcp_token
+            .as_deref()
+            .ok_or("--tcp requires --tcp-token")?;
+        return match connect_timeout_duration(args) {
+            Some(timeout) => local::connect_to_tcp_daemon_with_timeout(endpoint, token, timeout),
+            None => local::connect_to_tcp_daemon(endpoint, token),
+        };
+    }
     match connect_timeout_duration(args) {
         Some(timeout) => local::connect_to_daemon_with_timeout(&args.socket_path, timeout),
         None => local::connect_to_daemon(&args.socket_path),
@@ -2166,6 +2187,8 @@ struct Args {
     state_info_json: bool,
     socket_path: PathBuf,
     socket_source: local::SocketPathSource,
+    tcp_endpoint: Option<String>,
+    tcp_token: Option<String>,
     target_pane_id: Option<String>,
     target_tab_id: Option<String>,
     actor_id: String,
@@ -2242,6 +2265,10 @@ struct RawArgs {
     state_info_json: bool,
     #[arg(long = "socket", value_name = "PATH")]
     socket_path: Option<PathBuf>,
+    #[arg(long = "tcp", value_name = "HOST:PORT", allow_hyphen_values = true)]
+    tcp_endpoint: Option<String>,
+    #[arg(long = "tcp-token", value_name = "TOKEN", allow_hyphen_values = true)]
+    tcp_token: Option<String>,
     #[arg(long = "pane", value_name = "PANE_ID", allow_hyphen_values = true)]
     target_pane_id: Option<String>,
     #[arg(long = "tab", value_name = "TAB_ID", allow_hyphen_values = true)]
@@ -2469,6 +2496,7 @@ where
     .map_err(clap_error_message)?;
     let script = normalize_script_command(&mut raw)?;
     let script_command = script.command;
+    let socket_path_set = raw.socket_path.is_some();
     let (socket_path, socket_source) = match raw.socket_path {
         Some(path) => (path, local::SocketPathSource::Explicit),
         None => local::default_socket_path_and_source(),
@@ -2529,6 +2557,36 @@ where
     if raw.target_tab_id.as_deref().is_some_and(str::is_empty) {
         return Err("--tab requires a non-empty tab ID".into());
     }
+    let exits_before_attach = raw.help
+        || raw.version
+        || raw.version_json
+        || raw.list_key_names
+        || raw.list_key_names_json
+        || raw.list_input_choices_json
+        || raw.print_context
+        || raw.print_context_json
+        || raw.print_socket
+        || raw.print_socket_json
+        || raw.state_info
+        || raw.state_info_json;
+    if raw.tcp_endpoint.as_deref().is_some_and(str::is_empty) {
+        return Err("--tcp requires a non-empty HOST:PORT".into());
+    }
+    if raw.tcp_token.as_deref().is_some_and(str::is_empty) {
+        return Err("--tcp-token requires a non-empty token".into());
+    }
+    if raw.tcp_endpoint.is_some() && raw.tcp_token.is_none() && !exits_before_attach {
+        return Err("--tcp requires --tcp-token".into());
+    }
+    if raw.tcp_endpoint.is_none() && raw.tcp_token.is_some() && !exits_before_attach {
+        return Err("--tcp-token requires --tcp".into());
+    }
+    if raw.tcp_endpoint.is_some() && socket_path_set && !exits_before_attach {
+        return Err("--tcp cannot be combined with --socket".into());
+    }
+    if raw.tcp_endpoint.is_some() && start && !exits_before_attach {
+        return Err("--tcp cannot be combined with --start or --shell".into());
+    }
     let actor_id = raw.actor_id.unwrap_or_else(|| "local-actor".to_owned());
     let user_id = raw.user_id.unwrap_or_else(|| "local-user".to_owned());
     let display_name = raw.display_name.unwrap_or_else(|| "local".to_owned());
@@ -2548,18 +2606,6 @@ where
     if key_name_set || paste_set || focus_set || mouse_set || raw.no_input || raw.follow {
         input_text = None;
     }
-    let exits_before_attach = raw.help
-        || raw.version
-        || raw.version_json
-        || raw.list_key_names
-        || raw.list_key_names_json
-        || raw.list_input_choices_json
-        || raw.print_context
-        || raw.print_context_json
-        || raw.print_socket
-        || raw.print_socket_json
-        || raw.state_info
-        || raw.state_info_json;
     let live_resize = if exits_before_attach {
         match (live_cols, live_rows) {
             (Some(cols), Some(rows)) => Some((cols, rows)),
@@ -2659,6 +2705,8 @@ where
         state_info_json: raw.state_info_json,
         socket_path,
         socket_source,
+        tcp_endpoint: raw.tcp_endpoint,
+        tcp_token: raw.tcp_token,
         target_pane_id: raw.target_pane_id,
         target_tab_id: raw.target_tab_id,
         actor_id,
@@ -3958,6 +4006,8 @@ Usage:
 
 Options:
   --socket PATH              Unix socket path
+  --tcp HOST:PORT            Connect over TCP instead of a Unix socket
+  --tcp-token TOKEN          Shared token for TCP transport authentication
   --pane PANE_ID             Attach to and send input to PANE_ID
   --tab TAB_ID               Attach to and make TAB_ID active
   --actor-id ID              Client actor ID for presence
@@ -3967,7 +4017,7 @@ Options:
   --print-context-json       Print inherited nmux pane context as JSON and exit
   --print-socket             Print the resolved socket path and exit
   --print-socket-json        Print the resolved socket path as JSON and exit
-  --connect-timeout-ms MS    Wait up to this long for the daemon socket
+  --connect-timeout-ms MS    Wait up to this long for the daemon transport
   --startup-timeout-ms MS    Wait up to this long for managed nmuxd readiness
   --state-info               Inspect --state cache without connecting
   --state-info-json          Inspect --state cache as JSON without connecting
@@ -4019,6 +4069,7 @@ Subcommands:
 
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+  --tcp requires --tcp-token and cannot be combined with --socket, --start, or --shell.
   --print-context prints inherited NMUX_* pane identity without connecting.
   --print-context-json prints the same inherited context as a JSON object.
   --print-socket-json prints the resolved socket path and source as JSON.
@@ -6249,6 +6300,8 @@ mod tests {
         assert!(usage.contains("--print-context-json"));
         assert!(usage.contains("--print-socket"));
         assert!(usage.contains("--print-socket-json"));
+        assert!(usage.contains("--tcp HOST:PORT"));
+        assert!(usage.contains("--tcp-token TOKEN"));
         assert!(usage.contains("--state-info"));
         assert!(usage.contains("--state-info-json"));
         assert!(usage.contains("--tab TAB_ID"));

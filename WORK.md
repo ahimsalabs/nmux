@@ -12,7 +12,8 @@ see all panes restored.
 
 ## Next features (priority order)
 
-1. **Remote transport**: TCP/QUIC listener beyond Unix socket, identity/auth
+None queued. Close the test gaps below before adding promotion, packaging, or
+evidence infrastructure.
 
 ## Test gaps to close
 

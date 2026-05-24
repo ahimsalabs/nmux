@@ -25,6 +25,8 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--print-context-json"));
     assert!(stdout.contains("--print-socket"));
     assert!(stdout.contains("--print-socket-json"));
+    assert!(stdout.contains("--tcp HOST:PORT"));
+    assert!(stdout.contains("--tcp-token TOKEN"));
     assert!(stdout.contains("-V, --version"));
     assert!(stdout.contains("--version-json"));
     assert!(stdout.contains("--key-name NAME"));
@@ -88,6 +90,8 @@ fn nmuxd_help_lists_live_server_flags() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage:"));
     assert!(stdout.contains("--live-cycles COUNT"));
+    assert!(stdout.contains("--tcp-listen HOST:PORT"));
+    assert!(stdout.contains("--tcp-token TOKEN"));
     assert!(stdout.contains("--print-socket"));
     assert!(stdout.contains("--print-socket-json"));
     assert!(stdout.contains("--ready-json"));

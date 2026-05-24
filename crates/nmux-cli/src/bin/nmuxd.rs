@@ -57,15 +57,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let listener = match local::bind_listener(&args.socket_path) {
-        Ok(listener) => listener,
-        Err(err) => {
-            report_ready_json_error(&args, &err)?;
-            return Err(err.into());
+    let listener = if let Some(addr) = args.tcp_listen.as_deref() {
+        let listener = match local::bind_tcp_listener(addr) {
+            Ok(listener) => listener,
+            Err(err) => {
+                report_ready_json_error(&args, &err)?;
+                return Err(err.into());
+            }
+        };
+        eprintln!("nmuxd: listening on tcp://{addr}");
+        DaemonListener::Tcp(listener)
+    } else {
+        let listener = match local::bind_listener(&args.socket_path) {
+            Ok(listener) => listener,
+            Err(err) => {
+                report_ready_json_error(&args, &err)?;
+                return Err(err.into());
+            }
+        };
+        let cleanup = SocketCleanup::new(args.socket_path.clone());
+        eprintln!("nmuxd: listening on {}", args.socket_path.display());
+        DaemonListener::Unix {
+            listener,
+            _cleanup: cleanup,
         }
     };
-    let _socket_cleanup = SocketCleanup::new(args.socket_path.clone());
-    eprintln!("nmuxd: listening on {}", args.socket_path.display());
     let ready_json = if args.ready_json {
         Some(format_ready_json(&args))
     } else {
@@ -127,7 +143,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         session.set_pane_resize_policy(pane_id, args.resize_policy);
         session.set_pane_nmux_environment(
             pane_id,
-            args.socket_path.display().to_string(),
+            args.transport_endpoint(),
             inherited_origin.as_deref(),
         );
     }
@@ -164,14 +180,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             args.live_clients.unwrap_or(1)
         };
-        let serve_result = local::serve_live_n_with_host_and_engines(
-            &listener,
-            &mut session,
-            &mut pty_host,
-            clients,
-            cycles,
-            &mut terminal_engines,
-        );
+        let serve_result = match &listener {
+            DaemonListener::Unix { listener, .. } => local::serve_live_n_with_host_and_engines(
+                listener,
+                &mut session,
+                &mut pty_host,
+                clients,
+                cycles,
+                &mut terminal_engines,
+            ),
+            DaemonListener::Tcp(listener) => serve_tcp_n(
+                listener,
+                &args,
+                &mut session,
+                &mut pty_host,
+                clients,
+                Some(cycles),
+                &mut terminal_engines,
+            ),
+        };
         let stop_result = stop_panes(&mut pty_host, &pane_ids);
         serve_result?;
         stop_result?;
@@ -179,13 +206,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.one_shot {
-        let serve_result = local::serve_n_with_host_and_engines(
-            &listener,
-            &mut session,
-            &mut pty_host,
-            1,
-            &mut terminal_engines,
-        );
+        let serve_result = match &listener {
+            DaemonListener::Unix { listener, .. } => local::serve_n_with_host_and_engines(
+                listener,
+                &mut session,
+                &mut pty_host,
+                1,
+                &mut terminal_engines,
+            ),
+            DaemonListener::Tcp(listener) => serve_tcp_n(
+                listener,
+                &args,
+                &mut session,
+                &mut pty_host,
+                1,
+                None,
+                &mut terminal_engines,
+            ),
+        };
         let stop_result = stop_panes(&mut pty_host, &pane_ids);
         serve_result?;
         stop_result?;
@@ -193,14 +231,49 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     loop {
-        local::serve_n_with_host_and_engines(
-            &listener,
-            &mut session,
-            &mut pty_host,
-            1,
-            &mut terminal_engines,
-        )?;
+        match &listener {
+            DaemonListener::Unix { listener, .. } => local::serve_n_with_host_and_engines(
+                listener,
+                &mut session,
+                &mut pty_host,
+                1,
+                &mut terminal_engines,
+            )?,
+            DaemonListener::Tcp(listener) => serve_tcp_n(
+                listener,
+                &args,
+                &mut session,
+                &mut pty_host,
+                1,
+                None,
+                &mut terminal_engines,
+            )?,
+        }
     }
+}
+
+fn serve_tcp_n(
+    listener: &std::net::TcpListener,
+    args: &Args,
+    session: &mut Session,
+    host: &mut LocalPtyHost,
+    clients: usize,
+    live_cycles: Option<usize>,
+    engines: &mut PaneTerminalEngines,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let token = args
+        .tcp_token
+        .as_deref()
+        .ok_or("--tcp-listen requires --tcp-token")?;
+    for _ in 0..clients {
+        let stream = local::accept_authenticated_tcp_client(listener, token)?;
+        if let Some(cycles) = live_cycles {
+            local::serve_live_stream_with_host_and_engines(stream, session, host, engines, cycles)?;
+        } else {
+            local::serve_stream_with_host_and_engines(stream, session, host, engines)?;
+        }
+    }
+    Ok(())
 }
 
 fn inherited_nmux_origin() -> Option<String> {
@@ -217,6 +290,14 @@ fn inherited_nmux_origin() -> Option<String> {
 struct SocketCleanup {
     path: PathBuf,
     identity: Option<local::SocketIdentity>,
+}
+
+enum DaemonListener {
+    Unix {
+        listener: std::os::unix::net::UnixListener,
+        _cleanup: SocketCleanup,
+    },
+    Tcp(std::net::TcpListener),
 }
 
 impl SocketCleanup {
@@ -274,6 +355,8 @@ struct Args {
     ready_json: bool,
     socket_path: PathBuf,
     socket_source: local::SocketPathSource,
+    tcp_listen: Option<String>,
+    tcp_token: Option<String>,
     one_shot: bool,
     live: bool,
     live_forever: bool,
@@ -288,6 +371,15 @@ struct Args {
     initial_split: Option<protocol::SplitAxis>,
     resize_policy: protocol::ResizePolicy,
     terminal_engine_kind: TerminalEngineKind,
+}
+
+impl Args {
+    fn transport_endpoint(&self) -> String {
+        match self.tcp_listen.as_deref() {
+            Some(addr) => format!("tcp://{addr}"),
+            None => self.socket_path.display().to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -368,6 +460,14 @@ struct RawArgs {
     ready_json: bool,
     #[arg(long = "socket", value_name = "PATH")]
     socket_path: Option<PathBuf>,
+    #[arg(
+        long = "tcp-listen",
+        value_name = "HOST:PORT",
+        allow_hyphen_values = true
+    )]
+    tcp_listen: Option<String>,
+    #[arg(long = "tcp-token", value_name = "TOKEN", allow_hyphen_values = true)]
+    tcp_token: Option<String>,
     #[arg(long = "one-shot", action = ArgAction::SetTrue)]
     one_shot: bool,
     #[arg(long = "live", action = ArgAction::SetTrue)]
@@ -426,6 +526,7 @@ where
     S: Into<std::ffi::OsString> + Clone,
 {
     let raw = RawArgs::try_parse_from(args).map_err(clap_error_message)?;
+    let socket_path_set = raw.socket_path.is_some();
     let (socket_path, socket_source) = match raw.socket_path {
         Some(path) => (path, local::SocketPathSource::Explicit),
         None => local::default_socket_path_and_source(),
@@ -461,6 +562,18 @@ where
         .transpose()
         .map_err(|err| format!("--terminal-engine {err}"))?
         .unwrap_or(TerminalEngineKind::InterimText);
+    let tcp_listen = match raw.tcp_listen {
+        Some(value) if value.is_empty() => {
+            return Err("--tcp-listen requires a non-empty HOST:PORT".into());
+        }
+        value => value,
+    };
+    let tcp_token = match raw.tcp_token {
+        Some(value) if value.is_empty() => {
+            return Err("--tcp-token requires a non-empty token".into());
+        }
+        value => value,
+    };
 
     if !(raw.help
         || raw.version
@@ -479,6 +592,15 @@ where
         validate_working_dir_arg(working_dir.as_deref())?;
         validate_initial_size(initial_size)?;
         validate_initial_tabs(initial_tabs, active_tab_id.as_deref())?;
+        if tcp_listen.is_some() && tcp_token.is_none() {
+            return Err("--tcp-listen requires --tcp-token".into());
+        }
+        if tcp_listen.is_none() && tcp_token.is_some() {
+            return Err("--tcp-token requires --tcp-listen".into());
+        }
+        if tcp_listen.is_some() && socket_path_set {
+            return Err("--tcp-listen cannot be combined with --socket".into());
+        }
     }
 
     Ok(Args {
@@ -491,6 +613,8 @@ where
         ready_json: raw.ready_json,
         socket_path,
         socket_source,
+        tcp_listen,
+        tcp_token,
         one_shot: raw.one_shot,
         live: raw.live,
         live_forever: raw.live_forever,
@@ -530,8 +654,12 @@ fn format_daemon_choices_json() -> String {
 fn format_ready_json(args: &Args) -> String {
     format!(
         "{{\"event\":\"ready\",\"NMUX_SOCKET\":{},\"source\":{},\"mode\":{},\"terminal_engine\":{},\"resize_policy\":{}}}",
-        local::json_string(&args.socket_path.display().to_string()),
-        local::json_string(args.socket_source.label()),
+        local::json_string(&args.transport_endpoint()),
+        local::json_string(if args.tcp_listen.is_some() {
+            "--tcp-listen"
+        } else {
+            args.socket_source.label()
+        }),
         local::json_string(daemon_mode_name(args)),
         local::json_string(terminal_engine_kind_name(args.terminal_engine_kind)),
         local::json_string(resize_policy_name(args.resize_policy))
@@ -757,6 +885,8 @@ Usage:
 
 Options:
   --socket PATH                         Unix socket path
+  --tcp-listen HOST:PORT                Listen on TCP instead of a Unix socket
+  --tcp-token TOKEN                     Shared token for TCP transport authentication
   --print-socket                        Print the resolved socket path and exit
   --print-socket-json                   Print the resolved socket path/source as JSON
   --list-daemon-choices-json            List daemon configuration choices as JSON
@@ -784,6 +914,7 @@ Options:
 
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
+  --tcp-listen requires --tcp-token and cannot be combined with --socket.
   Informational flags exit before daemon-mode validation or socket/PTY work.
   --ready-json does not exit; it emits one stdout line after socket bind and pane startup.
   Existing socket paths are not replaced automatically.
@@ -792,6 +923,7 @@ Notes:
 
 Examples:
   nmuxd --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
+  nmuxd --tcp-listen 127.0.0.1:7007 --tcp-token TOKEN
   nmuxd --live --command \"printf 'ready\\n'; cat\"
   nmuxd --live-forever --command \"printf 'ready\\n'; cat\"
   nmuxd --live-clients 2 --command \"printf 'ready\\n'; cat\"
@@ -913,6 +1045,8 @@ mod tests {
             ready_json: true,
             socket_path: PathBuf::from("/tmp/nmux-ready.sock"),
             socket_source: local::SocketPathSource::Explicit,
+            tcp_listen: None,
+            tcp_token: None,
             one_shot: false,
             live: false,
             live_forever: true,
@@ -1014,6 +1148,8 @@ mod tests {
         assert!(usage.contains("--live"));
         assert!(usage.contains("--print-socket"));
         assert!(usage.contains("--print-socket-json"));
+        assert!(usage.contains("--tcp-listen HOST:PORT"));
+        assert!(usage.contains("--tcp-token TOKEN"));
         assert!(usage.contains("--ready-json"));
         assert!(usage.contains("--list-daemon-choices-json"));
         assert!(usage.contains("--version-json"));

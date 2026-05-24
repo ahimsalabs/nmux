@@ -759,6 +759,53 @@ fn scriptable_cli_splits_panes_and_manages_tabs() {
 }
 
 #[test]
+fn tcp_transport_can_attach_with_token_auth() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
+    let addr = listener.local_addr().expect("tcp addr").to_string();
+    drop(listener);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--tcp-listen",
+            &addr,
+            "--tcp-token",
+            "test-token",
+            "--one-shot",
+            "--command",
+            "printf 'tcp-ready\\n'",
+        ])
+        .spawn()
+        .expect("spawn tcp nmuxd");
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--tcp",
+            &addr,
+            "--tcp-token",
+            "test-token",
+            "--connect-timeout-ms",
+            "2000",
+            "--json",
+        ])
+        .output()
+        .expect("run nmux over tcp");
+
+    let server_status = server.wait().expect("wait for tcp nmuxd");
+
+    assert!(
+        client.status.success(),
+        "nmux tcp attach failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("\"pane_id\":\"pane-1\"") && stdout.contains("tcp-ready"),
+        "tcp attach should render the remote daemon pane:\n{stdout}"
+    );
+}
+
+#[test]
 fn one_shot_json_reports_state_save_error() {
     let socket_path = test_socket_path();
     let blocking_parent = test_state_path();
