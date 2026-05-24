@@ -813,11 +813,7 @@ fn serve_attached_client(
 }
 
 fn active_pane_id(session: &Session) -> Option<&str> {
-    let pane_id = active_tab(session)?.active_pane_id.as_str();
-    session
-        .surface_version(pane_id)
-        .is_some()
-        .then_some(pane_id)
+    session.active_pane_id()
 }
 
 fn active_tab<'a>(session: &'a Session) -> Option<&'a nmux_core::session::Tab> {

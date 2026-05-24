@@ -1651,6 +1651,175 @@ fn pane_origin_chain(parent_origin_chain: Option<&str>, origin: &str) -> String 
     }
 }
 
+fn pane_node<'a>(pane: &'a Pane, pane_id: &str) -> Option<&'a Pane> {
+    if pane.id == pane_id {
+        return Some(pane);
+    }
+    pane.children
+        .iter()
+        .find_map(|child| pane_node(child, pane_id))
+}
+
+fn pane_node_mut<'a>(pane: &'a mut Pane, pane_id: &str) -> Option<&'a mut Pane> {
+    if pane.id == pane_id {
+        return Some(pane);
+    }
+    pane.children
+        .iter_mut()
+        .find_map(|child| pane_node_mut(child, pane_id))
+}
+
+fn split_pane_node(
+    pane: &mut Pane,
+    pane_id: &str,
+    axis: protocol::SplitAxis,
+    new_pane_id: &str,
+    new_host: HostSpec,
+) -> bool {
+    if pane.id == pane_id {
+        if !pane.children.is_empty() {
+            return false;
+        }
+        let (first_cols, first_rows, second_cols, second_rows) =
+            match split_child_sizes(pane.cols, pane.rows, axis) {
+                Some(sizes) => sizes,
+                None => return false,
+            };
+        let mut existing = pane.clone();
+        existing.cols = first_cols;
+        existing.rows = first_rows;
+        existing.surface_version = existing.surface_version.saturating_add(1);
+        existing.last_patch_kind = protocol::PatchKind::FullRefreshRequired;
+        existing.last_row_update_indices = all_row_indices(existing.surface_lines.len());
+        existing.last_palette_diff = None;
+
+        let new_pane = new_pane_from_template(new_pane_id, new_host, second_cols, second_rows);
+        pane.id = format!("split-{pane_id}-{new_pane_id}");
+        pane.split_axis = axis;
+        pane.children = vec![existing, new_pane];
+        pane.cols = first_cols.saturating_add(second_cols);
+        pane.rows = first_rows.max(second_rows);
+        if axis == protocol::SplitAxis::Horizontal {
+            pane.cols = first_cols.max(second_cols);
+            pane.rows = first_rows.saturating_add(second_rows);
+        }
+        pane.surface_version = 0;
+        pane.last_patch_kind = protocol::PatchKind::FullRefreshRequired;
+        pane.last_row_update_indices.clear();
+        pane.last_palette_diff = None;
+        return true;
+    }
+
+    pane.children
+        .iter_mut()
+        .any(|child| split_pane_node(child, pane_id, axis, new_pane_id, new_host.clone()))
+}
+
+fn split_child_sizes(
+    cols: u32,
+    rows: u32,
+    axis: protocol::SplitAxis,
+) -> Option<(u32, u32, u32, u32)> {
+    match axis {
+        protocol::SplitAxis::Horizontal if rows >= 2 => {
+            let first_rows = rows / 2;
+            Some((cols, first_rows, cols, rows - first_rows))
+        }
+        protocol::SplitAxis::Vertical if cols >= 2 => {
+            let first_cols = cols / 2;
+            Some((first_cols, rows, cols - first_cols, rows))
+        }
+        _ => None,
+    }
+}
+
+fn new_pane_from_template(id: &str, host: HostSpec, cols: u32, rows: u32) -> Pane {
+    let surface_lines = vec![
+        format!("nmux {id}"),
+        "server-owned terminal state".to_owned(),
+    ];
+    let scrollback_lines = vec![
+        "booting nmux workspace".to_owned(),
+        format!("nmux {id}"),
+        "server-owned terminal state".to_owned(),
+    ];
+    let surface_row_count = surface_lines.len();
+    let scrollback_row_count = scrollback_lines.len();
+    Pane {
+        id: id.to_owned(),
+        split_axis: protocol::SplitAxis::None,
+        children: Vec::new(),
+        host,
+        surface_version: 1,
+        last_patch_kind: protocol::PatchKind::ReplaceRows,
+        last_row_update_indices: all_row_indices(surface_row_count),
+        scrollback_version: 1,
+        cols,
+        rows,
+        resize_policy: protocol::ResizePolicy::Fixed,
+        surface: protocol::SurfaceKind::Main,
+        cursor: Cursor {
+            row: 1,
+            col: 0,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: true,
+        },
+        modes: TerminalModes::default(),
+        terminal_title: String::new(),
+        terminal_working_directory: String::new(),
+        colors: TerminalColors::default(),
+        last_palette_diff: None,
+        styles: vec![PaneStyle::default()],
+        surface_lines,
+        surface_row_runs: vec![
+            vec![CellRun::plain(format!("nmux {id}"))],
+            vec![CellRun::plain("server-owned terminal state")],
+        ],
+        surface_semantic_prompts: vec![protocol::RowSemanticPrompt::None; surface_row_count],
+        surface_dirty_rows: vec![false; surface_row_count],
+        surface_kitty_placeholders: vec![false; surface_row_count],
+        scrollback_lines,
+        scrollback_row_runs: vec![
+            vec![CellRun::plain("booting nmux workspace")],
+            vec![CellRun::plain(format!("nmux {id}"))],
+            vec![CellRun::plain("server-owned terminal state")],
+        ],
+        scrollback_semantic_prompts: vec![protocol::RowSemanticPrompt::None; scrollback_row_count],
+        scrollback_dirty_rows: vec![false; scrollback_row_count],
+        scrollback_kitty_placeholders: vec![false; scrollback_row_count],
+    }
+}
+
+fn build_pane_node<'a>(
+    builder: &mut FlatBufferBuilder<'a>,
+    pane: &Pane,
+) -> flatbuffers::WIPOffset<protocol::PaneNode<'a>> {
+    let children = if pane.children.is_empty() {
+        None
+    } else {
+        let mut child_offsets = Vec::with_capacity(pane.children.len());
+        for child in &pane.children {
+            child_offsets.push(build_pane_node(builder, child));
+        }
+        Some(builder.create_vector(&child_offsets))
+    };
+    let pane_id = builder.create_string(&pane.id);
+    protocol::PaneNode::create(
+        builder,
+        &protocol::PaneNodeArgs {
+            pane_id: Some(pane_id),
+            kind: protocol::PaneKind::Pty,
+            split_axis: pane.split_axis,
+            children,
+            surface_version: pane.surface_version,
+            cols: pane.cols,
+            rows: pane.rows,
+            resize_policy: pane.resize_policy,
+        },
+    )
+}
+
 impl From<&Cursor> for TerminalCursor {
     fn from(cursor: &Cursor) -> Self {
         Self {
@@ -2082,7 +2251,7 @@ fn build_cell_run<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::host::{CommandSpec, HostKind};
+    use crate::host::{CommandSpec, HostKind, HostSpec};
     use crate::terminal::{
         CellRun, PaneStyle, TerminalColors, TerminalCursor, TerminalEngine, TerminalInput,
         TerminalModes, TerminalUpdate,
@@ -2210,6 +2379,78 @@ mod tests {
         let tabs = snapshot.tabs().expect("tabs");
         let pane = tabs.get(0).root().expect("pane");
         assert_eq!(pane.resize_policy(), protocol::ResizePolicy::Manual);
+    }
+
+    #[test]
+    fn split_active_pane_creates_recursive_workspace_tree_and_focuses_new_pane() {
+        let mut session = Session::initial();
+
+        assert!(session.split_active_pane(
+            protocol::SplitAxis::Vertical,
+            "pane-2",
+            HostSpec::local("local-2", CommandSpec::new("sh"))
+        ));
+
+        assert_eq!(session.version, 2);
+        assert_eq!(session.active_pane_id(), Some("pane-2"));
+        assert_eq!(session.tabs[0].active_pane_id, "pane-2");
+        assert_eq!(
+            session.pane_size("pane-1"),
+            Some((40, 24)),
+            "existing pane should take the first half of a vertical split"
+        );
+        assert_eq!(session.pane_size("pane-2"), Some((40, 24)));
+        assert_eq!(session.surface_version("pane-1"), Some(3));
+        assert_eq!(session.surface_version("pane-2"), Some(1));
+        assert_eq!(
+            session.pane_surface("pane-2").expect("new pane").lines,
+            vec![
+                "nmux pane-2".to_owned(),
+                "server-owned terminal state".to_owned(),
+            ]
+        );
+
+        let frame = session.workspace_tree_frame("conn-1", 7);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope
+            .body_as_workspace_tree_snapshot()
+            .expect("snapshot");
+        assert_eq!(snapshot.version(), 2);
+        let tabs = snapshot.tabs().expect("tabs");
+        let tab = tabs.get(0);
+        assert_eq!(tab.active_pane_id(), Some("pane-2"));
+        let root = tab.root().expect("root");
+        assert_eq!(root.split_axis(), protocol::SplitAxis::Vertical);
+        assert_eq!(root.cols(), 80);
+        assert_eq!(root.rows(), 24);
+        let children = root.children().expect("children");
+        assert_eq!(children.len(), 2);
+        let first = children.get(0);
+        assert_eq!(first.pane_id(), Some("pane-1"));
+        assert_eq!(first.split_axis(), protocol::SplitAxis::None);
+        assert_eq!(first.cols(), 40);
+        assert_eq!(first.rows(), 24);
+        let second = children.get(1);
+        assert_eq!(second.pane_id(), Some("pane-2"));
+        assert_eq!(second.cols(), 40);
+        assert_eq!(second.rows(), 24);
+    }
+
+    #[test]
+    fn focus_pane_routes_active_pane_to_existing_split_leaf() {
+        let mut session = Session::initial();
+        assert!(session.split_active_pane(
+            protocol::SplitAxis::Horizontal,
+            "pane-2",
+            HostSpec::local("local-2", CommandSpec::new("sh"))
+        ));
+
+        assert_eq!(session.active_pane_id(), Some("pane-2"));
+        assert!(session.focus_pane("pane-1"));
+        assert_eq!(session.active_pane_id(), Some("pane-1"));
+        assert_eq!(session.tabs[0].active_pane_id, "pane-1");
+        assert!(!session.focus_pane("missing"));
+        assert_eq!(session.active_pane_id(), Some("pane-1"));
     }
 
     #[test]

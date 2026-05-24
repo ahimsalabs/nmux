@@ -101,6 +101,8 @@ impl TmuxSession {
             active_pane_id: pane_id.clone(),
             root: Pane {
                 id: pane_id.clone(),
+                split_axis: protocol::SplitAxis::None,
+                children: Vec::new(),
                 host: tmux_pane_host(&self.name, &window.id, &active_pane.id),
                 surface_version: 1,
                 last_patch_kind: protocol::PatchKind::ReplaceRows,
