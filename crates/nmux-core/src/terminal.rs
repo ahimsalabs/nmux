@@ -1625,6 +1625,7 @@ mod tests {
     #[cfg(feature = "libghostty-vt")]
     fn renderer_surface_json(update: &super::TerminalUpdate) -> Value {
         json!({
+            "colors": renderer_colors_json(&update.colors),
             "styles": update
                 .styles
                 .iter()
@@ -1649,6 +1650,23 @@ mod tests {
             &update.scrollback_dirty_rows,
             &update.scrollback_kitty_placeholders,
         )
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn renderer_colors_json(colors: &TerminalColors) -> Value {
+        json!({
+            "default_fg_rgba": colors.default_fg_rgba,
+            "default_bg_rgba": colors.default_bg_rgba,
+            "cursor_rgba": colors.cursor_rgba,
+            "cursor_rgba_set": colors.cursor_rgba_set,
+            "palette_len": colors.palette_rgba.len(),
+            "palette_prefix": colors
+                .palette_rgba
+                .iter()
+                .take(16)
+                .copied()
+                .collect::<Vec<_>>(),
+        })
     }
 
     #[cfg(feature = "libghostty-vt")]

@@ -117,6 +117,7 @@ struct CanonicalSurface {
     surface_kind: String,
     cursor: CanonicalCursor,
     modes: CanonicalModes,
+    colors: CanonicalColors,
     styles: Vec<CanonicalStyle>,
     rows: Vec<CanonicalRow>,
 }
@@ -141,6 +142,16 @@ struct CanonicalModes {
     wraparound: bool,
     mouse_tracking_mode: String,
     mouse_format: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct CanonicalColors {
+    default_fg_rgba: u64,
+    default_bg_rgba: u64,
+    cursor_rgba: u64,
+    cursor_rgba_set: bool,
+    palette_len: usize,
+    palette_prefix: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -261,6 +272,7 @@ fn materialize_surface(decoded: &Value) -> CanonicalSurface {
         surface_kind: string_field(terminal, "surface_kind"),
         cursor: materialize_cursor(terminal.get("cursor").expect("cursor object")),
         modes: materialize_modes(terminal.get("modes").expect("modes object")),
+        colors: materialize_colors(surface.get("colors").expect("surface colors")),
         styles: surface
             .get("styles")
             .and_then(Value::as_array)
@@ -275,6 +287,34 @@ fn materialize_surface(decoded: &Value) -> CanonicalSurface {
             .iter()
             .map(materialize_row)
             .collect(),
+    }
+}
+
+fn materialize_colors(colors: &Value) -> CanonicalColors {
+    let palette = colors.get("palette_rgba").and_then(Value::as_array);
+    let palette_prefix = match palette {
+        Some(palette) => palette
+            .iter()
+            .take(16)
+            .map(|value| value.as_u64().expect("palette entry is numeric"))
+            .collect(),
+        None => colors
+            .get("palette_prefix")
+            .and_then(Value::as_array)
+            .expect("palette prefix")
+            .iter()
+            .map(|value| value.as_u64().expect("palette prefix entry is numeric"))
+            .collect(),
+    };
+    CanonicalColors {
+        default_fg_rgba: numeric_field(colors, "default_fg_rgba"),
+        default_bg_rgba: numeric_field(colors, "default_bg_rgba"),
+        cursor_rgba: numeric_field(colors, "cursor_rgba"),
+        cursor_rgba_set: bool_field(colors, "cursor_rgba_set"),
+        palette_len: palette
+            .map(|palette| palette.len())
+            .unwrap_or_else(|| numeric_field(colors, "palette_len") as usize),
+        palette_prefix,
     }
 }
 
@@ -474,12 +514,24 @@ fn canonical_terminal_json(surface: &CanonicalSurface) -> Value {
 
 fn canonical_surface_json(surface: &CanonicalSurface) -> Value {
     json!({
+        "colors": canonical_colors_json(&surface.colors),
         "styles": surface
             .styles
             .iter()
             .map(canonical_style_json)
             .collect::<Vec<_>>(),
         "row_updates": canonical_rows_json(&surface.rows),
+    })
+}
+
+fn canonical_colors_json(colors: &CanonicalColors) -> Value {
+    json!({
+        "default_fg_rgba": colors.default_fg_rgba,
+        "default_bg_rgba": colors.default_bg_rgba,
+        "cursor_rgba": colors.cursor_rgba,
+        "cursor_rgba_set": colors.cursor_rgba_set,
+        "palette_len": colors.palette_len,
+        "palette_prefix": colors.palette_prefix,
     })
 }
 
