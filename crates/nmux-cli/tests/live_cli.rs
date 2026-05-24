@@ -6984,6 +6984,81 @@ fn live_stdin_bytes_can_pass_ctrl_right_bracket_through() {
 }
 
 #[test]
+fn live_stdin_bytes_ctrl_d_exits_pane_without_later_input_error() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "stty -icanon -echo min 1 time 0; printf 'ready\n'; dd bs=1 count=1 >/dev/null 2>/dev/null",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+
+    wait_for_socket(&socket_path);
+
+    let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--stdin-bytes",
+            "--interval-ms",
+            "1000",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
+
+    let stdout = client.stdout.take().expect("client stdout");
+    let (lines_tx, lines_rx) = mpsc::channel();
+    let stdout_reader = thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            lines_tx.send(line.expect("stdout line")).ok();
+        }
+    });
+
+    let lines = read_until_line(&lines_rx, "ready");
+    let mut stdin = client.stdin.take().expect("client stdin");
+    stdin.write_all(b"\x04").expect("write ctrl-d");
+    stdin.flush().expect("flush ctrl-d");
+    thread::sleep(Duration::from_millis(200));
+    if let Err(error) = stdin.write_all(b"\n") {
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+    drop(stdin);
+
+    let client = client.wait_with_output().expect("wait for nmux");
+    stdout_reader.join().expect("stdout reader");
+    let server_status = server.wait().expect("wait for daemon");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&client.stderr);
+    assert!(
+        !stderr.contains("input forwarding failed"),
+        "pane exit should not report input forwarding failure:\n{stderr}"
+    );
+    assert!(server_status.success(), "daemon failed: {server_status}");
+    assert!(
+        lines.iter().any(|line| line.contains("ready")),
+        "missing ready output:\n{}",
+        lines.join("\n")
+    );
+}
+
+#[test]
 fn live_read_only_cli_observes_output_without_input() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

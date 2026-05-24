@@ -701,6 +701,9 @@ fn forward_live_input(
         }
     };
     if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+        if input_write_target_exited(&err, &input.pane_id) {
+            return Ok(());
+        }
         write_protocol_error(
             stream,
             session,
@@ -1203,6 +1206,9 @@ fn serve_live_attached_client(
                 }
             };
             if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+                if input_write_target_exited(&err, &input.pane_id) {
+                    return Ok(());
+                }
                 write_protocol_error(
                     stream,
                     session,
@@ -1643,6 +1649,9 @@ fn process_one_shot_input(
             }
         };
         if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+            if input_write_target_exited(&err, &input.pane_id) {
+                return Ok(false);
+            }
             let mut seq = 4;
             write_protocol_error(
                 stream,
@@ -2000,6 +2009,10 @@ fn host_error_pane_id(error: &HostError) -> &str {
         | HostError::NotRunning { pane_id }
         | HostError::Io { pane_id, .. } => pane_id,
     }
+}
+
+fn input_write_target_exited(error: &HostError, pane_id: &str) -> bool {
+    matches!(error, HostError::NotRunning { pane_id: failed_pane } if failed_pane == pane_id)
 }
 
 pub fn attach(path: &Path) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {

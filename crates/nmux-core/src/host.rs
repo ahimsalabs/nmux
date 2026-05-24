@@ -384,6 +384,28 @@ impl ProcessOutput for RecordingOutput {
 }
 
 impl LocalPtyHost {
+    fn reap_exited_process(&mut self, pane_id: &str) -> Result<bool, HostError> {
+        let process = self
+            .processes
+            .get_mut(pane_id)
+            .ok_or_else(|| HostError::NotRunning {
+                pane_id: pane_id.to_owned(),
+            })?;
+        if process.process.status != ProcessStatus::Running {
+            return Ok(true);
+        }
+        if process
+            .child
+            .try_wait()
+            .map_err(|error| Self::io_error(pane_id, "try_wait", error))?
+            .is_some()
+        {
+            process.process.status = ProcessStatus::Exited;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     fn process_mut(&mut self, pane_id: &str) -> Result<&mut LocalPtyProcess, HostError> {
         self.processes
             .get_mut(pane_id)
@@ -399,6 +421,10 @@ impl LocalPtyHost {
             operation: operation.to_owned(),
             message: error.to_string(),
         }
+    }
+
+    fn closed_pane_write_error(error: &io::Error) -> bool {
+        error.kind() == io::ErrorKind::BrokenPipe || error.raw_os_error() == Some(libc::EIO)
     }
 
     fn ensure_notify_pipe(&mut self, pane_id: &str) -> Result<&NotifyPipe, HostError> {
@@ -596,12 +622,25 @@ impl ProcessHost for LocalPtyHost {
     }
 
     fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
+        if self.reap_exited_process(pane_id)? {
+            return Err(HostError::NotRunning {
+                pane_id: pane_id.to_owned(),
+            });
+        }
         let process = self.process_mut(pane_id)?;
-        process
+        if let Err(error) = process
             .writer
             .write_all(bytes)
             .and_then(|()| process.writer.flush())
-            .map_err(|error| Self::io_error(pane_id, "write_input", error))
+        {
+            if Self::closed_pane_write_error(&error) && self.reap_exited_process(pane_id)? {
+                return Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                });
+            }
+            return Err(Self::io_error(pane_id, "write_input", error));
+        }
+        Ok(())
     }
 
     fn resize_pane(&mut self, pane_id: &str, cols: u32, rows: u32) -> Result<(), HostError> {
@@ -624,6 +663,12 @@ impl ProcessHost for LocalPtyHost {
             .ok_or_else(|| HostError::NotRunning {
                 pane_id: pane_id.to_owned(),
             })?;
+        if process.process.status == ProcessStatus::Exited {
+            if let Some(pump) = process.pump.take() {
+                let _ = pump.join();
+            }
+            return Ok(process.process);
+        }
         if process.process.status != ProcessStatus::Running {
             return Err(HostError::NotRunning {
                 pane_id: pane_id.to_owned(),
