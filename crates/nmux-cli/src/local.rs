@@ -9425,6 +9425,12 @@ mod tests {
         assert_eq!(decoded.surfaces[0].colors, expected_colors);
         assert_eq!(decoded.surfaces[0].render_text(), "cached\n\ntail");
         assert_eq!(
+            decoded
+                .cached_surface_text_styled("pane-1", true)
+                .as_deref(),
+            Some("\x1b[1;38;2;255;0;0mcache\x1b[0md\n\ntail")
+        );
+        assert_eq!(
             decoded.surfaces[0].row_semantic_prompts[0],
             protocol::RowSemanticPrompt::Prompt
         );
