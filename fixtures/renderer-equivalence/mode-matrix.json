@@ -17,7 +17,8 @@
         "row": 1,
         "col": 0,
         "visible": true,
-        "shape": "block"
+        "shape": "block",
+        "blinking": false
       },
       "modes": {
         "bracketed_paste": true,
@@ -44,6 +45,8 @@
         {
           "text": "modes",
           "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
           "runs": [
             {
               "text": "modes",
@@ -60,6 +63,8 @@
       {
         "text": "modes",
         "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
         "runs": [
           {
             "text": "modes",

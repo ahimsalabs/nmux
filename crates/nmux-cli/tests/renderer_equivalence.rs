@@ -127,6 +127,7 @@ struct CanonicalCursor {
     col: u64,
     visible: bool,
     shape: String,
+    blinking: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -154,6 +155,8 @@ struct CanonicalStyle {
 struct CanonicalRow {
     text: String,
     semantic_prompt: String,
+    dirty: bool,
+    kitty_virtual_placeholder: bool,
     runs: Vec<CanonicalRun>,
 }
 
@@ -290,6 +293,7 @@ fn materialize_cursor(cursor: &Value) -> CanonicalCursor {
         col: numeric_field(cursor, "col"),
         visible: bool_field(cursor, "visible"),
         shape: string_field(cursor, "shape"),
+        blinking: bool_field(cursor, "blinking"),
     }
 }
 
@@ -324,6 +328,8 @@ fn materialize_row(row: &Value) -> CanonicalRow {
     CanonicalRow {
         text: string_field(row, "text"),
         semantic_prompt: string_field(row, "semantic_prompt"),
+        dirty: bool_field(row, "dirty"),
+        kitty_virtual_placeholder: bool_field(row, "kitty_virtual_placeholder"),
         runs: row
             .get("runs")
             .and_then(Value::as_array)

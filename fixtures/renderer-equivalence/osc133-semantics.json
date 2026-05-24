@@ -17,7 +17,8 @@
         "row": 1,
         "col": 0,
         "visible": true,
-        "shape": "block"
+        "shape": "block",
+        "blinking": false
       },
       "modes": {
         "bracketed_paste": false,
@@ -44,6 +45,8 @@
         {
           "text": "prompt inputoutput",
           "semantic_prompt": "prompt",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
           "runs": [
             {
               "text": "prompt ",
@@ -74,6 +77,8 @@
       {
         "text": "prompt inputoutput",
         "semantic_prompt": "prompt",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
         "runs": [
           {
             "text": "prompt ",

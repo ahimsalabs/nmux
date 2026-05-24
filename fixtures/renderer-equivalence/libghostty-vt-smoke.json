@@ -17,7 +17,8 @@
         "row": 4,
         "col": 0,
         "visible": true,
-        "shape": "block"
+        "shape": "block",
+        "blinking": false
       },
       "modes": {
         "bracketed_paste": true,
@@ -50,6 +51,8 @@
         {
           "text": "red plain",
           "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
           "runs": [
             {
               "text": "red",
@@ -70,6 +73,8 @@
         {
           "text": "wide:中",
           "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
           "runs": [
             {
               "text": "wide:中",
@@ -83,6 +88,8 @@
         {
           "text": "link",
           "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
           "runs": [
             {
               "text": "link",
@@ -96,6 +103,8 @@
         {
           "text": "main-scroll",
           "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
           "runs": [
             {
               "text": "main-scroll",
@@ -112,6 +121,8 @@
       {
         "text": "red plain",
         "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
         "runs": [
           {
             "text": "red",
@@ -132,6 +143,8 @@
       {
         "text": "wide:中",
         "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
         "runs": [
           {
             "text": "wide:中",
@@ -145,6 +158,8 @@
       {
         "text": "link",
         "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
         "runs": [
           {
             "text": "link",
@@ -158,6 +173,8 @@
       {
         "text": "main-scroll",
         "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
         "runs": [
           {
             "text": "main-scroll",

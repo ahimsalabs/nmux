@@ -21,7 +21,8 @@
         "row": 2,
         "col": 0,
         "visible": true,
-        "shape": "block"
+        "shape": "block",
+        "blinking": false
       },
       "modes": {
         "bracketed_paste": false,
@@ -48,6 +49,8 @@
         {
           "text": "wrap-test-",
           "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
           "runs": [
             {
               "text": "wrap-test-",
@@ -61,6 +64,8 @@
         {
           "text": "12345",
           "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
           "runs": [
             {
               "text": "12345",
@@ -77,6 +82,8 @@
       {
         "text": "wrap-test-",
         "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
         "runs": [
           {
             "text": "wrap-test-",
@@ -90,6 +97,8 @@
       {
         "text": "12345",
         "semantic_prompt": "none",
+          "dirty": true,
+          "kitty_virtual_placeholder": false,
         "runs": [
           {
             "text": "12345",
