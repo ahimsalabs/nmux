@@ -121,7 +121,7 @@ For scripts that start a daemon and then attach a client, add `--ready-json` to
 initial pane has started:
 
 ```json
-{"event":"ready","NMUX_SOCKET":"/tmp/nmux.sock","source":"--socket","mode":"live-forever","terminal_engine":"libghostty-vt","resize_policy":"fixed"}
+{"event":"ready","NMUX_SOCKET":"/tmp/nmux.sock","source":"--socket","mode":"live-forever","terminal_engine":"interim","resize_policy":"fixed"}
 ```
 
 If startup fails before that point, `--ready-json` prints an error event before
@@ -510,8 +510,8 @@ default-feature builds can still select it explicitly with
 
 ## libghostty-vt Build
 
-The backend VT engine is enabled by default through the `libghostty-vt` Cargo
-feature. The dev shell pins Zig 0.15 because the Ghostty commit used by
+The backend VT engine is opt-in through the `libghostty-vt` Cargo feature and
+`--terminal-engine libghostty-vt`. The dev shell pins Zig 0.15 because the Ghostty commit used by
 `libghostty-vt-sys` requires that Zig version.
 
 The backend engine keeps PTY bytes in `nmux daemon` and maps Ghostty state back
@@ -519,12 +519,12 @@ into nmux snapshots, patches, and scrollback chunks. The local CLI prints
 non-empty terminal title and OSC 7 working-directory metadata alongside the
 rendered pane surface, including redraw output.
 
-To smoke the default engine manually:
+To smoke the opt-in VT engine manually:
 
 ```sh
 rm -f /tmp/nmux-vt.sock
 # shell 1
-nix develop . -c env GIT_CONFIG_GLOBAL=/dev/null cargo run -p nmux-cli --bin nmux -- daemon --socket /tmp/nmux-vt.sock --one-shot --command "printf '\033[31mvt engine\033[0m\n'; cat >/dev/null"
+nix develop . -c env GIT_CONFIG_GLOBAL=/dev/null cargo run -p nmux-cli --features libghostty-vt --bin nmux -- daemon --terminal-engine libghostty-vt --socket /tmp/nmux-vt.sock --one-shot --command "printf '\033[31mvt engine\033[0m\n'; cat >/dev/null"
 # shell 2
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux-vt.sock
 ```
@@ -563,11 +563,10 @@ protocol shape are clear.
 nix develop . -c just check-ghostty-vt
 ```
 
-The target is now a compatibility alias for `just check`, which runs the
-default-feature workspace tests with `RUST_TEST_THREADS=1` and
-`GIT_CONFIG_GLOBAL=/dev/null`. The serial test-harness setting is part of the
-current FFI-backed native-VT gate. The Git setting is not logically required by
-nmux; it avoids a local Git configuration that rewrites GitHub HTTPS URLs to
+The target runs the feature-enabled workspace tests with `RUST_TEST_THREADS=1`
+and `GIT_CONFIG_GLOBAL=/dev/null`. The serial test-harness setting is part of
+the current FFI-backed native-VT gate. The Git setting is not logically required
+by nmux; it avoids a local Git configuration that rewrites GitHub HTTPS URLs to
 SSH. The `libghostty-vt-sys` build script fetches Ghostty from an HTTPS URL
 unless `GHOSTTY_SOURCE_DIR` points at an existing Ghostty checkout.
 

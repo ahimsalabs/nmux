@@ -1081,8 +1081,8 @@ Notes:
   When started inside nmux, NMUX_ORIGIN is appended for child pane commands.
   --host container uses $NMUX_CONTAINER_RUNTIME or docker, and passes pane cwd/env into the runtime.
   --host sandbox currently uses macOS sandbox-exec and reports an unsupported host on other platforms.
-  Default terminal engine: libghostty-vt when built with the libghostty-vt feature, otherwise interim.
-  libghostty-vt requires building nmux with the libghostty-vt feature.
+  Default terminal engine: interim.
+  libghostty-vt requires building nmux with the libghostty-vt feature and selecting --terminal-engine libghostty-vt.
 
 Examples:
   nmux daemon --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
@@ -1384,8 +1384,8 @@ mod tests {
         assert!(usage.contains("--container-image IMAGE"));
         assert!(usage.contains("--terminal-engine interim|libghostty-vt"));
         assert!(usage.contains("--host container uses $NMUX_CONTAINER_RUNTIME"));
-        assert!(usage.contains("Default terminal engine: libghostty-vt"));
-        assert!(usage.contains("libghostty-vt requires building nmux"));
+        assert!(usage.contains("Default terminal engine: interim"));
+        assert!(usage.contains("selecting --terminal-engine libghostty-vt"));
         assert!(usage.contains("--ready-json does not exit"));
         assert!(usage.contains("Existing socket paths are not replaced automatically"));
     }

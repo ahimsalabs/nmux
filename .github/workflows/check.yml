@@ -147,6 +147,11 @@ jobs:
           system="$(nix eval --impure --raw --expr builtins.currentSystem)"
           out="$(nix build ".#checks.${system}.source-audit" --no-link --print-out-paths)"
           cat "$out/source-audit.txt"
+      - name: Nix package smoke
+        run: |
+          system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+          out="$(nix build ".#packages.${system}.default" --no-link --print-out-paths)"
+          "$out/bin/nmux" --version
       - name: Toolchain info
         run: nix develop . -c just toolchain-info
       - name: Check

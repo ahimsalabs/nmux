@@ -18,11 +18,12 @@ export PACKAGING_ARCHIVE_SHA256 := env_var_or_default("PACKAGING_ARCHIVE_SHA256"
 
 # --- Core ---
 
-check: check-vt-toolchain check-schema rust-test
+check: check-toolchain check-schema rust-test
 
 check-all: check check-interim
 
-check-ghostty-vt: check
+check-ghostty-vt: check-vt-toolchain check-schema
+    RUST_TEST_THREADS=1 GIT_CONFIG_GLOBAL=/dev/null cargo test --workspace --features libghostty-vt
 
 check-interim: check-toolchain check-schema
     cargo test -p nmux-core --no-default-features
@@ -68,7 +69,7 @@ require-flatc:
 require-zig:
     #!/usr/bin/env bash
     set -eu
-    command -v zig >/dev/null 2>&1 || { echo "missing zig; use 'nix develop . -c just check' or install Zig 0.15 for the default libghostty-vt build" >&2; exit 127; }
+    command -v zig >/dev/null 2>&1 || { echo "missing zig; use 'nix develop . -c just check-ghostty-vt' or install Zig 0.15 for the opt-in libghostty-vt build" >&2; exit 127; }
     version="$(zig version)"
     case "$version" in
         {{ZIG_VERSION_PREFIX}}*) ;;

@@ -67,7 +67,7 @@
         version = packageVersion;
         src = cleanSrc pkgs;
         strictDeps = true;
-        cargoExtraArgs = "-p nmux-cli --bin nmux";
+        cargoExtraArgs = "-p nmux-cli --bin nmux --no-default-features";
         nativeBuildInputs = defaultNativeBuildInputs pkgs;
       };
 
@@ -95,7 +95,7 @@
           cargoArtifacts = craneLib.buildDepsOnly (
             commonArgs
             // {
-              cargoExtraArgs = "--workspace";
+              cargoExtraArgs = "--workspace --no-default-features";
             }
           );
         in
@@ -103,7 +103,7 @@
           commonArgs
           // {
             inherit cargoArtifacts;
-            cargoExtraArgs = "--workspace --no-run";
+            cargoExtraArgs = "--workspace --no-default-features --no-run";
             RUST_TEST_THREADS = "1";
             preCheck = ''
               export PATH=${pkgs.bash}/bin:$PATH

@@ -41,4 +41,5 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0031: Container And Sandbox Host Execution](0031-container-and-sandbox-host-execution.md) | Accepted |
 | [0032: Single Binary CLI Boundary](0032-single-binary-cli-boundary.md) | Accepted |
 | [0033: Remove nmuxd Shim](0033-remove-nmuxd-shim.md) | Accepted |
-| [0034: Ghostty VT Default Engine](0034-ghostty-vt-default-engine.md) | Accepted |
+| [0034: Ghostty VT Default Engine](0034-ghostty-vt-default-engine.md) | Superseded by ADR 0035 |
+| [0035: Restore Portable Default Engine](0035-restore-portable-default-engine.md) | Accepted |

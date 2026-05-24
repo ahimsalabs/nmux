@@ -10,7 +10,7 @@ name = "nmux"
 path = "src/bin/nmux.rs"
 
 [features]
-default = ["libghostty-vt"]
+default = []
 libghostty-vt = ["nmux-core/libghostty-vt"]
 
 [dependencies]

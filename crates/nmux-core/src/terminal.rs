@@ -259,17 +259,9 @@ impl PaneTerminalEngines {
     }
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for TerminalEngineKind {
     fn default() -> Self {
-        #[cfg(feature = "libghostty-vt")]
-        {
-            Self::LibghosttyVt
-        }
-        #[cfg(not(feature = "libghostty-vt"))]
-        {
-            Self::InterimText
-        }
+        Self::InterimText
     }
 }
 

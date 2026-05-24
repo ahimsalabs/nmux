@@ -183,10 +183,10 @@ jobs:
             echo "build_date=$NMUX_BUILD_DATE"
             echo "binary=nmux"
             echo "artifact_shape=single binary plus checksums and provenance"
-            echo "terminal_engine=libghostty-vt"
+            echo "terminal_engine=interim"
             echo "terminal_engine_status=default"
-            echo "runtime_library_strategy=static libghostty-vt link; no bundled libghostty-vt runtime library"
-            echo "static_ghostty_link=verified"
+            echo "runtime_library_strategy=no libghostty-vt runtime library in default nightly artifact"
+            echo "ghostty_dynamic_dependency=absent"
             echo
             echo "[version_json]"
             cat "$staging/VERSION.json"
