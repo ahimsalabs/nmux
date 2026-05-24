@@ -11,14 +11,16 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
-use crossterm::{terminal, tty::IsTty};
+use crossterm::{
+    cursor, execute,
+    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
+    tty::IsTty,
+};
 use nmux_cli::{daemon, local};
 use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
 
 const STDIN_BYTES_DETACH: u8 = 0x1d;
-const REDRAW_TERMINAL_ENTER: &str = "\x1b[?1049h\x1b[?25l";
-const REDRAW_TERMINAL_EXIT: &str = "\x1b[?25h\x1b[?1049l";
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
 const SUPPORTED_KEY_NAMES: &[&str] = &[
     "numpad-enter",
@@ -1652,16 +1654,16 @@ impl RedrawTerminalGuard {
             return Ok(None);
         }
 
-        print!("{REDRAW_TERMINAL_ENTER}");
-        flush_stdout()?;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
         Ok(Some(Self))
     }
 }
 
 impl Drop for RedrawTerminalGuard {
     fn drop(&mut self) {
-        print!("{REDRAW_TERMINAL_EXIT}");
-        let _ = flush_stdout();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, cursor::Show, LeaveAlternateScreen);
     }
 }
 
