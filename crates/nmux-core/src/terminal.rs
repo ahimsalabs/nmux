@@ -1429,6 +1429,7 @@ mod tests {
         terminal_output: Vec<String>,
         expected_terminal: Value,
         expected_surface: Value,
+        expected_scrollback: Value,
     }
 
     #[cfg(feature = "libghostty-vt")]
@@ -1476,6 +1477,13 @@ mod tests {
             assert_eq!(
                 actual_surface, fixture.expected_surface,
                 "{} surface projection mismatch",
+                fixture.name
+            );
+
+            let actual_scrollback = renderer_scrollback_json(&update);
+            assert_eq!(
+                actual_scrollback, fixture.expected_scrollback,
+                "{} scrollback projection mismatch",
                 fixture.name
             );
         }
@@ -1550,6 +1558,10 @@ mod tests {
                 .get("surface")
                 .expect("expected surface object")
                 .clone(),
+            expected_scrollback: expected
+                .get("scrollback")
+                .expect("expected scrollback rows")
+                .clone(),
         }
     }
 
@@ -1618,8 +1630,25 @@ mod tests {
                 .iter()
                 .map(renderer_style_json)
                 .collect::<Vec<_>>(),
-            "row_updates": renderer_rows_json(update),
+            "row_updates": renderer_rows_json(
+                &update.surface_lines,
+                &update.surface_row_runs,
+                &update.surface_semantic_prompts,
+                &update.surface_dirty_rows,
+                &update.surface_kitty_placeholders,
+            ),
         })
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn renderer_scrollback_json(update: &super::TerminalUpdate) -> Value {
+        renderer_rows_json(
+            &update.scrollback_lines,
+            &update.scrollback_row_runs,
+            &update.scrollback_semantic_prompts,
+            &update.scrollback_dirty_rows,
+            &update.scrollback_kitty_placeholders,
+        )
     }
 
     #[cfg(feature = "libghostty-vt")]
@@ -1633,10 +1662,15 @@ mod tests {
     }
 
     #[cfg(feature = "libghostty-vt")]
-    fn renderer_rows_json(update: &super::TerminalUpdate) -> Value {
+    fn renderer_rows_json(
+        lines: &[String],
+        row_runs: &[Vec<super::CellRun>],
+        semantic_prompts: &[protocol::RowSemanticPrompt],
+        dirty_rows: &[bool],
+        kitty_placeholders: &[bool],
+    ) -> Value {
         Value::Array(
-            update
-                .surface_lines
+            lines
                 .iter()
                 .enumerate()
                 .filter(|(_, text)| !text.is_empty())
@@ -1644,20 +1678,17 @@ mod tests {
                     json!({
                         "text": text,
                         "semantic_prompt": row_semantic_prompt_name(
-                            update
-                                .surface_semantic_prompts
+                            semantic_prompts
                                 .get(row)
                                 .copied()
                                 .unwrap_or(protocol::RowSemanticPrompt::None),
                         ),
-                        "dirty": update.surface_dirty_rows.get(row).copied().unwrap_or(false),
-                        "kitty_virtual_placeholder": update
-                            .surface_kitty_placeholders
+                        "dirty": dirty_rows.get(row).copied().unwrap_or(false),
+                        "kitty_virtual_placeholder": kitty_placeholders
                             .get(row)
                             .copied()
                             .unwrap_or(false),
-                        "runs": update
-                            .surface_row_runs
+                        "runs": row_runs
                             .get(row)
                             .unwrap_or_else(|| panic!("missing row runs for row {row}"))
                             .iter()
