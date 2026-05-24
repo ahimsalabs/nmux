@@ -1757,6 +1757,16 @@ fn apply_terminal_update(
     pane.surface_semantic_prompts = surface_semantic_prompts;
     pane.surface_dirty_rows = surface_dirty_rows;
     pane.surface_kitty_placeholders = surface_kitty_placeholders;
+
+    // The terminal engine can return more rows than the declared pane size
+    // (e.g., 25 lines for a 24-row pane). Truncate all parallel surface
+    // vectors so serialized row indices never exceed `pane.rows - 1`.
+    let max_rows = pane.rows as usize;
+    pane.surface_lines.truncate(max_rows);
+    pane.surface_row_runs.truncate(max_rows);
+    pane.surface_semantic_prompts.truncate(max_rows);
+    pane.surface_dirty_rows.truncate(max_rows);
+    pane.surface_kitty_placeholders.truncate(max_rows);
     pane.cursor = cursor;
 
     if scrollback_changed {
@@ -4518,5 +4528,63 @@ mod tests {
         assert_eq!(rows.len(), 1);
         let runs = rows.get(0).runs().expect("runs");
         assert_eq!(runs.get(0).text_utf8(), Some("pty says hi"));
+    }
+
+    #[test]
+    fn engine_returning_more_rows_than_pane_size_is_truncated() {
+        // Regression: if the terminal engine returns 25 lines for a 24-row
+        // pane, the daemon would serialize row index 24, which the client
+        // correctly rejects as out of bounds.
+        struct ExtraRowEngine;
+
+        impl TerminalEngine for ExtraRowEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                _output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                // Return rows + 1 lines (e.g., 25 for a 24-row pane).
+                let mut lines: Vec<String> =
+                    (0..input.rows as usize + 1).map(|i| format!("row-{i}")).collect();
+                // Pad with empties if input already had fewer.
+                while lines.len() < input.rows as usize + 1 {
+                    lines.push(String::new());
+                }
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    lines,
+                    input.scrollback_lines.to_vec(),
+                ))
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let mut engine = ExtraRowEngine;
+
+        // Initial pane is 24 rows. Engine returns 25 lines.
+        session.apply_pane_output_with_engine("pane-1", b"trigger", &mut engine);
+
+        // The surface frame must serialize without out-of-bounds row indices.
+        let frame = session.pane_surface_frame("conn-1", 1);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope
+            .body_as_pane_surface_snapshot()
+            .expect("pane surface body");
+
+        // Must have exactly 24 rows (0-indexed 0..23), not 25.
+        let rows = snapshot.rows_data().expect("rows");
+        assert_eq!(rows.len(), 24);
+        assert_eq!(rows.get(23).row(), 23);
     }
 }
