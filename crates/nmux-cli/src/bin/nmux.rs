@@ -174,8 +174,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return run_live(&args);
     }
 
-    if args.script_command == Some(ScriptCommand::PaneSend) {
-        return run_pane_send(&args);
+    match args.script_command {
+        Some(ScriptCommand::PaneSend) => return run_pane_send(&args),
+        Some(ScriptCommand::PaneSplit | ScriptCommand::TabNew | ScriptCommand::TabClose) => {
+            return run_control_command(&args);
+        }
+        _ => {}
     }
 
     run_attach_loop(&args)
@@ -188,6 +192,38 @@ fn run_pane_send(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     })?;
     match attach_once(args, &mut client_state) {
         Ok(_) => save_client_state(args.state_path.as_deref(), &client_state),
+        Err(err) => {
+            report_cli_error(args, err.as_ref())?;
+            Err(err)
+        }
+    }
+}
+
+fn run_control_command(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let command_kind = match args.script_command {
+        Some(ScriptCommand::PaneSplit) => protocol::ControlCommandKind::PaneSplit,
+        Some(ScriptCommand::TabNew) => protocol::ControlCommandKind::TabNew,
+        Some(ScriptCommand::TabClose) => protocol::ControlCommandKind::TabClose,
+        _ => return Err("missing control command".into()),
+    };
+    let command = local::ControlCommandSummary {
+        actor_id: args.actor_id.clone(),
+        command_seq: 1,
+        kind: command_kind,
+        pane_id: args.target_pane_id.clone(),
+        tab_id: args.target_tab_id.clone(),
+        split_axis: args.script_split_axis,
+        title: args.script_title.clone(),
+    };
+    match local::run_control_command(&args.socket_path, connect_timeout_duration(args), command) {
+        Ok(workspace) => {
+            if args.output_json {
+                println!("{{\"workspace\":{}}}", format_workspace_json(&workspace));
+            } else {
+                println!("{}", workspace.display_line());
+            }
+            Ok(())
+        }
         Err(err) => {
             report_cli_error(args, err.as_ref())?;
             Err(err)
@@ -2166,6 +2202,8 @@ struct Args {
     connect_timeout_ms: Option<u64>,
     iterations: Option<usize>,
     script_command: Option<ScriptCommand>,
+    script_split_axis: protocol::SplitAxis,
+    script_title: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -2348,6 +2386,9 @@ struct RawArgs {
 enum ScriptCommand {
     PaneSend,
     PaneSnapshot,
+    PaneSplit,
+    TabNew,
+    TabClose,
 }
 
 #[derive(Debug, Subcommand)]
@@ -2355,6 +2396,10 @@ enum RawCommand {
     Pane {
         #[command(subcommand)]
         command: RawPaneCommand,
+    },
+    Tab {
+        #[command(subcommand)]
+        command: RawTabCommand,
     },
 }
 
@@ -2372,6 +2417,41 @@ enum RawPaneCommand {
         #[arg(long = "json", action = ArgAction::SetTrue)]
         json: bool,
     },
+    Split {
+        #[arg(value_name = "horizontal|vertical")]
+        axis: SplitAxisArg,
+        #[arg(value_name = "PANE_ID", allow_hyphen_values = true)]
+        pane_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RawTabCommand {
+    New {
+        #[arg(value_name = "TAB_ID", allow_hyphen_values = true)]
+        tab_id: Option<String>,
+        #[arg(long = "title", value_name = "TITLE", allow_hyphen_values = true)]
+        title: Option<String>,
+    },
+    Close {
+        #[arg(value_name = "TAB_ID", allow_hyphen_values = true)]
+        tab_id: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum SplitAxisArg {
+    Horizontal,
+    Vertical,
+}
+
+impl From<SplitAxisArg> for protocol::SplitAxis {
+    fn from(value: SplitAxisArg) -> Self {
+        match value {
+            SplitAxisArg::Horizontal => protocol::SplitAxis::Horizontal,
+            SplitAxisArg::Vertical => protocol::SplitAxis::Vertical,
+        }
+    }
 }
 
 fn args() -> Result<Args, Box<dyn std::error::Error>> {
@@ -2387,7 +2467,8 @@ where
         std::iter::once(std::ffi::OsString::from("nmux")).chain(args.into_iter().map(Into::into)),
     )
     .map_err(clap_error_message)?;
-    let script_command = normalize_script_command(&mut raw)?;
+    let script = normalize_script_command(&mut raw)?;
+    let script_command = script.command;
     let (socket_path, socket_source) = match raw.socket_path {
         Some(path) => (path, local::SocketPathSource::Explicit),
         None => local::default_socket_path_and_source(),
@@ -2614,30 +2695,50 @@ where
         connect_timeout_ms,
         iterations,
         script_command,
+        script_split_axis: script.split_axis,
+        script_title: script.title,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedScriptCommand {
+    command: Option<ScriptCommand>,
+    split_axis: protocol::SplitAxis,
+    title: Option<String>,
 }
 
 fn normalize_script_command(
     raw: &mut RawArgs,
-) -> Result<Option<ScriptCommand>, Box<dyn std::error::Error>> {
+) -> Result<NormalizedScriptCommand, Box<dyn std::error::Error>> {
     let Some(command) = raw.command.take() else {
-        return Ok(None);
+        return Ok(NormalizedScriptCommand {
+            command: None,
+            split_axis: protocol::SplitAxis::None,
+            title: None,
+        });
     };
-    if raw.target_pane_id.is_some() {
-        return Err("--pane cannot be combined with the pane subcommand".into());
-    }
     match command {
         RawCommand::Pane { command } => match command {
             RawPaneCommand::Send { pane_id, text } => {
+                if raw.target_pane_id.is_some() {
+                    return Err("--pane cannot be combined with the pane subcommand".into());
+                }
                 if pane_id.is_empty() {
                     return Err("pane send requires a non-empty pane ID".into());
                 }
                 raw.target_pane_id = Some(pane_id);
                 raw.key_text = Some(text);
                 raw.no_scrollback = true;
-                Ok(Some(ScriptCommand::PaneSend))
+                Ok(NormalizedScriptCommand {
+                    command: Some(ScriptCommand::PaneSend),
+                    split_axis: protocol::SplitAxis::None,
+                    title: None,
+                })
             }
             RawPaneCommand::Snapshot { pane_id, json } => {
+                if raw.target_pane_id.is_some() {
+                    return Err("--pane cannot be combined with the pane subcommand".into());
+                }
                 if pane_id.is_empty() {
                     return Err("pane snapshot requires a non-empty pane ID".into());
                 }
@@ -2645,9 +2746,65 @@ fn normalize_script_command(
                 raw.no_input = true;
                 raw.no_scrollback = true;
                 raw.output_json = json || raw.output_json;
-                Ok(Some(ScriptCommand::PaneSnapshot))
+                Ok(NormalizedScriptCommand {
+                    command: Some(ScriptCommand::PaneSnapshot),
+                    split_axis: protocol::SplitAxis::None,
+                    title: None,
+                })
+            }
+            RawPaneCommand::Split { axis, pane_id } => {
+                if raw.target_pane_id.is_some() {
+                    return Err("--pane cannot be combined with the pane subcommand".into());
+                }
+                if pane_id.as_deref().is_some_and(str::is_empty) {
+                    return Err("pane split requires a non-empty pane ID".into());
+                }
+                raw.target_pane_id = pane_id;
+                raw.no_input = true;
+                raw.no_scrollback = true;
+                Ok(NormalizedScriptCommand {
+                    command: Some(ScriptCommand::PaneSplit),
+                    split_axis: axis.into(),
+                    title: None,
+                })
             }
         },
+        RawCommand::Tab { command } => {
+            if raw.target_tab_id.is_some() {
+                return Err("--tab cannot be combined with the tab subcommand".into());
+            }
+            match command {
+                RawTabCommand::New { tab_id, title } => {
+                    if tab_id.as_deref().is_some_and(str::is_empty) {
+                        return Err("tab new requires a non-empty tab ID".into());
+                    }
+                    if title.as_deref().is_some_and(str::is_empty) {
+                        return Err("tab new --title requires a non-empty title".into());
+                    }
+                    raw.target_tab_id = tab_id;
+                    raw.no_input = true;
+                    raw.no_scrollback = true;
+                    Ok(NormalizedScriptCommand {
+                        command: Some(ScriptCommand::TabNew),
+                        split_axis: protocol::SplitAxis::None,
+                        title,
+                    })
+                }
+                RawTabCommand::Close { tab_id } => {
+                    if tab_id.as_deref().is_some_and(str::is_empty) {
+                        return Err("tab close requires a non-empty tab ID".into());
+                    }
+                    raw.target_tab_id = tab_id;
+                    raw.no_input = true;
+                    raw.no_scrollback = true;
+                    Ok(NormalizedScriptCommand {
+                        command: Some(ScriptCommand::TabClose),
+                        split_axis: protocol::SplitAxis::None,
+                        title: None,
+                    })
+                }
+            }
+        }
     }
 }
 
@@ -3795,6 +3952,9 @@ Usage:
   nmux [OPTIONS]
   nmux [OPTIONS] pane send PANE_ID TEXT
   nmux [OPTIONS] pane snapshot PANE_ID --json
+  nmux [OPTIONS] pane split horizontal|vertical [PANE_ID]
+  nmux [OPTIONS] tab new [TAB_ID] [--title TITLE]
+  nmux [OPTIONS] tab close [TAB_ID]
 
 Options:
   --socket PATH              Unix socket path
@@ -3853,6 +4013,9 @@ Options:
 Subcommands:
   pane send PANE_ID TEXT          Send text input to a pane
   pane snapshot PANE_ID --json    Print a pane snapshot as JSON
+  pane split AXIS [PANE_ID]       Split a pane horizontally or vertically
+  tab new [TAB_ID]                Create and switch to a new tab
+  tab close [TAB_ID]              Close a tab, defaulting to the active tab
 
 Notes:
   Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmuxd.sock, else /tmp/nmux-$UID/nmuxd.sock.
@@ -4236,6 +4399,23 @@ mod tests {
         assert!(snapshot.no_input);
         assert!(snapshot.no_scrollback);
         assert!(snapshot.output_json);
+
+        let split = args_from_iter(["pane", "split", "vertical", "pane-2"]).expect("split args");
+        assert_eq!(split.script_command, Some(ScriptCommand::PaneSplit));
+        assert_eq!(split.target_pane_id.as_deref(), Some("pane-2"));
+        assert_eq!(split.script_split_axis, protocol::SplitAxis::Vertical);
+        assert!(split.no_input);
+        assert!(split.no_scrollback);
+
+        let tab_new =
+            args_from_iter(["tab", "new", "tab-work", "--title", "Work"]).expect("tab new args");
+        assert_eq!(tab_new.script_command, Some(ScriptCommand::TabNew));
+        assert_eq!(tab_new.target_tab_id.as_deref(), Some("tab-work"));
+        assert_eq!(tab_new.script_title.as_deref(), Some("Work"));
+
+        let tab_close = args_from_iter(["tab", "close", "tab-work"]).expect("tab close args");
+        assert_eq!(tab_close.script_command, Some(ScriptCommand::TabClose));
+        assert_eq!(tab_close.target_tab_id.as_deref(), Some("tab-work"));
     }
 
     #[test]
@@ -6090,6 +6270,9 @@ mod tests {
         assert!(usage.contains("--cols COUNT"));
         assert!(usage.contains("pane send PANE_ID TEXT"));
         assert!(usage.contains("pane snapshot PANE_ID --json"));
+        assert!(usage.contains("pane split AXIS [PANE_ID]"));
+        assert!(usage.contains("tab new [TAB_ID]"));
+        assert!(usage.contains("tab close [TAB_ID]"));
         assert!(usage.contains("--start waits for nmuxd --ready-json"));
         assert!(usage.contains("interim text surface"));
     }

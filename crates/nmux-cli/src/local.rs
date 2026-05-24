@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flatbuffers::FlatBufferBuilder;
-use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
+use nmux_core::host::{HostError, HostSpec, ProcessHost, ProcessOutput};
 use nmux_core::session::{
     Actor, AttachMode, ErrorRetryability, FocusInputSpec, InputFrameContext, MouseInputSpec,
     PasteInputSpec, ScrollbackFetchSpec, ScrollbackRange, Session,
@@ -179,7 +179,7 @@ where
         if readiness.listener && accepted_clients < max_clients {
             loop {
                 match accept_live_client(listener, session, host, engines) {
-                    Ok(Some(mut client)) => {
+                    Ok(Some(LiveClientAccept::Attached(mut client))) => {
                         accepted_clients += 1;
                         let existing_actors = clients
                             .iter()
@@ -197,6 +197,12 @@ where
                             );
                         }
                         clients.push(client);
+                        if accepted_clients >= max_clients {
+                            break;
+                        }
+                    }
+                    Ok(Some(LiveClientAccept::Command)) => {
+                        accepted_clients += 1;
                         if accepted_clients >= max_clients {
                             break;
                         }
@@ -339,6 +345,11 @@ struct LiveAttachedClient {
     completed_cycles: usize,
 }
 
+enum LiveClientAccept {
+    Attached(LiveAttachedClient),
+    Command,
+}
+
 struct LiveConcurrentReadiness {
     listener: bool,
     host_output: bool,
@@ -358,14 +369,20 @@ fn accept_live_client(
     session: &mut Session,
     host: &mut dyn ProcessHostOutput,
     engines: &mut PaneTerminalEngines,
-) -> Result<Option<LiveAttachedClient>, Box<dyn std::error::Error>> {
+) -> Result<Option<LiveClientAccept>, Box<dyn std::error::Error>> {
     let (mut stream, _) = match listener.accept() {
         Ok(accepted) => accepted,
         Err(err) if matches!(err.kind(), io::ErrorKind::WouldBlock) => return Ok(None),
         Err(err) => return Err(err.into()),
     };
     stream.set_nonblocking(false)?;
-    let request = read_attach_request(&mut stream)?;
+    let request = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach(request) => request,
+        ClientInitialFrame::Control(command) => {
+            serve_control_command(&mut stream, command, session, Some(host))?;
+            return Ok(Some(LiveClientAccept::Command));
+        }
+    };
     let leaf_pane_ids = session.leaf_pane_ids();
     if let Some(pane_id) = attach_target_pane_id(session, &request) {
         let actor = request_actor_for_pane(&request, &pane_id);
@@ -375,13 +392,13 @@ fn accept_live_client(
             let mut seq = 1;
             let error_pane_id = host_error_pane_id(&err).to_owned();
             write_host_output_error(&mut stream, session, &mut seq, &error_pane_id, err)?;
-            return Ok(Some(LiveAttachedClient {
+            return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
                 stream,
                 actor,
                 seq,
                 known_surface_versions: BTreeMap::new(),
                 completed_cycles: usize::MAX,
-            }));
+            })));
         }
         let mut seq = 1;
         write_live_attach_initial(&mut stream, session, &request, &pane_id, &mut seq)?;
@@ -389,24 +406,24 @@ fn accept_live_client(
         if let Some(current) = session.surface_version(&pane_id) {
             known_surface_versions.insert(pane_id, current);
         }
-        return Ok(Some(LiveAttachedClient {
+        return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
             stream,
             actor,
             seq,
             known_surface_versions,
             completed_cycles: 0,
-        }));
+        })));
     }
 
     let mut seq = 1;
     write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
-    Ok(Some(LiveAttachedClient {
+    Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
         stream,
         actor: request.actor(),
         seq,
         known_surface_versions: BTreeMap::new(),
         completed_cycles: usize::MAX,
-    }))
+    })))
 }
 
 fn write_live_attach_initial(
@@ -811,8 +828,14 @@ fn serve_next(
     engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut stream, _) = listener.accept()?;
-    let request = read_attach_request(&mut stream)?;
-    serve_attached_client(&mut stream, request, session, None, engines)
+    match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach(request) => {
+            serve_attached_client(&mut stream, request, session, None, engines)
+        }
+        ClientInitialFrame::Control(command) => {
+            serve_control_command(&mut stream, command, session, None)
+        }
+    }
 }
 
 fn serve_next_with_output(
@@ -822,7 +845,12 @@ fn serve_next_with_output(
     engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut stream, _) = listener.accept()?;
-    let request = read_attach_request(&mut stream)?;
+    let request = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach(request) => request,
+        ClientInitialFrame::Control(command) => {
+            return serve_control_command(&mut stream, command, session, None);
+        }
+    };
     if let Some(output) = output.as_deref_mut() {
         let Some(pane_id) = attach_target_pane_id(session, &request) else {
             let mut seq = 1;
@@ -848,7 +876,12 @@ where
     H: ProcessHost + ProcessOutput,
 {
     let (mut stream, _) = listener.accept()?;
-    let request = read_attach_request(&mut stream)?;
+    let request = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach(request) => request,
+        ClientInitialFrame::Control(command) => {
+            return serve_control_command(&mut stream, command, session, Some(host));
+        }
+    };
     let Some(pane_id) = attach_target_pane_id(session, &request) else {
         let mut seq = 1;
         write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
@@ -873,7 +906,12 @@ where
     H: ProcessHost + ProcessOutput,
 {
     let (mut stream, _) = listener.accept()?;
-    let request = read_attach_request(&mut stream)?;
+    let request = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach(request) => request,
+        ClientInitialFrame::Control(command) => {
+            return serve_control_command(&mut stream, command, session, Some(host));
+        }
+    };
     let Some(pane_id) = attach_target_pane_id(session, &request) else {
         let mut seq = 1;
         write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
@@ -1285,6 +1323,299 @@ fn socket_closed_error(err: &io::Error) -> bool {
             | io::ErrorKind::ConnectionReset
             | io::ErrorKind::BrokenPipe
     ) || err.raw_os_error() == Some(22)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClientInitialFrame {
+    Attach(AttachRequest),
+    Control(ControlCommandSummary),
+}
+
+fn read_client_initial_frame<R: Read>(reader: &mut R) -> io::Result<ClientInitialFrame> {
+    let frame = wire::read_frame(reader, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)?;
+    let envelope = protocol::size_prefixed_root_as_envelope(&frame).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid client frame: {err}"),
+        )
+    })?;
+    match envelope.body_type() {
+        protocol::EnvelopeBody::AttachRequest => {
+            attach_request_from_frame(&frame).map(ClientInitialFrame::Attach)
+        }
+        protocol::EnvelopeBody::ControlCommand => {
+            control_command_from_frame(&frame).map(ClientInitialFrame::Control)
+        }
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unexpected initial envelope body: {other:?}"),
+        )),
+    }
+}
+
+fn serve_control_command(
+    stream: &mut UnixStream,
+    command: ControlCommandSummary,
+    session: &mut Session,
+    host: Option<&mut dyn ProcessHost>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut seq = 1;
+    match apply_control_command(session, host, &command) {
+        Ok(()) => {
+            let workspace_frame = session.workspace_tree_frame("local-client", seq);
+            wire::write_default_frame(stream, &workspace_frame)?;
+            Ok(())
+        }
+        Err(error) => write_protocol_error(
+            stream,
+            session,
+            &mut seq,
+            error.code,
+            &error.message,
+            error.pane_id.as_deref(),
+            command.command_seq,
+        ),
+    }
+}
+
+fn apply_control_command(
+    session: &mut Session,
+    host: Option<&mut dyn ProcessHost>,
+    command: &ControlCommandSummary,
+) -> Result<(), ControlCommandError> {
+    match command.kind {
+        protocol::ControlCommandKind::PaneSplit => {
+            let Some(host) = host else {
+                return Err(ControlCommandError::unknown(
+                    "pane split requires a process host",
+                    command.pane_id.clone(),
+                ));
+            };
+            apply_pane_split_command(session, host, command)
+        }
+        protocol::ControlCommandKind::TabNew => {
+            let Some(host) = host else {
+                return Err(ControlCommandError::unknown(
+                    "tab new requires a process host",
+                    None,
+                ));
+            };
+            apply_tab_new_command(session, host, command)
+        }
+        protocol::ControlCommandKind::TabClose => apply_tab_close_command(session, host, command),
+        _ => Err(ControlCommandError::unknown(
+            format!("unknown control command kind {}", command.kind.0),
+            command.pane_id.clone(),
+        )),
+    }
+}
+
+fn apply_pane_split_command(
+    session: &mut Session,
+    host: &mut dyn ProcessHost,
+    command: &ControlCommandSummary,
+) -> Result<(), ControlCommandError> {
+    let target_pane_id = match command.pane_id.as_deref() {
+        Some(pane_id) => pane_id.to_owned(),
+        None => session
+            .active_pane_id()
+            .ok_or_else(|| ControlCommandError::pane_not_found("active pane"))?
+            .to_owned(),
+    };
+    if !matches!(
+        command.split_axis,
+        protocol::SplitAxis::Horizontal | protocol::SplitAxis::Vertical
+    ) {
+        return Err(ControlCommandError::unknown(
+            "pane split requires horizontal or vertical axis",
+            Some(target_pane_id),
+        ));
+    }
+    let template = session
+        .pane_host(&target_pane_id)
+        .ok_or_else(|| ControlCommandError::pane_not_found(&target_pane_id))?
+        .clone();
+    let new_pane_id = next_pane_id(session);
+    let new_host = host_with_pane_environment(template, &new_pane_id);
+    host.start_pane(&new_pane_id, &new_host)
+        .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(new_pane_id.clone())))?;
+    if !session.split_pane(
+        &target_pane_id,
+        command.split_axis,
+        new_pane_id.clone(),
+        new_host,
+    ) {
+        let _ = host.stop_pane(&new_pane_id);
+        return Err(ControlCommandError::unknown(
+            format!("failed to split pane: {target_pane_id}"),
+            Some(target_pane_id),
+        ));
+    }
+    Ok(())
+}
+
+fn apply_tab_new_command(
+    session: &mut Session,
+    host: &mut dyn ProcessHost,
+    command: &ControlCommandSummary,
+) -> Result<(), ControlCommandError> {
+    let active_pane_id = session
+        .active_pane_id()
+        .ok_or_else(|| ControlCommandError::pane_not_found("active pane"))?
+        .to_owned();
+    let template = session
+        .pane_host(&active_pane_id)
+        .ok_or_else(|| ControlCommandError::pane_not_found(&active_pane_id))?
+        .clone();
+    let tab_id = command
+        .tab_id
+        .clone()
+        .unwrap_or_else(|| next_tab_id(session));
+    if session.tabs.iter().any(|tab| tab.id == tab_id) {
+        return Err(ControlCommandError::unknown(
+            format!("tab already exists: {tab_id}"),
+            None,
+        ));
+    }
+    let pane_id = format!("{tab_id}-pane-1");
+    let title = command.title.clone().unwrap_or_else(|| tab_id.clone());
+    let new_host = host_with_pane_environment(template, &pane_id);
+    host.start_pane(&pane_id, &new_host)
+        .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(pane_id.clone())))?;
+    if !session.add_tab(tab_id.clone(), title, pane_id.clone(), new_host)
+        || (!session.switch_tab(&tab_id) && session.active_tab_id != tab_id)
+    {
+        let _ = host.stop_pane(&pane_id);
+        return Err(ControlCommandError::unknown(
+            format!("failed to create tab: {tab_id}"),
+            None,
+        ));
+    }
+    Ok(())
+}
+
+fn apply_tab_close_command(
+    session: &mut Session,
+    host: Option<&mut dyn ProcessHost>,
+    command: &ControlCommandSummary,
+) -> Result<(), ControlCommandError> {
+    let tab_id = command
+        .tab_id
+        .clone()
+        .unwrap_or_else(|| session.active_tab_id.clone());
+    let tab = session
+        .tabs
+        .iter()
+        .find(|tab| tab.id == tab_id)
+        .ok_or_else(|| ControlCommandError::unknown(format!("tab not found: {tab_id}"), None))?;
+    let pane_ids = tab_leaf_pane_ids(tab);
+    if !session.close_tab(&tab_id) {
+        return Err(ControlCommandError::unknown(
+            format!("failed to close tab: {tab_id}"),
+            None,
+        ));
+    }
+    if let Some(host) = host {
+        for pane_id in pane_ids {
+            host.stop_pane(&pane_id)
+                .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(pane_id)))?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ControlCommandError {
+    code: protocol::ErrorCode,
+    message: String,
+    pane_id: Option<String>,
+}
+
+impl ControlCommandError {
+    fn pane_not_found(pane_id: &str) -> Self {
+        Self {
+            code: protocol::ErrorCode::PaneNotFound,
+            message: format!("pane not found: {pane_id}"),
+            pane_id: Some(pane_id.to_owned()),
+        }
+    }
+
+    fn unknown(message: impl Into<String>, pane_id: Option<String>) -> Self {
+        Self {
+            code: protocol::ErrorCode::Unknown,
+            message: message.into(),
+            pane_id,
+        }
+    }
+}
+
+fn next_pane_id(session: &Session) -> String {
+    let mut next = 1;
+    loop {
+        let pane_id = format!("pane-{next}");
+        if session.pane_host(&pane_id).is_none() {
+            return pane_id;
+        }
+        next += 1;
+    }
+}
+
+fn next_tab_id(session: &Session) -> String {
+    let mut next = 1;
+    loop {
+        let tab_id = format!("tab-{next}");
+        if !session.tabs.iter().any(|tab| tab.id == tab_id) {
+            return tab_id;
+        }
+        next += 1;
+    }
+}
+
+fn host_with_pane_environment(mut host: HostSpec, pane_id: &str) -> HostSpec {
+    let socket = host
+        .command
+        .env
+        .iter()
+        .find(|(key, _)| key == "NMUX_SOCKET")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_default();
+    let previous_origin = host
+        .command
+        .env
+        .iter()
+        .find(|(key, _)| key == "NMUX_ORIGIN")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| host.id.clone());
+    host.command.env.retain(|(key, _)| {
+        !matches!(
+            key.as_str(),
+            "NMUX" | "NMUX_SESSION_ID" | "NMUX_PANE_ID" | "NMUX_SOCKET" | "NMUX_ORIGIN"
+        )
+    });
+    host.command.env.extend([
+        ("NMUX".to_owned(), "1".to_owned()),
+        ("NMUX_SESSION_ID".to_owned(), "local".to_owned()),
+        ("NMUX_PANE_ID".to_owned(), pane_id.to_owned()),
+        ("NMUX_SOCKET".to_owned(), socket),
+        ("NMUX_ORIGIN".to_owned(), previous_origin),
+    ]);
+    host
+}
+
+fn tab_leaf_pane_ids(tab: &nmux_core::session::Tab) -> Vec<String> {
+    let mut pane_ids = Vec::new();
+    collect_tab_leaf_pane_ids(&tab.root, &mut pane_ids);
+    pane_ids
+}
+
+fn collect_tab_leaf_pane_ids(pane: &nmux_core::session::Pane, pane_ids: &mut Vec<String>) {
+    if pane.children.is_empty() {
+        pane_ids.push(pane.id.clone());
+        return;
+    }
+    for child in &pane.children {
+        collect_tab_leaf_pane_ids(child, pane_ids);
+    }
 }
 
 enum LiveClientRead {
@@ -2048,6 +2379,19 @@ pub fn attach_render_once(
     let snapshot = attach_with_client_options(path, options)?;
     client_state.apply_scope(socket_identity(path).ok());
     client_state.render_attach(snapshot)
+}
+
+pub fn run_control_command(
+    path: &Path,
+    connect_timeout: Option<Duration>,
+    command: ControlCommandSummary,
+) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
+    let mut stream = match connect_timeout {
+        Some(timeout) => connect_to_daemon_with_timeout(path, timeout)?,
+        None => connect_to_daemon(path)?,
+    };
+    write_control_command(&mut stream, &command)?;
+    read_control_command_response(&mut stream)
 }
 
 impl AttachOptions {
@@ -3139,6 +3483,25 @@ fn read_optional_server_error_from_stream(
     }
 }
 
+fn read_control_command_response(
+    stream: &mut UnixStream,
+) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
+    loop {
+        let frame = wire::read_default_frame(stream)?;
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+        match envelope.body_type() {
+            protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
+                return workspace_summary_from_frame(&frame);
+            }
+            protocol::EnvelopeBody::Error => {
+                return Err(server_error(error_summary_from_frame(&frame)?));
+            }
+            protocol::EnvelopeBody::PresenceUpdate => {}
+            other => return Err(format!("unexpected control response: {other:?}").into()),
+        }
+    }
+}
+
 pub fn read_live_surface_update_from_stream(
     stream: &mut UnixStream,
 ) -> Result<LiveSurfaceRead, Box<dyn std::error::Error>> {
@@ -3522,6 +3885,14 @@ pub fn write_attach_request<W: Write>(writer: &mut W, request: &AttachRequest) -
     wire::write_frame(writer, &frame, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)
 }
 
+pub fn write_control_command<W: Write>(
+    writer: &mut W,
+    command: &ControlCommandSummary,
+) -> io::Result<()> {
+    let frame = command.frame();
+    wire::write_frame(writer, &frame, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)
+}
+
 pub fn read_attach_request<R: Read>(reader: &mut R) -> io::Result<AttachRequest> {
     let frame = wire::read_frame(reader, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)?;
     attach_request_from_frame(&frame)
@@ -3579,6 +3950,36 @@ fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
     })
 }
 
+fn control_command_from_frame(frame: &[u8]) -> io::Result<ControlCommandSummary> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid control command frame: {err}"),
+        )
+    })?;
+    if envelope.body_type() != protocol::EnvelopeBody::ControlCommand {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "unexpected control command envelope body: {:?}",
+                envelope.body_type()
+            ),
+        ));
+    }
+    let command = envelope.body_as_control_command().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "missing control command body")
+    })?;
+    Ok(ControlCommandSummary {
+        actor_id: required_io_string(command.actor_id(), "control actor_id")?,
+        command_seq: command.command_seq(),
+        kind: validate_control_command_kind_io(command.kind())?,
+        pane_id: optional_io_string(command.pane_id(), "control pane_id")?,
+        tab_id: optional_io_string(command.tab_id(), "control tab_id")?,
+        split_axis: validate_split_axis_io(command.split_axis())?,
+        title: optional_io_string(command.title(), "control title")?,
+    })
+}
+
 fn required_io_string(value: Option<&str>, field: &str) -> io::Result<String> {
     let value = value
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("missing {field}")))?;
@@ -3589,6 +3990,41 @@ fn required_io_string(value: Option<&str>, field: &str) -> io::Result<String> {
         ));
     }
     Ok(value.to_owned())
+}
+
+fn optional_io_string(value: Option<&str>, field: &str) -> io::Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("empty {field}"),
+        ));
+    }
+    Ok(Some(value.to_owned()))
+}
+
+fn validate_control_command_kind_io(
+    kind: protocol::ControlCommandKind,
+) -> io::Result<protocol::ControlCommandKind> {
+    if kind.variant_name().is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown control command kind {}", kind.0),
+        ));
+    }
+    Ok(kind)
+}
+
+fn validate_split_axis_io(axis: protocol::SplitAxis) -> io::Result<protocol::SplitAxis> {
+    if axis.variant_name().is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown split axis {}", axis.0),
+        ));
+    }
+    Ok(axis)
 }
 
 fn wire_error_to_io(err: wire::WireError) -> io::Error {
@@ -3606,6 +4042,65 @@ pub struct AttachRequest {
     pub mode: AttachMode,
     pub focused_pane_id: Option<String>,
     pub known_surfaces: Vec<KnownSurfaceVersion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControlCommandSummary {
+    pub actor_id: String,
+    pub command_seq: u64,
+    pub kind: protocol::ControlCommandKind,
+    pub pane_id: Option<String>,
+    pub tab_id: Option<String>,
+    pub split_axis: protocol::SplitAxis,
+    pub title: Option<String>,
+}
+
+impl ControlCommandSummary {
+    fn frame(&self) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let actor_id = builder.create_string(&self.actor_id);
+        let pane_id = self
+            .pane_id
+            .as_ref()
+            .map(|pane_id| builder.create_string(pane_id));
+        let tab_id = self
+            .tab_id
+            .as_ref()
+            .map(|tab_id| builder.create_string(tab_id));
+        let title = self
+            .title
+            .as_ref()
+            .map(|title| builder.create_string(title));
+        let command = protocol::ControlCommand::create(
+            &mut builder,
+            &protocol::ControlCommandArgs {
+                actor_id: Some(actor_id),
+                command_seq: self.command_seq,
+                kind: self.kind,
+                pane_id,
+                tab_id,
+                split_axis: self.split_axis,
+                title,
+            },
+        );
+        let session_id = builder.create_string("local");
+        let connection_id = builder.create_string("local-client");
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(session_id),
+                connection_id: Some(connection_id),
+                seq: self.command_seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::ControlCommand,
+                body: Some(command.as_union_value()),
+            },
+        );
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
 }
 
 impl AttachRequest {

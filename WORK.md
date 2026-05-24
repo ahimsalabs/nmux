@@ -12,8 +12,7 @@ see all panes restored.
 
 ## Next features (priority order)
 
-1. **Scriptable CLI**: `nmux pane split`, `nmux tab new`, `nmux tab close`
-2. **Remote transport**: TCP/QUIC listener beyond Unix socket, identity/auth
+1. **Remote transport**: TCP/QUIC listener beyond Unix socket, identity/auth
 
 ## Test gaps to close
 

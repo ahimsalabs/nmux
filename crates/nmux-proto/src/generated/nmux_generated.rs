@@ -923,6 +923,94 @@ impl<'a> ::flatbuffers::Verifiable for ResizeReason {
 
 impl ::flatbuffers::SimpleToVerifyInSlice for ResizeReason {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_CONTROL_COMMAND_KIND: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_CONTROL_COMMAND_KIND: i8 = 2;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_CONTROL_COMMAND_KIND: [ControlCommandKind; 3] = [
+  ControlCommandKind::PaneSplit,
+  ControlCommandKind::TabNew,
+  ControlCommandKind::TabClose,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct ControlCommandKind(pub i8);
+#[allow(non_upper_case_globals)]
+impl ControlCommandKind {
+  pub const PaneSplit: Self = Self(0);
+  pub const TabNew: Self = Self(1);
+  pub const TabClose: Self = Self(2);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 2;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::PaneSplit,
+    Self::TabNew,
+    Self::TabClose,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::PaneSplit => Some("PaneSplit"),
+      Self::TabNew => Some("TabNew"),
+      Self::TabClose => Some("TabClose"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for ControlCommandKind {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for ControlCommandKind {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for ControlCommandKind {
+    type Output = ControlCommandKind;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for ControlCommandKind {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for ControlCommandKind {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for ControlCommandKind {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_RESIZE_POLICY: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MAX_RESIZE_POLICY: i8 = 3;
@@ -1649,10 +1737,10 @@ impl ::flatbuffers::SimpleToVerifyInSlice for PresenceKind {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_ENVELOPE_BODY: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_ENVELOPE_BODY: u8 = 11;
+pub const ENUM_MAX_ENVELOPE_BODY: u8 = 12;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 12] = [
+pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 13] = [
   EnvelopeBody::NONE,
   EnvelopeBody::WorkspaceTreeSnapshot,
   EnvelopeBody::PaneSurfaceSnapshot,
@@ -1665,6 +1753,7 @@ pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 12] = [
   EnvelopeBody::PresenceUpdate,
   EnvelopeBody::AttachRequest,
   EnvelopeBody::AttachStatus,
+  EnvelopeBody::ControlCommand,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -1684,9 +1773,10 @@ impl EnvelopeBody {
   pub const PresenceUpdate: Self = Self(9);
   pub const AttachRequest: Self = Self(10);
   pub const AttachStatus: Self = Self(11);
+  pub const ControlCommand: Self = Self(12);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 11;
+  pub const ENUM_MAX: u8 = 12;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::NONE,
     Self::WorkspaceTreeSnapshot,
@@ -1700,6 +1790,7 @@ impl EnvelopeBody {
     Self::PresenceUpdate,
     Self::AttachRequest,
     Self::AttachStatus,
+    Self::ControlCommand,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -1716,6 +1807,7 @@ impl EnvelopeBody {
       Self::PresenceUpdate => Some("PresenceUpdate"),
       Self::AttachRequest => Some("AttachRequest"),
       Self::AttachStatus => Some("AttachStatus"),
+      Self::ControlCommand => Some("ControlCommand"),
       _ => None,
     }
   }
@@ -5420,6 +5512,204 @@ impl ::core::fmt::Debug for ResizeIntent<'_> {
       ds.finish()
   }
 }
+pub enum ControlCommandOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ControlCommand<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ControlCommand<'a> {
+  type Inner = ControlCommand<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ControlCommand<'a> {
+  pub const VT_ACTOR_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_COMMAND_SEQ: ::flatbuffers::VOffsetT = 6;
+  pub const VT_KIND: ::flatbuffers::VOffsetT = 8;
+  pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 10;
+  pub const VT_TAB_ID: ::flatbuffers::VOffsetT = 12;
+  pub const VT_SPLIT_AXIS: ::flatbuffers::VOffsetT = 14;
+  pub const VT_TITLE: ::flatbuffers::VOffsetT = 16;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ControlCommand { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ControlCommandArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ControlCommand<'bldr>> {
+    let mut builder = ControlCommandBuilder::new(_fbb);
+    builder.add_command_seq(args.command_seq);
+    if let Some(x) = args.title { builder.add_title(x); }
+    if let Some(x) = args.tab_id { builder.add_tab_id(x); }
+    if let Some(x) = args.pane_id { builder.add_pane_id(x); }
+    if let Some(x) = args.actor_id { builder.add_actor_id(x); }
+    builder.add_split_axis(args.split_axis);
+    builder.add_kind(args.kind);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn actor_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ControlCommand::VT_ACTOR_ID, None)}
+  }
+  #[inline]
+  pub fn command_seq(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ControlCommand::VT_COMMAND_SEQ, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn kind(&self) -> ControlCommandKind {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<ControlCommandKind>(ControlCommand::VT_KIND, Some(ControlCommandKind::PaneSplit)).unwrap()}
+  }
+  #[inline]
+  pub fn pane_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ControlCommand::VT_PANE_ID, None)}
+  }
+  #[inline]
+  pub fn tab_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ControlCommand::VT_TAB_ID, None)}
+  }
+  #[inline]
+  pub fn split_axis(&self) -> SplitAxis {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<SplitAxis>(ControlCommand::VT_SPLIT_AXIS, Some(SplitAxis::None)).unwrap()}
+  }
+  #[inline]
+  pub fn title(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ControlCommand::VT_TITLE, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ControlCommand<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("actor_id", Self::VT_ACTOR_ID, false)?
+     .visit_field::<u64>("command_seq", Self::VT_COMMAND_SEQ, false)?
+     .visit_field::<ControlCommandKind>("kind", Self::VT_KIND, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("tab_id", Self::VT_TAB_ID, false)?
+     .visit_field::<SplitAxis>("split_axis", Self::VT_SPLIT_AXIS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("title", Self::VT_TITLE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ControlCommandArgs<'a> {
+    pub actor_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub command_seq: u64,
+    pub kind: ControlCommandKind,
+    pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub tab_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub split_axis: SplitAxis,
+    pub title: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for ControlCommandArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ControlCommandArgs {
+      actor_id: None,
+      command_seq: 0,
+      kind: ControlCommandKind::PaneSplit,
+      pane_id: None,
+      tab_id: None,
+      split_axis: SplitAxis::None,
+      title: None,
+    }
+  }
+}
+
+pub struct ControlCommandBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ControlCommandBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_actor_id(&mut self, actor_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ControlCommand::VT_ACTOR_ID, actor_id);
+  }
+  #[inline]
+  pub fn add_command_seq(&mut self, command_seq: u64) {
+    self.fbb_.push_slot::<u64>(ControlCommand::VT_COMMAND_SEQ, command_seq, 0);
+  }
+  #[inline]
+  pub fn add_kind(&mut self, kind: ControlCommandKind) {
+    self.fbb_.push_slot::<ControlCommandKind>(ControlCommand::VT_KIND, kind, ControlCommandKind::PaneSplit);
+  }
+  #[inline]
+  pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ControlCommand::VT_PANE_ID, pane_id);
+  }
+  #[inline]
+  pub fn add_tab_id(&mut self, tab_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ControlCommand::VT_TAB_ID, tab_id);
+  }
+  #[inline]
+  pub fn add_split_axis(&mut self, split_axis: SplitAxis) {
+    self.fbb_.push_slot::<SplitAxis>(ControlCommand::VT_SPLIT_AXIS, split_axis, SplitAxis::None);
+  }
+  #[inline]
+  pub fn add_title(&mut self, title: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ControlCommand::VT_TITLE, title);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ControlCommandBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ControlCommandBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ControlCommand<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ControlCommand<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ControlCommand");
+      ds.field("actor_id", &self.actor_id());
+      ds.field("command_seq", &self.command_seq());
+      ds.field("kind", &self.kind());
+      ds.field("pane_id", &self.pane_id());
+      ds.field("tab_id", &self.tab_id());
+      ds.field("split_axis", &self.split_axis());
+      ds.field("title", &self.title());
+      ds.finish()
+  }
+}
 pub enum ScrollbackFetchOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -7034,6 +7324,21 @@ impl<'a> Envelope<'a> {
     }
   }
 
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_control_command(&self) -> Option<ControlCommand<'a>> {
+    if self.body_type() == EnvelopeBody::ControlCommand {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { ControlCommand::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
 }
 
 impl ::flatbuffers::Verifiable for Envelope<'_> {
@@ -7061,6 +7366,7 @@ impl ::flatbuffers::Verifiable for Envelope<'_> {
           EnvelopeBody::PresenceUpdate => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<PresenceUpdate>>("EnvelopeBody::PresenceUpdate", pos),
           EnvelopeBody::AttachRequest => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<AttachRequest>>("EnvelopeBody::AttachRequest", pos),
           EnvelopeBody::AttachStatus => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<AttachStatus>>("EnvelopeBody::AttachStatus", pos),
+          EnvelopeBody::ControlCommand => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ControlCommand>>("EnvelopeBody::ControlCommand", pos),
           _ => Ok(()),
         }
      })?
@@ -7229,6 +7535,13 @@ impl ::core::fmt::Debug for Envelope<'_> {
         },
         EnvelopeBody::AttachStatus => {
           if let Some(x) = self.body_as_attach_status() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::ControlCommand => {
+          if let Some(x) = self.body_as_control_command() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")

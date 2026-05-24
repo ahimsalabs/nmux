@@ -68,6 +68,12 @@ enum ResizeReason : byte {
   Policy = 3,
 }
 
+enum ControlCommandKind : byte {
+  PaneSplit = 0,
+  TabNew = 1,
+  TabClose = 2,
+}
+
 enum ResizePolicy : byte {
   Fixed = 0,
   Leader = 1,
@@ -301,6 +307,16 @@ table ResizeIntent {
   reason:ResizeReason;
 }
 
+table ControlCommand {
+  actor_id:string;
+  command_seq:ulong;
+  kind:ControlCommandKind = PaneSplit;
+  pane_id:string;
+  tab_id:string;
+  split_axis:SplitAxis = None;
+  title:string;
+}
+
 table ScrollbackFetch {
   pane_id:string;
   actor_id:string;
@@ -379,6 +395,7 @@ union EnvelopeBody {
   PresenceUpdate,
   AttachRequest,
   AttachStatus,
+  ControlCommand,
 }
 
 table Envelope {

@@ -644,6 +644,121 @@ fn pane_send_subcommand_writes_to_target_pane() {
 }
 
 #[test]
+fn scriptable_cli_splits_panes_and_manages_tabs() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--command",
+            "printf 'ready:%s\\n' \"$NMUX_PANE_ID\"; cat >/dev/null",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let split = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "pane",
+            "split",
+            "vertical",
+            "pane-1",
+        ])
+        .output()
+        .expect("run nmux pane split");
+    assert!(
+        split.status.success(),
+        "nmux pane split failed: {}",
+        String::from_utf8_lossy(&split.stderr)
+    );
+    let split_stdout = String::from_utf8_lossy(&split.stdout);
+    assert!(
+        split_stdout.contains("\"pane_id\":\"pane-2\""),
+        "split should focus the new pane:\n{split_stdout}"
+    );
+
+    let tab_new = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "tab",
+            "new",
+            "tab-script",
+            "--title",
+            "Script",
+        ])
+        .output()
+        .expect("run nmux tab new");
+    assert!(
+        tab_new.status.success(),
+        "nmux tab new failed: {}",
+        String::from_utf8_lossy(&tab_new.stderr)
+    );
+    let tab_new_stdout = String::from_utf8_lossy(&tab_new.stdout);
+    assert!(
+        tab_new_stdout.contains("\"tab_id\":\"tab-script\"")
+            && tab_new_stdout.contains("\"pane_id\":\"tab-script-pane-1\""),
+        "tab new should focus the new tab pane:\n{tab_new_stdout}"
+    );
+
+    let tab_close = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "tab",
+            "close",
+            "tab-script",
+        ])
+        .output()
+        .expect("run nmux tab close");
+    assert!(
+        tab_close.status.success(),
+        "nmux tab close failed: {}",
+        String::from_utf8_lossy(&tab_close.stderr)
+    );
+    let tab_close_stdout = String::from_utf8_lossy(&tab_close.stdout);
+    assert!(
+        tab_close_stdout.contains("\"tab_id\":\"tab-1\"")
+            && tab_close_stdout.contains("\"pane_id\":\"pane-2\""),
+        "tab close should return to tab-1 focused pane:\n{tab_close_stdout}"
+    );
+
+    let attach = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "--pane",
+            "pane-2",
+        ])
+        .output()
+        .expect("run nmux attach pane-2");
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        attach.status.success(),
+        "nmux attach pane-2 failed: {}",
+        String::from_utf8_lossy(&attach.stderr)
+    );
+    let attach_stdout = String::from_utf8_lossy(&attach.stdout);
+    assert!(
+        attach_stdout.contains("\"pane_id\":\"pane-2\"") && attach_stdout.contains("ready:pane-2"),
+        "attach should see the runtime split pane output:\n{attach_stdout}"
+    );
+}
+
+#[test]
 fn one_shot_json_reports_state_save_error() {
     let socket_path = test_socket_path();
     let blocking_parent = test_state_path();
