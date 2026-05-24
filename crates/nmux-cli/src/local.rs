@@ -3644,6 +3644,149 @@ impl ClientPaneSurface {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpeculativeEchoOverlay {
+    prediction: Option<SpeculativeEchoPrediction>,
+    consecutive_misses: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpeculativeEchoPrediction {
+    pub pane_id: String,
+    pub base_version: u64,
+    pub input_seq: u64,
+    pub row: u32,
+    pub col: u32,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpeculativeEchoReconcile {
+    NoPrediction,
+    Pending,
+    Confirmed,
+    Mismatched,
+}
+
+impl SpeculativeEchoOverlay {
+    const MAX_CONSECUTIVE_MISSES: u8 = 2;
+
+    pub fn predict_printable_key(
+        &mut self,
+        surface: &ClientPaneSurface,
+        input_seq: u64,
+        text: &str,
+    ) -> Option<String> {
+        if self.consecutive_misses >= Self::MAX_CONSECUTIVE_MISSES || self.prediction.is_some() {
+            return None;
+        }
+        let ch = single_predictable_char(text)?;
+        let cursor = surface.cursor?;
+        if surface.surface != protocol::SurfaceKind::Main
+            || !cursor.visible
+            || cursor.row >= surface.rows
+            || cursor.col >= surface.cols
+        {
+            return None;
+        }
+        let row_index = usize::try_from(cursor.row).ok()?;
+        let row_text = surface.row_text.get(row_index)?;
+        if cursor.col as usize != row_text.chars().count() {
+            return None;
+        }
+        if cursor.col + 1 > surface.cols {
+            return None;
+        }
+
+        self.prediction = Some(SpeculativeEchoPrediction {
+            pane_id: surface.pane_id.clone(),
+            base_version: surface.version,
+            input_seq,
+            row: cursor.row,
+            col: cursor.col,
+            text: ch.to_string(),
+        });
+        self.render(surface)
+    }
+
+    pub fn render(&self, surface: &ClientPaneSurface) -> Option<String> {
+        let prediction = self.prediction.as_ref()?;
+        if prediction.pane_id != surface.pane_id || prediction.base_version != surface.version {
+            return None;
+        }
+        let row_index = usize::try_from(prediction.row).ok()?;
+        let mut rows = surface.row_text.clone();
+        let row = rows.get_mut(row_index)?;
+        if prediction.col as usize != row.chars().count() {
+            return None;
+        }
+        row.push_str(&prediction.text);
+        let visible_rows = rows
+            .iter()
+            .rposition(|row| !row.is_empty())
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        Some(rows[..visible_rows].join("\n"))
+    }
+
+    pub fn reconcile_update(&mut self, update: &SurfaceUpdate) -> SpeculativeEchoReconcile {
+        let Some(prediction) = self.prediction.clone() else {
+            return SpeculativeEchoReconcile::NoPrediction;
+        };
+        if prediction.pane_id != update.pane_id {
+            return SpeculativeEchoReconcile::Pending;
+        }
+        if update.kind == SurfaceUpdateKind::Snapshot
+            || update
+                .surface
+                .is_some_and(|surface| surface != protocol::SurfaceKind::Main)
+        {
+            return self.clear_mismatched();
+        }
+        if update.version <= prediction.base_version {
+            return SpeculativeEchoReconcile::Pending;
+        }
+        let Some(row) = update
+            .row_updates
+            .iter()
+            .find(|row| row.row == prediction.row)
+        else {
+            return SpeculativeEchoReconcile::Pending;
+        };
+        let confirmed = row
+            .text
+            .chars()
+            .nth(prediction.col as usize)
+            .is_some_and(|ch| ch.to_string() == prediction.text);
+        if confirmed {
+            self.prediction = None;
+            self.consecutive_misses = 0;
+            SpeculativeEchoReconcile::Confirmed
+        } else {
+            self.clear_mismatched()
+        }
+    }
+
+    pub fn prediction_allowed(&self) -> bool {
+        self.consecutive_misses < Self::MAX_CONSECUTIVE_MISSES
+    }
+
+    fn clear_mismatched(&mut self) -> SpeculativeEchoReconcile {
+        self.prediction = None;
+        self.consecutive_misses = self.consecutive_misses.saturating_add(1);
+        SpeculativeEchoReconcile::Mismatched
+    }
+}
+
+fn single_predictable_char(text: &str) -> Option<char> {
+    let mut chars = text.chars();
+    let ch = chars.next()?;
+    if chars.next().is_some() || ch.is_control() || !ch.is_ascii() {
+        return None;
+    }
+    Some(ch)
+}
+
 impl CellRunSummary {
     fn plain(text: &str) -> Self {
         Self {
@@ -8046,6 +8189,159 @@ mod tests {
         assert_eq!(surface.title, "cursor title");
         assert_eq!(surface.working_directory, "file://localhost/tmp/cursor");
         assert_eq!(surface.colors, original_colors);
+    }
+
+    #[test]
+    fn speculative_echo_predicts_printable_key_without_mutating_confirmed_surface() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "ab")],
+        );
+        snapshot.cursor = Some(CursorSummary {
+            row: 0,
+            col: 2,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: false,
+        });
+        let surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut overlay = SpeculativeEchoOverlay::default();
+
+        let predicted = overlay
+            .predict_printable_key(&surface, 7, "c")
+            .expect("predicted render");
+
+        assert_eq!(predicted, "abc");
+        assert_eq!(surface.render_text(), "ab");
+        assert_eq!(
+            overlay.prediction,
+            Some(SpeculativeEchoPrediction {
+                pane_id: "pane-1".to_owned(),
+                base_version: 1,
+                input_seq: 7,
+                row: 0,
+                col: 2,
+                text: "c".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn speculative_echo_rejects_non_single_cell_or_non_append_inputs() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "ab")],
+        );
+        snapshot.cursor = Some(CursorSummary {
+            row: 0,
+            col: 1,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: false,
+        });
+        let surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut overlay = SpeculativeEchoOverlay::default();
+
+        assert_eq!(overlay.predict_printable_key(&surface, 1, "Z"), None);
+        assert_eq!(overlay.predict_printable_key(&surface, 1, "\n"), None);
+        assert_eq!(overlay.predict_printable_key(&surface, 1, "wide:中"), None);
+        assert_eq!(overlay.prediction, None);
+    }
+
+    #[test]
+    fn speculative_echo_reconciles_confirmed_and_mismatched_updates() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "ab")],
+        );
+        snapshot.cursor = Some(CursorSummary {
+            row: 0,
+            col: 2,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: false,
+        });
+        let surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut overlay = SpeculativeEchoOverlay::default();
+        assert_eq!(
+            overlay.predict_printable_key(&surface, 1, "c").as_deref(),
+            Some("abc")
+        );
+
+        let confirmed = surface_update(
+            SurfaceUpdateKind::Patch,
+            2,
+            Some(1),
+            vec![surface_row(0, "abc")],
+        );
+        assert_eq!(
+            overlay.reconcile_update(&confirmed),
+            SpeculativeEchoReconcile::Confirmed
+        );
+        assert!(overlay.prediction_allowed());
+        assert_eq!(overlay.prediction, None);
+
+        assert_eq!(
+            overlay.predict_printable_key(&surface, 2, "d").as_deref(),
+            Some("abd")
+        );
+        let mismatch = surface_update(
+            SurfaceUpdateKind::Patch,
+            3,
+            Some(1),
+            vec![surface_row(0, "abX")],
+        );
+        assert_eq!(
+            overlay.reconcile_update(&mismatch),
+            SpeculativeEchoReconcile::Mismatched
+        );
+        assert_eq!(overlay.prediction, None);
+    }
+
+    #[test]
+    fn speculative_echo_backs_off_after_repeated_misses() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "ab")],
+        );
+        snapshot.cursor = Some(CursorSummary {
+            row: 0,
+            col: 2,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: false,
+        });
+        let surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut overlay = SpeculativeEchoOverlay::default();
+
+        for input_seq in 1..=2 {
+            assert!(
+                overlay
+                    .predict_printable_key(&surface, input_seq, "c")
+                    .is_some()
+            );
+            let mismatch = surface_update(
+                SurfaceUpdateKind::Patch,
+                u64::from(input_seq + 1),
+                Some(1),
+                vec![surface_row(0, "abX")],
+            );
+            assert_eq!(
+                overlay.reconcile_update(&mismatch),
+                SpeculativeEchoReconcile::Mismatched
+            );
+        }
+
+        assert!(!overlay.prediction_allowed());
+        assert_eq!(overlay.predict_printable_key(&surface, 3, "c"), None);
     }
 
     #[test]

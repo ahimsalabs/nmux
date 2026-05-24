@@ -34,3 +34,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0024: Native VT Source Policy Criteria](0024-native-vt-source-policy-criteria.md) | Accepted |
 | [0025: Native VT Packaging Criteria](0025-native-vt-packaging-criteria.md) | Accepted |
 | [0026: Native VT CI Promotion Criteria](0026-native-vt-ci-promotion-criteria.md) | Accepted |
+| [0027: Speculative Local Echo Boundary](0027-speculative-local-echo-boundary.md) | Proposed |
