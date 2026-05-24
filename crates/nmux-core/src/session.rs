@@ -2567,6 +2567,103 @@ mod tests {
     }
 
     #[test]
+    fn split_pane_can_target_existing_leaf_and_preserves_other_leaves() {
+        let mut session = Session::initial();
+        assert!(session.split_active_pane(
+            protocol::SplitAxis::Vertical,
+            "pane-2",
+            HostSpec::local("local-2", CommandSpec::new("sh"))
+        ));
+
+        assert!(session.split_pane(
+            "pane-1",
+            protocol::SplitAxis::Horizontal,
+            "pane-3",
+            HostSpec::local("local-3", CommandSpec::new("sh"))
+        ));
+
+        assert_eq!(session.version, 3);
+        assert_eq!(session.active_pane_id(), Some("pane-3"));
+        assert_eq!(
+            session.leaf_pane_ids(),
+            vec![
+                "pane-1".to_owned(),
+                "pane-3".to_owned(),
+                "pane-2".to_owned()
+            ]
+        );
+        assert_eq!(session.pane_size("pane-1"), Some((40, 12)));
+        assert_eq!(session.pane_size("pane-3"), Some((40, 12)));
+        assert_eq!(session.pane_size("pane-2"), Some((40, 24)));
+
+        let frame = session.workspace_tree_frame("conn-1", 7);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let snapshot = envelope
+            .body_as_workspace_tree_snapshot()
+            .expect("snapshot");
+        let root = snapshot.tabs().expect("tabs").get(0).root().expect("root");
+        assert_eq!(root.split_axis(), protocol::SplitAxis::Vertical);
+        let root_children = root.children().expect("root children");
+        assert_eq!(root_children.len(), 2);
+        let nested = root_children.get(0);
+        assert_eq!(nested.split_axis(), protocol::SplitAxis::Horizontal);
+        let nested_children = nested.children().expect("nested children");
+        assert_eq!(nested_children.get(0).pane_id(), Some("pane-1"));
+        assert_eq!(nested_children.get(1).pane_id(), Some("pane-3"));
+        assert_eq!(root_children.get(1).pane_id(), Some("pane-2"));
+    }
+
+    #[test]
+    fn split_pane_is_scoped_to_active_tab_and_rejects_invalid_targets() {
+        let mut session = Session::initial();
+        assert!(session.add_tab(
+            "tab-2",
+            "logs",
+            "tab-2-pane-1",
+            HostSpec::local("local-2", CommandSpec::new("sh"))
+        ));
+        assert!(session.switch_tab("tab-2"));
+        let version = session.version;
+
+        assert!(!session.split_pane(
+            "pane-1",
+            protocol::SplitAxis::Vertical,
+            "pane-2",
+            HostSpec::local("local-3", CommandSpec::new("sh"))
+        ));
+        assert_eq!(session.version, version);
+
+        assert!(session.split_pane(
+            "tab-2-pane-1",
+            protocol::SplitAxis::Vertical,
+            "tab-2-pane-2",
+            HostSpec::local("local-4", CommandSpec::new("sh"))
+        ));
+        let version = session.version;
+        assert!(!session.split_pane(
+            "tab-2-pane-1",
+            protocol::SplitAxis::None,
+            "tab-2-pane-3",
+            HostSpec::local("local-5", CommandSpec::new("sh"))
+        ));
+        assert!(!session.split_pane(
+            "tab-2-pane-1",
+            protocol::SplitAxis::Vertical,
+            "tab-2-pane-2",
+            HostSpec::local("local-6", CommandSpec::new("sh"))
+        ));
+        assert_eq!(session.version, version);
+        assert_eq!(
+            session.leaf_pane_ids(),
+            vec![
+                "pane-1".to_owned(),
+                "tab-2-pane-1".to_owned(),
+                "tab-2-pane-2".to_owned()
+            ]
+        );
+    }
+
+    #[test]
     fn add_and_switch_tab_updates_workspace_tree_active_tab() {
         let mut session = Session::initial();
 

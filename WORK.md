@@ -17,7 +17,6 @@ evidence infrastructure.
 
 ## Test gaps to close
 
-- Multi-pane session unit tests (currently only single-pane)
 - macOS CI job (primary dev platform, CI only runs ubuntu-latest)
 - Wire `check-ghostty-vt` into CI (tests exist but aren't in check.yml)
 
