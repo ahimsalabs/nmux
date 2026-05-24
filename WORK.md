@@ -12,13 +12,9 @@ see all panes restored.
 
 ## Next features (priority order)
 
-1. **Simultaneous multi-client**: broadcast surface updates to all attached
-   clients concurrently, not just sequential attach; decide and implement the
-   multiplayer cursor/mouse presence model before duplicating frontend state
-   tracking (issue #2)
-2. **Scriptable CLI**: `nmux pane split`, `nmux tab new`, `nmux tab close`,
+1. **Scriptable CLI**: `nmux pane split`, `nmux tab new`, `nmux tab close`,
    `nmux pane send`, `nmux pane snapshot --json`
-3. **Remote transport**: TCP/QUIC listener beyond Unix socket, identity/auth
+2. **Remote transport**: TCP/QUIC listener beyond Unix socket, identity/auth
 
 ## Test gaps to close
 
@@ -37,6 +33,8 @@ see all panes restored.
 - Streaming playback/replay design for exports, web embeds, timestamp metadata,
   and presence history (issue #3)
 - Protocol extensions (hyperlink IDs, images, command lifecycle, physical keys)
+- Per-client cursor/mouse overlays; current multiplayer MVP uses actor identity,
+  attach focused pane, and the shared daemon-owned terminal cursor (issue #2)
 - Frontend Ghostty renderer hydration
 - Container/sandbox process hosts
 

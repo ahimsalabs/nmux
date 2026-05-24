@@ -4785,6 +4785,114 @@ fn live_clients_can_observe_shared_input_concurrently() {
 }
 
 #[test]
+fn live_json_clients_exchange_presence_identity() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-clients",
+            "2",
+            "--command",
+            "printf 'ready\n'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn nmuxd");
+
+    wait_for_socket(&socket_path);
+
+    let reader_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--json",
+            "--no-input",
+            "--no-scrollback",
+            "--actor-id",
+            "reader",
+            "--user-id",
+            "reader-user",
+            "--display-name",
+            "Reader",
+            "--iterations",
+            "3",
+            "--interval-ms",
+            "1000",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn reader nmux");
+
+    thread::sleep(Duration::from_millis(150));
+
+    let writer_client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--json",
+            "--no-input",
+            "--no-scrollback",
+            "--actor-id",
+            "writer",
+            "--user-id",
+            "writer-user",
+            "--display-name",
+            "Writer",
+            "--iterations",
+            "2",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run writer nmux");
+
+    let reader_output = reader_client
+        .wait_with_output()
+        .expect("wait for reader nmux");
+    let server_status = server.wait().expect("wait for nmuxd");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        writer_client.status.success(),
+        "writer nmux failed: {}",
+        String::from_utf8_lossy(&writer_client.stderr)
+    );
+    assert!(
+        reader_output.status.success(),
+        "reader nmux failed: {}",
+        String::from_utf8_lossy(&reader_output.stderr)
+    );
+    assert!(server_status.success(), "nmuxd failed: {server_status}");
+
+    let reader_stdout = String::from_utf8_lossy(&reader_output.stdout);
+    assert!(
+        reader_stdout.contains("\"event\":\"presence\"")
+            && reader_stdout.contains("\"actor_id\":\"writer\"")
+            && reader_stdout.contains("\"user_id\":\"writer-user\"")
+            && reader_stdout.contains("\"display_name\":\"Writer\"")
+            && reader_stdout.contains("\"mode\":\"read-only\"")
+            && reader_stdout.contains("\"focused_pane_id\":\"pane-1\""),
+        "reader did not receive writer presence:\n{reader_stdout}"
+    );
+
+    let writer_stdout = String::from_utf8_lossy(&writer_client.stdout);
+    assert!(
+        writer_stdout.contains("\"event\":\"presence\"")
+            && writer_stdout.contains("\"actor_id\":\"reader\"")
+            && writer_stdout.contains("\"user_id\":\"reader-user\"")
+            && writer_stdout.contains("\"display_name\":\"Reader\"")
+            && writer_stdout.contains("\"mode\":\"read-only\"")
+            && writer_stdout.contains("\"focused_pane_id\":\"pane-1\""),
+        "writer did not receive reader presence:\n{writer_stdout}"
+    );
+}
+
+#[test]
 fn live_current_surface_reattach_reports_focus_rejection() {
     let socket_path = test_socket_path();
     let state_path = socket_path.with_extension("state");

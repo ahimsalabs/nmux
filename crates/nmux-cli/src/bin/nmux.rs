@@ -316,6 +316,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
+    apply_client_identity(args, &mut options.request);
     options.request.focused_pane_id = args
         .target_pane_id
         .clone()
@@ -1486,6 +1487,7 @@ fn attach_once(
         connect_timeout: connect_timeout_duration(args),
         ..local::AttachOptions::default()
     };
+    apply_client_identity(args, &mut options.request);
     options.request.focused_pane_id = args
         .target_pane_id
         .clone()
@@ -1509,6 +1511,12 @@ fn attach_once(
     }
 
     local::attach_render_once(&args.socket_path, options, client_state)
+}
+
+fn apply_client_identity(args: &Args, request: &mut local::AttachRequest) {
+    request.actor_id.clone_from(&args.actor_id);
+    request.user_id.clone_from(&args.user_id);
+    request.display_name.clone_from(&args.display_name);
 }
 
 fn connect_to_daemon(args: &Args) -> Result<UnixStream, Box<dyn std::error::Error>> {
@@ -2106,6 +2114,9 @@ struct Args {
     socket_source: local::SocketPathSource,
     target_pane_id: Option<String>,
     target_tab_id: Option<String>,
+    actor_id: String,
+    user_id: String,
+    display_name: String,
     input_text: Option<String>,
     key_name: Option<String>,
     key_names: Vec<String>,
@@ -2178,6 +2189,12 @@ struct RawArgs {
     target_pane_id: Option<String>,
     #[arg(long = "tab", value_name = "TAB_ID", allow_hyphen_values = true)]
     target_tab_id: Option<String>,
+    #[arg(long = "actor-id", value_name = "ID", allow_hyphen_values = true)]
+    actor_id: Option<String>,
+    #[arg(long = "user-id", value_name = "ID", allow_hyphen_values = true)]
+    user_id: Option<String>,
+    #[arg(long = "display-name", value_name = "NAME", allow_hyphen_values = true)]
+    display_name: Option<String>,
     #[arg(long = "key", value_name = "TEXT", allow_hyphen_values = true)]
     key_text: Option<String>,
     #[arg(
@@ -2379,6 +2396,18 @@ where
     if raw.target_tab_id.as_deref().is_some_and(str::is_empty) {
         return Err("--tab requires a non-empty tab ID".into());
     }
+    let actor_id = raw.actor_id.unwrap_or_else(|| "local-actor".to_owned());
+    let user_id = raw.user_id.unwrap_or_else(|| "local-user".to_owned());
+    let display_name = raw.display_name.unwrap_or_else(|| "local".to_owned());
+    if actor_id.is_empty() {
+        return Err("--actor-id requires a non-empty ID".into());
+    }
+    if user_id.is_empty() {
+        return Err("--user-id requires a non-empty ID".into());
+    }
+    if display_name.is_empty() {
+        return Err("--display-name requires a non-empty name".into());
+    }
     if raw.target_pane_id.is_some() && raw.target_tab_id.is_some() {
         return Err("--pane cannot be combined with --tab".into());
     }
@@ -2499,6 +2528,9 @@ where
         socket_source,
         target_pane_id: raw.target_pane_id,
         target_tab_id: raw.target_tab_id,
+        actor_id,
+        user_id,
+        display_name,
         input_text,
         key_name,
         key_names,
@@ -3679,6 +3711,9 @@ Options:
   --socket PATH              Unix socket path
   --pane PANE_ID             Attach to and send input to PANE_ID
   --tab TAB_ID               Attach to and make TAB_ID active
+  --actor-id ID              Client actor ID for presence
+  --user-id ID               Client user ID for presence
+  --display-name NAME        Client display name for presence
   --print-context            Print inherited nmux pane context and exit
   --print-context-json       Print inherited nmux pane context as JSON and exit
   --print-socket             Print the resolved socket path and exit
@@ -4069,6 +4104,28 @@ mod tests {
             Err(err) => err.to_string(),
         };
         assert_eq!(err, "--pane cannot be combined with --tab");
+    }
+
+    #[test]
+    fn presence_identity_args_override_defaults() {
+        let args = args_from_iter([
+            "--actor-id",
+            "actor-a",
+            "--user-id",
+            "user-a",
+            "--display-name",
+            "Alice",
+        ])
+        .expect("args");
+        assert_eq!(args.actor_id, "actor-a");
+        assert_eq!(args.user_id, "user-a");
+        assert_eq!(args.display_name, "Alice");
+
+        let err = match args_from_iter(["--actor-id", ""]) {
+            Ok(_) => panic!("empty actor ID should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(err, "--actor-id requires a non-empty ID");
     }
 
     #[test]
@@ -5905,6 +5962,9 @@ mod tests {
         assert!(usage.contains("--state-info"));
         assert!(usage.contains("--state-info-json"));
         assert!(usage.contains("--tab TAB_ID"));
+        assert!(usage.contains("--actor-id ID"));
+        assert!(usage.contains("--user-id ID"));
+        assert!(usage.contains("--display-name NAME"));
         assert!(usage.contains("--start"));
         assert!(usage.contains("--command SHELL"));
         assert!(usage.contains("--cwd DIR"));

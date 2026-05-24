@@ -368,6 +368,7 @@ fn accept_live_client(
     let request = read_attach_request(&mut stream)?;
     let leaf_pane_ids = session.leaf_pane_ids();
     if let Some(pane_id) = attach_target_pane_id(session, &request) {
+        let actor = request_actor_for_pane(&request, &pane_id);
         if let Err(err) =
             poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
         {
@@ -376,7 +377,7 @@ fn accept_live_client(
             write_host_output_error(&mut stream, session, &mut seq, &error_pane_id, err)?;
             return Ok(Some(LiveAttachedClient {
                 stream,
-                actor: request.actor(),
+                actor,
                 seq,
                 known_surface_versions: BTreeMap::new(),
                 completed_cycles: usize::MAX,
@@ -390,7 +391,7 @@ fn accept_live_client(
         }
         return Ok(Some(LiveAttachedClient {
             stream,
-            actor: request.actor(),
+            actor,
             seq,
             known_surface_versions,
             completed_cycles: 0,
@@ -419,7 +420,7 @@ fn write_live_attach_initial(
     wire::write_default_frame(stream, &workspace_frame)?;
     *seq += 1;
 
-    let actor = request.actor();
+    let actor = request_actor_for_pane(request, pane_id);
     let presence_frame = session.presence_update_frame("local-client", *seq, &actor);
     wire::write_default_frame(stream, &presence_frame)?;
     *seq += 1;
@@ -441,6 +442,14 @@ fn write_live_attach_initial(
         *seq += 1;
     }
     Ok(())
+}
+
+fn request_actor_for_pane(request: &AttachRequest, pane_id: &str) -> Actor {
+    let mut actor = request.actor();
+    if actor.focused_pane_id.is_none() {
+        actor.focused_pane_id = Some(pane_id.to_owned());
+    }
+    actor
 }
 
 fn write_presence_to_live_client(
@@ -896,7 +905,7 @@ fn serve_live_attached_client(
     wire::write_default_frame(stream, &workspace_frame)?;
     seq += 1;
 
-    let actor = request.actor();
+    let actor = request_actor_for_pane(&request, &pane_id);
     let presence_frame = session.presence_update_frame("local-client", seq, &actor);
     wire::write_default_frame(stream, &presence_frame)?;
     seq += 1;
@@ -1318,7 +1327,7 @@ fn serve_attached_client(
     wire::write_default_frame(stream, &workspace_frame)?;
     seq += 1;
 
-    let actor = request.actor();
+    let actor = request_actor_for_pane(&request, &pane_id);
     let presence_frame = session.presence_update_frame("local-client", seq, &actor);
     wire::write_default_frame(stream, &presence_frame)?;
     seq += 1;
@@ -7805,7 +7814,7 @@ mod tests {
                 user_id: "local-user".to_owned(),
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
-                focused_pane_id: None,
+                focused_pane_id: Some("pane-1".to_owned()),
             }
         );
         let surface = snapshot.surface.as_ref().expect("surface update");
