@@ -8,6 +8,19 @@ nix develop . -c make check
 nix develop . -c make local-smoke
 ```
 
+The flake also provides an installable default-engine package:
+
+```sh
+nix build .
+./result/bin/nmux --version
+./result/bin/nmuxd --version
+```
+
+`packages.default` builds the interim-engine `nmux` and `nmuxd` binaries with
+crane and installs them under `$out/bin`. The opt-in `libghostty-vt` package is
+intentionally not exposed yet because its Ghostty/Zig source-fetch path still
+needs a Nix-clean source policy.
+
 All Nix examples assume `nix-command` and `flakes` are enabled. If your Nix
 install has not enabled them globally, run the same commands as:
 `nix --extra-experimental-features 'nix-command flakes' develop . -c ...`.
@@ -19,6 +32,7 @@ Use a broader target only when the change needs the extra evidence:
 | Normal default-engine or docs work | `nix develop . -c make check` and `nix develop . -c make local-smoke` |
 | Backend `libghostty-vt` correctness work | `nix develop . -c make check` and `nix develop . -c make check-ghostty-vt` |
 | Renderer-equivalence fixture work | `nix develop . -c make renderer-equivalence-smoke` |
+| Nix package/build work | `nix build .` and `nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).default` |
 | Release-style local validation | `nix develop . -c make check-all` |
 | Self-contained promotion evidence bundle | `nix develop . -c make promotion-evidence-bundle` then `nix develop . -c make promotion-evidence-verify` |
 | Source-fetch evidence | `nix develop . -c make source-fetch-provenance-sample` or `nix develop . -c make source-fetch-offline-probe` |
@@ -61,6 +75,13 @@ nix develop . -c make packaging-archive-runtime-smoke
   bindings;
 - GNU Make for the repository check targets;
 - Zig 0.15 for the optional native Ghostty VT build.
+- a crane-built `packages.default` derivation for default interim-engine
+  `nmux` and `nmuxd` binaries;
+- `checks.default` / `checks.nmux-tests`, which validate the schema and compile
+  workspace Rust test targets with `cargo test --no-run`;
+- `checks.nmux-package`, an alias for the default package derivation;
+- `checks.source-audit`, which verifies the filtered flake source excludes
+  `target/`, VCS metadata, and Nix result links.
 
 The regular contributor path is `make check`, which validates
 [schema/nmux.fbs](../schema/nmux.fbs) and runs `cargo test --workspace` against
@@ -71,6 +92,10 @@ state, daemon-owned structured input, or default-engine promotion evidence.
 `make local-smoke` is a default-engine user workflow smoke for the local
 daemon/client path; it does not enable the native VT feature or replace the
 test suite.
+The crane `checks.default` target is deliberately a Nix build/compile check, not
+a live PTY workflow runner. Use `nix develop . -c make check` and `nix develop
+. -c make local-smoke` for runtime validation because those tests exercise local
+PTY and Unix-socket behavior outside the sandboxed package derivation.
 `make renderer-equivalence-smoke` is a focused opt-in fixture projection check
 for renderer-equivalence work. It exercises both a core `TerminalUpdate` corpus
 and a real `nmuxd`/`nmux --json` artifact smoke. It is not a trusted renderer

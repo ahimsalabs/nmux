@@ -51,6 +51,14 @@ backend default-engine promotion evidence alone.
 
 ## First Run
 
+Build the default interim-engine binaries:
+
+```sh
+nix build .
+./result/bin/nmux --version
+./result/bin/nmuxd --version
+```
+
 Run the default end-to-end smoke first:
 
 ```sh

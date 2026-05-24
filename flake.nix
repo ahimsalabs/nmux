@@ -1,10 +1,16 @@
 {
   description = "nmux development environment";
 
+  inputs.crane.url = "github:ipetkov/crane";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs =
-    { self, nixpkgs, ... }:
+    {
+      self,
+      crane,
+      nixpkgs,
+      ...
+    }:
     let
       systems = [
         "aarch64-darwin"
@@ -14,6 +20,8 @@
       ];
 
       forEachSystem = nixpkgs.lib.genAttrs systems;
+
+      packageVersion = "0.1.0";
 
       cleanSrc =
         pkgs:
@@ -33,6 +41,62 @@
             && !(pkgs.lib.hasPrefix "result-" name)
             && pkgs.lib.cleanSourceFilter path type;
         };
+
+      defaultNativeBuildInputs =
+        pkgs: [
+          pkgs.flatbuffers
+        ];
+
+      defaultBuildArgs =
+        pkgs:
+        {
+          pname = "nmux";
+          version = packageVersion;
+          src = cleanSrc pkgs;
+          strictDeps = true;
+          cargoExtraArgs = "-p nmux-cli --bins";
+          nativeBuildInputs = defaultNativeBuildInputs pkgs;
+        };
+
+      defaultPackageFor =
+        pkgs:
+        let
+          craneLib = crane.mkLib pkgs;
+          commonArgs = defaultBuildArgs pkgs;
+          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+        in
+        craneLib.buildPackage (
+          commonArgs
+          // {
+            inherit cargoArtifacts;
+            doCheck = false;
+          }
+        );
+
+      defaultTestsFor =
+        pkgs:
+        let
+          craneLib = crane.mkLib pkgs;
+          commonArgs = defaultBuildArgs pkgs;
+          cargoArtifacts = craneLib.buildDepsOnly (
+            commonArgs
+            // {
+              cargoExtraArgs = "--workspace";
+            }
+          );
+        in
+        craneLib.cargoTest (
+          commonArgs
+          // {
+            inherit cargoArtifacts;
+            cargoExtraArgs = "--workspace --no-run";
+            RUST_TEST_THREADS = "1";
+            preCheck = ''
+              export PATH=${pkgs.bash}/bin:$PATH
+              flatc --json --strict-json --no-warnings -o /tmp schema/nmux.fbs
+            '';
+          }
+        );
 
       sourceAuditFor =
         pkgs:
@@ -100,6 +164,16 @@
           '';
     in
     {
+      packages = forEachSystem (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          default = defaultPackageFor pkgs;
+        }
+      );
+
       devShells = forEachSystem (
         system:
         let
@@ -107,6 +181,9 @@
         in
         {
           default = pkgs.mkShell {
+            inputsFrom = [
+              self.packages.${system}.default
+            ];
             packages = [
               pkgs.cargo
               pkgs.flatbuffers
@@ -124,7 +201,10 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
         in
-        {
+        rec {
+          default = nmux-tests;
+          nmux-tests = defaultTestsFor pkgs;
+          nmux-package = self.packages.${system}.default;
           source-audit = sourceAuditFor pkgs;
         }
       );
