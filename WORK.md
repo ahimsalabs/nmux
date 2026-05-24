@@ -33,6 +33,7 @@ see all panes restored.
 ## Deferred until usable
 
 - Default engine promotion evidence / packaging / CI bundles
+- GitHub Actions cache/build optimization and libghostty-mode CI coverage (issue #4)
 - Renderer equivalence oracle
 - Protocol extensions (hyperlink IDs, images, command lifecycle, physical keys)
 - Frontend Ghostty renderer hydration
