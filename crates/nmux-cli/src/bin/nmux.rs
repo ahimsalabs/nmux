@@ -1411,14 +1411,16 @@ fn print_live_rendered(
         let surface_text = rendered
             .surface_text
             .unwrap_or_else(|| rendered.workspace.display_line());
+        let has_status_bar = redraw_state.is_some();
         let redraw_text = redraw_text_with_context(
             &rendered.workspace,
             &rendered.surface_metadata,
             &surface_text,
             initial_scrollback,
+            has_status_bar,
         );
         if let Some(state) = redraw_state {
-            state.render_initial(&redraw_text);
+            state.render_initial(&rendered.workspace, &redraw_text);
         } else {
             redraw_terminal(&redraw_text);
         }
@@ -1439,9 +1441,10 @@ fn print_live_surface(
     redraw_state: Option<&mut RedrawState>,
 ) {
     if redraw {
-        let text = redraw_text_with_context(workspace, metadata, surface_text, None);
+        let has_status_bar = redraw_state.is_some();
+        let text = redraw_text_with_context(workspace, metadata, surface_text, None, has_status_bar);
         if let Some(state) = redraw_state {
-            state.render_diff(&text);
+            state.render_diff(workspace, &text);
         } else {
             redraw_terminal(&text);
         }
@@ -1468,8 +1471,9 @@ fn print_live_update(
             if redraw {
                 if let Some(state) = redraw_state {
                     // Re-render with new metadata via differential update.
-                    let text = redraw_text_with_context(workspace, metadata, surface_text, None);
-                    state.render_diff(&text);
+                    let text =
+                        redraw_text_with_context(workspace, metadata, surface_text, None, true);
+                    state.render_diff(workspace, &text);
                 }
             } else {
                 print_terminal_metadata(metadata);
@@ -1515,7 +1519,7 @@ fn redraw_terminal(surface_text: &str) {
     }
 }
 
-/// Frame statistics for the render overlay.
+/// Frame statistics for the status bar.
 #[derive(Debug, Clone, Default)]
 struct FrameStats {
     /// Time since the previous frame was rendered.
@@ -1530,21 +1534,20 @@ struct FrameStats {
     rows_total: usize,
 }
 
-/// Tracks displayed rows for differential rendering and frame statistics.
+/// Tracks displayed rows for differential rendering with a status bar.
 struct RedrawState {
-    /// Previously displayed rows (including header lines).
+    /// Previously displayed rows (row 0 = status bar, then content rows).
     previous_rows: Vec<String>,
-    /// Terminal width for overlay positioning.
+    /// Terminal width for status bar formatting.
     terminal_cols: u32,
     /// When the last frame was rendered.
     last_frame_time: Instant,
     /// Most recent frame statistics.
     last_stats: FrameStats,
-    /// Previous overlay column and width so row 1 can be restored
-    /// before drawing the next overlay.
-    previous_overlay: Option<(u32, usize)>,
     /// Pending decode time set before render_diff is called.
     pending_decode_time: Duration,
+    /// Local hostname, resolved once at startup.
+    hostname: String,
 }
 
 impl RedrawState {
@@ -1554,8 +1557,8 @@ impl RedrawState {
             terminal_cols: 80,
             last_frame_time: Instant::now(),
             last_stats: FrameStats::default(),
-            previous_overlay: None,
             pending_decode_time: Duration::ZERO,
+            hostname: resolve_short_hostname(),
         }
     }
 
@@ -1570,35 +1573,69 @@ impl RedrawState {
         self.pending_decode_time = decode_time;
     }
 
-    /// Render the full surface text differentially: only write rows that changed.
-    /// Uses cursor addressing to update individual rows without clearing the screen.
-    fn render_diff(&mut self, surface_text: &str) {
-        print!("{}", self.render_diff_text(surface_text));
+    /// Build the full-width inverse-video status bar line.
+    fn format_status_bar(&self, workspace: &local::WorkspaceSummary) -> String {
+        let cols = self.terminal_cols as usize;
+
+        let left = format!(
+            " nmux  {}  {}x{}  {}",
+            workspace.pane_id, workspace.cols, workspace.rows, self.hostname
+        );
+
+        let right = format_stats_right(&self.last_stats);
+
+        // Pad between left and right so the bar fills the terminal width.
+        let content_len = left.len() + right.len();
+        let padding = if cols > content_len {
+            cols - content_len
+        } else {
+            1
+        };
+
+        format!("\x1b[7m{left}{:padding$}{right}\x1b[27m", "")
     }
 
-    fn render_diff_text(&mut self, surface_text: &str) -> String {
+    /// Render the full surface text differentially: only write rows that changed.
+    /// Row 1 is always the status bar; content starts at row 2.
+    fn render_diff(
+        &mut self,
+        workspace: &local::WorkspaceSummary,
+        surface_text: &str,
+    ) {
+        print!("{}", self.render_diff_text(workspace, surface_text));
+    }
+
+    fn render_diff_text(
+        &mut self,
+        workspace: &local::WorkspaceSummary,
+        surface_text: &str,
+    ) -> String {
         let render_start = Instant::now();
         let frame_interval = render_start.duration_since(self.last_frame_time);
         self.update_terminal_size();
 
-        let new_rows: Vec<String> = surface_text.lines().map(String::from).collect();
+        let content_rows: Vec<String> = surface_text.lines().map(String::from).collect();
         let mut output = String::new();
         let mut rows_changed: usize = 0;
 
         // Hide cursor during update to avoid flicker.
         output.push_str("\x1b[?25l");
 
-        let max_rows = new_rows
-            .len()
-            .max(self.previous_rows.len())
-            .max(usize::from(self.previous_overlay.is_some()));
-        for i in 0..max_rows {
-            let new_row = new_rows.get(i).map(String::as_str).unwrap_or("");
-            let old_row = self.previous_rows.get(i).map(String::as_str).unwrap_or("");
-            let overlay_was_on_row = i == 0 && self.previous_overlay.is_some();
-            if new_row != old_row || overlay_was_on_row {
-                // Move cursor to row i+1 (1-based), column 1.
-                output.push_str(&format!("\x1b[{};1H\x1b[2K{}", i + 1, new_row));
+        // Diff content rows (starting at terminal row 2).
+        let max_content = content_rows.len().max(
+            self.previous_rows.len().saturating_sub(1), // previous_rows[0] was status bar
+        );
+        for i in 0..max_content {
+            let new_row = content_rows.get(i).map(String::as_str).unwrap_or("");
+            // previous_rows[0] is the status bar, so content is at [i+1].
+            let old_row = self
+                .previous_rows
+                .get(i + 1)
+                .map(String::as_str)
+                .unwrap_or("");
+            if new_row != old_row {
+                // Terminal row i+2 (1-based: row 1=status bar, row 2=first content).
+                output.push_str(&format!("\x1b[{};1H\x1b[2K{}", i + 2, new_row));
                 rows_changed += 1;
             }
         }
@@ -1610,72 +1647,90 @@ impl RedrawState {
             decode_time: self.pending_decode_time,
             render_time,
             rows_changed,
-            rows_total: new_rows.len(),
+            rows_total: content_rows.len(),
         };
         self.pending_decode_time = Duration::ZERO;
         self.last_frame_time = Instant::now();
 
-        // Draw stats overlay in top-right corner.
-        let overlay_text = format_stats_overlay(&self.last_stats);
-        let overlay_col = overlay_column(self.terminal_cols, &overlay_text);
-        output.push_str(&format!(
-            "\x1b[1;{}H\x1b[7m{}\x1b[27m",
-            overlay_col, overlay_text
-        ));
+        // Always redraw the status bar (row 1) since stats change every frame.
+        let status_bar = self.format_status_bar(workspace);
+        output.push_str(&format!("\x1b[1;1H\x1b[2K{status_bar}"));
 
-        // Park cursor at the bottom to avoid visual artifacts.
-        let park_row = new_rows.len().max(1);
+        // Park cursor below content to avoid visual artifacts.
+        let park_row = content_rows.len() + 2; // +1 for status bar, +1 for park
         output.push_str(&format!("\x1b[{};1H", park_row));
 
-        self.previous_rows = new_rows;
-        self.previous_overlay = Some((overlay_col, overlay_text.len()));
+        // Store status bar + content rows for next diff.
+        let mut all_rows = Vec::with_capacity(content_rows.len() + 1);
+        all_rows.push(status_bar);
+        all_rows.extend(content_rows);
+        self.previous_rows = all_rows;
 
         output
     }
 
     /// Full repaint for initial frame (no previous state to diff against).
-    fn render_initial(&mut self, surface_text: &str) {
-        print!("{}", self.render_initial_text(surface_text));
+    fn render_initial(
+        &mut self,
+        workspace: &local::WorkspaceSummary,
+        surface_text: &str,
+    ) {
+        print!(
+            "{}",
+            self.render_initial_text(workspace, surface_text)
+        );
     }
 
-    fn render_initial_text(&mut self, surface_text: &str) -> String {
+    fn render_initial_text(
+        &mut self,
+        workspace: &local::WorkspaceSummary,
+        surface_text: &str,
+    ) -> String {
         self.last_frame_time = Instant::now();
         self.last_stats = FrameStats::default();
         self.update_terminal_size();
 
+        let content_rows: Vec<String> = surface_text.lines().map(String::from).collect();
+        self.last_stats.rows_changed = content_rows.len();
+        self.last_stats.rows_total = content_rows.len();
+
+        let status_bar = self.format_status_bar(workspace);
+
+        // Clear screen, draw status bar on row 1, then content starting row 2.
         let mut output = String::new();
+        output.push_str(&format!("\x1b[2J\x1b[H{status_bar}\n{surface_text}"));
 
-        // Clear screen and render everything.
-        output.push_str(&format!("\x1b[2J\x1b[H{surface_text}"));
-
-        let new_rows: Vec<String> = surface_text.lines().map(String::from).collect();
-
-        self.last_stats.rows_changed = new_rows.len();
-        self.last_stats.rows_total = new_rows.len();
-
-        // Draw stats overlay.
-        let overlay_text = format_stats_overlay(&self.last_stats);
-        let overlay_col = overlay_column(self.terminal_cols, &overlay_text);
-        output.push_str(&format!(
-            "\x1b[1;{}H\x1b[7m{}\x1b[27m",
-            overlay_col, overlay_text
-        ));
-
-        let park_row = new_rows.len().max(1);
+        let park_row = content_rows.len() + 2;
         output.push_str(&format!("\x1b[{};1H", park_row));
 
-        self.previous_rows = new_rows;
-        self.previous_overlay = Some((overlay_col, overlay_text.len()));
+        let mut all_rows = Vec::with_capacity(content_rows.len() + 1);
+        all_rows.push(status_bar);
+        all_rows.extend(content_rows);
+        self.previous_rows = all_rows;
 
         output
     }
 }
 
-fn overlay_column(terminal_cols: u32, overlay_text: &str) -> u32 {
-    terminal_cols.saturating_sub(overlay_text.len() as u32) + 1
+fn resolve_short_hostname() -> String {
+    let mut buf = [0u8; 256];
+    let c_hostname = unsafe {
+        if libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) == 0 {
+            let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            String::from_utf8_lossy(&buf[..len]).into_owned()
+        } else {
+            "unknown".to_owned()
+        }
+    };
+    // Use short hostname (before first dot).
+    c_hostname
+        .split('.')
+        .next()
+        .unwrap_or(&c_hostname)
+        .to_owned()
 }
 
-fn format_stats_overlay(stats: &FrameStats) -> String {
+fn format_stats_right(stats: &FrameStats) -> String {
     let interval_ms = stats.frame_interval.as_millis();
     let decode_us = stats.decode_time.as_micros();
     let render_us = stats.render_time.as_micros();
@@ -1685,7 +1740,7 @@ fn format_stats_overlay(stats: &FrameStats) -> String {
         0
     };
     format!(
-        " {rows}/{total} rows  decode:{decode}  render:{render}  {interval}ms ({fps}fps) ",
+        "{rows}/{total} rows  decode:{decode}  render:{render}  {interval}ms ({fps}fps) ",
         rows = stats.rows_changed,
         total = stats.rows_total,
         decode = format_duration_short(decode_us),
@@ -1712,9 +1767,14 @@ fn redraw_text_with_context(
     metadata: &local::TerminalMetadataSummary,
     surface_text: &str,
     scrollback: Option<local::ScrollbackChunkSummary>,
+    has_status_bar: bool,
 ) -> String {
-    let mut text = workspace.display_line();
-    text.push('\n');
+    let mut text = String::new();
+    if !has_status_bar {
+        // Without a status bar, include workspace info as a header line.
+        text.push_str(&workspace.display_line());
+        text.push('\n');
+    }
     append_terminal_metadata(&mut text, metadata);
     if let Some(scrollback) = scrollback {
         text.push_str(&format_scrollback(&scrollback));
@@ -4430,32 +4490,50 @@ mod tests {
     }
 
     #[test]
-    fn redraw_state_restores_first_row_before_overlay_update() {
+    fn redraw_state_renders_status_bar_and_diffs_content() {
         let mut state = RedrawState::new();
         state.terminal_cols = 120;
 
-        let initial = state.render_initial_text("session=local\npane output");
-        assert!(initial.contains("\x1b[2J\x1b[Hsession=local\npane output"));
-        // Initial overlay shows row/total counts and zeroed timings.
+        let ws = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+        };
+
+        let initial = state.render_initial_text(&ws, "pane output\nsecond line");
+        // Status bar is in inverse video on the first terminal row.
         assert!(
-            initial.contains("\x1b[7m") && initial.contains("rows"),
-            "initial frame should contain stats overlay: {initial:?}"
+            initial.contains("\x1b[7m") && initial.contains("nmux"),
+            "initial frame should contain status bar: {initial:?}"
+        );
+        assert!(
+            initial.contains("pane-1") && initial.contains("80x24"),
+            "status bar should show pane id and size: {initial:?}"
+        );
+        // Content follows the status bar.
+        assert!(
+            initial.contains("pane output"),
+            "initial frame should contain content: {initial:?}"
         );
 
-        let update = state.render_diff_text("session=local\npane output changed");
+        let update = state.render_diff_text(&ws, "pane output\nsecond line changed");
+        // Row 1 is the status bar (always redrawn).
         assert!(
-            update.contains("\x1b[1;1H\x1b[2Ksession=local"),
-            "redraw diff did not restore first row before replacing overlay: {update:?}"
+            update.contains("\x1b[1;1H"),
+            "diff should redraw status bar on row 1: {update:?}"
         );
+        // Content row 2 (terminal row 3) changed.
         assert!(
-            update.contains("\x1b[2;1H\x1b[2Kpane output changed"),
-            "redraw diff did not update changed surface row: {update:?}"
+            update.contains("\x1b[3;1H\x1b[2Ksecond line changed"),
+            "diff should update changed content row at terminal row 3: {update:?}"
         );
-        // Overlay should show 1 row changed out of 2 total (row 2 changed,
-        // row 1 is also rewritten because the overlay was there, so 2).
+        // Status bar should show stats.
         assert!(
             update.contains("rows") && update.contains("fps"),
-            "diff frame should contain stats overlay: {update:?}"
+            "status bar should contain frame stats: {update:?}"
         );
     }
 
