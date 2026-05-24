@@ -1393,6 +1393,7 @@ fn terminal_size_from_winsize(size: libc::winsize) -> Option<(u32, u32)> {
 fn raw_terminal_termios(mut termios: libc::termios, local_echo: LocalEcho) -> libc::termios {
     // Safety: cfmakeraw only mutates the provided termios value.
     unsafe { libc::cfmakeraw(&mut termios) };
+    termios.c_iflag &= !libc::IXOFF;
     match local_echo {
         LocalEcho::Off => {}
         LocalEcho::Tty => {
