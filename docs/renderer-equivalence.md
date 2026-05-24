@@ -61,6 +61,10 @@ surface/scrollback shape, and compares it to an expected semantic snapshot for
 structured rows/runs, style IDs, cell widths, hyperlink-presence flags,
 cursor state, terminal modes, title/OSC 7 metadata, main screen restoration
 after alternate screen, and omission of raw control text.
+The initial integration corpus lives in
+`fixtures/renderer-equivalence/libghostty-vt-smoke.json` so the stimulus and
+canonical expected state can grow without burying fixture semantics in test
+code.
 Set `NMUX_RENDERER_EQUIVALENCE_ARTIFACT_DIR=target/renderer-equivalence` to
 write the captured JSON fixture artifact.
 

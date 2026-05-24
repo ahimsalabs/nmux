@@ -12,19 +12,9 @@ static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn renderer_equivalence_smoke_captures_structured_nmux_state() {
+    let fixture = load_fixture("libghostty-vt-smoke");
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
-    let command = concat!(
-        "printf '\\033]0;renderer fixture\\007'; ",
-        "printf '\\033]7;file://localhost/tmp/nmux-renderer\\033\\\\'; ",
-        "printf '\\033[?2004h\\033[?1000h'; ",
-        "printf '\\033[31mred\\033[0m plain'; printf '\\n'; ",
-        "printf 'wide:中'; printf '\\n'; ",
-        "printf '\\033]8;;https://example.invalid\\033\\\\link\\033]8;;\\033\\\\'; printf '\\n'; ",
-        "printf 'main-scroll'; printf '\\n'; ",
-        "printf '\\033[?1049hALT-ONLY\\033[?1049l'; ",
-        "cat >/dev/null"
-    );
 
     let mut server = Command::new(env!("CARGO_BIN_EXE_nmuxd"))
         .args([
@@ -34,7 +24,7 @@ fn renderer_equivalence_smoke_captures_structured_nmux_state() {
             "--terminal-engine",
             "libghostty-vt",
             "--command",
-            command,
+            fixture.command.as_str(),
         ])
         .spawn()
         .expect("spawn nmuxd");
@@ -71,88 +61,21 @@ fn renderer_equivalence_smoke_captures_structured_nmux_state() {
 
     let decoded: Value = serde_json::from_str(&stdout).expect("decode nmux json");
     let surface = materialize_surface(&decoded);
-    let expected_surface = CanonicalSurface {
-        title: "renderer fixture".to_owned(),
-        working_directory: "file://localhost/tmp/nmux-renderer".to_owned(),
-        surface_kind: "main".to_owned(),
-        cursor: CanonicalCursor {
-            row: 4,
-            col: 0,
-            visible: true,
-            shape: "block".to_owned(),
-        },
-        modes: CanonicalModes {
-            bracketed_paste: true,
-            mouse_tracking: true,
-            focus_reporting: false,
-            application_keypad: false,
-            application_cursor: false,
-            origin: false,
-            wraparound: true,
-            mouse_tracking_mode: "normal".to_owned(),
-            mouse_format: "x10".to_owned(),
-        },
-        rows: vec![
-            CanonicalRow {
-                text: "red plain".to_owned(),
-                runs: vec![
-                    CanonicalRun {
-                        text: "red".to_owned(),
-                        cell_widths: vec![1, 1, 1],
-                        style_id: 1,
-                        flags: 0,
-                    },
-                    CanonicalRun {
-                        text: " plain".to_owned(),
-                        cell_widths: vec![1, 1, 1, 1, 1, 1],
-                        style_id: 0,
-                        flags: 0,
-                    },
-                ],
-            },
-            CanonicalRow {
-                text: "wide:中".to_owned(),
-                runs: vec![CanonicalRun {
-                    text: "wide:中".to_owned(),
-                    cell_widths: vec![1, 1, 1, 1, 1, 2],
-                    style_id: 0,
-                    flags: 0,
-                }],
-            },
-            CanonicalRow {
-                text: "link".to_owned(),
-                runs: vec![CanonicalRun {
-                    text: "link".to_owned(),
-                    cell_widths: vec![1, 1, 1, 1],
-                    style_id: 0,
-                    flags: 1,
-                }],
-            },
-            CanonicalRow {
-                text: "main-scroll".to_owned(),
-                runs: vec![CanonicalRun {
-                    text: "main-scroll".to_owned(),
-                    cell_widths: vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-                    style_id: 0,
-                    flags: 0,
-                }],
-            },
-        ],
-    };
-    assert_eq!(surface, expected_surface);
+    assert_eq!(surface, fixture.expected_surface);
 
     let scrollback = materialize_scrollback(&decoded);
-    assert_eq!(
-        scrollback,
-        vec![
-            expected_surface.rows[0].clone(),
-            expected_surface.rows[1].clone(),
-            expected_surface.rows[2].clone(),
-            expected_surface.rows[3].clone(),
-        ]
-    );
-    assert_absent(&stdout, "\u{1b}[31m");
-    assert_absent(&stdout, "ALT-ONLY");
+    assert_eq!(scrollback, fixture.expected_scrollback);
+    for needle in fixture.absent_substrings {
+        assert_absent(&stdout, &needle);
+    }
+}
+
+#[derive(Debug)]
+struct RendererFixture {
+    command: String,
+    expected_surface: CanonicalSurface,
+    expected_scrollback: Vec<CanonicalRow>,
+    absent_substrings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -198,6 +121,40 @@ struct CanonicalRun {
     cell_widths: Vec<u8>,
     style_id: u64,
     flags: u64,
+}
+
+fn load_fixture(name: &str) -> RendererFixture {
+    let path = workspace_path(PathBuf::from(format!(
+        "fixtures/renderer-equivalence/{name}.json"
+    )));
+    let json = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read renderer fixture {}: {error}", path.display()));
+    let decoded: Value = serde_json::from_str(&json)
+        .unwrap_or_else(|error| panic!("decode renderer fixture {}: {error}", path.display()));
+    let expected = decoded.get("expected").expect("expected fixture object");
+    RendererFixture {
+        command: string_field(&decoded, "command"),
+        expected_surface: materialize_surface(expected),
+        expected_scrollback: expected
+            .get("scrollback")
+            .and_then(Value::as_array)
+            .expect("expected scrollback rows")
+            .iter()
+            .map(materialize_row)
+            .collect(),
+        absent_substrings: decoded
+            .get("absent_substrings")
+            .and_then(Value::as_array)
+            .expect("absent substrings")
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .expect("absent substring is string")
+                    .to_owned()
+            })
+            .collect(),
+    }
 }
 
 fn materialize_surface(decoded: &Value) -> CanonicalSurface {
