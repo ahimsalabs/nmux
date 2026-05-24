@@ -28,6 +28,16 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+      - name: Cache Cargo build state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: nmux-${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            nmux-${{ runner.os }}-cargo-
       - name: Source audit
         run: |
           system="$(nix eval --impure --raw --expr builtins.currentSystem)"
@@ -52,6 +62,16 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+      - name: Cache Cargo build state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: nmux-${{ runner.os }}-cargo-native-vt-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            nmux-${{ runner.os }}-cargo-native-vt-
       - name: Toolchain info
         run: nix develop . -c make toolchain-info
       - name: Check ghostty VT
