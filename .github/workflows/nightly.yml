@@ -90,7 +90,12 @@ jobs:
 
       - name: Install cargo-zigbuild
         if: matrix.cross
-        run: pip3 install ziglang && cargo install cargo-zigbuild
+        run: |
+          python3 -m pip install ziglang==0.15.2
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(python3 -c 'import shutil; print(shutil.which("python-zig"))')" "$HOME/.local/bin/zig"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          cargo install cargo-zigbuild
 
       - name: Set build metadata
         run: |
@@ -108,17 +113,95 @@ jobs:
         if: matrix.cross
         run: cargo zigbuild --release -p nmux-cli --bin nmux --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Verify static Ghostty linkage
         run: |
-          target_dir="target/${{ matrix.cross && matrix.target || 'release' }}"
+          set -euo pipefail
+
           if [ "${{ matrix.cross }}" = "true" ]; then
             target_dir="target/${{ matrix.target }}/release"
           else
             target_dir="target/release"
           fi
+          bin="$target_dir/nmux"
+          test -x "$bin"
+
+          dep_report="dynamic-dependencies-${{ matrix.target }}.txt"
+          if command -v otool >/dev/null 2>&1; then
+            otool -L "$bin" > "$dep_report"
+          elif command -v readelf >/dev/null 2>&1; then
+            readelf -d "$bin" > "$dep_report" 2>&1 || true
+          elif command -v ldd >/dev/null 2>&1; then
+            ldd "$bin" > "$dep_report"
+          else
+            echo "dynamic dependency inspector unavailable" > "$dep_report"
+          fi
+          cat "$dep_report"
+
+          if grep -Eiq 'libghostty-vt|ghostty-install|libghostty' "$dep_report"; then
+            echo "Release artifact dynamically depends on libghostty-vt" >&2
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          set -euo pipefail
+
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            target_dir="target/${{ matrix.target }}/release"
+          else
+            target_dir="target/release"
+          fi
+          bin="$target_dir/nmux"
           staging="nmux-${{ matrix.target }}"
+          rm -rf "$staging"
           mkdir -p "$staging"
-          cp "$target_dir/nmux" "$staging/"
+          cp "$bin" "$staging/nmux"
+          cp "dynamic-dependencies-${{ matrix.target }}.txt" "$staging/DYNAMIC_DEPENDENCIES.txt"
+          version="$(awk -F '"' '/^version = / { print $2; exit }' crates/nmux-cli/Cargo.toml)"
+          printf '{"binary":"nmux","version":"%s","channel":"%s","commit":"%s","build_date":"%s"}\n' \
+            "$version" "$NMUX_BUILD_CHANNEL" "$NMUX_BUILD_COMMIT" "$NMUX_BUILD_DATE" \
+            > "$staging/VERSION.json"
+
+          hash_file() {
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$1" | awk '{print $1}'
+            else
+              shasum -a 256 "$1" | awk '{print $1}'
+            fi
+          }
+
+          {
+            echo "nmux nightly artifact provenance"
+            echo "generated_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "target=${{ matrix.target }}"
+            echo "github_repository=$GITHUB_REPOSITORY"
+            echo "github_sha=$GITHUB_SHA"
+            echo "github_run_id=$GITHUB_RUN_ID"
+            echo "github_run_attempt=$GITHUB_RUN_ATTEMPT"
+            echo "build_channel=$NMUX_BUILD_CHANNEL"
+            echo "build_commit=$NMUX_BUILD_COMMIT"
+            echo "build_date=$NMUX_BUILD_DATE"
+            echo "binary=nmux"
+            echo "artifact_shape=single binary plus checksums and provenance"
+            echo "terminal_engine=libghostty-vt"
+            echo "terminal_engine_status=default"
+            echo "runtime_library_strategy=static libghostty-vt link; no bundled libghostty-vt runtime library"
+            echo "static_ghostty_link=verified"
+            echo
+            echo "[version_json]"
+            cat "$staging/VERSION.json"
+            echo
+            echo "[dynamic_dependencies]"
+            cat "$staging/DYNAMIC_DEPENDENCIES.txt"
+          } > "$staging/PROVENANCE.txt"
+
+          (
+            cd "$staging"
+            for file in nmux VERSION.json DYNAMIC_DEPENDENCIES.txt PROVENANCE.txt; do
+              printf '%s  %s\n' "$(hash_file "$file")" "$file"
+            done > SHA256SUMS
+          )
+
           tar czf "$staging.tar.gz" "$staging"
 
       - name: Upload artifact

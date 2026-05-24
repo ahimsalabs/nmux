@@ -5,14 +5,32 @@ distribution path is source checkout plus the supported Nix development shell.
 
 ## Current Shape
 
-- Default-engine builds use the `interim` terminal engine and avoid the native
-  Ghostty/Zig build.
-- Opt-in correctness builds use `--features libghostty-vt` and may build the
-  native Ghostty VT library through `libghostty-vt-sys`.
+- Default-engine builds use `libghostty-vt` and statically link the native
+  Ghostty VT library.
+- No-default-features builds keep the `interim` terminal engine available for
+  legacy/debug coverage.
 - `nmux` is the user-facing binary; `nmux daemon` is the daemon entrypoint.
-- The repository does not currently define install paths, service units,
-  shell completions, notarization/signing, update channels, or binary artifact
-  provenance.
+- Nightly artifacts contain one `nmux` binary per target plus checksums and
+  provenance. The repository does not currently define install paths, service
+  units, shell completions, notarization/signing, or update channels beyond the
+  `nightly` release tag.
+
+## Nightly Artifacts
+
+The nightly workflow builds target-specific archives named
+`nmux-<target>.tar.gz`. Each archive contains:
+
+- `nmux`;
+- `VERSION.json`;
+- `DYNAMIC_DEPENDENCIES.txt`;
+- `PROVENANCE.txt`;
+- `SHA256SUMS`.
+
+`PROVENANCE.txt` records the GitHub repository, exact commit, run id, target,
+build channel, build date, version JSON, and dynamic dependency inspection. The
+workflow fails if dependency inspection shows a dynamic `libghostty-vt`
+dependency. The release job also publishes a top-level `SHA256SUMS` for the
+target archives.
 
 ## Local Packaging Sample
 
