@@ -91,6 +91,7 @@ struct CanonicalSurface {
     surface_kind: String,
     cursor: CanonicalCursor,
     modes: CanonicalModes,
+    styles: Vec<CanonicalStyle>,
     rows: Vec<CanonicalRow>,
 }
 
@@ -113,6 +114,14 @@ struct CanonicalModes {
     wraparound: bool,
     mouse_tracking_mode: String,
     mouse_format: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct CanonicalStyle {
+    fg_rgba: u64,
+    bg_rgba: u64,
+    underline_rgba: u64,
+    flags: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -200,6 +209,13 @@ fn materialize_surface(decoded: &Value) -> CanonicalSurface {
         surface_kind: string_field(terminal, "surface_kind"),
         cursor: materialize_cursor(terminal.get("cursor").expect("cursor object")),
         modes: materialize_modes(terminal.get("modes").expect("modes object")),
+        styles: surface
+            .get("styles")
+            .and_then(Value::as_array)
+            .expect("surface styles")
+            .iter()
+            .map(materialize_style)
+            .collect(),
         rows: surface
             .get("row_updates")
             .and_then(Value::as_array)
@@ -207,6 +223,15 @@ fn materialize_surface(decoded: &Value) -> CanonicalSurface {
             .iter()
             .map(materialize_row)
             .collect(),
+    }
+}
+
+fn materialize_style(style: &Value) -> CanonicalStyle {
+    CanonicalStyle {
+        fg_rgba: numeric_field(style, "fg_rgba"),
+        bg_rgba: numeric_field(style, "bg_rgba"),
+        underline_rgba: numeric_field(style, "underline_rgba"),
+        flags: numeric_field(style, "flags"),
     }
 }
 

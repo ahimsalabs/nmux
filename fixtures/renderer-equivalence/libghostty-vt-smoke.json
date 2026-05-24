@@ -24,6 +24,20 @@
       }
     },
     "surface": {
+      "styles": [
+        {
+          "fg_rgba": 0,
+          "bg_rgba": 0,
+          "underline_rgba": 0,
+          "flags": 0
+        },
+        {
+          "fg_rgba": 3429263103,
+          "bg_rgba": 0,
+          "underline_rgba": 0,
+          "flags": 0
+        }
+      ],
       "row_updates": [
         {
           "text": "red plain",
