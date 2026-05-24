@@ -6,14 +6,61 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  check-status:
+    name: check status
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful check workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          for attempt in $(seq 1 30); do
+            run="$(gh run list \
+              -R "$GITHUB_REPOSITORY" \
+              --workflow check.yml \
+              --commit "$GITHUB_SHA" \
+              --json databaseId,status,conclusion,url \
+              --jq '.[0] // empty')"
+
+            if [ -z "$run" ]; then
+              echo "No check workflow run found yet for $GITHUB_SHA (attempt $attempt/30)."
+              sleep 20
+              continue
+            fi
+
+            status="$(printf '%s\n' "$run" | jq -r '.status')"
+            conclusion="$(printf '%s\n' "$run" | jq -r '.conclusion // ""')"
+            url="$(printf '%s\n' "$run" | jq -r '.url')"
+            echo "check workflow: status=$status conclusion=${conclusion:-pending} url=$url"
+
+            if [ "$status" != "completed" ]; then
+              sleep 20
+              continue
+            fi
+
+            if [ "$conclusion" = "success" ]; then
+              exit 0
+            fi
+
+            echo "Refusing to publish nightly because check workflow concluded: $conclusion" >&2
+            exit 1
+          done
+
+          echo "Timed out waiting for successful check workflow for $GITHUB_SHA" >&2
+          exit 1
+
   build:
     name: build (${{ matrix.target }})
+    needs: check-status
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
