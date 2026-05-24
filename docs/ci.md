@@ -159,4 +159,7 @@ that explicitly support Node.js 24 and record that evidence in
 
 CI installs Nix with `cachix/install-nix-action@v31`, which the action README
 documents for Linux and macOS runners. The workflow does not configure a
-project binary cache yet; cache behavior remains explicit open promotion work.
+project-owned binary cache. The regular default-engine job and direct manual
+native-VT job use GitHub Actions-backed Nix and Cargo caches to speed up repeat
+CI runs; the promotion evidence jobs remain explicit about their observed cache
+state and do not use those cache steps as promotion proof by themselves.
