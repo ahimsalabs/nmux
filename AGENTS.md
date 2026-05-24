@@ -74,6 +74,33 @@ the committed revision and `@` starts empty for the next progress note.
 - If subagents are useful, run them as bounded read-only assistants.
 - Don't inspect or copy generated Ghostty source under `target/`.
 
+## Commit quality
+
+Every commit message must have a **description body** (not just the subject
+line). Explain *why* the change exists — what it enables, what problem it
+solves, or what design tradeoff it makes. One to three sentences is enough.
+
+**Issue references:** When a commit completes work from a GitHub issue, include
+`closes #N` in the description body. This is the only reliable link between
+code and motivation. Don't close issues via `gh issue close` without a
+matching commit reference.
+
+**ADRs for significant changes:** New transport layers, new execution
+boundaries, new data formats, and new CLI subcommand families all require an
+ADR under `docs/adr/`. If you're not sure whether a change is significant
+enough, write the ADR — a short ADR is better than a missing one.
+
+Example commit message:
+```
+cli: add token-authenticated tcp transport
+
+Adds a TCP listener behind a pre-shared token for non-Unix-socket
+experiments. Enables remote attach without SSH tunneling. ADR 0025
+documents the threat model and why TLS is deferred.
+
+Closes #7
+```
+
 ## Documentation gardening
 
 Docs exist to support building and using nmux. When they grow without bound
@@ -123,11 +150,13 @@ WORK.md is the canonical priority list. Items also come from GitHub issues.
 
 **When a work item from an issue is done:**
 
-- Remove it from WORK.md
+- The completing commit must include `closes #N` in its description body
+- Remove the item from WORK.md
 - Close the issue: `gh issue close N -R ahimsalabs/nmux`
-- Reference the issue number in the commit message
 
-Don't close issues when triaging — only when the work is actually complete.
+Don't close issues when triaging — only when the work is actually complete
+and the code passes checks. If the work is partial, leave the issue open and
+note progress in WORK.md.
 
 ## Self-check (every 10 commits)
 
