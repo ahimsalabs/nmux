@@ -1,5 +1,9 @@
 {
   "command": "printf '\\033]133;A\\033\\\\prompt \\033]133;B\\033\\\\input\\033]133;C\\033\\\\output'; printf '\\n'; cat >/dev/null",
+  "terminal_output": [
+    "\u001b]133;A\u001b\\prompt \u001b]133;B\u001b\\input\u001b]133;C\u001b\\output",
+    "\r\n"
+  ],
   "expected": {
     "workspace": {
       "session_id": "local",

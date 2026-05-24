@@ -63,9 +63,11 @@ OSC 133 row/run semantics, dirty and Kitty-placeholder row metadata, cursor
 state including blink state, terminal modes, title/OSC 7 metadata, initial
 workspace geometry and wrap/reflow behavior, main screen restoration after
 alternate screen, and omission of raw control text.
-The initial integration corpus lives in `fixtures/renderer-equivalence/*.json`
-so each fixture's stimulus and canonical expected state can grow without
-burying fixture semantics in test code.
+The corpus lives in `fixtures/renderer-equivalence/*.json` so each fixture's
+shell command, direct terminal-output chunks, and canonical expected state can
+grow without burying fixture semantics in test code. The core harness replays
+the direct chunks into `libghostty-vt`; the CLI harness runs the shell command
+through a real `nmuxd` and `nmux --json`.
 Set `NMUX_RENDERER_EQUIVALENCE_ARTIFACT_DIR=target/renderer-equivalence` to
 write one raw `nmux --json` artifact plus one deterministic
 `*.canonical.json` nmux-state projection per fixture. The canonical artifacts

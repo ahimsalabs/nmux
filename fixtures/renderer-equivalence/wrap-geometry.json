@@ -4,6 +4,10 @@
     "rows": 5
   },
   "command": "printf 'wrap-test-12345'; printf '\\n'; cat >/dev/null",
+  "terminal_output": [
+    "wrap-test-12345",
+    "\r\n"
+  ],
   "expected": {
     "workspace": {
       "session_id": "local",

@@ -1,5 +1,10 @@
 {
   "command": "printf '\\033[?2004h\\033[?1000h\\033[?1006h\\033[?1004h\\033[?1h\\033=\\033[?6h\\033[?7l'; printf 'modes'; printf '\\n'; cat >/dev/null",
+  "terminal_output": [
+    "\u001b[?2004h\u001b[?1000h\u001b[?1006h\u001b[?1004h\u001b[?1h\u001b=\u001b[?6h\u001b[?7l",
+    "modes",
+    "\r\n"
+  ],
   "expected": {
     "workspace": {
       "session_id": "local",

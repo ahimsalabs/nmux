@@ -258,6 +258,7 @@ dependencies = [
  "libghostty-vt",
  "nmux-proto",
  "portable-pty",
+ "serde_json",
 ]
 
 [[package]]

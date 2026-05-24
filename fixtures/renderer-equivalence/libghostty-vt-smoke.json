@@ -1,5 +1,19 @@
 {
   "command": "printf '\\033]0;renderer fixture\\007'; printf '\\033]7;file://localhost/tmp/nmux-renderer\\033\\\\'; printf '\\033[?2004h\\033[?1000h'; printf '\\033[31mred\\033[0m plain'; printf '\\n'; printf 'wide:中'; printf '\\n'; printf '\\033]8;;https://example.invalid\\033\\\\link\\033]8;;\\033\\\\'; printf '\\n'; printf 'main-scroll'; printf '\\n'; printf '\\033[?1049hALT-ONLY\\033[?1049l'; cat >/dev/null",
+  "terminal_output": [
+    "\u001b]0;renderer fixture\u0007",
+    "\u001b]7;file://localhost/tmp/nmux-renderer\u001b\\",
+    "\u001b[?2004h\u001b[?1000h",
+    "\u001b[31mred\u001b[0m plain",
+    "\r\n",
+    "wide:中",
+    "\r\n",
+    "\u001b]8;;https://example.invalid\u001b\\link\u001b]8;;\u001b\\",
+    "\r\n",
+    "main-scroll",
+    "\r\n",
+    "\u001b[?1049hALT-ONLY\u001b[?1049l"
+  ],
   "expected": {
     "workspace": {
       "session_id": "local",

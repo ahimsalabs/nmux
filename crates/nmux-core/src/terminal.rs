@@ -1338,6 +1338,12 @@ mod ghostty_vt {
 #[cfg(test)]
 mod tests {
     use nmux_proto::protocol;
+    #[cfg(feature = "libghostty-vt")]
+    use serde_json::{Value, json};
+    #[cfg(feature = "libghostty-vt")]
+    use std::fs;
+    #[cfg(feature = "libghostty-vt")]
+    use std::path::{Path, PathBuf};
 
     use super::{
         InterimTextTerminalEngine, PaneTerminalEngines, TerminalColors, TerminalCursor,
@@ -1416,175 +1422,363 @@ mod tests {
     }
 
     #[cfg(feature = "libghostty-vt")]
-    struct RendererEquivalenceFixture {
-        name: &'static str,
+    struct CoreRendererFixture {
+        name: String,
         cols: u32,
         rows: u32,
-        output: &'static [u8],
-        expected_lines: &'static [&'static str],
-        expected_title: Option<&'static str>,
-        expected_bracketed_paste: bool,
-        expected_mouse_tracking: bool,
-        expectations: &'static [RendererFixtureExpectation],
-    }
-
-    #[cfg(feature = "libghostty-vt")]
-    enum RendererFixtureExpectation {
-        DefaultStyleRun(&'static str),
-        NonDefaultStyleRun(&'static str),
-        DoubleWidthChar(char),
-        HyperlinkRun(&'static str),
-    }
-
-    #[cfg(feature = "libghostty-vt")]
-    fn assert_renderer_equivalence_fixture(fixture: RendererEquivalenceFixture) {
-        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
-        let empty = Vec::new();
-        let update = engine
-            .apply_output(
-                terminal_input_with_size(fixture.cols, fixture.rows, &empty, &empty),
-                fixture.output,
-            )
-            .unwrap_or_else(|| panic!("{} did not produce a terminal update", fixture.name));
-
-        for expected in fixture.expected_lines {
-            assert!(
-                update.surface_lines.iter().any(|line| line == expected),
-                "{} missing expected visible row {expected:?}: {:?}",
-                fixture.name,
-                update.surface_lines
-            );
-        }
-        if let Some(expected_title) = fixture.expected_title {
-            assert_eq!(
-                update.title, expected_title,
-                "{} title mismatch",
-                fixture.name
-            );
-        }
-        assert_eq!(
-            update.modes.bracketed_paste, fixture.expected_bracketed_paste,
-            "{} bracketed paste mode mismatch",
-            fixture.name
-        );
-        assert_eq!(
-            update.modes.mouse_tracking, fixture.expected_mouse_tracking,
-            "{} mouse tracking mode mismatch",
-            fixture.name
-        );
-
-        for expectation in fixture.expectations {
-            match *expectation {
-                RendererFixtureExpectation::DefaultStyleRun(text) => {
-                    let run = renderer_fixture_run_containing(&update, text, fixture.name);
-                    assert_eq!(
-                        run.style_id, 0,
-                        "{} expected default style for run {text:?}",
-                        fixture.name
-                    );
-                }
-                RendererFixtureExpectation::NonDefaultStyleRun(text) => {
-                    let run = renderer_fixture_run_containing(&update, text, fixture.name);
-                    assert_ne!(
-                        run.style_id, 0,
-                        "{} expected non-default style for run {text:?}",
-                        fixture.name
-                    );
-                }
-                RendererFixtureExpectation::DoubleWidthChar(ch) => {
-                    let run = update
-                        .surface_row_runs
-                        .iter()
-                        .flat_map(|row| row.iter())
-                        .find(|run| run.text.contains(ch))
-                        .unwrap_or_else(|| {
-                            panic!("{} missing run containing {ch:?}", fixture.name)
-                        });
-                    let width_index = run
-                        .text
-                        .chars()
-                        .position(|candidate| candidate == ch)
-                        .unwrap_or_else(|| {
-                            panic!("{} missing char {ch:?} in run {:?}", fixture.name, run.text)
-                        });
-                    assert_eq!(
-                        run.cell_widths[width_index], 2,
-                        "{} expected {ch:?} to occupy two cells",
-                        fixture.name
-                    );
-                }
-                RendererFixtureExpectation::HyperlinkRun(text) => {
-                    let run = renderer_fixture_run_containing(&update, text, fixture.name);
-                    assert_ne!(
-                        run.flags & super::CELL_RUN_FLAG_HYPERLINK_PRESENT,
-                        0,
-                        "{} expected hyperlink presence for run {text:?}",
-                        fixture.name
-                    );
-                }
-            }
-        }
-    }
-
-    #[cfg(feature = "libghostty-vt")]
-    fn renderer_fixture_run_containing<'a>(
-        update: &'a super::TerminalUpdate,
-        text: &str,
-        fixture_name: &str,
-    ) -> &'a super::CellRun {
-        update
-            .surface_row_runs
-            .iter()
-            .flat_map(|row| row.iter())
-            .find(|run| run.text.contains(text))
-            .unwrap_or_else(|| panic!("{fixture_name} missing run containing {text:?}"))
+        terminal_output: Vec<String>,
+        expected_terminal: Value,
+        expected_surface: Value,
     }
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
     fn renderer_equivalence_fixture_corpus_projects_server_owned_surface() {
-        let fixtures = [
-            RendererEquivalenceFixture {
-                name: "style and width",
-                cols: 80,
-                rows: 3,
-                output: b"\x1b[31mred\x1b[0m plain\r\nwide:\xe4\xb8\xad",
-                expected_lines: &["red plain", "wide:中"],
-                expected_title: None,
-                expected_bracketed_paste: false,
-                expected_mouse_tracking: false,
-                expectations: &[
-                    RendererFixtureExpectation::NonDefaultStyleRun("red"),
-                    RendererFixtureExpectation::DefaultStyleRun(" plain"),
-                    RendererFixtureExpectation::DoubleWidthChar('中'),
-                ],
-            },
-            RendererEquivalenceFixture {
-                name: "metadata and modes",
-                cols: 80,
-                rows: 3,
-                output: b"\x1b]0;fixture title\x07\x1b[?2004h\x1b[?1000hready",
-                expected_lines: &["ready"],
-                expected_title: Some("fixture title"),
-                expected_bracketed_paste: true,
-                expected_mouse_tracking: true,
-                expectations: &[],
-            },
-            RendererEquivalenceFixture {
-                name: "hyperlink presence",
-                cols: 80,
-                rows: 3,
-                output: b"\x1b]8;;https://example.invalid\x1b\\link\x1b]8;;\x1b\\",
-                expected_lines: &["link"],
-                expected_title: None,
-                expected_bracketed_paste: false,
-                expected_mouse_tracking: false,
-                expectations: &[RendererFixtureExpectation::HyperlinkRun("link")],
-            },
-        ];
+        for fixture in load_core_renderer_fixtures() {
+            let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+            let empty = Vec::new();
+            let mut update = None;
+            for output in &fixture.terminal_output {
+                let input = match &update {
+                    Some(previous) => {
+                        terminal_input_from_update_with_size(fixture.cols, fixture.rows, previous)
+                    }
+                    None => terminal_input_with_size(fixture.cols, fixture.rows, &empty, &empty),
+                };
+                update = engine.apply_output(input, output.as_bytes());
+            }
+            let update = update
+                .unwrap_or_else(|| panic!("{} did not produce a terminal update", fixture.name));
 
-        for fixture in fixtures {
-            assert_renderer_equivalence_fixture(fixture);
+            let actual_terminal = renderer_terminal_json(&update);
+            if fixture.name == "libghostty-vt-smoke" {
+                // The real PTY-backed CLI fixture observes the final main-screen
+                // cursor column after alternate-screen restoration differently
+                // from direct chunk replay. Keep core coverage on the shared
+                // rows, styles, modes, title, working directory, surface kind,
+                // cursor row/visibility/shape/blink, and let the CLI fixture pin
+                // the exact user-facing cursor column.
+                assert_eq!(
+                    terminal_without_cursor_col(actual_terminal),
+                    terminal_without_cursor_col(fixture.expected_terminal),
+                    "{} terminal projection mismatch",
+                    fixture.name
+                );
+            } else {
+                assert_eq!(
+                    actual_terminal, fixture.expected_terminal,
+                    "{} terminal projection mismatch",
+                    fixture.name
+                );
+            }
+
+            let actual_surface = renderer_surface_json(&update);
+            assert_eq!(
+                actual_surface, fixture.expected_surface,
+                "{} surface projection mismatch",
+                fixture.name
+            );
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn terminal_without_cursor_col(mut terminal: Value) -> Value {
+        terminal
+            .get_mut("cursor")
+            .and_then(Value::as_object_mut)
+            .expect("terminal cursor object")
+            .remove("col");
+        terminal
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn load_core_renderer_fixtures() -> Vec<CoreRendererFixture> {
+        let dir = workspace_path(PathBuf::from("fixtures/renderer-equivalence"));
+        let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
+            .unwrap_or_else(|error| panic!("read renderer fixture dir {}: {error}", dir.display()))
+            .map(|entry| {
+                entry
+                    .unwrap_or_else(|error| panic!("read renderer fixture dir entry: {error}"))
+                    .path()
+            })
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "json")
+            })
+            .collect();
+        paths.sort();
+        assert!(
+            !paths.is_empty(),
+            "renderer fixture dir {} has no json fixtures",
+            dir.display()
+        );
+        paths
+            .into_iter()
+            .map(|path| load_core_renderer_fixture(&path))
+            .collect()
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn load_core_renderer_fixture(path: &Path) -> CoreRendererFixture {
+        let json = fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("read renderer fixture {}: {error}", path.display()));
+        let decoded: Value = serde_json::from_str(&json)
+            .unwrap_or_else(|error| panic!("decode renderer fixture {}: {error}", path.display()));
+        let expected = decoded.get("expected").expect("expected fixture object");
+        let workspace = expected
+            .get("workspace")
+            .expect("expected workspace object");
+        let size = decoded.get("initial_size").unwrap_or(workspace);
+        CoreRendererFixture {
+            name: path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or_else(|| panic!("fixture path has no utf-8 stem: {}", path.display()))
+                .to_owned(),
+            cols: renderer_numeric_field(size, "cols")
+                .try_into()
+                .expect("fixture cols fit u32"),
+            rows: renderer_numeric_field(size, "rows")
+                .try_into()
+                .expect("fixture rows fit u32"),
+            terminal_output: renderer_string_or_array_field(&decoded, "terminal_output"),
+            expected_terminal: expected
+                .get("terminal")
+                .expect("expected terminal object")
+                .clone(),
+            expected_surface: expected
+                .get("surface")
+                .expect("expected surface object")
+                .clone(),
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn terminal_input_from_update_with_size<'a>(
+        cols: u32,
+        rows: u32,
+        update: &'a super::TerminalUpdate,
+    ) -> TerminalInput<'a> {
+        TerminalInput {
+            pane_id: "pane-1",
+            cols,
+            rows,
+            surface: update.surface,
+            cursor: update.cursor,
+            modes: update.modes,
+            title: &update.title,
+            working_directory: &update.working_directory,
+            colors: update.colors.clone(),
+            styles: &update.styles,
+            surface_lines: &update.surface_lines,
+            surface_row_runs: &update.surface_row_runs,
+            surface_semantic_prompts: &update.surface_semantic_prompts,
+            surface_dirty_rows: &update.surface_dirty_rows,
+            surface_kitty_placeholders: &update.surface_kitty_placeholders,
+            scrollback_lines: &update.scrollback_lines,
+            scrollback_row_runs: &update.scrollback_row_runs,
+            scrollback_semantic_prompts: &update.scrollback_semantic_prompts,
+            scrollback_dirty_rows: &update.scrollback_dirty_rows,
+            scrollback_kitty_placeholders: &update.scrollback_kitty_placeholders,
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn renderer_terminal_json(update: &super::TerminalUpdate) -> Value {
+        json!({
+            "title": update.title,
+            "working_directory": update.working_directory,
+            "surface_kind": surface_kind_name(update.surface),
+            "cursor": {
+                "row": update.cursor.row,
+                "col": update.cursor.col,
+                "visible": update.cursor.visible,
+                "shape": cursor_shape_name(update.cursor.shape),
+                "blinking": update.cursor.blinking,
+            },
+            "modes": {
+                "bracketed_paste": update.modes.bracketed_paste,
+                "mouse_tracking": update.modes.mouse_tracking,
+                "focus_reporting": update.modes.focus_reporting,
+                "application_keypad": update.modes.application_keypad,
+                "application_cursor": update.modes.application_cursor,
+                "origin": update.modes.origin,
+                "wraparound": update.modes.wraparound,
+                "mouse_tracking_mode": mouse_tracking_mode_name(update.modes.mouse_tracking_mode),
+                "mouse_format": mouse_format_name(update.modes.mouse_format),
+            },
+        })
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn renderer_surface_json(update: &super::TerminalUpdate) -> Value {
+        json!({
+            "styles": update
+                .styles
+                .iter()
+                .map(renderer_style_json)
+                .collect::<Vec<_>>(),
+            "row_updates": renderer_rows_json(update),
+        })
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn renderer_style_json(style: &super::PaneStyle) -> Value {
+        json!({
+            "fg_rgba": style.fg_rgba,
+            "bg_rgba": style.bg_rgba,
+            "underline_rgba": style.underline_rgba,
+            "flags": style.flags,
+        })
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn renderer_rows_json(update: &super::TerminalUpdate) -> Value {
+        Value::Array(
+            update
+                .surface_lines
+                .iter()
+                .enumerate()
+                .filter(|(_, text)| !text.is_empty())
+                .map(|(row, text)| {
+                    json!({
+                        "text": text,
+                        "semantic_prompt": row_semantic_prompt_name(
+                            update
+                                .surface_semantic_prompts
+                                .get(row)
+                                .copied()
+                                .unwrap_or(protocol::RowSemanticPrompt::None),
+                        ),
+                        "dirty": update.surface_dirty_rows.get(row).copied().unwrap_or(false),
+                        "kitty_virtual_placeholder": update
+                            .surface_kitty_placeholders
+                            .get(row)
+                            .copied()
+                            .unwrap_or(false),
+                        "runs": update
+                            .surface_row_runs
+                            .get(row)
+                            .unwrap_or_else(|| panic!("missing row runs for row {row}"))
+                            .iter()
+                            .map(renderer_run_json)
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn renderer_run_json(run: &super::CellRun) -> Value {
+        json!({
+            "text": run.text,
+            "cell_widths": run.cell_widths,
+            "style_id": run.style_id,
+            "flags": run.flags,
+            "semantic_content": cell_semantic_content_name(run.semantic_content),
+        })
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn renderer_string_or_array_field(value: &Value, name: &str) -> Vec<String> {
+        let field = value
+            .get(name)
+            .unwrap_or_else(|| panic!("missing string or array field {name} in {value:?}"));
+        if let Some(text) = field.as_str() {
+            return vec![text.to_owned()];
+        }
+        field
+            .as_array()
+            .unwrap_or_else(|| panic!("field {name} is not a string or array in {value:?}"))
+            .iter()
+            .map(|chunk| {
+                chunk
+                    .as_str()
+                    .unwrap_or_else(|| panic!("field {name} contains non-string chunk: {chunk:?}"))
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn renderer_numeric_field(value: &Value, name: &str) -> u64 {
+        value
+            .get(name)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("missing numeric field {name} in {value:?}"))
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn workspace_path(path: PathBuf) -> PathBuf {
+        if path.is_absolute() {
+            return path;
+        }
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path)
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn surface_kind_name(kind: protocol::SurfaceKind) -> &'static str {
+        match kind {
+            protocol::SurfaceKind::Main => "main",
+            protocol::SurfaceKind::Alternate => "alternate",
+            _ => "unknown",
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn cursor_shape_name(shape: protocol::CursorShape) -> &'static str {
+        match shape {
+            protocol::CursorShape::Block => "block",
+            protocol::CursorShape::Beam => "beam",
+            protocol::CursorShape::Underline => "underline",
+            _ => "unknown",
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn mouse_tracking_mode_name(mode: protocol::MouseTrackingMode) -> &'static str {
+        match mode {
+            protocol::MouseTrackingMode::None => "none",
+            protocol::MouseTrackingMode::X10 => "x10",
+            protocol::MouseTrackingMode::Normal => "normal",
+            protocol::MouseTrackingMode::Button => "button",
+            protocol::MouseTrackingMode::Any => "any",
+            _ => "unknown",
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn mouse_format_name(format: protocol::MouseFormat) -> &'static str {
+        match format {
+            protocol::MouseFormat::X10 => "x10",
+            protocol::MouseFormat::Utf8 => "utf8",
+            protocol::MouseFormat::Sgr => "sgr",
+            protocol::MouseFormat::Urxvt => "urxvt",
+            protocol::MouseFormat::SgrPixels => "sgr-pixels",
+            _ => "unknown",
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn row_semantic_prompt_name(prompt: protocol::RowSemanticPrompt) -> &'static str {
+        match prompt {
+            protocol::RowSemanticPrompt::None => "none",
+            protocol::RowSemanticPrompt::Prompt => "prompt",
+            protocol::RowSemanticPrompt::Continuation => "continuation",
+            _ => "unknown",
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn cell_semantic_content_name(content: protocol::CellSemanticContent) -> &'static str {
+        match content {
+            protocol::CellSemanticContent::Output => "output",
+            protocol::CellSemanticContent::Prompt => "prompt",
+            protocol::CellSemanticContent::Input => "input",
+            _ => "unknown",
         }
     }
 
