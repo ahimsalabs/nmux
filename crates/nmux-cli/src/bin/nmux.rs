@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
-use crossterm::tty::IsTty;
+use crossterm::{terminal, tty::IsTty};
 use nmux_cli::{daemon, local};
 use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
@@ -1781,7 +1781,7 @@ impl SigwinchResize {
             return Ok(None);
         }
 
-        let Some(size) = stdin_terminal_size()? else {
+        let Some(size) = terminal_size()? else {
             return Ok(None);
         };
         if self.last_size == Some(size) {
@@ -1833,29 +1833,12 @@ fn sigwinch_resize_needed(context: SigwinchResizeContext) -> bool {
     context.stdin_bytes && !context.explicit_resize && context.stdin_is_tty
 }
 
-fn stdin_terminal_size() -> io::Result<Option<(u32, u32)>> {
-    fd_terminal_size(libc::STDIN_FILENO)
-}
-
-fn stdout_terminal_size() -> io::Result<Option<(u32, u32)>> {
-    fd_terminal_size(libc::STDOUT_FILENO)
-}
-
-fn fd_terminal_size(fd: libc::c_int) -> io::Result<Option<(u32, u32)>> {
-    let mut size = empty_winsize();
-    // Safety: fd is a process file descriptor and size points to valid
-    // writable storage for TIOCGWINSZ.
-    if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut size) } != 0 {
-        return Err(io::Error::last_os_error());
+fn terminal_size() -> io::Result<Option<(u32, u32)>> {
+    let (cols, rows) = terminal::size()?;
+    if cols == 0 || rows == 0 {
+        return Ok(None);
     }
-    Ok(terminal_size_from_winsize(size))
-}
-
-fn terminal_size_from_winsize(size: libc::winsize) -> Option<(u32, u32)> {
-    if size.ws_col == 0 || size.ws_row == 0 {
-        return None;
-    }
-    Some((u32::from(size.ws_col), u32::from(size.ws_row)))
+    Ok(Some((u32::from(cols), u32::from(rows))))
 }
 
 fn raw_terminal_termios(mut termios: libc::termios, local_echo: LocalEcho) -> libc::termios {
@@ -1884,12 +1867,6 @@ fn stdout_is_tty() -> bool {
 fn empty_termios() -> libc::termios {
     // Safety: termios is a plain C struct that is immediately initialized by
     // tcgetattr before use.
-    unsafe { std::mem::zeroed() }
-}
-
-fn empty_winsize() -> libc::winsize {
-    // Safety: winsize is a plain C struct that is immediately initialized by
-    // ioctl before use.
     unsafe { std::mem::zeroed() }
 }
 
@@ -2188,7 +2165,7 @@ impl RedrawState {
     }
 
     fn update_terminal_size(&mut self) {
-        if let Ok(Some((cols, _))) = stdout_terminal_size() {
+        if let Ok(Some((cols, _))) = terminal_size() {
             self.terminal_cols = cols;
         }
     }
@@ -5026,7 +5003,7 @@ mod tests {
         parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
         parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_mode_needed,
         raw_terminal_termios, redraw_terminal_guard_needed, redraw_workspace_surface_text,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -6009,23 +5986,6 @@ mod tests {
             stdin_bytes: false,
             ..interactive_byte_mode
         }));
-    }
-
-    #[test]
-    fn terminal_size_from_winsize_rejects_zero_dimensions() {
-        let mut size = libc::winsize {
-            ws_row: 24,
-            ws_col: 80,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        };
-        assert_eq!(terminal_size_from_winsize(size), Some((80, 24)));
-
-        size.ws_col = 0;
-        assert_eq!(terminal_size_from_winsize(size), None);
-        size.ws_col = 80;
-        size.ws_row = 0;
-        assert_eq!(terminal_size_from_winsize(size), None);
     }
 
     #[test]
