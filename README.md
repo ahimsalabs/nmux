@@ -25,6 +25,16 @@ over FlatBuffers — not client-side PTY replay.
 
 See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
 
+## Install
+
+```sh
+# run directly from GitHub (requires Nix with flakes)
+nix run github:ahimsalabs/nmux -- --shell
+```
+
+Pre-built binaries for Linux (x86_64, aarch64) and macOS (Apple Silicon) are
+available from [nightly releases](https://github.com/ahimsalabs/nmux/releases/tag/nightly).
+
 ## Quick start
 
 ```sh

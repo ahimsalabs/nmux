@@ -1,0 +1,116 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # daily at 08:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: true
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            cross: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Add cross target
+        if: matrix.cross
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cargo-zigbuild
+        if: matrix.cross
+        run: pip3 install ziglang && cargo install cargo-zigbuild
+
+      - name: Build (native)
+        if: "!matrix.cross"
+        run: cargo build --release -p nmux-cli
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cargo zigbuild --release -p nmux-cli --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          target_dir="target/${{ matrix.cross && matrix.target || 'release' }}"
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            target_dir="target/${{ matrix.target }}/release"
+          else
+            target_dir="target/release"
+          fi
+          staging="nmux-${{ matrix.target }}"
+          mkdir -p "$staging"
+          cp "$target_dir/nmux" "$staging/"
+          cp "$target_dir/nmuxd" "$staging/"
+          tar czf "$staging.tar.gz" "$staging"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmux-${{ matrix.target }}
+          path: nmux-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum *.tar.gz > SHA256SUMS
+
+      - name: Create or update nightly release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="nightly"
+          # Delete existing release if present
+          gh release delete "$tag" --yes 2>/dev/null || true
+          # Delete existing tag if present
+          git push origin ":refs/tags/$tag" 2>/dev/null || true
+          # Create new release
+          gh release create "$tag" \
+            --title "Nightly ($(date -u +%Y-%m-%d))" \
+            --notes "Automated nightly build from \`main\` at $(git rev-parse --short HEAD).
+
+          **This is a development build — not a stable release.**
+
+          Targets:
+          - \`x86_64-unknown-linux-gnu\` — Linux x86_64
+          - \`aarch64-unknown-linux-gnu\` — Linux ARM64
+          - \`aarch64-apple-darwin\` — macOS Apple Silicon" \
+            --prerelease \
+            artifacts/*

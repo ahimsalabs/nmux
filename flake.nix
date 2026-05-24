@@ -82,6 +82,7 @@
           // {
             inherit cargoArtifacts;
             doCheck = false;
+            meta.mainProgram = "nmux";
           }
         );
 
@@ -221,6 +222,7 @@
             ];
             packages = [
               pkgs.cargo
+              pkgs.cargo-zigbuild
               pkgs.flatbuffers
               pkgs.gnumake
               pkgs.nixfmt
