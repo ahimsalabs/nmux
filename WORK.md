@@ -12,14 +12,13 @@ see all panes restored.
 
 ## Next features (priority order)
 
-1. **Multi-tab**: create/switch/close tabs within a session
-2. **Simultaneous multi-client**: broadcast surface updates to all attached
+1. **Simultaneous multi-client**: broadcast surface updates to all attached
    clients concurrently, not just sequential attach; decide and implement the
    multiplayer cursor/mouse presence model before duplicating frontend state
    tracking (issue #2)
-3. **Scriptable CLI**: `nmux pane split`, `nmux tab new`, `nmux pane send`,
-   `nmux pane snapshot --json`
-4. **Remote transport**: TCP/QUIC listener beyond Unix socket, identity/auth
+2. **Scriptable CLI**: `nmux pane split`, `nmux tab new`, `nmux tab close`,
+   `nmux pane send`, `nmux pane snapshot --json`
+3. **Remote transport**: TCP/QUIC listener beyond Unix socket, identity/auth
 
 ## Test gaps to close
 
