@@ -390,8 +390,9 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --redraw
 Add `--speculative-echo` only with `--redraw` and `--key` to enable the
 experimental client-local local echo overlay. It predicts one outstanding
 printable single-cell append at the confirmed cursor position, repaints the
-redraw buffer immediately, and then replaces that overlay with the next
-daemon-owned surface update. It does not change the confirmed client cache,
+redraw buffer immediately with the predicted glyph underlined, and then
+replaces that overlay with the next daemon-owned surface update. It does not
+change the confirmed client cache,
 protocol frames, scrollback, or daemon terminal state, and it deliberately skips
 raw stdin-byte mode, line-streamed stdin, paste, named keys, control input, wide
 graphemes, wrapping, alternate-screen claims, and JSON output.

@@ -73,15 +73,19 @@ SLE remains an optional frontend behavior, not a protocol guarantee. It should
 be guarded by an explicit client option or experimental mode until local latency
 measurements and regression tests justify a default.
 
+Predictions should be visibly marked as unconfirmed. The first redraw path uses
+ANSI underline around the predicted glyph only; the marker disappears when the
+next daemon-owned surface update replaces the overlay.
+
 The daemon remains the sole terminal-state authority. Confirmed rendering,
 persisted client state, scrollback fetches, renderer-equivalence fixtures, and
 default-engine promotion evidence must ignore speculative overlay state.
 
-The first implementation milestone should add tests around the prediction data
-model and reconciliation against `SurfaceUpdate` objects before wiring live TTY
-painting. A later milestone can measure whether the quiet-polling window is
-visible enough to justify enabling SLE for local workflows or whether an
-input-correlated daemon fast-flush is a better fix.
+The first implementation milestone should keep tests around the prediction data
+model, visible unconfirmed marker, and reconciliation against `SurfaceUpdate`
+objects before broader live TTY painting. A later milestone can measure whether
+the quiet-polling window is visible enough to justify enabling SLE for local
+workflows or whether an input-correlated daemon fast-flush is a better fix.
 
 ## Licensing And Compatibility Notes
 

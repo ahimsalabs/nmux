@@ -4255,8 +4255,8 @@ fn live_cli_speculative_echo_repaints_before_server_confirmation() {
         "missing redraw sequence:\n{stdout:?}"
     );
     assert!(
-        stdout.contains("readyx"),
-        "missing speculative echo repaint before server confirmation:\n{stdout:?}"
+        stdout.contains("ready\x1b[4mx\x1b[24m"),
+        "missing underlined speculative echo repaint before server confirmation:\n{stdout:?}"
     );
 }
 

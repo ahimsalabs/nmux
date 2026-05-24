@@ -3672,6 +3672,8 @@ pub enum SpeculativeEchoReconcile {
 
 impl SpeculativeEchoOverlay {
     const MAX_CONSECUTIVE_MISSES: u8 = 2;
+    const UNDERLINE_START: &'static str = "\x1b[4m";
+    const UNDERLINE_END: &'static str = "\x1b[24m";
 
     pub fn predict_printable_key(
         &mut self,
@@ -3712,6 +3714,18 @@ impl SpeculativeEchoOverlay {
     }
 
     pub fn render(&self, surface: &ClientPaneSurface) -> Option<String> {
+        self.render_with_speculative_style(surface, false)
+    }
+
+    pub fn render_underlined(&self, surface: &ClientPaneSurface) -> Option<String> {
+        self.render_with_speculative_style(surface, true)
+    }
+
+    fn render_with_speculative_style(
+        &self,
+        surface: &ClientPaneSurface,
+        underline_prediction: bool,
+    ) -> Option<String> {
         let prediction = self.prediction.as_ref()?;
         if prediction.pane_id != surface.pane_id || prediction.base_version != surface.version {
             return None;
@@ -3722,7 +3736,13 @@ impl SpeculativeEchoOverlay {
         if prediction.col as usize != row.chars().count() {
             return None;
         }
-        row.push_str(&prediction.text);
+        if underline_prediction {
+            row.push_str(Self::UNDERLINE_START);
+            row.push_str(&prediction.text);
+            row.push_str(Self::UNDERLINE_END);
+        } else {
+            row.push_str(&prediction.text);
+        }
         let visible_rows = rows
             .iter()
             .rposition(|row| !row.is_empty())
@@ -4300,7 +4320,8 @@ impl ClientAttachState {
             .surfaces
             .iter()
             .find(|surface| surface.pane_id == pane_id)?;
-        overlay.predict_printable_key(surface, input_seq, text)
+        overlay.predict_printable_key(surface, input_seq, text)?;
+        overlay.render_underlined(surface)
     }
 
     pub fn cached_surface_text(&self, pane_id: &str) -> Option<String> {
@@ -8236,6 +8257,10 @@ mod tests {
             .expect("predicted render");
 
         assert_eq!(predicted, "abc");
+        assert_eq!(
+            overlay.render_underlined(&surface).as_deref(),
+            Some("ab\x1b[4mc\x1b[24m")
+        );
         assert_eq!(surface.render_text(), "ab");
         assert_eq!(
             overlay.prediction,
