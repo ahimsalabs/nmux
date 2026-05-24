@@ -290,6 +290,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin_bytes_closed = false;
     let mut detach_requested = false;
     let mut client_sequence = local::ClientFrameSequence::default();
+    let mut speculative_echo = local::SpeculativeEchoOverlay::default();
 
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
@@ -424,12 +425,25 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
-                            local::send_raw_input_with_sequence(
+                            let input_seq = local::send_raw_input_with_sequence(
                                 &mut stream,
                                 &mut client_sequence,
                                 &attached_pane_id,
                                 &input,
                             )?;
+                            if let Some(text) = speculative_echo_raw_text(&input) {
+                                repaint_speculative_echo(
+                                    args,
+                                    &client_state,
+                                    &mut speculative_echo,
+                                    &attached_pane_id,
+                                    input_seq,
+                                    text,
+                                    &current_workspace,
+                                    &current_surface_metadata,
+                                    &mut current_surface_text,
+                                )?;
+                            }
                         }
                         detach_requested = detach;
                         None
@@ -507,11 +521,22 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     paste_text,
                 )?;
             } else if let Some(input_text) = input_text.as_deref() {
-                local::send_key_input_with_sequence(
+                let input_seq = local::send_key_input_with_sequence(
                     &mut stream,
                     &mut client_sequence,
                     &attached_pane_id,
                     input_text,
+                )?;
+                repaint_speculative_echo(
+                    args,
+                    &client_state,
+                    &mut speculative_echo,
+                    &attached_pane_id,
+                    input_seq,
+                    input_text,
+                    &current_workspace,
+                    &current_surface_metadata,
+                    &mut current_surface_text,
                 )?;
             }
         }
@@ -535,6 +560,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::Update(update) => {
+                    speculative_echo.reconcile_update(&update);
                     let previous_metadata = current_surface_metadata.clone();
                     current_surface_metadata = local::TerminalMetadataSummary {
                         title: update.title.clone(),
@@ -884,6 +910,40 @@ fn finish_live(
         flush_stdout()?;
     }
     Ok(())
+}
+
+fn repaint_speculative_echo(
+    args: &Args,
+    client_state: &local::ClientAttachState,
+    overlay: &mut local::SpeculativeEchoOverlay,
+    pane_id: &str,
+    input_seq: u64,
+    text: &str,
+    workspace: &local::WorkspaceSummary,
+    metadata: &local::TerminalMetadataSummary,
+    current_surface_text: &mut String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !args.speculative_echo {
+        return Ok(());
+    }
+    let Some(predicted) = client_state.render_speculative_echo(overlay, pane_id, input_seq, text)
+    else {
+        return Ok(());
+    };
+    *current_surface_text = predicted;
+    print_live_surface(workspace, metadata, current_surface_text, true);
+    flush_stdout()?;
+    Ok(())
+}
+
+fn speculative_echo_raw_text(input: &[u8]) -> Option<&str> {
+    let [byte] = input else {
+        return None;
+    };
+    if !byte.is_ascii() || byte.is_ascii_control() {
+        return None;
+    }
+    std::str::from_utf8(input).ok()
 }
 
 fn report_live_setup_error(
@@ -1518,6 +1578,7 @@ struct Args {
     local_echo: LocalEcho,
     detach_key: DetachKey,
     redraw: bool,
+    speculative_echo: bool,
     live_resize: Option<(u32, u32)>,
     interval_ms: u64,
     connect_timeout_ms: Option<u64>,
@@ -1670,6 +1731,8 @@ struct RawArgs {
     detach_key: Option<DetachKey>,
     #[arg(long = "redraw", action = ArgAction::SetTrue)]
     redraw: bool,
+    #[arg(long = "speculative-echo", action = ArgAction::SetTrue)]
+    speculative_echo: bool,
     #[arg(long = "cols", value_name = "COUNT", value_parser = parse_cols_arg)]
     live_cols: Option<u32>,
     #[arg(long = "rows", value_name = "COUNT", value_parser = parse_rows_arg)]
@@ -1816,6 +1879,7 @@ where
             local_echo_set,
             detach_key_set,
             redraw,
+            speculative_echo: raw.speculative_echo,
             live_resize,
             iterations,
             output_json: raw.output_json,
@@ -1886,6 +1950,7 @@ where
         local_echo,
         detach_key,
         redraw,
+        speculative_echo: raw.speculative_echo,
         live_resize,
         interval_ms,
         connect_timeout_ms,
@@ -2906,6 +2971,7 @@ struct ClientModeArgs {
     local_echo_set: bool,
     detach_key_set: bool,
     redraw: bool,
+    speculative_echo: bool,
     live_resize: Option<(u32, u32)>,
     iterations: Option<usize>,
     output_json: bool,
@@ -2972,6 +3038,12 @@ fn validate_mode_args(args: ClientModeArgs) -> Result<(), &'static str> {
     }
     if args.redraw && !args.live {
         return Err("--redraw requires --live");
+    }
+    if args.speculative_echo && !args.live {
+        return Err("--speculative-echo requires --live");
+    }
+    if args.speculative_echo && !args.redraw {
+        return Err("--speculative-echo requires --redraw");
     }
     if args.live_resize.is_some() && !args.live {
         return Err("--cols and --rows require --live");
@@ -3044,6 +3116,7 @@ Options:
   --local-echo off|tty       Local TTY echo policy for --stdin-bytes
   --detach-key ctrl-]|none   Local detach key for --stdin-bytes
   --redraw                   Repaint the current live surface in place
+  --speculative-echo         Experimental redraw-only local echo prediction
   --cols COUNT               Live ResizeIntent columns; both dimensions required
   --rows COUNT               Live ResizeIntent rows; both dimensions required
   --interval-ms MS           Poll/read timeout in milliseconds
@@ -3062,6 +3135,7 @@ Notes:
   --start waits for nmuxd --ready-json and cleans up the private daemon on exit.
   --startup-timeout-ms controls that managed readiness wait and defaults to 5000.
   --shell is shorthand for --start --live --stdin-bytes --redraw using $SHELL or sh.
+  --speculative-echo is experimental and predicts only simple printable input in redraw mode.
   Ctrl-] detaches byte-streamed live sessions by default; --detach-key none passes it through.
   NMUX_ORIGIN records the local hop chain for nested nmux daemons.
   Informational flags exit before mode validation or socket/state work.
@@ -3075,6 +3149,7 @@ Examples:
   nmux --live --cols 100 --rows 30
   nmux --live --no-input
   nmux --live --stdin-bytes --redraw
+  nmux --live --stdin-bytes --redraw --speculative-echo
   nmux --shell
   nmux --start --cwd /tmp --env NMUX_DEMO=1 --command 'pwd; env | grep ^NMUX_DEMO=; cat >/dev/null'
   nmux --start --live --stdin-bytes --redraw --command '$SHELL'
@@ -4355,6 +4430,21 @@ mod tests {
         );
         assert_eq!(
             super_validate_mode_args(ClientModeArgs {
+                speculative_echo: true,
+                ..ClientModeArgs::default()
+            }),
+            Err("--speculative-echo requires --live")
+        );
+        assert_eq!(
+            super_validate_mode_args(ClientModeArgs {
+                live: true,
+                speculative_echo: true,
+                ..ClientModeArgs::default()
+            }),
+            Err("--speculative-echo requires --redraw")
+        );
+        assert_eq!(
+            super_validate_mode_args(ClientModeArgs {
                 live_resize: Some((80, 24)),
                 ..ClientModeArgs::default()
             }),
@@ -4420,6 +4510,7 @@ mod tests {
                 stdin_bytes: true,
                 local_echo_set: true,
                 redraw: true,
+                speculative_echo: true,
                 live_resize: Some((80, 24)),
                 iterations: Some(1),
                 focus_set: true,
@@ -4906,6 +4997,22 @@ mod tests {
     fn no_scrollback_arg_skips_scrollback_fetch() {
         let args = args_from_iter(["--no-scrollback"]).expect("parse no-scrollback args");
         assert!(args.no_scrollback);
+    }
+
+    #[test]
+    fn speculative_echo_arg_is_live_redraw_only() {
+        let args = args_from_iter(["--live", "--stdin-bytes", "--redraw", "--speculative-echo"])
+            .expect("parse speculative echo args");
+        assert!(args.speculative_echo);
+        assert!(args.live);
+        assert!(args.stdin_bytes);
+        assert!(args.redraw);
+
+        let err = match args_from_iter(["--live", "--speculative-echo"]) {
+            Ok(_) => panic!("speculative echo without redraw should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(err, "--speculative-echo requires --redraw");
     }
 
     #[test]

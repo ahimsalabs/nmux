@@ -38,7 +38,8 @@ What works today: local `nmuxd`/`nmux` workflows over a Unix socket, one-shot
 attach, live attach, read-only reattach, explicit input and resize intents,
 persisted client render state, daemon-owned scrollback fetches, nested
 `NMUX_*` context reporting, daemon command cwd/env configuration,
-default-engine CI, and an opt-in
+default-engine CI, an experimental redraw-only speculative local echo overlay
+for simple printable live input, and an opt-in
 `libghostty-vt` correctness path with promotion evidence bundles.
 
 What is not default-ready: the default engine is still the interim text surface,
@@ -101,7 +102,9 @@ nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 
 Detach the live client with Ctrl-] by default, or pass `--detach-key none` to
 forward that byte to the pane; stop the daemon in shell 1 with Ctrl-C when
-finished. `--ready-json` prints one JSON line after the socket is bound and the
+finished. `--speculative-echo` can be added to redraw live clients as an
+experimental client-local prediction overlay for simple printable input.
+`--ready-json` prints one JSON line after the socket is bound and the
 initial pane starts, or an `event:error` line if startup fails before readiness,
 so scripts do not need to poll the socket path. See
 [docs/running.md](docs/running.md) for socket selection, one-shot attach,

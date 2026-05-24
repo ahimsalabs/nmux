@@ -1452,7 +1452,7 @@ pub fn send_key_input(
     text: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut sequence = ClientFrameSequence::default();
-    send_key_input_with_sequence(stream, &mut sequence, pane_id, text)
+    send_key_input_with_sequence(stream, &mut sequence, pane_id, text).map(|_| ())
 }
 
 pub fn send_key_input_with_sequence(
@@ -1460,17 +1460,18 @@ pub fn send_key_input_with_sequence(
     sequence: &mut ClientFrameSequence,
     pane_id: &str,
     text: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<u64, Box<dyn std::error::Error>> {
+    let input_seq = sequence.next_input_seq();
     let frame = Session::initial().key_input_frame(
         "local-client",
         sequence.next_envelope_seq(),
         "local-actor",
         pane_id,
-        sequence.next_input_seq(),
+        input_seq,
         text,
     );
     wire::write_default_frame(stream, &frame)?;
-    Ok(())
+    Ok(input_seq)
 }
 
 pub fn send_named_key_input(
@@ -1523,7 +1524,7 @@ pub fn send_raw_input(
     bytes: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut sequence = ClientFrameSequence::default();
-    send_raw_input_with_sequence(stream, &mut sequence, pane_id, bytes)
+    send_raw_input_with_sequence(stream, &mut sequence, pane_id, bytes).map(|_| ())
 }
 
 pub fn send_raw_input_with_sequence(
@@ -1531,17 +1532,18 @@ pub fn send_raw_input_with_sequence(
     sequence: &mut ClientFrameSequence,
     pane_id: &str,
     bytes: &[u8],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<u64, Box<dyn std::error::Error>> {
+    let input_seq = sequence.next_input_seq();
     let frame = Session::initial().raw_input_frame(
         "local-client",
         sequence.next_envelope_seq(),
         "local-actor",
         pane_id,
-        sequence.next_input_seq(),
+        input_seq,
         bytes,
     );
     wire::write_default_frame(stream, &frame)?;
-    Ok(())
+    Ok(input_seq)
 }
 
 pub fn send_paste_input(
@@ -4279,6 +4281,20 @@ impl ClientAttachState {
         update: &SurfaceUpdate,
     ) -> Result<String, Box<dyn std::error::Error>> {
         self.apply_surface_update(update)
+    }
+
+    pub fn render_speculative_echo(
+        &self,
+        overlay: &mut SpeculativeEchoOverlay,
+        pane_id: &str,
+        input_seq: u64,
+        text: &str,
+    ) -> Option<String> {
+        let surface = self
+            .surfaces
+            .iter()
+            .find(|surface| surface.pane_id == pane_id)?;
+        overlay.predict_printable_key(surface, input_seq, text)
     }
 
     pub fn cached_surface_text(&self, pane_id: &str) -> Option<String> {

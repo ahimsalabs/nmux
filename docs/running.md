@@ -258,8 +258,8 @@ updates through the same client-side pane surface state used by reconnects.
 Explicit input modes such as `--key`, `--key-name`, `--paste`, `--focus`,
 `--mouse`, `--stdin`, `--stdin-bytes`, and `--no-input` are mutually exclusive.
 Live-only frontend flags such as `--stdin`, `--stdin-bytes`, `--redraw`, and
-`--cols`/`--rows` are rejected unless `--live` is set, so ignored-mode mistakes
-fail before the client tries to connect.
+`--speculative-echo`, and `--cols`/`--rows` are rejected unless `--live` is set,
+so ignored-mode mistakes fail before the client tries to connect.
 `nmux --start` is the single-command form for a private managed daemon; it uses
 an isolated temporary socket and state path unless `--socket` or `--state` is
 supplied explicitly. Add `--live` when the managed daemon should remain
@@ -386,6 +386,15 @@ By default, live mode prints each rendered update as plain text. Add `--redraw` 
 ```sh
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --redraw --stdin-bytes --interval-ms 500
 ```
+
+Add `--speculative-echo` only with `--redraw` to enable the experimental
+client-local local echo overlay. It predicts one outstanding printable
+single-cell append at the confirmed cursor position, repaints the redraw buffer
+immediately, and then replaces that overlay with the next daemon-owned surface
+update. It does not change the confirmed client cache, protocol frames,
+scrollback, or daemon terminal state, and it deliberately skips paste, named
+keys, control input, wide graphemes, wrapping, alternate-screen claims, and JSON
+output.
 
 Read-write live clients also poll process output during idle cycles. That means a process can update the backend-owned pane surface and stream patches to an attached read-write client even when the client has not sent a key frame in that cycle.
 
