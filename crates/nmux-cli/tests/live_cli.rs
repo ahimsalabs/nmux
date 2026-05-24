@@ -7104,7 +7104,7 @@ fn live_redraw_tty_uses_alternate_screen_and_logical_lines() {
         output.output
     );
     assert!(
-        output.output.contains("\x1b[2J\x1b[H"),
+        output.output.contains("\x1b[2J\x1b[1;1H"),
         "missing initial redraw clear/home:\n{}",
         output.output
     );

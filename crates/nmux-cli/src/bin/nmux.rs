@@ -13,7 +13,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use crossterm::{
     cursor, execute,
-    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
+    style::{Attribute, SetAttribute},
+    terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
     tty::IsTty,
 };
 use nmux_cli::{daemon, local};
@@ -2197,7 +2198,12 @@ impl RedrawState {
             1
         };
 
-        format!("\x1b[7m{left}{:padding$}{right}\x1b[27m", "")
+        format!(
+            "{}{left}{:padding$}{right}{}",
+            SetAttribute(Attribute::Reverse),
+            "",
+            SetAttribute(Attribute::NoReverse)
+        )
     }
 
     /// Render the full surface text differentially: only write rows that changed.
@@ -2220,7 +2226,7 @@ impl RedrawState {
         let mut rows_changed: usize = 0;
 
         // Hide cursor during update to avoid flicker.
-        output.push_str("\x1b[?25l");
+        output.push_str(&format!("{}", cursor::Hide));
 
         // Diff content rows (starting at terminal row 2).
         let max_content = content_rows.len().max(
@@ -2236,7 +2242,12 @@ impl RedrawState {
                 .unwrap_or("");
             if new_row != old_row {
                 // Terminal row i+2 (1-based: row 1=status bar, row 2=first content).
-                output.push_str(&format!("\x1b[{};1H\x1b[2K{}", i + 2, new_row));
+                output.push_str(&format!(
+                    "{}{}{}",
+                    cursor::MoveTo(0, terminal_row(i + 2)),
+                    Clear(ClearType::CurrentLine),
+                    new_row
+                ));
                 rows_changed += 1;
             }
         }
@@ -2255,11 +2266,16 @@ impl RedrawState {
 
         // Always redraw the status bar (row 1) since stats change every frame.
         let status_bar = self.format_status_bar(workspace);
-        output.push_str(&format!("\x1b[1;1H\x1b[2K{status_bar}"));
+        output.push_str(&format!(
+            "{}{}{}",
+            cursor::MoveTo(0, 0),
+            Clear(ClearType::CurrentLine),
+            status_bar
+        ));
 
         // Park cursor below content to avoid visual artifacts.
         let park_row = content_rows.len() + 2; // +1 for status bar, +1 for park
-        output.push_str(&format!("\x1b[{};1H", park_row));
+        output.push_str(&format!("{}", cursor::MoveTo(0, terminal_row(park_row))));
 
         // Store status bar + content rows for next diff.
         let mut all_rows = Vec::with_capacity(content_rows.len() + 1);
@@ -2292,10 +2308,16 @@ impl RedrawState {
 
         // Clear screen, draw status bar on row 1, then content starting row 2.
         let mut output = String::new();
-        output.push_str(&format!("\x1b[2J\x1b[H{status_bar}\n{surface_text}"));
+        output.push_str(&format!(
+            "{}{}{}\n{}",
+            Clear(ClearType::All),
+            cursor::MoveTo(0, 0),
+            status_bar,
+            surface_text
+        ));
 
         let park_row = content_rows.len() + 2;
-        output.push_str(&format!("\x1b[{};1H", park_row));
+        output.push_str(&format!("{}", cursor::MoveTo(0, terminal_row(park_row))));
 
         let mut all_rows = Vec::with_capacity(content_rows.len() + 1);
         all_rows.push(status_bar);
@@ -2304,6 +2326,10 @@ impl RedrawState {
 
         output
     }
+}
+
+fn terminal_row(row_1_based: usize) -> u16 {
+    row_1_based.saturating_sub(1).min(u16::MAX as usize) as u16
 }
 
 fn resolve_short_hostname() -> String {
