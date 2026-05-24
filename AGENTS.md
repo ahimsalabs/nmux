@@ -36,12 +36,37 @@ Crate layout:
 - `crates/nmux-core` — session state, process hosts, terminal engine boundary
 - `crates/nmux-cli` — `nmuxd` daemon, `nmux` client, integration tests
 
+## Context handoff
+
+Use the jj working copy description (`@`) as a progress note between
+iterations. At the start of each session, read it with `jj log -r @ -T description`.
+Before finishing a session or between major steps, update it:
+
+```sh
+jj describe -m "$(cat <<'EOF'
+## Current item
+Multi-pane: split panes horizontally/vertically
+
+## Done so far
+- Added PaneLayout tree to session model
+- Unit tests passing for 2-pane horizontal split
+
+## Next step
+Wire pane layout into workspace snapshot serialization
+EOF
+)"
+```
+
+This is your cheapest context — ~200 tokens instead of re-deriving state from
+the full codebase. When you commit (`jj new`), the old description stays on
+the committed revision and `@` starts empty for the next progress note.
+
 ## Working rules
 
 - Work sequentially. Don't parallelize implementation steps.
 - Build features first. Write docs/ADRs only when they're needed to support a
   feature or record a decision that changes protocol shape or boundaries.
-- Check `jj status` before starting a step.
+- Check `jj status` and `jj log -r @ -T description` before starting a step.
 - Commit with `jj` after each coherent step, after relevant checks pass.
 - Keep commits small with a clear review purpose.
 - Don't create documentation infrastructure (evidence bundles, promotion
