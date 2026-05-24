@@ -32,6 +32,7 @@ see all panes restored.
 
 - Default engine promotion evidence / packaging / CI bundles
 - GitHub Actions cache/build optimization and libghostty-mode CI coverage (issue #4)
+- README dependency inventory and docs-only fast-build policy (issue #5)
 - Renderer equivalence oracle
 - Streaming playback/replay design for exports, web embeds, timestamp metadata,
   and presence history (issue #3)
