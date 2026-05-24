@@ -2,13 +2,17 @@
 
 ## Status
 
-Accepted.
+Superseded by ADR 0034.
 
 ## Date
 
 2026-05-23
 
 ## Context
+
+ADR 0034 later makes the Ghostty-backed binary the default package baseline and
+supplies Ghostty source through the flake package derivation. This ADR records
+the earlier packaging promotion criteria.
 
 ADR 0023 keeps `libghostty-vt` opt-in until native build cost, regular CI,
 non-Nix/toolchain provisioning, source-fetch policy, packaging, and workflow

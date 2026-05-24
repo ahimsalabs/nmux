@@ -15,10 +15,10 @@ nix build .
 ./result/bin/nmux --version
 ```
 
-`packages.default` builds the interim-engine `nmux` binary with
-crane and installs it under `$out/bin`. The opt-in `libghostty-vt` package is
-intentionally not exposed yet because its Ghostty/Zig source-fetch path still
-needs a Nix-clean source policy.
+`packages.default` builds the Ghostty-backed `nmux` binary with crane and
+installs it under `$out/bin`. The package derivation supplies
+`GHOSTTY_SOURCE_DIR` from a pinned Nix source fetch so it does not clone Ghostty
+from inside the Cargo build.
 
 All Nix examples assume `nix-command` and `flakes` are enabled. If your Nix
 install has not enabled them globally, run the same commands as:
@@ -29,7 +29,7 @@ Use a broader target only when the change needs the extra evidence:
 | Work type | Target |
 | --- | --- |
 | Normal default-engine or docs work | `nix develop . -c just check` and `nix develop . -c just local-smoke` |
-| Backend `libghostty-vt` correctness work | `nix develop . -c just check` and `nix develop . -c just check-ghostty-vt` |
+| Backend `libghostty-vt` correctness work | `nix develop . -c just check` |
 | Renderer-equivalence fixture work | `nix develop . -c just renderer-equivalence-smoke` |
 | Nix package/build work | `nix build .`, `nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).default`, and `nix build .#checks.$(nix eval --raw --impure --expr builtins.currentSystem).nmux-package-smoke` |
 | Release-style local validation | `nix develop . -c just check-all` |
@@ -98,7 +98,7 @@ The crane `checks.default` target is deliberately a Nix build/compile check, not
 a live PTY workflow runner. Use `nix develop . -c just check` and `nix develop
 . -c just local-smoke` for runtime validation because those tests exercise local
 PTY and Unix-socket behavior outside the sandboxed package derivation.
-`just renderer-equivalence-smoke` is a focused opt-in fixture projection check
+`just renderer-equivalence-smoke` is a focused fixture projection check
 for renderer-equivalence work. It exercises both a core `TerminalUpdate` corpus
 and a real `nmux daemon`/`nmux --json` artifact smoke. Use
 `just renderer-equivalence-artifacts` to write nmux canonical artifacts, or
@@ -198,8 +198,8 @@ info, and locked `Cargo.lock` records for `libghostty-vt` and
 `libghostty-vt-sys`. The provenance verifier checks the existing report
 without collecting a new sample.
 The offline probe writes `target/source-fetch-offline/OFFLINE_PROBE.txt` and
-checks whether `nmux-core --features libghostty-vt` can compile from current
-caches with `CARGO_NET_OFFLINE=true` and `GIT_CONFIG_GLOBAL=/dev/null`. The
+checks whether default-feature `nmux-core` can compile from current caches with
+`CARGO_NET_OFFLINE=true` and `GIT_CONFIG_GLOBAL=/dev/null`. The
 offline-probe verifier checks the existing probe report. Treat the probe as
 cache-present evidence only, not cold-checkout, CI cache-miss, or source-policy
 evidence.
@@ -209,12 +209,10 @@ For local release-binary evidence, use:
 nix develop . -c just packaging-sample
 ```
 
-That target builds default and opt-in `libghostty-vt` release binaries in
-separate target directories, then prints artifact sizes, dynamic-library
-artifacts, the discovered runtime library directory, and binary versions. A
-failed opt-in binary version check is packaging evidence and should be recorded
-in
-[the default-engine promotion tracker](default-engine-promotion.md).
+That target builds default Ghostty release binaries and interim fallback release
+binaries in separate target directories, then prints artifact sizes,
+dynamic-library artifacts, the discovered runtime library directory, and binary
+versions.
 For a local staged package-layout smoke check, use:
 
 ```sh
@@ -292,7 +290,7 @@ A non-Nix environment must provide:
 - `flatc` 25.12.19, matching the pinned Rust `flatbuffers = "=25.12.19"`
   crate;
 - `just`;
-- Zig 0.15.x when building or testing `--features libghostty-vt`;
+- Zig 0.15.x when building or testing default features;
 - network or local-source policy for the `libghostty-vt-sys` Ghostty source
   fetch.
 
@@ -303,15 +301,9 @@ just check
 ```
 
 The justfile checks for required tools before running schema or Rust tests. A
-missing `flatc`, `cargo`, or optional native-VT `zig` reports the missing tool
-and the matching Nix command to use. `flatc` must report version 25.12.19, and
-the optional native-VT `zig` must be in the 0.15.x line.
-
-For the opt-in VT engine, the command shape is:
-
-```sh
-GIT_CONFIG_GLOBAL=/dev/null just check-ghostty-vt
-```
+missing `flatc`, `cargo`, or `zig` reports the missing tool and the matching
+Nix command to use. `flatc` must report version 25.12.19, and `zig` must be in
+the 0.15.x line.
 
 `GIT_CONFIG_GLOBAL=/dev/null` is not a semantic nmux requirement. It keeps local
 Git URL rewrite rules from changing the HTTPS source fetch used by
@@ -320,7 +312,7 @@ Git URL rewrite rules from changing the HTTPS source fetch used by
 that source policy before using the result as promotion evidence.
 Use `just promotion-sample` for non-Nix setup attempts or promotion samples so
 the exact tool versions, source-fetch environment, and `check-all` timing are
-visible together. When `GHOSTTY_SOURCE_DIR` is set, the optional VT preflight
+visible together. When `GHOSTTY_SOURCE_DIR` is set, the native VT preflight
 requires it to point at an existing readable directory. When it is unset, the
 source mode is recorded as the pinned `libghostty-vt-sys` fetch path.
 

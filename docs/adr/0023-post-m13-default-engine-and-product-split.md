@@ -19,11 +19,9 @@ cursor state, modes, color state, metadata, styled rows, scrollback, dirty
 state, row hashes, Kitty placeholders, hyperlink presence, structured input
 gating, and reconnect/cache behavior through full feature-enabled tests.
 
-That does not mean `libghostty-vt` should silently become the default engine.
-ADR 0018 deliberately kept the native Ghostty/Zig build out of regular
-development and `just check` until native build cost, regular CI,
-non-Nix/toolchain provisioning, source-fetch policy, packaging, and developer
-workflow costs are intentionally accepted.
+ADR 0034 later accepts the native Ghostty/Zig build and package source policy
+for the default path. This ADR remains the record of the post-M13 split between
+terminal extraction, frontend hydration, and protocol expansion.
 
 M13 also identified several real terminal-state domains that should not be
 folded into the extraction milestone by inertia: wired hyperlink identities,
@@ -33,21 +31,17 @@ renderer hydration.
 
 ## Decision
 
-Treat M13 as complete for the opt-in backend extraction milestone, not as a
-default-engine promotion.
+Treat M13 as complete for the backend extraction milestone, not as a reason to
+fold frontend hydration or protocol expansion into the same work.
 
-Keep the default daemon engine `interim` and keep `libghostty-vt` opt-in until a
-future decision accepts the native build cost, regular CI, non-Nix/toolchain
-provisioning, source-fetch policy, packaging, and developer-workflow costs.
-`just check-ghostty-vt` remains the required gate for changes that touch the
-opt-in engine, feature-sensitive attach/reconnect behavior, cached state, or
-daemon-owned structured input.
+The default daemon engine is now `libghostty-vt` per ADR 0034. The interim
+engine remains available through `--terminal-engine interim` and
+`--no-default-features`.
 
 Split post-M13 work into explicit tracks:
 
-- Default-engine promotion readiness: measure and document native build time,
-  CI behavior, non-Nix toolchain provisioning, source-fetch or vendoring policy,
-  and packaging implications before changing defaults.
+- Default-engine package readiness: keep the Ghostty-backed package, default CI,
+  and source-fetch policy explicit as native tooling evolves.
 - Frontend Ghostty renderer hydration: keep this upstream/API-driven and do not
   reintroduce client-side raw PTY replay to make a frontend render.
 - Protocol object expansion: require a focused ADR and compatibility plan before
@@ -62,9 +56,8 @@ Split post-M13 work into explicit tracks:
 ## Consequences
 
 The project can stop treating every future terminal feature as unfinished M13
-work. The backend extraction path is available for correctness work, but the
-default user and contributor path remains fast and explicit about interim
-renderer limitations.
+work. The backend extraction path is now the default correctness path, while
+the interim renderer remains an explicit fallback.
 
 Future schema additions must carry their own compatibility rationale instead of
 using M13 as blanket justification. Upstream/API blockers belong in

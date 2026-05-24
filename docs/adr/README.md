@@ -20,19 +20,19 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0010: herdr Integration Boundary](0010-herdr-integration-boundary.md) | Accepted |
 | [0011: Live Local Interactive Attach](0011-live-local-interactive-attach.md) | Accepted |
 | [0012: Backend Terminal Engine Boundary](0012-backend-terminal-engine-boundary.md) | Accepted |
-| [0013: Optional libghostty-vt Backend](0013-optional-libghostty-vt-backend.md) | Accepted |
+| [0013: Optional libghostty-vt Backend](0013-optional-libghostty-vt-backend.md) | Superseded by ADR 0034 |
 | [0014: Transport Identity Boundary](0014-transport-identity-boundary.md) | Proposed |
 | [0015: Cell Semantic Content](0015-cell-semantic-content.md) | Accepted |
 | [0016: Terminal Color State](0016-terminal-color-state.md) | Accepted |
 | [0017: Terminal Input Mode State](0017-terminal-input-mode-state.md) | Accepted |
-| [0018: libghostty-vt Default And CI Gate](0018-libghostty-vt-default-and-ci-gate.md) | Accepted |
+| [0018: libghostty-vt Default And CI Gate](0018-libghostty-vt-default-and-ci-gate.md) | Superseded by ADR 0034 |
 | [0019: Color-Only Palette Diffs](0019-color-only-palette-diffs.md) | Accepted |
 | [0020: Attributed Error Frames](0020-attributed-error-frames.md) | Accepted |
 | [0021: Explicit Attach Status](0021-explicit-attach-status.md) | Accepted |
 | [0022: Hyperlink Identity Table](0022-hyperlink-identity-table.md) | Accepted |
 | [0023: Post-M13 Default Engine And Product Split](0023-post-m13-default-engine-and-product-split.md) | Accepted |
-| [0024: Native VT Source Policy Criteria](0024-native-vt-source-policy-criteria.md) | Accepted |
-| [0025: Native VT Packaging Criteria](0025-native-vt-packaging-criteria.md) | Accepted |
+| [0024: Native VT Source Policy Criteria](0024-native-vt-source-policy-criteria.md) | Superseded by ADR 0034 |
+| [0025: Native VT Packaging Criteria](0025-native-vt-packaging-criteria.md) | Superseded by ADR 0034 |
 | [0026: Native VT CI Promotion Criteria](0026-native-vt-ci-promotion-criteria.md) | Accepted |
 | [0027: Speculative Local Echo Boundary](0027-speculative-local-echo-boundary.md) | Proposed |
 | [0028: Runtime Control Commands](0028-runtime-control-commands.md) | Accepted |
@@ -41,5 +41,5 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0031: Container And Sandbox Host Execution](0031-container-and-sandbox-host-execution.md) | Accepted |
 | [0032: Single Binary CLI Boundary](0032-single-binary-cli-boundary.md) | Accepted |
 | [0033: Remove nmuxd Shim](0033-remove-nmuxd-shim.md) | Accepted |
-| [0034: Ghostty VT Default Engine](0034-ghostty-vt-default-engine.md) | Superseded by ADR 0035 |
-| [0035: Restore Portable Default Engine](0035-restore-portable-default-engine.md) | Accepted |
+| [0034: Ghostty VT Default Engine](0034-ghostty-vt-default-engine.md) | Accepted |
+| [0035: Restore Portable Default Engine](0035-restore-portable-default-engine.md) | Superseded by ADR 0034 |

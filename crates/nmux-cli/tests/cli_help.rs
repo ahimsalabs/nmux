@@ -152,8 +152,14 @@ fn daemon_help_lists_live_server_flags() {
     assert!(stdout.contains("--ready-json does not exit"));
     assert!(stdout.contains("Existing socket paths are not replaced automatically"));
     assert!(stdout.contains("NMUX_ORIGIN is appended for child pane commands"));
+    #[cfg(feature = "libghostty-vt")]
+    assert!(stdout.contains("Default terminal engine: libghostty-vt"));
+    #[cfg(feature = "libghostty-vt")]
+    assert!(stdout.contains("Use --terminal-engine interim"));
+    #[cfg(not(feature = "libghostty-vt"))]
     assert!(stdout.contains("Default terminal engine: interim"));
-    assert!(stdout.contains("selecting --terminal-engine libghostty-vt"));
+    #[cfg(not(feature = "libghostty-vt"))]
+    assert!(stdout.contains("libghostty-vt requires building nmux"));
     assert!(stdout.contains("Examples:"));
     assert!(stdout.contains("nmux daemon --one-shot"));
     assert!(stdout.contains("nmux daemon --live"));

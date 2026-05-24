@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "writing opt-in libghostty-vt package provenance manifest"
+echo "writing default libghostty-vt package provenance manifest"
 pkg_dir=target/packaging-libghostty-vt/package
 manifest="$pkg_dir/PROVENANCE.txt"
 tree_file="$pkg_dir/CARGO_TREE.txt"

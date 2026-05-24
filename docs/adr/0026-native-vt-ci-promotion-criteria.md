@@ -10,25 +10,19 @@ Accepted.
 
 ## Context
 
-ADR 0018 keeps `libghostty-vt` out of regular `just check` and default CI while
-still requiring a full opt-in `just check-ghostty-vt` gate for feature-sensitive
-changes. That opt-in gate currently runs the native-VT feature suites with
-`RUST_TEST_THREADS=1`. ADR 0023 keeps the post-M13 default engine as `interim`
-until build, CI, source-fetch, packaging, and workflow costs are accepted
-deliberately.
+ADR 0034 makes `libghostty-vt` the default engine and default CI path. The
+native-VT feature suites run with `RUST_TEST_THREADS=1`, and the interim engine
+is covered separately with `--no-default-features`.
 
 The repository now has a GitHub Actions default-engine job for pull requests and
 pushes to `main`, plus a manual `workflow_dispatch` promotion evidence job that
-runs `just promotion-evidence-bundle`. That manual job is useful evidence, but
-a regular or required native-VT CI gate would have different consequences:
-network fetch behavior, cache misses, Zig/native build provisioning, runner
-cost, artifact provenance, and failure triage become part of every protected
-change.
+runs `just promotion-evidence-bundle`. That manual job remains useful release
+evidence, but the regular default gate now owns native build provisioning,
+package smoke, source mode reporting, and failure triage.
 
 ## Decision
 
-A future ADR that makes the native VT path a regular or required CI gate must
-prove these criteria:
+The native VT path is a regular CI gate. Maintain these criteria:
 
 - The required and optional CI jobs are named explicitly, including which branch
   and pull-request events run each job.
@@ -47,26 +41,20 @@ prove these criteria:
   runtime-smoke failures.
 - The job matrix is explicit about supported operating systems and whether
   unsupported platforms are skipped, allowed to fail, or out of scope.
-- The cost of making the native VT job required is accepted for normal
-  contributors, including expected runtime and cache behavior.
-- The default `interim` engine remains independently tested unless a later ADR
-  also changes the default engine decision.
+- The cost of the native VT job remains accepted for normal contributors,
+  including expected runtime and cache behavior.
+- The `interim` engine remains independently tested as the explicit fallback.
 
-Until a later ADR satisfies those criteria and updates the workflow, the GitHub
-Actions required path remains default-engine `just check` plus `just
-local-smoke`, and the native-VT promotion job remains manual evidence
-collection.
+The GitHub Actions required path is default-engine `just check` plus `just
+local-smoke`, with a separate interim fallback job. The promotion job remains
+manual release evidence collection.
 
 ## Consequences
 
 CI promotion work can proceed by adding evidence rows and improving the manual
-job without accidentally changing repository protection expectations. A green
-default-engine CI run still does not claim native-VT correctness, and a green
-manual promotion run still does not by itself make native VT required.
-
-If the project later chooses to make native VT required, this ADR requires the
-change to include workflow updates, docs updates, recorded runner evidence, and
-clear failure ownership.
+job without changing repository protection expectations. Changes to native VT
+CI should keep workflow updates, docs updates, recorded runner evidence, and
+clear failure ownership together.
 
 ## Licensing And Compatibility
 

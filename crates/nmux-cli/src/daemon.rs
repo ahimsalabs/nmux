@@ -1033,7 +1033,71 @@ fn validate_mode_args(args: DaemonModeArgs) -> Result<(), &'static str> {
 }
 
 fn usage() -> &'static str {
-    "\
+    #[cfg(feature = "libghostty-vt")]
+    {
+        "\
+nmux daemon - serve an nmux session over a local Unix socket
+
+Usage:
+  nmux daemon [OPTIONS]
+
+Options:
+  --socket PATH                         Unix socket path
+  -s, --session NAME                    Session name published by this daemon
+  --tcp-listen, --listen HOST:PORT      Listen on TCP instead of a Unix socket
+  --tcp-token, --token TOKEN            Shared token for TCP transport authentication
+  --print-socket                        Print the resolved socket path and exit
+  --print-socket-json                   Print the resolved socket path/source as JSON
+  --list-daemon-choices-json            List daemon configuration choices as JSON
+  --ready-json                          Print a JSON ready event after bind and pane startup
+  --one-shot                            Serve one attach client
+  --live                                Serve one live client until detach
+  --live-forever                        Serve sequential live clients until stopped
+  --live-cycles COUNT                   Serve a bounded live client
+  --live-clients COUNT                  Serve bounded sequential live clients
+  --command SHELL                       Run a shell command in the pane PTY
+  --cwd DIR                             Run the pane command from existing DIR
+  --env KEY=VALUE                       Add an environment variable to the pane command
+  --cols COUNT                          Initial pane PTY columns; both dimensions required
+  --rows COUNT                          Initial pane PTY rows; both dimensions required
+  --tabs COUNT                          Start with COUNT tabs
+  --active-tab TAB_ID                   Select the initial active tab
+  --split horizontal|vertical           Start with pane-1 split into pane-1 and pane-2
+  --resize-policy fixed|leader|active-client|manual
+                                         Publish and enforce pane resize policy
+  --host local|sandbox|container        Run pane commands locally, through sandbox-exec, or a container runtime
+  --sandbox-profile PROFILE             macOS sandbox-exec profile for --host sandbox
+  --container-image IMAGE               Container image for --host container
+  --terminal-engine interim|libghostty-vt
+                                         Backend terminal engine implementation
+  --version-json                         Show version as JSON
+  -V, --version                         Show version
+  -h, --help                            Show this help
+
+Notes:
+  Default socket: --socket, else valid absolute $NMUX_SOCKET, else valid absolute $XDG_RUNTIME_DIR/nmux/nmux.sock, else /tmp/nmux-$UID/nmux.sock.
+  --listen requires --token, --tcp-token, or NMUX_TOKEN and cannot be combined with --socket.
+  Informational flags exit before daemon-mode validation or socket/PTY work.
+  --ready-json does not exit; it emits one stdout line after socket bind and pane startup.
+  Existing socket paths are not replaced automatically.
+  When started inside nmux, NMUX_ORIGIN is appended for child pane commands.
+  --host container uses $NMUX_CONTAINER_RUNTIME or docker, and passes pane cwd/env into the runtime.
+  --host sandbox currently uses macOS sandbox-exec and reports an unsupported host on other platforms.
+  Default terminal engine: libghostty-vt.
+  Use --terminal-engine interim for the portable fallback engine.
+
+Examples:
+  nmux daemon --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
+  nmux daemon --listen 127.0.0.1:7007 --token TOKEN
+  nmux daemon --live --command \"printf 'ready\\n'; cat\"
+  nmux daemon --live-forever --command \"printf 'ready\\n'; cat\"
+  nmux daemon --live-clients 2 --command \"printf 'ready\\n'; cat\"
+"
+    }
+
+    #[cfg(not(feature = "libghostty-vt"))]
+    {
+        "\
 nmux daemon - serve an nmux session over a local Unix socket
 
 Usage:
@@ -1082,7 +1146,7 @@ Notes:
   --host container uses $NMUX_CONTAINER_RUNTIME or docker, and passes pane cwd/env into the runtime.
   --host sandbox currently uses macOS sandbox-exec and reports an unsupported host on other platforms.
   Default terminal engine: interim.
-  libghostty-vt requires building nmux with the libghostty-vt feature and selecting --terminal-engine libghostty-vt.
+  libghostty-vt requires building nmux with the libghostty-vt feature.
 
 Examples:
   nmux daemon --one-shot --command \"printf 'ready\\n'; cat >/dev/null\"
@@ -1091,6 +1155,7 @@ Examples:
   nmux daemon --live-forever --command \"printf 'ready\\n'; cat\"
   nmux daemon --live-clients 2 --command \"printf 'ready\\n'; cat\"
 "
+    }
 }
 
 #[cfg(test)]
@@ -1384,8 +1449,14 @@ mod tests {
         assert!(usage.contains("--container-image IMAGE"));
         assert!(usage.contains("--terminal-engine interim|libghostty-vt"));
         assert!(usage.contains("--host container uses $NMUX_CONTAINER_RUNTIME"));
+        #[cfg(feature = "libghostty-vt")]
+        assert!(usage.contains("Default terminal engine: libghostty-vt"));
+        #[cfg(feature = "libghostty-vt")]
+        assert!(usage.contains("Use --terminal-engine interim"));
+        #[cfg(not(feature = "libghostty-vt"))]
         assert!(usage.contains("Default terminal engine: interim"));
-        assert!(usage.contains("selecting --terminal-engine libghostty-vt"));
+        #[cfg(not(feature = "libghostty-vt"))]
+        assert!(usage.contains("libghostty-vt requires building nmux"));
         assert!(usage.contains("--ready-json does not exit"));
         assert!(usage.contains("Existing socket paths are not replaced automatically"));
     }

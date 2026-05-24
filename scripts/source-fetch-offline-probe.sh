@@ -9,7 +9,7 @@ start_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 rm -rf "$report_dir"
 mkdir -p "$report_dir"
 status=0
-env CARGO_NET_OFFLINE=true GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/source-fetch-offline cargo test -p nmux-core --features libghostty-vt --no-run > "$log" 2>&1 || status="$?"
+env CARGO_NET_OFFLINE=true GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/source-fetch-offline cargo test -p nmux-core --no-run > "$log" 2>&1 || status="$?"
 end_epoch="$(date -u '+%s')"
 completed_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 {
@@ -18,15 +18,15 @@ completed_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf 'started_at_utc=%s\n' "$start_utc"
     printf 'completed_at_utc=%s\n' "$completed_utc"
     printf 'elapsed_seconds=%s\n' "$((end_epoch - start_epoch))"
-    printf 'probe_scope=%s\n' 'cache-present opt-in native VT build only; not cold checkout, CI cache miss, network-failure, or default/package source policy evidence'
+    printf 'probe_scope=%s\n' 'cache-present default native VT build only; not cold checkout, CI cache miss, or network-failure evidence'
     printf 'ghostty_source_mode=%s\n' "$([ -n "${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"
     printf 'GHOSTTY_SOURCE_DIR=%s\n' "${GHOSTTY_SOURCE_DIR:-unset}"
     printf 'CARGO_NET_OFFLINE=%s\n' 'true'
     printf 'GIT_CONFIG_GLOBAL=%s\n' '/dev/null'
     printf 'CARGO_TARGET_DIR=%s\n' 'target/source-fetch-offline'
     printf 'package=%s\n' 'nmux-core'
-    printf 'features=%s\n' 'libghostty-vt'
-    printf 'command=%s\n' 'cargo test -p nmux-core --features libghostty-vt --no-run'
+    printf 'features=%s\n' 'default'
+    printf 'command=%s\n' 'cargo test -p nmux-core --no-run'
     printf 'log=%s\n' "$log"
     if [ "$status" -eq 0 ]; then
         printf 'source_fetch_offline_probe=passed\n'

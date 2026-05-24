@@ -1,19 +1,19 @@
 # Terminal State Extraction Checklist
 
-M13 proves the opt-in path from the interim text engine toward daemon-owned
-backend `libghostty-vt` state extraction. This file records the mapping work
-already proven by the opt-in backend and the remaining terminal-state protocol
-decisions that must stay separate from default-engine promotion and
+M13 proves the path from the interim text engine toward daemon-owned backend
+`libghostty-vt` state extraction. This file records the mapping work already
+proven by the backend and the remaining terminal-state protocol decisions that
+must stay separate from frontend hydration and
 renderer-equivalence evidence. The renderer-equivalence milestone lives in
 [Renderer Equivalence Milestone](renderer-equivalence.md), and the
 cross-cutting pre-schema protocol tracks live in
 [Future Protocol Tracks](protocol-futures.md).
 
-`libghostty-vt` is now present as an optional Cargo feature and compiles through
-the `libghostty-vt-sys` pinned-source native build path, or a
-`GHOSTTY_SOURCE_DIR` checkout when supplied. ADR 0018 keeps the default
-`nmux daemon` engine as `interim` while requiring the full feature-enabled
-`just check-ghostty-vt` gate for related changes.
+`libghostty-vt` is now the default Cargo feature and compiles through the
+`libghostty-vt-sys` pinned-source native build path, or a
+`GHOSTTY_SOURCE_DIR` checkout when supplied. ADR 0034 makes the default
+`nmux daemon` engine `libghostty-vt`; no-default-features builds keep the
+interim engine available as a fallback.
 
 ## Current nmux Surface
 
@@ -200,9 +200,9 @@ keep tests proving:
 - unsupported VT features fail by omission with documented limitations, not by
   corrupting the existing nmux state objects.
 
-## Current libghostty-vt Default/CI Promotion Gate
+## Current libghostty-vt Default/CI Gate
 
-The opt-in engine now proves dependency wiring, VT byte ingestion, visible-row
+The default engine now proves dependency wiring, VT byte ingestion, visible-row
 extraction, style-separated cell runs, SGR style flags, underline variants, underline color,
 wide-cell widths, cursor-only updates, cursor visibility/shape/blink extraction,
 render-state default colors/palette, palette overrides, explicit cursor color,
@@ -252,16 +252,11 @@ metadata, style-table full-refresh reattach, and restored
 alternate-screen scrollback omission. Client-side tests assert decoded surface
 patches and scrollback chunks preserve structured `CellRun` style IDs, cell
 widths, hyperlink-presence flags, and semantic content rather than collapsing
-to text-only fallback rows. `just check-ghostty-vt` runs the full `nmux-core`
-and `nmux-cli` test suites with `--features libghostty-vt` and
+to text-only fallback rows. `just check` runs the full `nmux-core` and
+`nmux-cli` test suites with default `libghostty-vt` features and
 `RUST_TEST_THREADS=1`, so ordinary feature-sensitive tests are part of the
-opt-in gate. ADR 0018 keeps the default
-engine `interim`, and ADR 0023 keeps `libghostty-vt` opt-in after M13 until a
-later decision explicitly accepts the native Ghostty/Zig build cost in normal
-development, CI, and packaging. `just check-all` is the explicit combined gate
-for release-style validation and default-engine-promotion evidence; it does not
-change the regular meaning of `just check`. Record that evidence in
-[the default-engine promotion tracker](default-engine-promotion.md).
+default gate. `just check-interim` covers the explicit no-default-features
+fallback.
 
 The `libghostty-vt` terminal is allocated in a stable heap location before
 PTY-write callback registration. The binding stores callback userdata inside

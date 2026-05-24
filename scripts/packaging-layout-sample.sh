@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "staging opt-in libghostty-vt package layout"
+echo "staging default libghostty-vt package layout"
 pkg_dir=target/packaging-libghostty-vt/package
 lib_path="$(find target/packaging-libghostty-vt/release -path '*/ghostty-install/lib/libghostty-vt.*' -print -quit)"
 if [ -z "$lib_path" ]; then
@@ -13,13 +13,13 @@ mkdir -p "$pkg_dir/bin" "$pkg_dir/lib" "$pkg_dir/libexec"
 cp target/packaging-libghostty-vt/release/nmux "$pkg_dir/libexec/nmux"
 cp "$lib_dir"/libghostty-vt* "$pkg_dir/lib/"
 {
-    printf 'nmux opt-in native VT package metadata\n'
+    printf 'nmux default native VT package metadata\n'
     printf 'generated_at_utc=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf 'package_format=%s\n' 'local-tar-archive-layout'
     printf 'release_status=%s\n' 'local evidence artifact; not a signed, notarized, installed, or published release package'
     printf 'target_host=%s\n' "$(rustc -vV | awk '/^host: / { print $2 }')"
     printf 'terminal_engine=%s\n' 'libghostty-vt'
-    printf 'terminal_engine_status=%s\n' 'opt-in'
+    printf 'terminal_engine_status=%s\n' 'default'
     printf 'binaries=%s\n' 'nmux'
     printf 'runtime_library_strategy=%s\n' 'staged libghostty-vt native library artifacts for packaging evidence; nmux must not dynamically depend on libghostty-vt'
     printf 'source_mode=%s\n' "$([ -n "${GHOSTTY_SOURCE_DIR:-}" ] && printf 'local' || printf 'pinned-fetch')"

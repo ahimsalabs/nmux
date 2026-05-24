@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "running packaged opt-in libghostty-vt archive runtime smoke"
+echo "running packaged default libghostty-vt archive runtime smoke"
 archive=target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz
 work_dir="$(mktemp -d "/tmp/nmuxpkg.XXXXXX")"
 install_root="$work_dir/install"

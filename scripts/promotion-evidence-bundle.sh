@@ -155,14 +155,14 @@ write_promotion_open_work() {
     {
         printf 'nmux native VT promotion open work\n'
         printf 'generated_at_utc=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-        printf 'promotion_decision=not-promoted\n'
-        printf 'default_terminal_engine=interim-text\n'
-        printf 'libghostty_vt_status=opt-in\n'
-        printf 'open_work_scope=%s\n' 'known blockers that must be resolved before libghostty-vt can become the default engine or a regular required CI gate'
-        printf 'open_work_ci=%s\n' 'manual promotion evidence bundle and downloaded-artifact verifier jobs still need recorded CI runs'
+        printf 'promotion_decision=promoted\n'
+        printf 'default_terminal_engine=libghostty-vt\n'
+        printf 'libghostty_vt_status=default\n'
+        printf 'open_work_scope=%s\n' 'post-promotion release evidence and distribution work that remains after libghostty-vt became the default engine'
+        printf 'open_work_ci=%s\n' 'manual promotion evidence bundle and downloaded-artifact verifier jobs remain release evidence rather than default-engine blockers'
         printf 'open_work_platforms=%s\n' 'more supported local systems and at least one full cold-checkout or cold-machine run still need timing evidence'
         printf 'open_work_non_nix=%s\n' 'non-Nix toolchain checklist still needs a successful platform-specific validation run'
-        printf 'open_work_source_policy=%s\n' 'packaged/default build source policy still needs a decision and evidence'
+        printf 'open_work_source_policy=%s\n' 'flake packages use a pinned Nix-fetched Ghostty source; non-Nix and release artifact source policies still need platform-specific evidence'
         printf 'open_work_packaging=%s\n' 'native VT binary distribution expectations still need supported-target, signing, notarization, installed-package, and platform distribution decisions despite local layout, archive, provenance, and runtime-smoke verifiers'
         printf 'open_work_frontend=%s\n' 'frontend Ghostty renderer hydration remains separate from backend terminal-state extraction'
     } > "$promotion_open_work"

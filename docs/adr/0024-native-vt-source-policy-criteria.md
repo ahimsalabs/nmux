@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Superseded by ADR 0034.
 
 ## Date
 
@@ -10,12 +10,18 @@ Accepted.
 
 ## Context
 
-ADR 0023 keeps `libghostty-vt` opt-in after M13 until native build cost,
-regular CI, non-Nix/toolchain provisioning, source-fetch policy, packaging, and
-workflow consequences are deliberately accepted. The current opt-in path is
-useful for local correctness work: `libghostty-vt-sys` fetches the pinned
-Ghostty source unless `GHOSTTY_SOURCE_DIR` points at a local checkout, and nmux
-records the active mode in promotion evidence.
+ADR 0034 later chooses the source policy for the default path: local development
+may use the `libghostty-vt-sys` pinned fetch or `GHOSTTY_SOURCE_DIR`, while the
+Nix package supplies a pinned Nix-fetched Ghostty source. This ADR records the
+earlier promotion criteria.
+
+ADR 0023 kept `libghostty-vt` opt-in after M13 until native build cost, regular
+CI, non-Nix/toolchain provisioning, source-fetch policy, packaging, and workflow
+consequences were deliberately accepted. ADR 0034 later accepts those tradeoffs
+for the default path. The original opt-in path was useful for local correctness
+work: `libghostty-vt-sys` fetched the pinned Ghostty source unless
+`GHOSTTY_SOURCE_DIR` pointed at a local checkout, and nmux recorded the active
+mode in promotion evidence.
 
 That current behavior is not enough by itself for a default engine, regular CI
 requirement, or packaged binary baseline. A default or packaged build needs a
@@ -25,7 +31,7 @@ a native library artifact.
 
 ## Decision
 
-A future ADR that promotes `libghostty-vt` beyond the opt-in path must choose a
+This ADR required any later promotion beyond the opt-in path to choose a
 specific native VT source policy and prove these criteria:
 
 - The source mode is explicit in docs, CI logs, and package provenance.
@@ -43,10 +49,10 @@ specific native VT source policy and prove these criteria:
 - Generated Ghostty build output under `target/` remains build output, not nmux
   source material or implementation guidance.
 
-Until a later ADR satisfies those criteria and chooses a concrete policy, the
-default engine remains `interim`, regular `just check` remains independent of
-the native Ghostty/Zig build, and packaged/default builds must not rely on an
-implicit native VT source-fetch assumption.
+ADR 0034 is the later ADR that satisfies this requirement for the default path:
+local development may use the `libghostty-vt-sys` pinned fetch or
+`GHOSTTY_SOURCE_DIR`, while Nix package builds provide a pinned Nix-fetched
+Ghostty source through `GHOSTTY_SOURCE_DIR`.
 
 ## Consequences
 

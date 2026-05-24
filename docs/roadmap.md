@@ -70,19 +70,17 @@ Default socket path, managed `--start`/`--shell`, persisted state reattach,
 bounded/unbounded sequential clients, JSON output, `NMUX_*` context, connect
 timeout, `--ready-json`, input/resize validation, `just local-smoke`.
 
-### M13: Backend libghostty-vt Extraction — done (opt-in)
+### M13: Backend libghostty-vt Extraction — done
 
-Opt-in `--features libghostty-vt` engine. Extracts cursor, modes, styles,
+Default `libghostty-vt` engine. Extracts cursor, modes, styles,
 colors, scrollback, cell widths, graphemes, semantic metadata, hyperlink
-presence, mouse/focus/paste/key input with daemon-owned gating. Default
-engine remains `interim`.
+presence, mouse/focus/paste/key input with daemon-owned gating. The interim
+engine remains available for no-default-features fallback builds.
 
 ### M14: Post-M13 Product Split — done
 
-ADR 0023 keeps libghostty-vt opt-in. Promotion requires build/CI/packaging
-evidence tracked in [default-engine-promotion.md](default-engine-promotion.md).
-Renderer equivalence, frontend hydration, and protocol extensions are separate
-tracks.
+ADR 0034 makes libghostty-vt the default while keeping frontend hydration and
+protocol extensions as separate tracks.
 
 ### M15: Usable Local Multiplexer MVP — done
 

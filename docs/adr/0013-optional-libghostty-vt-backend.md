@@ -1,6 +1,6 @@
 # 0013: Optional libghostty-vt Backend
 
-Status: Accepted
+Status: Superseded by ADR 0034
 
 Date: 2026-05-21
 
@@ -20,11 +20,13 @@ to make the default nmux build path without a deliberate project decision.
 ## Decision
 
 Import `libghostty-vt` as an optional Cargo feature named `libghostty-vt`.
+ADR 0034 later enables this feature by default and keeps `interim` available
+through no-default-features builds.
 
-The default engine remains `interim`. The `nmuxd --terminal-engine
-libghostty-vt` flag is accepted only in feature builds. The feature is pinned to
-an exact crate version, and the Nix dev shell pins Zig 0.15 because the current
-vendored Ghostty build requires that Zig version.
+The original decision kept `interim` as the default and accepted
+`nmuxd --terminal-engine libghostty-vt` only in feature builds. The feature is
+pinned to an exact crate version, and the Nix dev shell pins Zig 0.15 because
+the current vendored Ghostty build requires that Zig version.
 
 The optional engine must implement the existing nmux terminal engine boundary:
 PTY bytes enter the daemon-owned VT engine, and clients still receive
@@ -41,9 +43,8 @@ Feature-gated tests cover ANSI sequence consumption, cursor-only updates,
 alternate-screen detection, resize/reflow, backend-owned scrollback extraction,
 session-level scrollback chunks, and a live CLI smoke path.
 
-The default build still avoids the native Ghostty/Zig build cost. Promoting
-`libghostty-vt` into regular CI or making it the default engine is a separate
-decision about build cost, upstream API maturity, and binary packaging.
+ADR 0034 is the later decision that accepts the native Ghostty/Zig build cost
+for the default engine and package baseline.
 
 ## Licensing
 

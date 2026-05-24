@@ -57,19 +57,70 @@
             && pkgs.lib.cleanSourceFilter path type;
         };
 
-      defaultNativeBuildInputs = pkgs: [
-        pkgs.flatbuffers
-        pkgs.zig_0_15
-      ];
+      darwinSdkShim =
+        pkgs:
+        pkgs.runCommand "nmux-darwin-sdk-shim" { } ''
+          mkdir -p "$out/bin"
+          cat > "$out/bin/xcode-select" <<'SH'
+          #!/bin/sh
+          if [ "$1" = "--print-path" ]; then
+            printf '%s\n' "$DEVELOPER_DIR"
+            exit 0
+          fi
+          printf 'unsupported xcode-select invocation: %s\n' "$*" >&2
+          exit 1
+          SH
+          cat > "$out/bin/xcrun" <<'SH'
+          #!/bin/sh
+          if [ "$1" = "--sdk" ] && [ "$3" = "--show-sdk-path" ]; then
+            printf '%s\n' "$SDKROOT"
+            exit 0
+          fi
+          printf 'unsupported xcrun invocation: %s\n' "$*" >&2
+          exit 1
+          SH
+          chmod +x "$out/bin/xcode-select" "$out/bin/xcrun"
+        '';
 
-      defaultBuildArgs = pkgs: {
-        pname = "nmux";
-        version = packageVersion;
-        src = cleanSrc pkgs;
-        strictDeps = true;
-        cargoExtraArgs = "-p nmux-cli --bin nmux --no-default-features";
-        nativeBuildInputs = defaultNativeBuildInputs pkgs;
-      };
+      defaultNativeBuildInputs =
+        pkgs:
+        [
+          pkgs.flatbuffers
+          pkgs.zig_0_15
+        ]
+        ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+          pkgs.apple-sdk
+          pkgs.darwin.cctools
+          (darwinSdkShim pkgs)
+        ];
+
+      ghosttySource =
+        pkgs:
+        pkgs.fetchFromGitHub {
+          owner = "ghostty-org";
+          repo = "ghostty";
+          rev = "6590196661f769dd8f2b3e85d6c98262c4ec5b3b";
+          hash = "sha256-HHHgWuBssEBMfV5hOFdFxp0WUXiwfl20NfkjU/ZNuC8=";
+        };
+
+      defaultBuildArgs =
+        pkgs:
+        {
+          pname = "nmux";
+          version = packageVersion;
+          src = cleanSrc pkgs;
+          strictDeps = true;
+          cargoExtraArgs = "-p nmux-cli --bin nmux";
+          nativeBuildInputs = defaultNativeBuildInputs pkgs;
+          GHOSTTY_SOURCE_DIR = ghosttySource pkgs;
+          GIT_CONFIG_GLOBAL = "/dev/null";
+          ZIG_GLOBAL_CACHE_DIR = "/tmp/zig-global-cache";
+          ZIG_LOCAL_CACHE_DIR = "/tmp/zig-local-cache";
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          DEVELOPER_DIR = "${pkgs.apple-sdk}";
+          SDKROOT = "${pkgs.apple-sdk.sdkroot}";
+        };
 
       defaultPackageFor =
         pkgs:
@@ -83,6 +134,9 @@
           // {
             inherit cargoArtifacts;
             doCheck = false;
+            postFixup = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+              /usr/bin/codesign --force --sign - "$out/bin/nmux"
+            '';
             meta.mainProgram = "nmux";
           }
         );
@@ -95,7 +149,7 @@
           cargoArtifacts = craneLib.buildDepsOnly (
             commonArgs
             // {
-              cargoExtraArgs = "--workspace --no-default-features";
+              cargoExtraArgs = "--workspace";
             }
           );
         in
@@ -103,7 +157,7 @@
           commonArgs
           // {
             inherit cargoArtifacts;
-            cargoExtraArgs = "--workspace --no-default-features --no-run";
+            cargoExtraArgs = "--workspace --no-run";
             RUST_TEST_THREADS = "1";
             preCheck = ''
               export PATH=${pkgs.bash}/bin:$PATH

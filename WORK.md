@@ -20,7 +20,6 @@ None queued.
 
 ## Deferred until usable
 
-- Default engine promotion evidence / packaging / CI bundles
 - Renderer equivalence oracle
 - Protocol extensions (hyperlink IDs, images, command lifecycle, physical keys)
 - Per-client cursor/mouse overlays; current multiplayer MVP uses actor identity,
@@ -32,7 +31,7 @@ None queued.
 - Backend owns terminal state; no client-side PTY replay
 - FlatBuffers state-sync protocol, not RPC
 - No GPL/AGPL code in the core
-- libghostty-vt stays opt-in until promotion criteria (ADR 0023) are met
+- libghostty-vt is the default engine; interim stays as an explicit fallback
 - ADR required before protocol schema changes
 
 ## Background

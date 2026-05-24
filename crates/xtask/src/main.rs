@@ -311,18 +311,15 @@ fn source_fetch_offline_probe_verify_at(report_path: &Path, log_path: &Path) -> 
     )?;
     for (line, description) in [
         (
-            "probe_scope=cache-present opt-in native VT build only; not cold checkout, CI cache miss, network-failure, or default/package source policy evidence",
+            "probe_scope=cache-present default native VT build only; not cold checkout, CI cache miss, or network-failure evidence",
             "probe scope",
         ),
         ("CARGO_NET_OFFLINE=true", "Cargo offline mode"),
         ("GIT_CONFIG_GLOBAL=/dev/null", "Git config isolation"),
         ("CARGO_TARGET_DIR=target/source-fetch-offline", "target dir"),
         ("package=nmux-core", "package"),
-        ("features=libghostty-vt", "features"),
-        (
-            "command=cargo test -p nmux-core --features libghostty-vt --no-run",
-            "command",
-        ),
+        ("features=default", "features"),
+        ("command=cargo test -p nmux-core --no-run", "command"),
         (
             "log=target/source-fetch-offline/OFFLINE_PROBE.log",
             "log path",
@@ -363,7 +360,7 @@ fn packaging_provenance_manifest_verify() -> Result<()> {
 }
 
 fn packaging_provenance_manifest_verify_at(manifest_path: &Path) -> Result<()> {
-    println!("verifying opt-in libghostty-vt package provenance manifest");
+    println!("verifying default libghostty-vt package provenance manifest");
     let manifest_text = read_required_text(manifest_path, "provenance manifest")?;
     let pkg_dir = Path::new(PACKAGING_LAYOUT_DEFAULT);
 
@@ -575,7 +572,7 @@ fn packaging_archive_verify() -> Result<()> {
 }
 
 fn packaging_layout_verify() -> Result<()> {
-    println!("verifying existing opt-in libghostty-vt package layout");
+    println!("verifying existing default libghostty-vt package layout");
     let pkg_dir = PathBuf::from(
         env::var("PACKAGING_LAYOUT").unwrap_or_else(|_| PACKAGING_LAYOUT_DEFAULT.into()),
     );
@@ -585,7 +582,7 @@ fn packaging_layout_verify() -> Result<()> {
 }
 
 fn packaging_archive_verify_at(archive: &Path, archive_sha_file: &Path) -> Result<()> {
-    println!("verifying existing opt-in libghostty-vt package archive");
+    println!("verifying existing default libghostty-vt package archive");
     require_file(archive, "archive artifact")?;
     require_file(archive_sha_file, "archive SHA-256 artifact")?;
 
@@ -1633,7 +1630,7 @@ fn packaging_layout_verify_for_dir(pkg_dir: &Path) -> Result<()> {
     let metadata_text = read_required_text(&metadata, "package metadata")?;
     require_exact(
         &metadata_text,
-        "nmux opt-in native VT package metadata",
+        "nmux default native VT package metadata",
         "metadata title",
         &metadata,
     )?;
@@ -1653,7 +1650,7 @@ fn packaging_layout_verify_for_dir(pkg_dir: &Path) -> Result<()> {
             "release status",
         ),
         ("terminal_engine=libghostty-vt", "terminal engine"),
-        ("terminal_engine_status=opt-in", "terminal engine status"),
+        ("terminal_engine_status=default", "terminal engine status"),
         ("binaries=nmux", "binary list"),
         (RUNTIME_LIBRARY_STRATEGY, "runtime-library strategy"),
     ] {
@@ -1812,7 +1809,7 @@ fn verify_offline_probe(offline_probe: &Path, run_log: &Path, run_log_text: &str
     for (line, description) in [
         ("nmux source-fetch offline probe", "offline probe title"),
         (
-            "probe_scope=cache-present opt-in native VT build only; not cold checkout, CI cache miss, network-failure, or default/package source policy evidence",
+            "probe_scope=cache-present default native VT build only; not cold checkout, CI cache miss, or network-failure evidence",
             "offline probe scope",
         ),
         ("CARGO_NET_OFFLINE=true", "offline probe Cargo offline mode"),
@@ -1825,7 +1822,7 @@ fn verify_offline_probe(offline_probe: &Path, run_log: &Path, run_log_text: &str
             "offline probe target dir",
         ),
         ("package=nmux-core", "offline probe package"),
-        ("features=libghostty-vt", "offline probe features"),
+        ("features=default", "offline probe features"),
         ("source_fetch_offline_probe=passed", "offline probe result"),
     ] {
         require_exact(&text, line, description, offline_probe)?;
@@ -2148,18 +2145,18 @@ fn verify_promotion_open_work(promotion_open_work: &Path) -> Result<()> {
             "nmux native VT promotion open work",
             "promotion open work title",
         ),
-        ("promotion_decision=not-promoted", "promotion decision"),
+        ("promotion_decision=promoted", "promotion decision"),
         (
-            "default_terminal_engine=interim-text",
+            "default_terminal_engine=libghostty-vt",
             "default terminal engine",
         ),
-        ("libghostty_vt_status=opt-in", "libghostty-vt opt-in status"),
+        ("libghostty_vt_status=default", "libghostty-vt status"),
         (
-            "open_work_scope=known blockers that must be resolved before libghostty-vt can become the default engine or a regular required CI gate",
+            "open_work_scope=post-promotion release evidence and distribution work that remains after libghostty-vt became the default engine",
             "promotion open work scope",
         ),
         (
-            "open_work_ci=manual promotion evidence bundle and downloaded-artifact verifier jobs still need recorded CI runs",
+            "open_work_ci=manual promotion evidence bundle and downloaded-artifact verifier jobs remain release evidence rather than default-engine blockers",
             "promotion open work CI gap",
         ),
         (
@@ -2171,7 +2168,7 @@ fn verify_promotion_open_work(promotion_open_work: &Path) -> Result<()> {
             "promotion open work non-Nix gap",
         ),
         (
-            "open_work_source_policy=packaged/default build source policy still needs a decision and evidence",
+            "open_work_source_policy=flake packages use a pinned Nix-fetched Ghostty source; non-Nix and release artifact source policies still need platform-specific evidence",
             "promotion open work source-policy gap",
         ),
         (

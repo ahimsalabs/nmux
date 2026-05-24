@@ -128,7 +128,7 @@ engine or a regular CI requirement.
   smoke result, exact current open-work blocker lines, run-log evidence that
   source-fetch provenance verification ran, run-log evidence that `local-smoke`
   ran, and run-log evidence that the cache-present offline probe compiled the
-  opt-in native-VT test binary and ran its verifier.
+  default native-VT test binary and ran its verifier.
   The bundle target runs it before printing the artifact list.
 - `just source-fetch-provenance-sample` writes the active source mode and
   locked `libghostty-vt` Cargo package records without inspecting Ghostty
@@ -137,21 +137,21 @@ engine or a regular CI requirement.
   provenance report against the current `Cargo.lock`, toolchain records,
   source-mode fields, and policy note without regenerating the report. Override
   `SOURCE_FETCH_REPORT` when checking a copied or bundled report.
-- `just source-fetch-offline-probe` checks whether the opt-in
-  `nmux-core --features libghostty-vt` build can compile from current caches
-  with `CARGO_NET_OFFLINE=true`; this is cache-present evidence only.
+- `just source-fetch-offline-probe` checks whether the default `nmux-core`
+  native-VT build can compile from current caches with
+  `CARGO_NET_OFFLINE=true`; this is cache-present evidence only.
 - `just source-fetch-offline-probe-verify` validates an existing offline probe
   report and log for the expected offline mode, target dir, command, passing
   result, and generated `nmux-core` test binary without rerunning the probe.
   Override `SOURCE_FETCH_OFFLINE_PROBE_REPORT` and
   `SOURCE_FETCH_OFFLINE_PROBE_LOG` when checking copied or bundled evidence.
-- `just packaging-sample` prints that toolchain information, builds default and
-  opt-in `libghostty-vt` release binaries in separate target directories, and
+- `just packaging-sample` prints that toolchain information, builds default
+  `libghostty-vt` release binaries in separate target directories, and
   reports artifact sizes plus binary versions for packaging evidence.
-- `just packaging-layout-sample` stages opt-in release binaries, wrapper
+- `just packaging-layout-sample` stages default release binaries, wrapper
   scripts, and `libghostty-vt` runtime-library artifacts in a local package
   layout and verifies the wrapped binaries run from that layout.
-- `just packaging-layout-verify` validates an existing staged opt-in native-VT
+- `just packaging-layout-verify` validates an existing staged default native-VT
   package layout without rebuilding, including required files, wrapper scripts,
   layout metadata, runtime-library presence, and wrapped binary version checks.
 - `just packaging-provenance-sample` writes a provenance manifest for the

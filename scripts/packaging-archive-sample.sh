@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "writing and verifying opt-in libghostty-vt package archive"
+echo "writing and verifying default libghostty-vt package archive"
 pkg_dir=target/packaging-libghostty-vt/package
 archive_dir=target/packaging-libghostty-vt/archive
 archive="$archive_dir/nmux-libghostty-vt-package.tar.gz"

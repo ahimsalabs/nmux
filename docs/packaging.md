@@ -38,20 +38,20 @@ Use the narrowest packaging target that matches the evidence question:
 
 | Question | Command |
 | --- | --- |
-| Do default and opt-in release binaries build and report versions locally? | `nix develop . -c just packaging-sample` |
-| Does the local opt-in layout stage wrappers and runtime libraries correctly? | `nix develop . -c just packaging-layout-sample` then `nix develop . -c just packaging-layout-verify` |
+| Do default release binaries build and report versions locally? | `nix develop . -c just packaging-sample` |
+| Does the local default native-VT layout stage wrappers and runtime libraries correctly? | `nix develop . -c just packaging-layout-sample` then `nix develop . -c just packaging-layout-verify` |
 | Does the staged layout have the required local provenance records? | `nix develop . -c just packaging-provenance-sample` then `nix develop . -c just packaging-provenance-verify` |
 | Can an existing copied or bundled provenance manifest be checked without rebuilding? | `nix develop . -c just packaging-provenance-manifest-verify` |
 | Does the staged layout archive and verify as a self-contained artifact? | `nix develop . -c just packaging-archive-sample` then `nix develop . -c just packaging-archive-verify` |
-| Can the relocated archive serve a real opt-in native-VT pane? | `nix develop . -c just packaging-archive-runtime-smoke` |
+| Can the relocated archive serve a real default native-VT pane? | `nix develop . -c just packaging-archive-runtime-smoke` |
 
-The target prints `just toolchain-info`, validates the optional native-VT
-toolchain preflight, builds the default release `nmux` binary into
-`target/packaging-default`, builds opt-in `--features libghostty-vt` release
-`nmux` into `target/packaging-libghostty-vt`, then prints artifact paths,
-byte sizes, discovered `libghostty-vt` dynamic-library artifacts, and
-`--version` output. The opt-in build uses `GIT_CONFIG_GLOBAL=/dev/null` and the
-same `GHOSTTY_SOURCE_DIR` validation as the terminal-correctness gate. For the
+The target prints `just toolchain-info`, validates the native-VT toolchain
+preflight, builds the default release `nmux` binary into
+`target/packaging-default`, builds the default `libghostty-vt` release `nmux`
+into `target/packaging-libghostty-vt`, then prints artifact paths, byte sizes,
+discovered `libghostty-vt` dynamic-library artifacts, and `--version` output.
+The native build uses `GIT_CONFIG_GLOBAL=/dev/null` and the same
+`GHOSTTY_SOURCE_DIR` validation as the terminal-correctness gate. For the
 version checks, it discovers the `ghostty-install/lib` directory produced by
 `libghostty-vt-sys` and sets `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` for the
 opt-in binaries. If a built binary cannot run its version check, the target
@@ -144,7 +144,7 @@ the archive into a fresh `/tmp` install root outside `target/`, unsets
 `nmux daemon --terminal-engine libghostty-vt --one-shot` plus wrapped `nmux` client
 against a temporary socket. It asserts that the client observes a known PTY
 sentinel from the packaged daemon. This proves the relocated package layout can
-serve a real opt-in native-VT pane locally through its own wrappers; it is still
+serve a real default native-VT pane locally through its own wrappers; it is still
 not a multi-platform or installed-package guarantee.
 
 Current local Darwin evidence shows the default release binaries run directly,

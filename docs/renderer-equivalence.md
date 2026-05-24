@@ -5,17 +5,16 @@ Status: Tracking.
 Last reviewed: 2026-05-24.
 
 This milestone gates stronger user-facing renderer claims. It sits between the
-M13 opt-in `libghostty-vt` backend extraction milestone and any later claim that
-nmux has a default-ready VT-correct renderer or frontend Ghostty hydration path.
+M13 `libghostty-vt` backend extraction milestone and any later claim that nmux
+has a frontend Ghostty hydration path.
 
 ## Current Decision
 
-- The default user-visible renderer remains the interim text surface.
-- The opt-in `libghostty-vt` engine is terminal-state extraction evidence, not
+- The default engine is `libghostty-vt`, but backend extraction evidence is not
   renderer equivalence evidence by itself.
 - Frontend Ghostty hydration remains an upstream/API question and must not use
   client-side raw PTY replay as its source of truth.
-- Default-engine promotion evidence must not be described as renderer
+- Default-engine evidence must not be described as frontend renderer
   equivalence until this milestone has passing evidence.
 
 ## Goal
@@ -49,8 +48,8 @@ terminal state.
 
 ## Current Harness
 
-`just renderer-equivalence-smoke` runs focused feature-gated corpus projection
-checks. The `nmux-core --features libghostty-vt` corpus proves that
+`just renderer-equivalence-smoke` runs focused corpus projection checks. The
+`nmux-core` corpus proves that
 representative server-owned terminal state for styled text, default text, wide
 cells, title metadata, bracketed paste mode, mouse tracking mode, and hyperlink
 presence is projected into nmux `TerminalUpdate` rows, runs, styles, modes, and

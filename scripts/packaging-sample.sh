@@ -11,13 +11,13 @@ if ! target/packaging-default/release/nmux --version; then
     echo "default nmux version check failed" >&2
     exit 1
 fi
-echo "building opt-in libghostty-vt release binaries"
-GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/packaging-libghostty-vt cargo build -p nmux-cli --release --bins --features libghostty-vt
-echo "opt-in libghostty-vt release artifacts"
+echo "building default libghostty-vt release binaries"
+GIT_CONFIG_GLOBAL=/dev/null CARGO_TARGET_DIR=target/packaging-libghostty-vt cargo build -p nmux-cli --release --bins
+echo "default libghostty-vt release artifacts"
 for bin in target/packaging-libghostty-vt/release/nmux; do
     printf '%s bytes=%s\n' "$bin" "$(wc -c < "$bin" | tr -d ' ')"
 done
-echo "opt-in libghostty-vt dynamic library artifacts"
+echo "default libghostty-vt dynamic library artifacts"
 find target/packaging-libghostty-vt/release -name 'libghostty-vt*.dylib' -o -name 'libghostty-vt*.so' -o -name 'libghostty-vt*.dll'
 status=0
 lib_path="$(find target/packaging-libghostty-vt/release -path '*/ghostty-install/lib/libghostty-vt.*' -print -quit)"
@@ -33,6 +33,6 @@ if ! DYLD_LIBRARY_PATH="$lib_dir" LD_LIBRARY_PATH="$lib_dir" target/packaging-li
     status=1
 fi
 if [ "$status" -ne 0 ]; then
-    echo "one or more opt-in libghostty-vt binary version checks failed; record this as packaging evidence" >&2
+    echo "one or more default libghostty-vt binary version checks failed; record this as packaging evidence" >&2
     exit "$status"
 fi

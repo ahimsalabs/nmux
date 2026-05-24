@@ -2,13 +2,16 @@
 
 ## Status
 
-Accepted.
+Superseded by ADR 0034.
 
 ## Date
 
 2026-05-22
 
 ## Context
+
+ADR 0034 later accepts `libghostty-vt` as the default engine, regular CI path,
+and flake package baseline. This ADR records the earlier opt-in gate.
 
 ADR 0013 imported `libghostty-vt` as an optional backend terminal engine. M13
 has since expanded that engine from a smoke path into the main terminal-state
@@ -23,7 +26,8 @@ tests: CLI argument parsing, local attach behavior, cached client state, protoco
 decoding, and shared session invariants all need to compile and pass under
 `--features libghostty-vt`.
 
-The native build is still materially different from the default path.
+At the time of this ADR, the native build was materially different from the
+default path.
 `libghostty-vt-sys` fetches a pinned Ghostty source tree unless
 `GHOSTTY_SOURCE_DIR` is provided, and the native build currently requires the
 Zig version pinned by the Nix development shell. That build cost and packaging
@@ -31,8 +35,10 @@ shape should not enter the default developer loop by accident.
 
 ## Decision
 
-Keep `libghostty-vt` opt-in for default development, regular `just check`, and
-the default `nmuxd --terminal-engine interim` path.
+The original decision kept `libghostty-vt` opt-in for default development,
+regular `just check`, and the default daemon terminal-engine path. ADR 0034
+later supersedes this by making `libghostty-vt` the default feature and default
+daemon engine.
 
 Strengthen the opt-in verification gate instead:
 
@@ -45,7 +51,8 @@ Strengthen the opt-in verification gate instead:
   parsing should run `just check-ghostty-vt` before commit.
 
 Promoting `libghostty-vt` into regular CI or making it the documented/default
-engine requires a later decision. That decision should have evidence for:
+engine required a later decision. ADR 0034 records that decision and its
+accepted evidence for:
 
 - acceptable native build time in CI and local development;
 - stable Zig/toolchain provisioning outside the current Nix shell;
@@ -55,12 +62,8 @@ engine requires a later decision. That decision should have evidence for:
 
 ## Consequences
 
-The repository now has a stronger opt-in correctness gate without forcing the
-native Ghostty/Zig build onto every contributor or every default test run.
-
-The default engine remaining `interim` is a build and packaging decision, not a
-claim that the interim text surface is terminal-correct. User-facing docs should
-continue to label the interim renderer as temporary and non-VT-correct.
+This ADR created a stronger opt-in correctness gate before promotion. ADR 0034
+turns that native Ghostty/Zig path into the default gate and package baseline.
 
 Because the opt-in gate is full-suite rather than name-filtered, feature-only
 regressions in ordinary code paths are more likely to fail before a commit.
