@@ -566,6 +566,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     flush_stdout()?;
                 }
                 local::LiveSurfaceRead::Update(update) => {
+                    let decode_start = Instant::now();
                     speculative_echo.reconcile_update(&update);
                     let previous_metadata = current_surface_metadata.clone();
                     current_surface_metadata = local::TerminalMetadataSummary {
@@ -574,6 +575,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     };
                     current_surface_text =
                         client_state.render_surface_update_styled(&update, use_styled)?;
+                    if let Some(ref mut rs) = redraw_state {
+                        rs.record_decode_time(decode_start.elapsed());
+                    }
                     if args.output_json {
                         println!(
                             "{}",
@@ -1508,19 +1512,36 @@ fn redraw_terminal(surface_text: &str) {
     }
 }
 
-/// Tracks displayed rows for differential rendering and latency measurement.
+/// Frame statistics for the render overlay.
+#[derive(Debug, Clone, Default)]
+struct FrameStats {
+    /// Time since the previous frame was rendered.
+    frame_interval: Duration,
+    /// Time spent decoding the protocol update and applying it to client state.
+    decode_time: Duration,
+    /// Time spent diffing rows and writing ANSI output.
+    render_time: Duration,
+    /// Number of rows rewritten in this frame.
+    rows_changed: usize,
+    /// Total rows in the surface.
+    rows_total: usize,
+}
+
+/// Tracks displayed rows for differential rendering and frame statistics.
 struct RedrawState {
     /// Previously displayed rows (including header lines).
     previous_rows: Vec<String>,
-    /// Terminal width for latency overlay positioning.
+    /// Terminal width for overlay positioning.
     terminal_cols: u32,
     /// When the last frame was rendered.
     last_frame_time: Instant,
-    /// Most recent measured frame latency.
-    last_latency: Duration,
-    /// Previous latency overlay column and width so row 1 can be restored
+    /// Most recent frame statistics.
+    last_stats: FrameStats,
+    /// Previous overlay column and width so row 1 can be restored
     /// before drawing the next overlay.
-    previous_latency_overlay: Option<(u32, usize)>,
+    previous_overlay: Option<(u32, usize)>,
+    /// Pending decode time set before render_diff is called.
+    pending_decode_time: Duration,
 }
 
 impl RedrawState {
@@ -1529,8 +1550,9 @@ impl RedrawState {
             previous_rows: Vec::new(),
             terminal_cols: 80,
             last_frame_time: Instant::now(),
-            last_latency: Duration::ZERO,
-            previous_latency_overlay: None,
+            last_stats: FrameStats::default(),
+            previous_overlay: None,
+            pending_decode_time: Duration::ZERO,
         }
     }
 
@@ -1540,6 +1562,11 @@ impl RedrawState {
         }
     }
 
+    /// Record decode time so the next render_diff can include it in stats.
+    fn record_decode_time(&mut self, decode_time: Duration) {
+        self.pending_decode_time = decode_time;
+    }
+
     /// Render the full surface text differentially: only write rows that changed.
     /// Uses cursor addressing to update individual rows without clearing the screen.
     fn render_diff(&mut self, surface_text: &str) {
@@ -1547,13 +1574,13 @@ impl RedrawState {
     }
 
     fn render_diff_text(&mut self, surface_text: &str) -> String {
-        let now = Instant::now();
-        self.last_latency = now.duration_since(self.last_frame_time);
-        self.last_frame_time = now;
+        let render_start = Instant::now();
+        let frame_interval = render_start.duration_since(self.last_frame_time);
         self.update_terminal_size();
 
         let new_rows: Vec<String> = surface_text.lines().map(String::from).collect();
         let mut output = String::new();
+        let mut rows_changed: usize = 0;
 
         // Hide cursor during update to avoid flicker.
         output.push_str("\x1b[?25l");
@@ -1561,23 +1588,36 @@ impl RedrawState {
         let max_rows = new_rows
             .len()
             .max(self.previous_rows.len())
-            .max(usize::from(self.previous_latency_overlay.is_some()));
+            .max(usize::from(self.previous_overlay.is_some()));
         for i in 0..max_rows {
             let new_row = new_rows.get(i).map(String::as_str).unwrap_or("");
             let old_row = self.previous_rows.get(i).map(String::as_str).unwrap_or("");
-            let latency_overlay_was_on_row = i == 0 && self.previous_latency_overlay.is_some();
-            if new_row != old_row || latency_overlay_was_on_row {
+            let overlay_was_on_row = i == 0 && self.previous_overlay.is_some();
+            if new_row != old_row || overlay_was_on_row {
                 // Move cursor to row i+1 (1-based), column 1.
                 output.push_str(&format!("\x1b[{};1H\x1b[2K{}", i + 1, new_row));
+                rows_changed += 1;
             }
         }
 
-        // Draw latency overlay in top-right corner.
-        let latency_text = format_latency(self.last_latency);
-        let latency_col = latency_overlay_column(self.terminal_cols, &latency_text);
+        let render_time = render_start.elapsed();
+
+        self.last_stats = FrameStats {
+            frame_interval,
+            decode_time: self.pending_decode_time,
+            render_time,
+            rows_changed,
+            rows_total: new_rows.len(),
+        };
+        self.pending_decode_time = Duration::ZERO;
+        self.last_frame_time = Instant::now();
+
+        // Draw stats overlay in top-right corner.
+        let overlay_text = format_stats_overlay(&self.last_stats);
+        let overlay_col = overlay_column(self.terminal_cols, &overlay_text);
         output.push_str(&format!(
             "\x1b[1;{}H\x1b[7m{}\x1b[27m",
-            latency_col, latency_text
+            overlay_col, overlay_text
         ));
 
         // Park cursor at the bottom to avoid visual artifacts.
@@ -1585,7 +1625,7 @@ impl RedrawState {
         output.push_str(&format!("\x1b[{};1H", park_row));
 
         self.previous_rows = new_rows;
-        self.previous_latency_overlay = Some((latency_col, latency_text.len()));
+        self.previous_overlay = Some((overlay_col, overlay_text.len()));
 
         output
     }
@@ -1597,7 +1637,7 @@ impl RedrawState {
 
     fn render_initial_text(&mut self, surface_text: &str) -> String {
         self.last_frame_time = Instant::now();
-        self.last_latency = Duration::ZERO;
+        self.last_stats = FrameStats::default();
         self.update_terminal_size();
 
         let mut output = String::new();
@@ -1607,34 +1647,56 @@ impl RedrawState {
 
         let new_rows: Vec<String> = surface_text.lines().map(String::from).collect();
 
-        // Draw latency overlay.
-        let latency_text = format_latency(self.last_latency);
-        let latency_col = latency_overlay_column(self.terminal_cols, &latency_text);
+        self.last_stats.rows_changed = new_rows.len();
+        self.last_stats.rows_total = new_rows.len();
+
+        // Draw stats overlay.
+        let overlay_text = format_stats_overlay(&self.last_stats);
+        let overlay_col = overlay_column(self.terminal_cols, &overlay_text);
         output.push_str(&format!(
             "\x1b[1;{}H\x1b[7m{}\x1b[27m",
-            latency_col, latency_text
+            overlay_col, overlay_text
         ));
 
         let park_row = new_rows.len().max(1);
         output.push_str(&format!("\x1b[{};1H", park_row));
 
         self.previous_rows = new_rows;
-        self.previous_latency_overlay = Some((latency_col, latency_text.len()));
+        self.previous_overlay = Some((overlay_col, overlay_text.len()));
 
         output
     }
 }
 
-fn latency_overlay_column(terminal_cols: u32, latency_text: &str) -> u32 {
-    terminal_cols.saturating_sub(latency_text.len() as u32) + 1
+fn overlay_column(terminal_cols: u32, overlay_text: &str) -> u32 {
+    terminal_cols.saturating_sub(overlay_text.len() as u32) + 1
 }
 
-fn format_latency(latency: Duration) -> String {
-    let ms = latency.as_millis();
-    if ms == 0 {
-        " 0ms ".to_owned()
+fn format_stats_overlay(stats: &FrameStats) -> String {
+    let interval_ms = stats.frame_interval.as_millis();
+    let decode_us = stats.decode_time.as_micros();
+    let render_us = stats.render_time.as_micros();
+    let fps = if interval_ms > 0 {
+        1000 / interval_ms
     } else {
-        format!(" {}ms ", ms)
+        0
+    };
+    format!(
+        " {rows}/{total} rows  decode:{decode}  render:{render}  {interval}ms ({fps}fps) ",
+        rows = stats.rows_changed,
+        total = stats.rows_total,
+        decode = format_duration_short(decode_us),
+        render = format_duration_short(render_us),
+        interval = interval_ms,
+        fps = fps,
+    )
+}
+
+fn format_duration_short(micros: u128) -> String {
+    if micros < 1000 {
+        format!("{micros}us")
+    } else {
+        format!("{}ms", micros / 1000)
     }
 }
 
@@ -4365,22 +4427,32 @@ mod tests {
     }
 
     #[test]
-    fn redraw_state_restores_first_row_before_latency_overlay_update() {
+    fn redraw_state_restores_first_row_before_overlay_update() {
         let mut state = RedrawState::new();
-        state.terminal_cols = 20;
+        state.terminal_cols = 120;
 
         let initial = state.render_initial_text("session=local\npane output");
         assert!(initial.contains("\x1b[2J\x1b[Hsession=local\npane output"));
-        assert!(initial.contains("\x1b[1;16H\x1b[7m 0ms \x1b[27m"));
+        // Initial overlay shows row/total counts and zeroed timings.
+        assert!(
+            initial.contains("\x1b[7m") && initial.contains("rows"),
+            "initial frame should contain stats overlay: {initial:?}"
+        );
 
         let update = state.render_diff_text("session=local\npane output changed");
         assert!(
             update.contains("\x1b[1;1H\x1b[2Ksession=local"),
-            "redraw diff did not restore first row before replacing latency overlay: {update:?}"
+            "redraw diff did not restore first row before replacing overlay: {update:?}"
         );
         assert!(
             update.contains("\x1b[2;1H\x1b[2Kpane output changed"),
             "redraw diff did not update changed surface row: {update:?}"
+        );
+        // Overlay should show 1 row changed out of 2 total (row 2 changed,
+        // row 1 is also rewritten because the overlay was there, so 2).
+        assert!(
+            update.contains("rows") && update.contains("fps"),
+            "diff frame should contain stats overlay: {update:?}"
         );
     }
 
