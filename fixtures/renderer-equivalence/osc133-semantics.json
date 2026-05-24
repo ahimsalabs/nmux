@@ -1,0 +1,96 @@
+{
+  "command": "printf '\\033]133;A\\033\\\\prompt \\033]133;B\\033\\\\input\\033]133;C\\033\\\\output'; printf '\\n'; cat >/dev/null",
+  "expected": {
+    "terminal": {
+      "title": "",
+      "working_directory": "",
+      "surface_kind": "main",
+      "cursor": {
+        "row": 1,
+        "col": 0,
+        "visible": true,
+        "shape": "block"
+      },
+      "modes": {
+        "bracketed_paste": false,
+        "mouse_tracking": false,
+        "focus_reporting": false,
+        "application_keypad": false,
+        "application_cursor": false,
+        "origin": false,
+        "wraparound": true,
+        "mouse_tracking_mode": "none",
+        "mouse_format": "x10"
+      }
+    },
+    "surface": {
+      "styles": [
+        {
+          "fg_rgba": 0,
+          "bg_rgba": 0,
+          "underline_rgba": 0,
+          "flags": 0
+        }
+      ],
+      "row_updates": [
+        {
+          "text": "prompt inputoutput",
+          "semantic_prompt": "prompt",
+          "runs": [
+            {
+              "text": "prompt ",
+              "cell_widths": [1, 1, 1, 1, 1, 1, 1],
+              "style_id": 0,
+              "flags": 0,
+              "semantic_content": "prompt"
+            },
+            {
+              "text": "input",
+              "cell_widths": [1, 1, 1, 1, 1],
+              "style_id": 0,
+              "flags": 0,
+              "semantic_content": "input"
+            },
+            {
+              "text": "output",
+              "cell_widths": [1, 1, 1, 1, 1, 1],
+              "style_id": 0,
+              "flags": 0,
+              "semantic_content": "output"
+            }
+          ]
+        }
+      ]
+    },
+    "scrollback": [
+      {
+        "text": "prompt inputoutput",
+        "semantic_prompt": "prompt",
+        "runs": [
+          {
+            "text": "prompt ",
+            "cell_widths": [1, 1, 1, 1, 1, 1, 1],
+            "style_id": 0,
+            "flags": 0,
+            "semantic_content": "prompt"
+          },
+          {
+            "text": "input",
+            "cell_widths": [1, 1, 1, 1, 1],
+            "style_id": 0,
+            "flags": 0,
+            "semantic_content": "input"
+          },
+          {
+            "text": "output",
+            "cell_widths": [1, 1, 1, 1, 1, 1],
+            "style_id": 0,
+            "flags": 0,
+            "semantic_content": "output"
+          }
+        ]
+      }
+    ]
+  },
+  "absent_substrings": ["]133;"]
+}

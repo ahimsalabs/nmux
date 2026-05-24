@@ -41,51 +41,60 @@
       "row_updates": [
         {
           "text": "red plain",
+          "semantic_prompt": "none",
           "runs": [
             {
               "text": "red",
               "cell_widths": [1, 1, 1],
               "style_id": 1,
-              "flags": 0
+              "flags": 0,
+              "semantic_content": "output"
             },
             {
               "text": " plain",
               "cell_widths": [1, 1, 1, 1, 1, 1],
               "style_id": 0,
-              "flags": 0
+              "flags": 0,
+              "semantic_content": "output"
             }
           ]
         },
         {
           "text": "wide:中",
+          "semantic_prompt": "none",
           "runs": [
             {
               "text": "wide:中",
               "cell_widths": [1, 1, 1, 1, 1, 2],
               "style_id": 0,
-              "flags": 0
+              "flags": 0,
+              "semantic_content": "output"
             }
           ]
         },
         {
           "text": "link",
+          "semantic_prompt": "none",
           "runs": [
             {
               "text": "link",
               "cell_widths": [1, 1, 1, 1],
               "style_id": 0,
-              "flags": 1
+              "flags": 1,
+              "semantic_content": "output"
             }
           ]
         },
         {
           "text": "main-scroll",
+          "semantic_prompt": "none",
           "runs": [
             {
               "text": "main-scroll",
               "cell_widths": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
               "style_id": 0,
-              "flags": 0
+              "flags": 0,
+              "semantic_content": "output"
             }
           ]
         }
@@ -94,51 +103,60 @@
     "scrollback": [
       {
         "text": "red plain",
+        "semantic_prompt": "none",
         "runs": [
           {
             "text": "red",
             "cell_widths": [1, 1, 1],
             "style_id": 1,
-            "flags": 0
+            "flags": 0,
+            "semantic_content": "output"
           },
           {
             "text": " plain",
             "cell_widths": [1, 1, 1, 1, 1, 1],
             "style_id": 0,
-            "flags": 0
+            "flags": 0,
+            "semantic_content": "output"
           }
         ]
       },
       {
         "text": "wide:中",
+        "semantic_prompt": "none",
         "runs": [
           {
             "text": "wide:中",
             "cell_widths": [1, 1, 1, 1, 1, 2],
             "style_id": 0,
-            "flags": 0
+            "flags": 0,
+            "semantic_content": "output"
           }
         ]
       },
       {
         "text": "link",
+        "semantic_prompt": "none",
         "runs": [
           {
             "text": "link",
             "cell_widths": [1, 1, 1, 1],
             "style_id": 0,
-            "flags": 1
+            "flags": 1,
+            "semantic_content": "output"
           }
         ]
       },
       {
         "text": "main-scroll",
+        "semantic_prompt": "none",
         "runs": [
           {
             "text": "main-scroll",
             "cell_widths": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             "style_id": 0,
-            "flags": 0
+            "flags": 0,
+            "semantic_content": "output"
           }
         ]
       }

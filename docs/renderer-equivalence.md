@@ -59,8 +59,9 @@ integration smoke runs a real `nmuxd --terminal-engine libghostty-vt` plus
 `nmux --json` attach, materializes the exported JSON into a small canonical
 surface/scrollback shape, and compares it to an expected semantic snapshot for
 structured rows/runs, style tables and IDs, cell widths, hyperlink-presence flags,
-cursor state, terminal modes, title/OSC 7 metadata, main screen restoration
-after alternate screen, and omission of raw control text.
+OSC 133 row/run semantics, cursor state, terminal modes, title/OSC 7 metadata,
+main screen restoration after alternate screen, and omission of raw control
+text.
 The initial integration corpus lives in `fixtures/renderer-equivalence/*.json`
 so each fixture's stimulus and canonical expected state can grow without
 burying fixture semantics in test code.

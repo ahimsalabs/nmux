@@ -127,6 +127,7 @@ struct CanonicalStyle {
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct CanonicalRow {
     text: String,
+    semantic_prompt: String,
     runs: Vec<CanonicalRun>,
 }
 
@@ -136,6 +137,7 @@ struct CanonicalRun {
     cell_widths: Vec<u8>,
     style_id: u64,
     flags: u64,
+    semantic_content: String,
 }
 
 fn load_fixtures() -> Vec<RendererFixture> {
@@ -274,6 +276,7 @@ fn materialize_scrollback(decoded: &Value) -> Vec<CanonicalRow> {
 fn materialize_row(row: &Value) -> CanonicalRow {
     CanonicalRow {
         text: string_field(row, "text"),
+        semantic_prompt: string_field(row, "semantic_prompt"),
         runs: row
             .get("runs")
             .and_then(Value::as_array)
@@ -301,6 +304,7 @@ fn materialize_run(run: &Value) -> CanonicalRun {
             .collect(),
         style_id: numeric_field(run, "style_id"),
         flags: numeric_field(run, "flags"),
+        semantic_content: string_field(run, "semantic_content"),
     }
 }
 
