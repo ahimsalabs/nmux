@@ -102,8 +102,8 @@ nix develop . -c cargo run --bin nmux -- --live --stdin-bytes --redraw
 
 Detach the live client with Ctrl-] by default, or pass `--detach-key none` to
 forward that byte to the pane; stop the daemon in shell 1 with Ctrl-C when
-finished. `--speculative-echo` can be added to redraw live clients as an
-experimental client-local prediction overlay for simple printable input.
+finished. `--speculative-echo` can be added to redraw live clients that send a
+simple printable `--key` as an experimental client-local prediction overlay.
 `--ready-json` prints one JSON line after the socket is bound and the
 initial pane starts, or an `event:error` line if startup fails before readiness,
 so scripts do not need to poll the socket path. See

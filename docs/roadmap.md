@@ -257,7 +257,7 @@ Done:
   richer damage, command lifecycle metadata, and physical-key/text-event input
   into explicit pre-schema work.
 - README, running docs, and the terminal extraction checklist use post-M14 language for roadmap focus, implemented `libghostty-vt` mapping, attached-pane authority during reconnect, explicit scrollback range semantics, and a first-reader quick-start path before deeper protocol or evidence detail.
-- `nmux --live --redraw --speculative-echo` provides an experimental client-local overlay for one outstanding printable append prediction from confirmed cursor state, with focused live CLI coverage proving the redraw repaint can appear before server confirmation while leaving confirmed cache, protocol, scrollback, and daemon terminal state authoritative.
+- `nmux --live --redraw --key TEXT --speculative-echo` provides an experimental client-local overlay for one outstanding printable append prediction from confirmed cursor state, with focused live CLI coverage proving the redraw repaint can appear before server confirmation while leaving confirmed cache, protocol, scrollback, and daemon terminal state authoritative; raw stdin-byte mode remains outside the first SLE scope.
 - [Toolchain notes](toolchain.md) document the supported Nix path, Makefile
   tool preflight, and non-Nix requirements checklist; promotion still needs
   platform-specific validation, repeated CI evidence with cache classification,
