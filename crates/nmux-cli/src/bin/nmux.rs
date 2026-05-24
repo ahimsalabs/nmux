@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use crossterm::tty::IsTty;
 use nmux_cli::{daemon, local};
 use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
@@ -1873,13 +1874,11 @@ fn raw_terminal_termios(mut termios: libc::termios, local_echo: LocalEcho) -> li
 }
 
 fn stdin_is_tty() -> bool {
-    // Safety: isatty only inspects the file descriptor.
-    unsafe { libc::isatty(libc::STDIN_FILENO) == 1 }
+    io::stdin().is_tty()
 }
 
 fn stdout_is_tty() -> bool {
-    // Safety: isatty only inspects the file descriptor.
-    unsafe { libc::isatty(libc::STDOUT_FILENO) == 1 }
+    io::stdout().is_tty()
 }
 
 fn empty_termios() -> libc::termios {
