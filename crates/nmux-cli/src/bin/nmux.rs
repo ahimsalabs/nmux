@@ -589,6 +589,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     flush_stdout()?;
                 }
+                local::LiveSurfaceRead::Presence(presence) => {
+                    if args.output_json {
+                        println!("{}", format_live_presence_json(&presence));
+                        flush_stdout()?;
+                    }
+                }
                 local::LiveSurfaceRead::Update(update) => {
                     let decode_start = Instant::now();
                     speculative_echo.reconcile_update(&update);
@@ -2681,6 +2687,28 @@ fn format_live_workspace_json(workspace: &local::WorkspaceSummary) -> String {
     )
 }
 
+fn format_live_presence_json(presence: &local::PresenceSummary) -> String {
+    let focused_pane_id = presence
+        .focused_pane_id
+        .as_deref()
+        .map(local::json_string)
+        .unwrap_or_else(|| "null".to_owned());
+    format!(
+        "{{\"event\":\"presence\",\"presence\":{{\"actor_id\":{},\"user_id\":{},\"display_name\":{},\"mode\":{},\"focused_pane_id\":{focused_pane_id}}}}}",
+        local::json_string(&presence.actor_id),
+        local::json_string(&presence.user_id),
+        local::json_string(&presence.display_name),
+        local::json_string(attach_mode_name(presence.mode))
+    )
+}
+
+fn attach_mode_name(mode: AttachMode) -> &'static str {
+    match mode {
+        AttachMode::ReadOnly => "read-only",
+        AttachMode::ReadWrite => "read-write",
+    }
+}
+
 fn format_live_surface_update_json(
     workspace: &local::WorkspaceSummary,
     metadata: &local::TerminalMetadataSummary,
@@ -3928,24 +3956,24 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientModeArgs, DetachKey, ExplicitInputModeArgs, FocusEvent, HostMouseModeContext,
-        InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
-        LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
-        RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
-        SUPPORTED_KEY_NAMES, ScrollbackSelectionArgFlags, SigwinchResizeContext,
-        StateInfoSocketSummary, args_from_iter, format_cli_error_json, format_context_json,
-        format_input_choices_json, format_key_names_json, format_live_attach_json,
-        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
-        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
-        format_scrollback, format_state_info_json, format_state_info_text,
-        host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
-        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
-        live_update_print_kind, managed_ready_error_message, parse_detach_key,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        raw_terminal_mode_needed, raw_terminal_termios, redraw_terminal_guard_needed,
-        redraw_workspace_surface_text, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        terminal_size_from_winsize, usage,
+        AttachMode, ClientModeArgs, DetachKey, ExplicitInputModeArgs, FocusEvent,
+        HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
+        LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
+        PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
+        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScrollbackSelectionArgFlags,
+        SigwinchResizeContext, StateInfoSocketSummary, args_from_iter, format_cli_error_json,
+        format_context_json, format_input_choices_json, format_key_names_json,
+        format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
+        format_live_error_json, format_live_presence_json, format_live_surface_update_json,
+        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
+        format_state_info_json, format_state_info_text, host_mouse_mode_disable_sequence,
+        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
+        interim_surface_fidelity_warning_needed, live_update_print_kind,
+        managed_ready_error_message, parse_detach_key, parse_env_assignment, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, raw_terminal_mode_needed, raw_terminal_termios,
+        redraw_terminal_guard_needed, redraw_workspace_surface_text, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, terminal_size_from_winsize, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -4409,6 +4437,16 @@ mod tests {
         assert_eq!(
             format_live_workspace_json(&workspace),
             "{\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":80,\"rows\":24,\"resize_policy\":\"fixed\"}}"
+        );
+        assert_eq!(
+            format_live_presence_json(&local::PresenceSummary {
+                actor_id: "writer".to_owned(),
+                user_id: "user-1".to_owned(),
+                display_name: "Writer".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+            }),
+            "{\"event\":\"presence\",\"presence\":{\"actor_id\":\"writer\",\"user_id\":\"user-1\",\"display_name\":\"Writer\",\"mode\":\"read-write\",\"focused_pane_id\":\"pane-1\"}}"
         );
         let update_json = format_live_surface_update_json(
             &workspace,

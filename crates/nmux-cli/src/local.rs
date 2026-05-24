@@ -179,8 +179,23 @@ where
         if readiness.listener && accepted_clients < max_clients {
             loop {
                 match accept_live_client(listener, session, host, engines) {
-                    Ok(Some(client)) => {
+                    Ok(Some(mut client)) => {
                         accepted_clients += 1;
+                        let existing_actors = clients
+                            .iter()
+                            .map(|client| client.actor.clone())
+                            .collect::<Vec<_>>();
+                        for existing in &mut clients {
+                            let _ = write_presence_to_live_client(existing, session, &client.actor);
+                        }
+                        for actor in existing_actors {
+                            let _ = write_presence_frame(
+                                &mut client.stream,
+                                session,
+                                &mut client.seq,
+                                &actor,
+                            );
+                        }
                         clients.push(client);
                         if accepted_clients >= max_clients {
                             break;
@@ -410,20 +425,41 @@ fn write_live_attach_initial(
     *seq += 1;
 
     let response = request.surface_response(session, pane_id);
-    let status_frame = session.attach_status_frame(
-        "local-client",
-        *seq,
-        pane_id,
-        attach_surface_state(response),
-    );
+    let surface_frame = response
+        .as_ref()
+        .and_then(|response| surface_response_frame(session, pane_id, *response, *seq + 1));
+    let surface_state = if surface_frame.is_some() {
+        attach_surface_state(response)
+    } else {
+        protocol::AttachSurfaceState::Current
+    };
+    let status_frame = session.attach_status_frame("local-client", *seq, pane_id, surface_state);
     wire::write_default_frame(stream, &status_frame)?;
     *seq += 1;
-    if let Some(response) = response
-        && let Some(surface_frame) = surface_response_frame(session, pane_id, response, *seq)
-    {
+    if let Some(surface_frame) = surface_frame {
         wire::write_default_frame(stream, &surface_frame)?;
         *seq += 1;
     }
+    Ok(())
+}
+
+fn write_presence_to_live_client(
+    client: &mut LiveAttachedClient,
+    session: &Session,
+    actor: &Actor,
+) -> Result<(), Box<dyn std::error::Error>> {
+    write_presence_frame(&mut client.stream, session, &mut client.seq, actor)
+}
+
+fn write_presence_frame(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    actor: &Actor,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let presence_frame = session.presence_update_frame("local-client", *seq, actor);
+    wire::write_default_frame(stream, &presence_frame)?;
+    *seq += 1;
     Ok(())
 }
 
@@ -2988,17 +3024,20 @@ pub fn fetch_scrollback_chunk_with_selection(
 fn read_scrollback_response_from_stream(
     stream: &mut UnixStream,
 ) -> Result<ScrollbackRead, Box<dyn std::error::Error>> {
-    let frame = wire::read_default_frame(stream)?;
-    let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
-    match envelope.body_type() {
-        protocol::EnvelopeBody::ScrollbackChunk => {
-            Ok(ScrollbackRead::Chunk(scrollback_chunk_from_frame(&frame)?))
+    loop {
+        let frame = wire::read_default_frame(stream)?;
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+        match envelope.body_type() {
+            protocol::EnvelopeBody::ScrollbackChunk => {
+                return Ok(ScrollbackRead::Chunk(scrollback_chunk_from_frame(&frame)?));
+            }
+            protocol::EnvelopeBody::Error => {
+                let error = error_summary_from_frame(&frame)?;
+                return Ok(ScrollbackRead::Error(error));
+            }
+            protocol::EnvelopeBody::PresenceUpdate => {}
+            other => return Err(format!("unexpected envelope body: {other:?}").into()),
         }
-        protocol::EnvelopeBody::Error => {
-            let error = error_summary_from_frame(&frame)?;
-            Ok(ScrollbackRead::Error(error))
-        }
-        other => Err(format!("unexpected envelope body: {other:?}").into()),
     }
 }
 
@@ -3103,6 +3142,9 @@ pub fn read_live_surface_update_from_stream(
                 }
                 protocol::EnvelopeBody::Error => {
                     Ok(LiveSurfaceRead::Error(error_summary_from_frame(&frame)?))
+                }
+                protocol::EnvelopeBody::PresenceUpdate => {
+                    Ok(LiveSurfaceRead::Presence(presence_from_frame(&frame)?))
                 }
                 other => Err(format!("unexpected live server frame: {other:?}").into()),
             }
@@ -3930,6 +3972,7 @@ pub struct SurfaceUpdate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveSurfaceRead {
     Workspace(WorkspaceSummary),
+    Presence(PresenceSummary),
     Update(SurfaceUpdate),
     Error(ErrorSummary),
     NoFrame,
@@ -10678,6 +10721,79 @@ mod tests {
             HostEvent::Input { pane_id, .. } if pane_id == "pane-1"
         )));
 
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn concurrent_live_clients_exchange_join_presence() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = EchoHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start echo pane");
+
+        let server = thread::spawn(move || {
+            serve_live_n_with_host(&listener, &mut session, &mut host, 2, usize::MAX)
+                .expect("serve concurrent live");
+        });
+
+        let mut reader = UnixStream::connect(&socket_path).expect("connect reader");
+        write_attach_request(
+            &mut reader,
+            &AttachRequest {
+                actor_id: "reader".to_owned(),
+                user_id: "reader-user".to_owned(),
+                display_name: "Reader".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write reader attach");
+        let reader_attach = attach_from_stream(&mut reader).expect("reader attach");
+        assert_eq!(reader_attach.presence.actor_id, "reader");
+
+        let mut writer = UnixStream::connect(&socket_path).expect("connect writer");
+        write_attach_request(
+            &mut writer,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "writer-user".to_owned(),
+                display_name: "Writer".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write writer attach");
+        let writer_attach = attach_from_stream(&mut writer).expect("writer attach");
+        assert_eq!(writer_attach.presence.actor_id, "writer");
+
+        assert_eq!(
+            read_live_surface_update_from_stream(&mut reader).expect("reader presence"),
+            LiveSurfaceRead::Presence(PresenceSummary {
+                actor_id: "writer".to_owned(),
+                user_id: "writer-user".to_owned(),
+                display_name: "Writer".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+            })
+        );
+        assert_eq!(
+            read_live_surface_update_from_stream(&mut writer).expect("writer presence"),
+            LiveSurfaceRead::Presence(PresenceSummary {
+                actor_id: "reader".to_owned(),
+                user_id: "reader-user".to_owned(),
+                display_name: "Reader".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+            })
+        );
+
+        drop(reader);
+        drop(writer);
+        server.join().expect("server thread");
         let _ = fs::remove_file(socket_path);
     }
 
