@@ -3650,6 +3650,7 @@ impl ClientPaneSurface {
 pub struct SpeculativeEchoOverlay {
     prediction: Option<SpeculativeEchoPrediction>,
     consecutive_misses: u8,
+    suppressed_predictable_keys: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3672,6 +3673,7 @@ pub enum SpeculativeEchoReconcile {
 
 impl SpeculativeEchoOverlay {
     const MAX_CONSECUTIVE_MISSES: u8 = 2;
+    const RECOVERY_PREDICTABLE_KEYS: u8 = 3;
     const UNDERLINE_START: &'static str = "\x1b[4m";
     const UNDERLINE_END: &'static str = "\x1b[24m";
 
@@ -3681,7 +3683,7 @@ impl SpeculativeEchoOverlay {
         input_seq: u64,
         text: &str,
     ) -> Option<String> {
-        if self.consecutive_misses >= Self::MAX_CONSECUTIVE_MISSES || self.prediction.is_some() {
+        if self.prediction.is_some() {
             return None;
         }
         let ch = single_predictable_char(text)?;
@@ -3699,6 +3701,10 @@ impl SpeculativeEchoOverlay {
             return None;
         }
         if cursor.col + 1 > surface.cols {
+            return None;
+        }
+        if self.prediction_suppressed() {
+            self.record_suppressed_predictable_key();
             return None;
         }
 
@@ -3789,6 +3795,7 @@ impl SpeculativeEchoOverlay {
         if confirmed {
             self.prediction = None;
             self.consecutive_misses = 0;
+            self.suppressed_predictable_keys = 0;
             SpeculativeEchoReconcile::Confirmed
         } else {
             self.clear_mismatched()
@@ -3796,13 +3803,26 @@ impl SpeculativeEchoOverlay {
     }
 
     pub fn prediction_allowed(&self) -> bool {
-        self.consecutive_misses < Self::MAX_CONSECUTIVE_MISSES
+        !self.prediction_suppressed()
     }
 
     fn clear_mismatched(&mut self) -> SpeculativeEchoReconcile {
         self.prediction = None;
         self.consecutive_misses = self.consecutive_misses.saturating_add(1);
+        self.suppressed_predictable_keys = 0;
         SpeculativeEchoReconcile::Mismatched
+    }
+
+    fn prediction_suppressed(&self) -> bool {
+        self.consecutive_misses >= Self::MAX_CONSECUTIVE_MISSES
+    }
+
+    fn record_suppressed_predictable_key(&mut self) {
+        self.suppressed_predictable_keys = self.suppressed_predictable_keys.saturating_add(1);
+        if self.suppressed_predictable_keys >= Self::RECOVERY_PREDICTABLE_KEYS {
+            self.consecutive_misses = 0;
+            self.suppressed_predictable_keys = 0;
+        }
     }
 }
 
@@ -8429,6 +8449,15 @@ mod tests {
 
         assert!(!overlay.prediction_allowed());
         assert_eq!(overlay.predict_printable_key(&surface, 3, "c"), None);
+        assert_eq!(overlay.predict_printable_key(&surface, 4, "c"), None);
+        assert_eq!(overlay.predict_printable_key(&surface, 5, "\n"), None);
+        assert!(!overlay.prediction_allowed());
+        assert_eq!(overlay.predict_printable_key(&surface, 5, "c"), None);
+        assert!(overlay.prediction_allowed());
+        assert_eq!(
+            overlay.predict_printable_key(&surface, 6, "c").as_deref(),
+            Some("abc")
+        );
     }
 
     #[test]

@@ -105,7 +105,7 @@ forward that byte to the pane; stop the daemon in shell 1 with Ctrl-C when
 finished. `--speculative-echo` can be added to redraw live clients that send a
 simple printable `--key` as an experimental client-local prediction overlay;
 the predicted glyph is underlined until the daemon-owned surface update
-replaces it.
+replaces it, and repeated misses suppress prediction temporarily.
 `--ready-json` prints one JSON line after the socket is bound and the
 initial pane starts, or an `event:error` line if startup fails before readiness,
 so scripts do not need to poll the socket path. See

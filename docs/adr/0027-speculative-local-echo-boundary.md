@@ -61,11 +61,12 @@ client can distinguish "not confirmed yet" from "wrong". Until then, any
 prototype must treat unconfirmed predictions as short-lived and disposable
 rather than counting every missing row update as a settled miss.
 
-A prediction engine must be able to back off. The initial policy should disable
-predictions after recent misses and re-enable only after a quiet period or after
-confirmed simple echo behavior is observed. Password prompts, editors, shells
-with custom line editing, remote full-screen programs, and alternate-screen
-applications should bias toward no prediction.
+A prediction engine must be able to back off. The initial policy disables
+predictions after recent misses and re-enables only after a short run of
+otherwise-predictable skipped keys or after confirmed simple echo behavior is
+observed. Password prompts, editors, shells with custom line editing, remote
+full-screen programs, and alternate-screen applications should bias toward no
+prediction.
 
 ## Consequences
 

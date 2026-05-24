@@ -395,7 +395,9 @@ replaces that overlay with the next daemon-owned surface update. It does not
 change the confirmed client cache,
 protocol frames, scrollback, or daemon terminal state, and it deliberately skips
 raw stdin-byte mode, line-streamed stdin, paste, named keys, control input, wide
-graphemes, wrapping, alternate-screen claims, and JSON output.
+graphemes, wrapping, alternate-screen claims, and JSON output. Repeated
+mismatches suppress prediction temporarily; after a short run of otherwise
+predictable skipped keys, the overlay tries again.
 
 Read-write live clients also poll process output during idle cycles. That means a process can update the backend-owned pane surface and stream patches to an attached read-write client even when the client has not sent a key frame in that cycle.
 
