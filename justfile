@@ -114,6 +114,10 @@ supply-chain-review:
 local-smoke: check-toolchain
     @scripts/local-smoke.sh
 
+latency-bench: check-toolchain
+    cargo build -p nmux-cli --bins
+    target/debug/nmux-latency-bench --trace target/nmux-latency/trace.jsonl
+
 static-link-verify: check-vt-toolchain
     cargo run -p xtask -- static-link-verify
 

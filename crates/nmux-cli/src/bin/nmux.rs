@@ -117,6 +117,7 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    nmux_cli::observability::init_from_env()?;
     let raw_args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if let Some(result) = run_builtin_subcommand(&raw_args) {
         return result;

@@ -21,6 +21,9 @@ libc = "0.2"
 nmux-core = { path = "../nmux-core", default-features = false }
 nmux-proto = { path = "../nmux-proto" }
 serde_json = "1"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 [dev-dependencies]
 portable-pty = "0.9.0"

@@ -18,6 +18,7 @@ use nmux_core::terminal::{
     TerminalEngineKind, named_key_bytes,
 };
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
+use tracing::{Span, instrument};
 
 pub use crate::build_info::BuildInfo;
 pub use crate::json::{json_string, socket_path_json, version_json};
@@ -655,6 +656,11 @@ fn drain_live_client_frames(
     })
 }
 
+#[instrument(
+    level = "trace",
+    skip_all,
+    fields(pane_id = %input.pane_id, input_seq = input.input_seq)
+)]
 fn forward_live_input(
     stream: &mut UnixStream,
     session: &mut Session,
@@ -700,7 +706,14 @@ fn forward_live_input(
             return Ok(());
         }
     };
-    if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+    let write_span = tracing::trace_span!(
+        "host.write_input",
+        pane_id = %input.pane_id,
+        input_seq = input.input_seq,
+        bytes = bytes.len()
+    );
+    let write_result = write_span.in_scope(|| host.write_input(&input.pane_id, &bytes));
+    if let Err(err) = write_result {
         if input_write_target_exited(&err, &input.pane_id) {
             return Ok(());
         }
@@ -1205,7 +1218,14 @@ fn serve_live_attached_client(
                     return Ok(());
                 }
             };
-            if let Err(err) = host.write_input(&input.pane_id, &bytes) {
+            let write_span = tracing::trace_span!(
+                "host.write_input",
+                pane_id = %input.pane_id,
+                input_seq = input.input_seq,
+                bytes = bytes.len()
+            );
+            let write_result = write_span.in_scope(|| host.write_input(&input.pane_id, &bytes));
+            if let Err(err) = write_result {
                 if input_write_target_exited(&err, &input.pane_id) {
                     return Ok(());
                 }
@@ -1239,15 +1259,39 @@ fn serve_live_attached_client(
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
         let output_result = if host.notify_fd().is_some() {
-            poll_panes_output_with_host_until_poll_quiet(
-                session,
-                engines,
-                host,
-                &leaf_pane_ids,
-                quiet_timeout,
-            )
+            let poll_span = tracing::trace_span!(
+                "host.output.poll",
+                reason = if input_pane_id.is_some() {
+                    "post_input"
+                } else {
+                    "background"
+                },
+                panes = leaf_pane_ids.len(),
+                notify_fd = true
+            );
+            poll_span.in_scope(|| {
+                poll_panes_output_with_host_until_poll_quiet(
+                    session,
+                    engines,
+                    host,
+                    &leaf_pane_ids,
+                    quiet_timeout,
+                )
+            })
         } else {
-            poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
+            let poll_span = tracing::trace_span!(
+                "host.output.poll",
+                reason = if input_pane_id.is_some() {
+                    "post_input"
+                } else {
+                    "background"
+                },
+                panes = leaf_pane_ids.len(),
+                notify_fd = false
+            );
+            poll_span.in_scope(|| {
+                poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
+            })
         };
         if let Err(err) = output_result {
             let error_pane_id = host_error_pane_id(&err).to_owned();
@@ -1255,13 +1299,24 @@ fn serve_live_attached_client(
             return Ok(());
         }
 
-        write_changed_surface_frames(
-            stream,
-            session,
-            &mut seq,
-            &leaf_pane_ids,
-            &mut known_surface_versions,
-        )?;
+        let surface_span = tracing::trace_span!(
+            "surface.write_changed",
+            reason = if input_pane_id.is_some() {
+                "post_input"
+            } else {
+                "background"
+            },
+            panes = leaf_pane_ids.len()
+        );
+        surface_span.in_scope(|| {
+            write_changed_surface_frames(
+                stream,
+                session,
+                &mut seq,
+                &leaf_pane_ids,
+                &mut known_surface_versions,
+            )
+        })?;
         if count_cycle {
             completed_cycles += 1;
         }
@@ -2311,6 +2366,11 @@ pub fn send_key_input(
     send_key_input_with_sequence(stream, &mut sequence, pane_id, text).map(|_| ())
 }
 
+#[instrument(
+    level = "trace",
+    skip(stream, sequence, text),
+    fields(pane_id = %pane_id, bytes = text.len(), input_seq)
+)]
 pub fn send_key_input_with_sequence(
     stream: &mut UnixStream,
     sequence: &mut ClientFrameSequence,
@@ -2318,6 +2378,7 @@ pub fn send_key_input_with_sequence(
     text: &str,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     let input_seq = sequence.next_input_seq();
+    Span::current().record("input_seq", input_seq);
     let frame = Session::initial().key_input_frame(
         "local-client",
         sequence.next_envelope_seq(),
@@ -2326,7 +2387,8 @@ pub fn send_key_input_with_sequence(
         input_seq,
         text,
     );
-    wire::write_default_frame(stream, &frame)?;
+    let write_span = tracing::trace_span!("wire.write_input_frame", kind = "key");
+    write_span.in_scope(|| wire::write_default_frame(stream, &frame))?;
     Ok(input_seq)
 }
 
@@ -2383,6 +2445,11 @@ pub fn send_raw_input(
     send_raw_input_with_sequence(stream, &mut sequence, pane_id, bytes).map(|_| ())
 }
 
+#[instrument(
+    level = "trace",
+    skip(stream, sequence, bytes),
+    fields(pane_id = %pane_id, bytes = bytes.len(), input_seq)
+)]
 pub fn send_raw_input_with_sequence(
     stream: &mut UnixStream,
     sequence: &mut ClientFrameSequence,
@@ -2390,6 +2457,7 @@ pub fn send_raw_input_with_sequence(
     bytes: &[u8],
 ) -> Result<u64, Box<dyn std::error::Error>> {
     let input_seq = sequence.next_input_seq();
+    Span::current().record("input_seq", input_seq);
     let frame = Session::initial().raw_input_frame(
         "local-client",
         sequence.next_envelope_seq(),
@@ -2398,7 +2466,8 @@ pub fn send_raw_input_with_sequence(
         input_seq,
         bytes,
     );
-    wire::write_default_frame(stream, &frame)?;
+    let write_span = tracing::trace_span!("wire.write_input_frame", kind = "raw");
+    write_span.in_scope(|| wire::write_default_frame(stream, &frame))?;
     Ok(input_seq)
 }
 

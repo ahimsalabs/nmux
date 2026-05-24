@@ -2,5 +2,6 @@ pub mod build_info;
 pub mod daemon;
 pub mod json;
 pub mod local;
+pub mod observability;
 pub mod socket;
 pub mod speculative_echo;
