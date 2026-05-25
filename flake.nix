@@ -110,6 +110,11 @@
           zig_0_15 = pkgs.zig_0_15;
         };
 
+      # Format lastModifiedDate (YYYYMMDDHHmmSS) as YYYY-MM-DD.
+      buildDate = builtins.substring 0 4 self.lastModifiedDate
+        + "-" + builtins.substring 4 2 self.lastModifiedDate
+        + "-" + builtins.substring 6 2 self.lastModifiedDate;
+
       defaultBuildArgs =
         pkgs:
         {
@@ -121,6 +126,9 @@
           nativeBuildInputs = defaultNativeBuildInputs pkgs;
           GHOSTTY_SOURCE_DIR = ghosttySource pkgs;
           GHOSTTY_ZIG_SYSTEM_DIR = ghosttyZigDeps pkgs;
+          NMUX_BUILD_CHANNEL = "dev";
+          NMUX_BUILD_COMMIT = self.shortRev or self.dirtyShortRev or "unknown";
+          NMUX_BUILD_DATE = buildDate;
           GIT_CONFIG_GLOBAL = "/dev/null";
           ZIG_GLOBAL_CACHE_DIR = "/tmp/zig-global-cache";
           ZIG_LOCAL_CACHE_DIR = "/tmp/zig-local-cache";
