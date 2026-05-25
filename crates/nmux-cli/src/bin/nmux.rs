@@ -3408,7 +3408,7 @@ where
     let scrollback_tail_count = raw.scrollback_tail;
     let live_cols = raw.live_cols;
     let live_rows = raw.live_rows;
-    let interval_ms = raw.interval_ms.unwrap_or(if raw.stdin_bytes {
+    let interval_ms = raw.interval_ms.unwrap_or(if stdin_bytes {
         // Interactive byte input needs fast polling for responsive rendering
         // (~60 fps).
         16
@@ -5728,6 +5728,7 @@ mod tests {
         assert!(args.redraw);
         assert!(!args.stdin_input);
         assert!(args.start_command.is_none());
+        assert_eq!(args.interval_ms, 16);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
 static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 const STDIN_BYTES_DETACH: u8 = 0x1d;
@@ -2404,6 +2404,67 @@ fn live_tty_client_resize_updates_daemon_pane_size() {
     assert!(
         stdout.contains("session=local tab=tab-1 pane=pane-1 size=72x19 resize=fixed"),
         "daemon did not commit tty resize:\n{stdout}"
+    );
+}
+
+#[test]
+fn live_tty_client_records_resize_without_followup_input() {
+    let socket_path = test_socket_path();
+    let record_path = socket_path.with_extension("record.jsonl");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&record_path);
+    let socket = socket_path.to_str().expect("socket path");
+    let record = record_path.to_str().expect("record path");
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live-forever",
+            "--command",
+            "printf 'resize-record-ready\n'; while :; do sleep 1; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(200));
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--live", "--stdin-bytes", "--redraw", "--record", record],
+        &[("NMUX_SOCKET", socket)],
+    );
+    thread::sleep(Duration::from_millis(200));
+    client.resize(72, 19);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut record_contents = String::new();
+    while Instant::now() < deadline {
+        record_contents = fs::read_to_string(&record_path).unwrap_or_default();
+        if record_contents.contains(
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":72,\"rows\":19,\"resize_policy\":\"fixed\"}",
+        ) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    client.detach();
+    let client_output = client.wait();
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&record_path);
+
+    assert!(
+        client_output.success,
+        "resizing client failed:\n{}",
+        client_output.output
+    );
+    assert!(
+        record_contents.contains(
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":72,\"rows\":19,\"resize_policy\":\"fixed\"}"
+        ),
+        "client did not record resize before follow-up input:\nrecord:\n{record_contents}\noutput:\n{}",
+        client_output.output
     );
 }
 
