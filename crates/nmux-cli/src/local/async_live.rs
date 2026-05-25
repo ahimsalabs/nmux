@@ -28,6 +28,14 @@ pub(crate) struct PendingSurfaceSignal {
     pub pane_id: String,
     pub version: u64,
     pub snapshot_required: bool,
+    pub snapshot_frame: Option<Vec<u8>>,
+    pub patch_frame: Option<SurfacePatchFrame>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SurfacePatchFrame {
+    pub base_version: u64,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -209,7 +217,23 @@ impl AsyncClientOutput {
         pane_id: impl Into<String>,
         version: u64,
     ) -> Result<(), ClientOutputError> {
-        self.update_surface_signal(pane_id.into(), version, false)
+        self.update_surface_signal(pane_id.into(), version, false, None, None)
+    }
+
+    pub(crate) fn signal_surface_frame_bundle(
+        &mut self,
+        pane_id: impl Into<String>,
+        version: u64,
+        snapshot_frame: Vec<u8>,
+        patch_frame: Option<SurfacePatchFrame>,
+    ) -> Result<(), ClientOutputError> {
+        self.update_surface_signal(
+            pane_id.into(),
+            version,
+            false,
+            Some(snapshot_frame),
+            patch_frame,
+        )
     }
 
     pub(crate) fn require_surface_snapshot(
@@ -217,7 +241,16 @@ impl AsyncClientOutput {
         pane_id: impl Into<String>,
         version: u64,
     ) -> Result<(), ClientOutputError> {
-        self.update_surface_signal(pane_id.into(), version, true)
+        self.update_surface_signal(pane_id.into(), version, true, None, None)
+    }
+
+    pub(crate) fn require_surface_snapshot_frame(
+        &mut self,
+        pane_id: impl Into<String>,
+        version: u64,
+        snapshot_frame: Vec<u8>,
+    ) -> Result<(), ClientOutputError> {
+        self.update_surface_signal(pane_id.into(), version, true, Some(snapshot_frame), None)
     }
 
     fn update_surface_signal(
@@ -225,6 +258,8 @@ impl AsyncClientOutput {
         pane_id: String,
         version: u64,
         snapshot_required: bool,
+        snapshot_frame: Option<Vec<u8>>,
+        patch_frame: Option<SurfacePatchFrame>,
     ) -> Result<(), ClientOutputError> {
         let snapshot_required = snapshot_required
             || self
@@ -239,6 +274,8 @@ impl AsyncClientOutput {
                 pane_id,
                 version,
                 snapshot_required,
+                snapshot_frame,
+                patch_frame,
             },
         );
         self.surface_tx
@@ -459,6 +496,9 @@ fn surface_frame_for_signal<S>(
 where
     S: SurfaceFrameSource,
 {
+    if let Some(frame) = bundled_surface_frame_for_signal(state, signal) {
+        return Some(frame);
+    }
     let known = state.known_surface_versions.get(&signal.pane_id).copied();
     if !signal.snapshot_required
         && let Some(known_version) = known
@@ -469,6 +509,21 @@ where
         return surface_source.surface_patch_frame(&signal.pane_id, known_version, state.next_seq);
     }
     surface_source.surface_snapshot_frame(&signal.pane_id, state.next_seq)
+}
+
+fn bundled_surface_frame_for_signal(
+    state: &ClientWriteTaskState,
+    signal: &PendingSurfaceSignal,
+) -> Option<Vec<u8>> {
+    if !signal.snapshot_required
+        && let Some(known_version) = state.known_surface_versions.get(&signal.pane_id).copied()
+        && let Some(patch) = signal.patch_frame.as_ref()
+        && patch.base_version == known_version
+        && known_version.checked_add(1) == Some(signal.version)
+    {
+        return Some(patch.bytes.clone());
+    }
+    signal.snapshot_frame.clone()
 }
 
 async fn async_write_default_frame<W>(writer: &mut W, frame: &[u8]) -> Result<(), ClientOutputError>
@@ -628,6 +683,8 @@ mod tests {
                 pane_id: "pane-1".to_owned(),
                 version: 3,
                 snapshot_required: false,
+                snapshot_frame: None,
+                patch_frame: None,
             })
         );
     }
@@ -650,6 +707,8 @@ mod tests {
                 pane_id: "pane-1".to_owned(),
                 version: 5,
                 snapshot_required: true,
+                snapshot_frame: None,
+                patch_frame: None,
             })
         );
     }
@@ -771,6 +830,64 @@ mod tests {
         assert!(source.patches.is_empty());
         assert_eq!(source.snapshots, vec![("pane-1".to_owned(), 10)]);
         assert_eq!(state.known_surface_version("pane-1"), Some(2));
+    }
+
+    #[tokio::test]
+    async fn write_task_can_use_bundled_surface_patch_without_source_access() {
+        let (mut output, rx) = AsyncClientOutput::new(8, 1024);
+        output
+            .signal_surface_frame_bundle(
+                "pane-1",
+                2,
+                test_frame(50),
+                Some(SurfacePatchFrame {
+                    base_version: 1,
+                    bytes: test_frame(51),
+                }),
+            )
+            .expect("surface bundle");
+        drop(output);
+
+        let mut writer = Vec::new();
+        let mut source = MockSurfaceFrameSource::default();
+        let mut state = ClientWriteTaskState::new(10, BTreeMap::from([("pane-1".to_owned(), 1)]));
+        run_client_write_task(&mut writer, rx, &mut source, &mut state)
+            .await
+            .expect("write task");
+
+        assert!(source.patches.is_empty());
+        assert!(source.snapshots.is_empty());
+        assert_eq!(state.known_surface_version("pane-1"), Some(2));
+        assert_eq!(decoded_frame_count(writer), 1);
+    }
+
+    #[tokio::test]
+    async fn write_task_uses_bundled_snapshot_when_patch_base_is_stale() {
+        let (mut output, rx) = AsyncClientOutput::new(8, 1024);
+        output
+            .signal_surface_frame_bundle(
+                "pane-1",
+                4,
+                test_frame(50),
+                Some(SurfacePatchFrame {
+                    base_version: 3,
+                    bytes: test_frame(51),
+                }),
+            )
+            .expect("surface bundle");
+        drop(output);
+
+        let mut writer = Vec::new();
+        let mut source = MockSurfaceFrameSource::default();
+        let mut state = ClientWriteTaskState::new(10, BTreeMap::from([("pane-1".to_owned(), 1)]));
+        run_client_write_task(&mut writer, rx, &mut source, &mut state)
+            .await
+            .expect("write task");
+
+        assert!(source.patches.is_empty());
+        assert!(source.snapshots.is_empty());
+        assert_eq!(state.known_surface_version("pane-1"), Some(4));
+        assert_eq!(decoded_frame_count(writer), 1);
     }
 
     #[tokio::test]
