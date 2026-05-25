@@ -281,12 +281,12 @@ fn terminal_engine_for_kind(kind: TerminalEngineKind) -> Box<dyn TerminalEngine>
 }
 
 #[cfg(feature = "libghostty-vt")]
-pub fn libghostty_vt_supports_kitty_graphics() -> bool {
+pub(crate) fn libghostty_vt_supports_kitty_graphics() -> bool {
     libghostty_vt::build_info::supports_kitty_graphics().unwrap_or(false)
 }
 
 #[derive(Debug, Default)]
-pub struct InterimTextTerminalEngine {
+pub(crate) struct InterimTextTerminalEngine {
     parser: InterimAnsiParser,
 }
 
@@ -578,7 +578,7 @@ pub fn named_key_bytes(
     Some(bytes.to_vec())
 }
 
-pub fn modified_named_key_bytes(key_name: &str, modifiers: u32) -> Option<Vec<u8>> {
+fn modified_named_key_bytes(key_name: &str, modifiers: u32) -> Option<Vec<u8>> {
     if modifiers == 0 || modifiers > 0x0f {
         return None;
     }

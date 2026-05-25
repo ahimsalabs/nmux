@@ -41,7 +41,18 @@ pub use client_state::{
     SocketIdentitySummary,
 };
 use control::{ControlCommandOutcome, serve_control_command};
-use surface::*;
+use surface::{
+    decoded_cell_runs, decoded_hyperlinks, decoded_styles, decoded_surface_row,
+    decoded_surface_rows, decoded_terminal_colors, default_style_summaries, render_decoded_rows,
+    render_run_summaries, required_string, row_runs_for_text, terminal_colors_have_palette_diff,
+    validate_attach_surface_update, validate_cached_row_hyperlink_ids,
+    validate_cached_row_style_ids, validate_cell_run_hyperlink_ids,
+    validate_cell_run_semantic_content, validate_cell_run_style_ids, validate_cursor_summary,
+    validate_hyperlink_table, validate_no_row_patch_payload, validate_palette_diff_scope,
+    validate_patch_kind, validate_row_semantic_prompt, validate_row_update_hyperlink_ids,
+    validate_row_update_style_ids, validate_row_update_terminal_enums, validate_surface_kind,
+    validate_terminal_mode_summary,
+};
 pub use surface::{
     CachedSurfaceSummary, CellRunSummary, ClientPaneSurface, CursorSummary, HyperlinkSummary,
     RenderedSurfaceSummary, StyleSummary, SurfaceRowUpdate, SurfaceUpdate, SurfaceUpdateKind,
@@ -56,12 +67,12 @@ const LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(3);
 
-pub trait ProcessHostOutput: ProcessHost + ProcessOutput {}
+pub(crate) trait ProcessHostOutput: ProcessHost + ProcessOutput {}
 
 impl<T> ProcessHostOutput for T where T: ProcessHost + ProcessOutput {}
 
 #[derive(Debug)]
-pub struct SessionShutdown;
+pub(crate) struct SessionShutdown;
 
 impl fmt::Display for SessionShutdown {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -71,7 +82,7 @@ impl fmt::Display for SessionShutdown {
 
 impl std::error::Error for SessionShutdown {}
 
-pub fn is_session_shutdown(error: &(dyn std::error::Error + 'static)) -> bool {
+pub(crate) fn is_session_shutdown(error: &(dyn std::error::Error + 'static)) -> bool {
     error.is::<SessionShutdown>()
 }
 
@@ -99,14 +110,14 @@ impl Drop for NonblockingGuard<'_> {
     }
 }
 
-pub fn serve_one(
+pub(crate) fn serve_one(
     listener: &UnixListener,
     session: &mut Session,
 ) -> Result<(), Box<dyn std::error::Error>> {
     serve_n(listener, session, 1)
 }
 
-pub fn serve_one_with_output<O: ProcessOutput>(
+pub(crate) fn serve_one_with_output<O: ProcessOutput>(
     listener: &UnixListener,
     session: &mut Session,
     output: &mut O,
@@ -114,7 +125,7 @@ pub fn serve_one_with_output<O: ProcessOutput>(
     serve_n_with_output(listener, session, output, 1)
 }
 
-pub fn serve_one_with_host<H>(
+pub(crate) fn serve_one_with_host<H>(
     listener: &UnixListener,
     session: &mut Session,
     host: &mut H,
@@ -125,7 +136,7 @@ where
     serve_n_with_host(listener, session, host, 1)
 }
 
-pub fn serve_live_one_with_host<H>(
+pub(crate) fn serve_live_one_with_host<H>(
     listener: &UnixListener,
     session: &mut Session,
     host: &mut H,
@@ -138,7 +149,7 @@ where
     serve_live_one_with_host_and_engines(listener, session, host, &mut engines, cycles)
 }
 
-pub fn serve_live_n_with_host<H>(
+pub(crate) fn serve_live_n_with_host<H>(
     listener: &UnixListener,
     session: &mut Session,
     host: &mut H,
@@ -158,7 +169,7 @@ where
     )
 }
 
-pub fn serve_live_n_with_host_and_terminal_engine_kind<H>(
+pub(crate) fn serve_live_n_with_host_and_terminal_engine_kind<H>(
     listener: &UnixListener,
     session: &mut Session,
     host: &mut H,
@@ -180,7 +191,7 @@ where
     )
 }
 
-pub fn serve_live_n_with_host_and_engines<H>(
+pub(crate) fn serve_live_n_with_host_and_engines<H>(
     listener: &UnixListener,
     session: &mut Session,
     host: &mut H,
@@ -1034,7 +1045,7 @@ fn boxed_socket_closed_error(err: &(dyn std::error::Error + 'static)) -> bool {
             .is_some_and(socket_closed_error_from_wire)
 }
 
-pub fn serve_n(
+pub(crate) fn serve_n(
     listener: &UnixListener,
     session: &mut Session,
     clients: usize,
@@ -1046,7 +1057,7 @@ pub fn serve_n(
     Ok(())
 }
 
-pub fn serve_n_with_output<O: ProcessOutput>(
+pub(crate) fn serve_n_with_output<O: ProcessOutput>(
     listener: &UnixListener,
     session: &mut Session,
     output: &mut O,
@@ -1059,7 +1070,7 @@ pub fn serve_n_with_output<O: ProcessOutput>(
     Ok(())
 }
 
-pub fn serve_n_with_host<H>(
+pub(crate) fn serve_n_with_host<H>(
     listener: &UnixListener,
     session: &mut Session,
     host: &mut H,
@@ -1077,7 +1088,7 @@ where
     )
 }
 
-pub fn serve_n_with_host_and_terminal_engine_kind<H>(
+pub(crate) fn serve_n_with_host_and_terminal_engine_kind<H>(
     listener: &UnixListener,
     session: &mut Session,
     host: &mut H,
@@ -1091,7 +1102,7 @@ where
     serve_n_with_host_and_engines(listener, session, host, clients, &mut engines)
 }
 
-pub fn serve_n_with_host_and_engines<H>(
+pub(crate) fn serve_n_with_host_and_engines<H>(
     listener: &UnixListener,
     session: &mut Session,
     host: &mut H,
@@ -1107,7 +1118,7 @@ where
     Ok(())
 }
 
-pub fn serve_stream_with_host_and_engines<H>(
+pub(crate) fn serve_stream_with_host_and_engines<H>(
     mut stream: UnixStream,
     session: &mut Session,
     host: &mut H,
@@ -1215,7 +1226,7 @@ where
     serve_live_stream_with_host_and_engines(stream, session, host, engines, cycles)
 }
 
-pub fn serve_live_stream_with_host_and_engines<H>(
+pub(crate) fn serve_live_stream_with_host_and_engines<H>(
     mut stream: UnixStream,
     session: &mut Session,
     host: &mut H,
@@ -2216,7 +2227,7 @@ fn write_changed_surface_frames(
     Ok(())
 }
 
-pub fn poll_pane_output(
+pub(crate) fn poll_pane_output(
     session: &mut Session,
     output: &mut dyn ProcessOutput,
     pane_id: &str,
@@ -2225,7 +2236,7 @@ pub fn poll_pane_output(
     poll_pane_output_with_engines(session, &mut engines, output, pane_id)
 }
 
-pub fn poll_pane_output_with_engines(
+pub(crate) fn poll_pane_output_with_engines(
     session: &mut Session,
     engines: &mut PaneTerminalEngines,
     output: &mut dyn ProcessOutput,
@@ -2260,7 +2271,7 @@ pub fn poll_pane_output_with_engines(
     }))
 }
 
-pub fn poll_pane_output_with_host_and_engines(
+pub(crate) fn poll_pane_output_with_host_and_engines(
     session: &mut Session,
     engines: &mut PaneTerminalEngines,
     host: &mut dyn ProcessHostOutput,
@@ -2422,11 +2433,11 @@ fn input_write_target_exited(error: &HostError, pane_id: &str) -> bool {
     matches!(error, HostError::NotRunning { pane_id: failed_pane } if failed_pane == pane_id)
 }
 
-pub fn attach(path: &Path) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
+pub(crate) fn attach(path: &Path) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
     attach_with_known_surfaces(path, Vec::new())
 }
 
-pub fn attach_with_known_surfaces(
+pub(crate) fn attach_with_known_surfaces(
     path: &Path,
     known_surfaces: Vec<KnownSurfaceVersion>,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
@@ -2510,7 +2521,7 @@ impl Default for AttachOptions {
     }
 }
 
-pub fn attach_with_options(
+pub(crate) fn attach_with_options(
     path: &Path,
     request: AttachRequest,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
@@ -2523,7 +2534,7 @@ pub fn attach_with_options(
     )
 }
 
-pub fn attach_with_client_options(
+pub(crate) fn attach_with_client_options(
     path: &Path,
     options: AttachOptions,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
@@ -2534,7 +2545,7 @@ pub fn attach_with_client_options(
     attach_with_client_options_from_stream(stream, options)
 }
 
-pub fn attach_with_client_options_from_stream(
+pub(crate) fn attach_with_client_options_from_stream(
     mut stream: UnixStream,
     options: AttachOptions,
 ) -> Result<AttachSnapshot, Box<dyn std::error::Error>> {
@@ -2709,7 +2720,7 @@ pub fn attach_from_stream(
     })
 }
 
-pub fn send_key_input(
+pub(crate) fn send_key_input(
     stream: &mut UnixStream,
     pane_id: &str,
     text: &str,
@@ -2744,7 +2755,7 @@ pub fn send_key_input_with_sequence(
     Ok(input_seq)
 }
 
-pub fn send_named_key_input(
+pub(crate) fn send_named_key_input(
     stream: &mut UnixStream,
     pane_id: &str,
     key_name: &str,
@@ -2752,7 +2763,7 @@ pub fn send_named_key_input(
     send_named_key_input_with_modifiers(stream, pane_id, key_name, 0)
 }
 
-pub fn send_named_key_input_with_modifiers(
+pub(crate) fn send_named_key_input_with_modifiers(
     stream: &mut UnixStream,
     pane_id: &str,
     key_name: &str,
@@ -2789,7 +2800,7 @@ pub fn send_named_key_input_with_modifiers_and_sequence(
     Ok(())
 }
 
-pub fn send_raw_input(
+pub(crate) fn send_raw_input(
     stream: &mut UnixStream,
     pane_id: &str,
     bytes: &[u8],
@@ -2825,7 +2836,7 @@ pub fn send_raw_input_with_sequence(
     Ok(input_seq)
 }
 
-pub fn send_paste_input(
+pub(crate) fn send_paste_input(
     stream: &mut UnixStream,
     pane_id: &str,
     text: &str,
@@ -2857,7 +2868,7 @@ pub fn send_paste_input_with_sequence(
     Ok(())
 }
 
-pub fn send_focus_input(
+pub(crate) fn send_focus_input(
     stream: &mut UnixStream,
     pane_id: &str,
     focused: bool,
@@ -2886,7 +2897,7 @@ pub fn send_focus_input_with_sequence(
     Ok(())
 }
 
-pub fn send_mouse_input(
+pub(crate) fn send_mouse_input(
     stream: &mut UnixStream,
     pane_id: &str,
     mouse: AttachMouseInput,
@@ -2929,7 +2940,7 @@ impl From<AttachMouseInput> for MouseInputSpec {
     }
 }
 
-pub fn send_resize_intent(
+pub(crate) fn send_resize_intent(
     stream: &mut UnixStream,
     pane_id: &str,
     cols: u32,
@@ -3052,7 +3063,7 @@ impl ClientFrameSequence {
     }
 }
 
-pub fn workspace_summary_from_frame(
+pub(crate) fn workspace_summary_from_frame(
     frame: &[u8],
 ) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
@@ -3095,11 +3106,11 @@ pub fn workspace_summary_from_frame(
     })
 }
 
-pub fn surface_text_from_frame(frame: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
+pub(crate) fn surface_text_from_frame(frame: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
     Ok(surface_update_from_frame(frame)?.text)
 }
 
-pub fn surface_update_from_frame(
+pub(crate) fn surface_update_from_frame(
     frame: &[u8],
 ) -> Result<SurfaceUpdate, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
@@ -3240,7 +3251,7 @@ pub fn surface_update_from_frame(
     }
 }
 
-pub fn read_input_event_from_stream(
+pub(crate) fn read_input_event_from_stream(
     stream: &mut UnixStream,
 ) -> Result<InputSummary, Box<dyn std::error::Error>> {
     let frame = wire::read_default_frame(stream)?;
@@ -3301,14 +3312,14 @@ fn read_attached_client_frame_from_stream(
     }
 }
 
-pub fn read_scrollback_fetch_from_stream(
+pub(crate) fn read_scrollback_fetch_from_stream(
     stream: &mut UnixStream,
 ) -> Result<ScrollbackFetchSummary, Box<dyn std::error::Error>> {
     let frame = wire::read_default_frame(stream)?;
     scrollback_fetch_from_frame(&frame)
 }
 
-pub fn read_scrollback_chunk_from_stream(
+pub(crate) fn read_scrollback_chunk_from_stream(
     stream: &mut UnixStream,
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
     match read_scrollback_response_from_stream(stream, None)? {
@@ -3317,7 +3328,7 @@ pub fn read_scrollback_chunk_from_stream(
     }
 }
 
-pub fn read_scrollback_chunk_with_stale_retry(
+pub(crate) fn read_scrollback_chunk_with_stale_retry(
     stream: &mut UnixStream,
     sequence: &mut ClientFrameSequence,
     pane_id: &str,
@@ -3482,14 +3493,14 @@ enum ScrollbackRead {
     Error(ErrorSummary),
 }
 
-pub fn read_surface_update_from_stream(
+pub(crate) fn read_surface_update_from_stream(
     stream: &mut UnixStream,
 ) -> Result<SurfaceUpdate, Box<dyn std::error::Error>> {
     let frame = wire::read_default_frame(stream)?;
     surface_update_from_frame(&frame)
 }
 
-pub fn read_optional_surface_update_from_stream(
+pub(crate) fn read_optional_surface_update_from_stream(
     stream: &mut UnixStream,
 ) -> Result<Option<SurfaceUpdate>, Box<dyn std::error::Error>> {
     match wire::read_default_frame(stream) {
@@ -3629,7 +3640,7 @@ pub fn read_live_surface_update_from_stream(
     }
 }
 
-pub fn error_summary_from_frame(frame: &[u8]) -> Result<ErrorSummary, Box<dyn std::error::Error>> {
+pub(crate) fn error_summary_from_frame(frame: &[u8]) -> Result<ErrorSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     if envelope.body_type() != protocol::EnvelopeBody::Error {
         return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
@@ -3648,7 +3659,7 @@ pub fn error_summary_from_frame(frame: &[u8]) -> Result<ErrorSummary, Box<dyn st
     })
 }
 
-pub fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn std::error::Error>> {
+pub(crate) fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     if envelope.body_type() != protocol::EnvelopeBody::InputEvent {
         return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
@@ -3818,7 +3829,7 @@ fn paste_input_bytes(
     Ok(bytes)
 }
 
-pub fn resize_intent_from_frame(
+pub(crate) fn resize_intent_from_frame(
     frame: &[u8],
 ) -> Result<ResizeIntentSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
@@ -3838,7 +3849,7 @@ pub fn resize_intent_from_frame(
     })
 }
 
-pub fn presence_from_frame(frame: &[u8]) -> Result<PresenceSummary, Box<dyn std::error::Error>> {
+pub(crate) fn presence_from_frame(frame: &[u8]) -> Result<PresenceSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     if envelope.body_type() != protocol::EnvelopeBody::PresenceUpdate {
         return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
@@ -3861,7 +3872,7 @@ pub fn presence_from_frame(frame: &[u8]) -> Result<PresenceSummary, Box<dyn std:
     })
 }
 
-pub fn attach_status_from_frame(
+pub(crate) fn attach_status_from_frame(
     frame: &[u8],
 ) -> Result<AttachStatusSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
@@ -3879,7 +3890,7 @@ pub fn attach_status_from_frame(
     })
 }
 
-pub fn scrollback_fetch_from_frame(
+pub(crate) fn scrollback_fetch_from_frame(
     frame: &[u8],
 ) -> Result<ScrollbackFetchSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
@@ -3900,7 +3911,7 @@ pub fn scrollback_fetch_from_frame(
     })
 }
 
-pub fn scrollback_chunk_from_frame(
+pub(crate) fn scrollback_chunk_from_frame(
     frame: &[u8],
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
@@ -3967,7 +3978,7 @@ pub fn write_attach_request<W: Write>(writer: &mut W, request: &AttachRequest) -
     wire::write_frame(writer, &frame, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)
 }
 
-pub fn write_control_command<W: Write>(
+pub(crate) fn write_control_command<W: Write>(
     writer: &mut W,
     command: &ControlCommandSummary,
 ) -> io::Result<()> {
@@ -3975,7 +3986,7 @@ pub fn write_control_command<W: Write>(
     wire::write_frame(writer, &frame, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)
 }
 
-pub fn read_attach_request<R: Read>(reader: &mut R) -> io::Result<AttachRequest> {
+pub(crate) fn read_attach_request<R: Read>(reader: &mut R) -> io::Result<AttachRequest> {
     let frame = wire::read_frame(reader, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)?;
     attach_request_from_frame(&frame)
 }
@@ -4582,29 +4593,29 @@ fn validate_scrollback_row_public_range(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InputSummary {
-    pub pane_id: String,
-    pub actor_id: String,
-    pub input_seq: u64,
-    pub text: String,
-    pub bytes: Vec<u8>,
-    pub paste_text: Option<String>,
-    pub key_name: Option<String>,
-    pub key_modifiers: u32,
-    pub mouse: Option<MouseSummary>,
-    pub requires_focus_reporting: bool,
-    pub requires_mouse_tracking: bool,
+pub(crate) struct InputSummary {
+    pub(crate) pane_id: String,
+    pub(crate) actor_id: String,
+    pub(crate) input_seq: u64,
+    pub(crate) text: String,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) paste_text: Option<String>,
+    pub(crate) key_name: Option<String>,
+    pub(crate) key_modifiers: u32,
+    pub(crate) mouse: Option<MouseSummary>,
+    pub(crate) requires_focus_reporting: bool,
+    pub(crate) requires_mouse_tracking: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MouseSummary {
-    pub row: u32,
-    pub col: u32,
-    pub pixel_x: Option<u32>,
-    pub pixel_y: Option<u32>,
-    pub button: MouseButton,
-    pub action: MouseAction,
-    pub modifiers: u32,
+pub(crate) struct MouseSummary {
+    pub(crate) row: u32,
+    pub(crate) col: u32,
+    pub(crate) pixel_x: Option<u32>,
+    pub(crate) pixel_y: Option<u32>,
+    pub(crate) button: MouseButton,
+    pub(crate) action: MouseAction,
+    pub(crate) modifiers: u32,
 }
 
 impl InputSummary {
@@ -4751,12 +4762,12 @@ fn mouse_input_allowed(mode: protocol::MouseTrackingMode, mouse: MouseSummary) -
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResizeIntentSummary {
-    pub pane_id: String,
-    pub actor_id: String,
-    pub cols: u32,
-    pub rows: u32,
-    pub reason: protocol::ResizeReason,
+pub(crate) struct ResizeIntentSummary {
+    pub(crate) pane_id: String,
+    pub(crate) actor_id: String,
+    pub(crate) cols: u32,
+    pub(crate) rows: u32,
+    pub(crate) reason: protocol::ResizeReason,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4769,12 +4780,12 @@ pub struct PresenceSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScrollbackFetchSummary {
-    pub pane_id: String,
-    pub actor_id: String,
-    pub start_line: u64,
-    pub line_count: u32,
-    pub known_scrollback_version: u64,
+pub(crate) struct ScrollbackFetchSummary {
+    pub(crate) pane_id: String,
+    pub(crate) actor_id: String,
+    pub(crate) start_line: u64,
+    pub(crate) line_count: u32,
+    pub(crate) known_scrollback_version: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
