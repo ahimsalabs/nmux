@@ -670,6 +670,11 @@ impl ProcessHost for LocalPtyHost {
     }
 
     fn resize_pane(&mut self, pane_id: &str, cols: u32, rows: u32) -> Result<(), HostError> {
+        if self.reap_exited_process(pane_id)? {
+            return Err(HostError::NotRunning {
+                pane_id: pane_id.to_owned(),
+            });
+        }
         let process = self.process_mut(pane_id)?;
         process
             .master
@@ -1252,6 +1257,22 @@ mod tests {
         assert_eq!(stopped.status, ProcessStatus::Exited);
         assert_eq!(
             host.resize_pane("pane-1", 80, 24),
+            Err(HostError::NotRunning {
+                pane_id: "pane-1".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn local_pty_host_resize_reaps_exited_process() {
+        let spec = HostSpec::local("local", CommandSpec::new("sh").with_args(["-c", "exit 0"]));
+        let mut host = LocalPtyHost::default();
+
+        host.start_pane("pane-1", &spec).expect("start pty pane");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        assert_eq!(
+            host.resize_pane("pane-1", 100, 30),
             Err(HostError::NotRunning {
                 pane_id: "pane-1".to_owned(),
             })

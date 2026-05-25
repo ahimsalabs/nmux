@@ -260,7 +260,18 @@ where
         let mut frontend_resize_pane_ids = Vec::new();
         let mut changed_workspace = false;
         let mut closed_clients = Vec::new();
-        for client_index in readiness.client_indices {
+        let mut readable_client_indices = readiness.client_indices;
+        for client_index in 0..clients.len() {
+            if readable_client_indices.binary_search(&client_index).is_ok() {
+                continue;
+            }
+            if stream_readable_within(&clients[client_index].stream, Duration::ZERO)? {
+                readable_client_indices.push(client_index);
+            }
+        }
+        readable_client_indices.sort_unstable();
+        readable_client_indices.dedup();
+        for client_index in readable_client_indices {
             let Some(client) = clients.get_mut(client_index) else {
                 continue;
             };
@@ -301,8 +312,9 @@ where
         frontend_resize_pane_ids.sort();
         frontend_resize_pane_ids.dedup();
         for pane_id in frontend_resize_pane_ids {
-            changed_workspace |=
+            let changed =
                 apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
+            changed_workspace |= changed;
         }
         let closing_frontend_resize_pane_ids = closed_clients
             .iter()
@@ -2753,6 +2765,7 @@ pub fn send_named_key_input_with_modifiers_and_sequence(
         modifiers,
     );
     wire::write_default_frame(stream, &frame)?;
+    stream.flush()?;
     Ok(())
 }
 
@@ -2788,6 +2801,7 @@ pub fn send_raw_input_with_sequence(
     );
     let write_span = tracing::trace_span!("wire.write_input_frame", kind = "raw");
     write_span.in_scope(|| wire::write_default_frame(stream, &frame))?;
+    stream.flush()?;
     Ok(input_seq)
 }
 

@@ -2220,7 +2220,7 @@ fn bare_tty_nmux_replaces_default_daemon_when_probe_resize_exits_pane() {
     let _ = fs::remove_file(&fresh_shell_path);
     fs::write(
         &stale_shell_path,
-        "#!/bin/sh\ntrap 'exit 0' WINCH\nprintf 'resize-exit-ready\\n'\nwhile :; do sleep 1; done\n",
+        "#!/bin/sh\nprintf 'resize-exit-ready\\n'\ninitial=$(stty size 2>/dev/null || true)\nwhile :; do current=$(stty size 2>/dev/null || true); [ -n \"$initial\" ] && [ \"$current\" != \"$initial\" ] && exit 0; sleep 0.05; done\n",
     )
     .expect("write stale test shell");
     fs::write(
@@ -2418,6 +2418,120 @@ fn live_tty_client_resize_updates_daemon_pane_size() {
     assert!(
         stdout.contains("session=local tab=tab-1 pane=pane-1 size=72x19 resize=fixed"),
         "daemon did not commit tty resize:\n{stdout}"
+    );
+}
+
+#[test]
+fn live_tty_client_keeps_rendering_after_resize_without_input() {
+    let socket_path = test_socket_path();
+    let record_path = socket_path.with_extension("record.jsonl");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&record_path);
+    let socket = socket_path.to_str().expect("socket path");
+    let record = record_path.to_str().expect("record path");
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live-forever",
+            "--command",
+            "printf 'pre-resize-ready\n'; sleep 0.2; printf 'post-resize-tick\n'; while :; do sleep 1; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(200));
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--live", "--stdin-bytes", "--redraw", "--record", record],
+        &[("NMUX_SOCKET", socket)],
+    );
+    thread::sleep(Duration::from_millis(100));
+    client.resize(72, 19);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut record = String::new();
+    while Instant::now() < deadline {
+        record = fs::read_to_string(&record_path).unwrap_or_default();
+        if record.contains("post-resize-tick") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    client.detach();
+    let client_output = client.wait();
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&record_path);
+
+    assert!(
+        client_output.success,
+        "resizing client failed:\n{}",
+        client_output.output
+    );
+    assert!(
+        record.contains("post-resize-tick"),
+        "client stopped rendering after resize without input:\nrecord:\n{record}\noutput:\n{}",
+        client_output.output
+    );
+    assert!(
+        client_output.output.contains("post-resize-tick"),
+        "client recorded but did not render output after resize without input:\nrecord:\n{record}\noutput:\n{}",
+        client_output.output
+    );
+}
+
+#[test]
+fn live_tty_client_initial_size_renders_before_input() {
+    let socket_path = test_socket_path();
+    let record_path = socket_path.with_extension("record.jsonl");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&record_path);
+    let socket = socket_path.to_str().expect("socket path");
+    let record = record_path.to_str().expect("record path");
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live-forever",
+            "--command",
+            "printf 'initial-size-ready\n'; while :; do sleep 1; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(200));
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--live", "--stdin-bytes", "--redraw", "--record", record],
+        &[("NMUX_SOCKET", socket)],
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut record = String::new();
+    while Instant::now() < deadline {
+        record = fs::read_to_string(&record_path).unwrap_or_default();
+        if record.contains(
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":100,\"rows\":24,\"resize_policy\":\"fixed\"}",
+        ) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    client.kill();
+    let client_output = client.wait();
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&record_path);
+
+    assert!(
+        record.contains(
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":100,\"rows\":24,\"resize_policy\":\"fixed\"}"
+        ),
+        "client did not render initial tty resize before input:\nrecord:\n{record}\noutput:\n{}",
+        client_output.output
     );
 }
 

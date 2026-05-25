@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -222,8 +223,27 @@ fn run_default(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
             report_live_setup_error(&args, err.as_ref())?;
             return Err(err);
         }
+        if wait_for_default_daemon_attach(&args).is_err() {
+            replace_default_daemon_socket(&args);
+            if let Err(err) = start_default_daemon(&args) {
+                report_live_setup_error(&args, err.as_ref())?;
+                return Err(err);
+            }
+            wait_for_default_daemon_attach(&args)?;
+        }
     }
-    run_live(&args)
+    match run_live(&args) {
+        Ok(()) => Ok(()),
+        Err(err) if default_live_error_needs_restart(err.as_ref()) => {
+            replace_default_daemon_socket(&args);
+            if let Err(start_err) = start_default_daemon(&args) {
+                report_live_setup_error(&args, start_err.as_ref())?;
+                return Err(start_err);
+            }
+            run_live(&args)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn configure_default_live_args(args: &mut Args) {
@@ -252,14 +272,41 @@ fn start_default_daemon(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn default_daemon_needs_restart(args: &Args) -> bool {
-    if default_daemon_resize_probe_needs_restart(args) {
-        return true;
-    }
-    // A probe resize can itself be the thing that reveals a dead pane. Some
-    // shells exit on SIGWINCH; verify the daemon again before the user attach
-    // commits to this socket.
-    std::thread::sleep(Duration::from_millis(25));
     default_daemon_resize_probe_needs_restart(args)
+}
+
+fn wait_for_default_daemon_attach(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + Duration::from_millis(args.startup_timeout_ms);
+    let request = local::AttachRequest {
+        actor_id: args.actor_id.clone(),
+        user_id: args.user_id.clone(),
+        display_name: args.display_name.clone(),
+        mode: AttachMode::ReadOnly,
+        focused_pane_id: args
+            .target_pane_id
+            .clone()
+            .or_else(|| args.target_tab_id.clone()),
+        known_surfaces: Vec::new(),
+    };
+    let mut last_error: Option<Box<dyn std::error::Error>> = None;
+    while Instant::now() < deadline {
+        match local::connect_to_daemon_with_timeout(&args.socket_path, Duration::from_millis(100)) {
+            Ok(mut stream) => {
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                if let Err(err) = local::write_attach_request(&mut stream, &request) {
+                    last_error = Some(err.into());
+                } else {
+                    match local::attach_from_stream(&mut stream) {
+                        Ok(_) => return Ok(()),
+                        Err(err) => last_error = Some(err),
+                    }
+                }
+            }
+            Err(err) => last_error = Some(err),
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    Err(last_error.unwrap_or_else(|| "default daemon did not become attachable".into()))
 }
 
 fn default_daemon_resize_probe_needs_restart(args: &Args) -> bool {
@@ -290,12 +337,13 @@ fn default_daemon_resize_probe_needs_restart(args: &Args) -> bool {
         Err(err) => return default_attach_error_needs_restart(err.as_ref()),
     };
     let (cols, rows) = default_probe_resize();
+    let alternate_cols = cols.saturating_sub(1).max(1);
     let mut sequence = local::ClientFrameSequence::default();
     if local::send_resize_intent_with_reason_and_sequence(
         &mut stream,
         &mut sequence,
         &snapshot.status.pane_id,
-        cols,
+        alternate_cols,
         rows,
         protocol::ResizeReason::FrontendViewport,
     )
@@ -303,32 +351,57 @@ fn default_daemon_resize_probe_needs_restart(args: &Args) -> bool {
     {
         return true;
     }
-    match local::read_live_surface_update_from_stream(&mut stream) {
-        Ok(local::LiveSurfaceRead::Error(error)) => error_summary_needs_default_restart(&error),
-        Ok(_) => {
-            std::thread::sleep(Duration::from_millis(50));
-            if local::send_resize_intent_with_reason_and_sequence(
-                &mut stream,
-                &mut sequence,
-                &snapshot.status.pane_id,
-                cols,
-                rows,
-                protocol::ResizeReason::FrontendViewport,
-            )
-            .is_err()
-            {
-                return true;
-            }
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
-            match local::read_live_surface_update_from_stream(&mut stream) {
-                Ok(local::LiveSurfaceRead::Error(error)) => {
-                    error_summary_needs_default_restart(&error)
-                }
-                Ok(_) | Err(_) => false,
-            }
-        }
-        Err(_) => false,
+    if drain_default_resize_probe(&mut stream, Duration::from_millis(40)) {
+        return true;
     }
+    std::thread::sleep(Duration::from_millis(50));
+    if local::send_raw_input_with_sequence(
+        &mut stream,
+        &mut sequence,
+        &snapshot.status.pane_id,
+        &[],
+    )
+    .is_err()
+    {
+        return true;
+    }
+    if drain_default_resize_probe(&mut stream, Duration::from_millis(120)) {
+        return true;
+    }
+    if local::send_resize_intent_with_reason_and_sequence(
+        &mut stream,
+        &mut sequence,
+        &snapshot.status.pane_id,
+        cols,
+        rows,
+        protocol::ResizeReason::UserCommand,
+    )
+    .is_err()
+    {
+        return true;
+    }
+    drain_default_resize_probe(&mut stream, Duration::from_millis(500))
+}
+
+fn drain_default_resize_probe(stream: &mut UnixStream, timeout: Duration) -> bool {
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(20)));
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        match local::read_live_surface_update_from_stream(stream) {
+            Ok(local::LiveSurfaceRead::Error(error)) => {
+                return error_summary_needs_default_restart(&error);
+            }
+            Ok(local::LiveSurfaceRead::Closed) => return true,
+            Ok(local::LiveSurfaceRead::NoFrame) => {}
+            Err(_) => return false,
+            Ok(
+                local::LiveSurfaceRead::Workspace(_)
+                | local::LiveSurfaceRead::Update(_)
+                | local::LiveSurfaceRead::Presence(_),
+            ) => {}
+        }
+    }
+    false
 }
 
 fn default_attach_error_needs_restart(error: &(dyn std::error::Error + 'static)) -> bool {
@@ -339,6 +412,12 @@ fn default_attach_error_needs_restart(error: &(dyn std::error::Error + 'static))
 
 fn error_summary_needs_default_restart(error: &local::ErrorSummary) -> bool {
     error.message.contains("pane process is not running")
+}
+
+fn default_live_error_needs_restart(error: &(dyn std::error::Error + 'static)) -> bool {
+    error.to_string().contains("pane process is not running")
+        || error.to_string().contains("failed to fill whole buffer")
+        || error.to_string().contains("Broken pipe")
 }
 
 fn default_probe_resize() -> (u32, u32) {
@@ -682,7 +761,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut sigwinch_resize = match SigwinchResize::enable_if_needed(SigwinchResizeContext {
         stdin_bytes: args.stdin_bytes,
         explicit_resize: args.live_resize.is_some(),
-        stdin_is_tty: stdin_is_tty(),
+        terminal_is_tty: stdin_is_tty() || stdout_is_tty(),
     }) {
         Ok(resize) => resize,
         Err(err) => {
@@ -845,6 +924,58 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
     }
+    if args.live_resize.is_none()
+        && let Some((cols, rows)) = sigwinch_resize.current_resize()?
+    {
+        local::send_resize_intent_with_reason_and_sequence(
+            &mut stream,
+            &mut client_sequence,
+            &attached_pane_id,
+            cols,
+            rows,
+            protocol::ResizeReason::FrontendViewport,
+        )?;
+        apply_frontend_workspace_size(&mut current_workspace, cols, rows);
+        recorder.record(&format_live_workspace_json(&current_workspace))?;
+        let _ = stream.set_read_timeout(Some(live_poll_timeout));
+        loop {
+            match local::read_live_surface_update_from_stream(&mut stream)? {
+                local::LiveSurfaceRead::Workspace(workspace) => {
+                    current_workspace = workspace;
+                    recorder.record(&format_live_workspace_json(&current_workspace))?;
+                }
+                local::LiveSurfaceRead::Update(update) => {
+                    speculative_echo.reconcile_update(&update);
+                    let update_metadata = local::TerminalMetadataSummary {
+                        title: update.title.clone(),
+                        working_directory: update.working_directory.clone(),
+                    };
+                    let update_surface_text =
+                        client_state.render_surface_update_styled(&update, use_styled)?;
+                    current_pane_surfaces
+                        .insert(update.pane_id.clone(), update_surface_text.clone());
+                    if update.pane_id == current_workspace.pane_id {
+                        current_surface_metadata = update_metadata;
+                        current_modes = update.modes;
+                        current_surface_text = update_surface_text;
+                    }
+                }
+                local::LiveSurfaceRead::Presence(presence) => {
+                    recorder.record(&format_live_presence_json(&presence))?;
+                }
+                local::LiveSurfaceRead::Error(error) => {
+                    recorder.record(&format_live_error_json(&error))?;
+                    return Err(format!("live server error: {error}").into());
+                }
+                local::LiveSurfaceRead::NoFrame | local::LiveSurfaceRead::Closed => break,
+            }
+        }
+        let _ = stream.set_read_timeout(Some(setup_read_timeout));
+        rendered.workspace = current_workspace.clone();
+        rendered.surface_metadata = current_surface_metadata.clone();
+        rendered.surface_text = Some(current_surface_text.clone());
+        rendered.modes = current_modes;
+    }
     // Differential rendering with latency overlay is only useful on real
     // terminals. When stdout is captured (tests, pipes), fall back to the
     // legacy full-screen-clear path so output is plain text.
@@ -942,6 +1073,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             .then_some(1)
     });
     let mut cycles = 0;
+    let mut sent_explicit_live_resize = false;
     let detach_reason = loop {
         if cycle_limit.is_some_and(|iterations| cycles >= iterations) {
             break LiveDetachReason::IterationLimit;
@@ -949,14 +1081,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
         if options.request.mode == AttachMode::ReadWrite {
             if let Some((cols, rows)) = args.live_resize {
-                local::send_resize_intent_with_reason_and_sequence(
-                    &mut stream,
-                    &mut client_sequence,
-                    &attached_pane_id,
-                    cols,
-                    rows,
-                    protocol::ResizeReason::UserCommand,
-                )?;
+                if !sent_explicit_live_resize {
+                    local::send_resize_intent_with_reason_and_sequence(
+                        &mut stream,
+                        &mut client_sequence,
+                        &attached_pane_id,
+                        cols,
+                        rows,
+                        protocol::ResizeReason::UserCommand,
+                    )?;
+                    sent_explicit_live_resize = true;
+                }
             } else if let Some((cols, rows)) = sigwinch_resize.next_resize()? {
                 local::send_resize_intent_with_reason_and_sequence(
                     &mut stream,
@@ -966,6 +1101,24 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     rows,
                     protocol::ResizeReason::FrontendViewport,
                 )?;
+                apply_frontend_workspace_size(&mut current_workspace, cols, rows);
+                let event = format_live_workspace_json(&current_workspace);
+                recorder.record(&event)?;
+                if args.output_json {
+                    println!("{event}");
+                } else if args.redraw {
+                    print_live_surface(
+                        &current_workspace,
+                        &current_surface_metadata,
+                        &current_surface_text,
+                        args.redraw,
+                        redraw_state.as_mut(),
+                        Some(&current_pane_surfaces),
+                    );
+                } else {
+                    println!("{}", current_workspace.display_line());
+                }
+                flush_stdout()?;
             }
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
                 match receiver.try_recv() {
@@ -1201,6 +1354,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     finish_live(args, &client_state, &mut recorder, detach_reason)
+}
+
+fn apply_frontend_workspace_size(workspace: &mut local::WorkspaceSummary, cols: u32, rows: u32) {
+    workspace.cols = cols;
+    workspace.rows = rows;
+    if let Some(tree) = workspace.pane_tree.as_mut()
+        && tree.pane_id == workspace.pane_id
+    {
+        tree.cols = cols;
+        tree.rows = rows;
+    }
 }
 
 fn run_managed(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -2022,6 +2186,13 @@ impl SigwinchResize {
             return Ok(None);
         }
 
+        self.current_resize()
+    }
+
+    fn current_resize(&mut self) -> io::Result<Option<(u32, u32)>> {
+        if self._guard.is_none() {
+            return Ok(None);
+        }
         let Some(size) = terminal_size()? else {
             return Ok(None);
         };
@@ -2067,19 +2238,53 @@ extern "C" fn handle_sigwinch(_: libc::c_int) {
 struct SigwinchResizeContext {
     stdin_bytes: bool,
     explicit_resize: bool,
-    stdin_is_tty: bool,
+    terminal_is_tty: bool,
 }
 
 fn sigwinch_resize_needed(context: SigwinchResizeContext) -> bool {
-    context.stdin_bytes && !context.explicit_resize && context.stdin_is_tty
+    context.stdin_bytes && !context.explicit_resize && context.terminal_is_tty
 }
 
 fn terminal_size() -> io::Result<Option<(u32, u32)>> {
+    for fd in [
+        io::stdout().as_raw_fd(),
+        io::stdin().as_raw_fd(),
+        io::stderr().as_raw_fd(),
+    ] {
+        if let Some(size) = terminal_size_from_fd(fd)? {
+            return Ok(Some(size));
+        }
+    }
+
     let (cols, rows) = terminal::size()?;
     if cols == 0 || rows == 0 {
         return Ok(None);
     }
     Ok(Some((u32::from(cols), u32::from(rows))))
+}
+
+fn terminal_size_from_fd(fd: i32) -> io::Result<Option<(u32, u32)>> {
+    let mut size = libc::winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let result = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut size) };
+    if result < 0 {
+        let err = io::Error::last_os_error();
+        if matches!(
+            err.raw_os_error(),
+            Some(libc::ENOTTY | libc::EBADF | libc::EINVAL)
+        ) {
+            return Ok(None);
+        }
+        return Err(err);
+    }
+    if size.ws_col == 0 || size.ws_row == 0 {
+        return Ok(None);
+    }
+    Ok(Some((u32::from(size.ws_col), u32::from(size.ws_row))))
 }
 
 fn apply_raw_terminal_fixups(local_echo: LocalEcho) -> io::Result<()> {
@@ -6280,7 +6485,7 @@ mod tests {
         let interactive_byte_mode = SigwinchResizeContext {
             stdin_bytes: true,
             explicit_resize: false,
-            stdin_is_tty: true,
+            terminal_is_tty: true,
         };
 
         assert!(sigwinch_resize_needed(interactive_byte_mode));
@@ -6289,7 +6494,7 @@ mod tests {
             ..interactive_byte_mode
         }));
         assert!(!sigwinch_resize_needed(SigwinchResizeContext {
-            stdin_is_tty: false,
+            terminal_is_tty: false,
             ..interactive_byte_mode
         }));
         assert!(!sigwinch_resize_needed(SigwinchResizeContext {
