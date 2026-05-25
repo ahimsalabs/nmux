@@ -8320,7 +8320,7 @@ fn live_cycles_coalesces_delayed_echo_after_input() {
     let _ = fs::remove_file(&ready_path);
     let _ = fs::remove_file(&trigger_path);
     let command = format!(
-        "touch {}; while [ ! -f {} ]; do sleep 0.01; done; printf 'typed:coalesce!\\n'; sleep 0.02; printf 'echo:coalesce!\\n'; sleep 1",
+        "touch {}; while [ ! -f {} ]; do sleep 0.01; done; printf 'echo:coalesce!\\n'; sleep 1",
         shell_quote(ready_path.to_str().expect("ready path")),
         shell_quote(trigger_path.to_str().expect("trigger path")),
     );
