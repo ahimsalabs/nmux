@@ -2749,6 +2749,8 @@ struct RedrawState {
     previous_rows: Vec<String>,
     /// Terminal width for status bar formatting.
     terminal_cols: u32,
+    /// Terminal height for detecting resize-induced screen reflow.
+    terminal_rows: u32,
     /// When the last frame was rendered.
     last_frame_time: Instant,
     /// Most recent frame statistics.
@@ -2768,6 +2770,7 @@ impl RedrawState {
         Self {
             previous_rows: Vec::new(),
             terminal_cols: 80,
+            terminal_rows: 24,
             last_frame_time: Instant::now(),
             last_stats: FrameStats::default(),
             pending_decode_time: Duration::ZERO,
@@ -2777,10 +2780,14 @@ impl RedrawState {
         }
     }
 
-    fn update_terminal_size(&mut self) {
-        if let Ok(Some((cols, _))) = terminal_size() {
+    fn update_terminal_size(&mut self) -> bool {
+        if let Ok(Some((cols, rows))) = terminal_size() {
+            let changed = self.terminal_cols != cols || self.terminal_rows != rows;
             self.terminal_cols = cols;
+            self.terminal_rows = rows;
+            return changed;
         }
+        false
     }
 
     /// Record decode time so the next render_diff can include it in stats.
@@ -2837,7 +2844,9 @@ impl RedrawState {
     ) -> String {
         let render_start = Instant::now();
         let frame_interval = render_start.duration_since(self.last_frame_time);
-        self.update_terminal_size();
+        if self.update_terminal_size() && !self.previous_rows.is_empty() {
+            return self.render_initial_text(workspace, surface_text);
+        }
 
         let content_rows: Vec<String> = surface_text.lines().map(String::from).collect();
         let mut output = String::new();

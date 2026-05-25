@@ -2579,6 +2579,52 @@ fn live_tty_client_keeps_rendering_after_resize_without_input() {
 }
 
 #[test]
+fn live_redraw_tty_clears_stale_rows_after_resize() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let socket = socket_path.to_str().expect("socket path");
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live-forever",
+            "--command",
+            "printf 'resize-clear-ready\n'; while :; do sleep 1; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(200));
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--live", "--stdin-bytes", "--redraw"],
+        &[("NMUX_SOCKET", socket)],
+    );
+    thread::sleep(Duration::from_millis(300));
+    client.resize(72, 19);
+    thread::sleep(Duration::from_millis(500));
+    client.detach();
+    let output = client.wait();
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(output.success, "nmux failed:\n{}", output.output);
+    assert!(
+        output.output.contains("resize-clear-ready"),
+        "missing daemon output:\n{}",
+        output.output
+    );
+    let clear_count = output.output.matches("\x1b[2J").count();
+    assert!(
+        clear_count >= 2,
+        "redraw resize should clear stale terminal rows with a full repaint; clear_count={clear_count}\n{}",
+        output.output
+    );
+}
+
+#[test]
 fn live_tty_client_initial_size_renders_before_input() {
     let socket_path = test_socket_path();
     let record_path = socket_path.with_extension("record.jsonl");
