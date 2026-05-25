@@ -3,8 +3,13 @@ use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use super::{
+    InputSummary, PingSummary, ResizeIntentSummary, ScrollbackFetchSummary,
+    input_summary_from_frame, ping_from_frame, resize_intent_from_frame,
+    scrollback_fetch_from_frame,
+};
 use nmux_proto::{protocol, wire};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, watch};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,10 +54,36 @@ pub(crate) enum ClientOutputError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ClientInputError {
+    EventQueueClosed,
+    Io(String),
+    Wire(String),
+    UnexpectedFrame(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ClientInputEvent {
+    Resize(ResizeIntentSummary),
+    Scrollback(ScrollbackFetchSummary),
+    Input(InputSummary),
+    Ping(PingSummary),
+    Closed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ClientWriteEvent {
     Reliable(ReliableFrame),
     Surface(SurfaceSignalSet),
     Closed,
+}
+
+#[derive(Clone)]
+pub(crate) struct AsyncClientInputTx {
+    tx: mpsc::Sender<ClientInputEvent>,
+}
+
+pub(crate) struct AsyncClientInputRx {
+    rx: mpsc::Receiver<ClientInputEvent>,
 }
 
 pub(crate) struct AsyncClientOutput {
@@ -103,6 +134,26 @@ impl ClientWriteTaskState {
 
     pub(crate) fn known_surface_version(&self, pane_id: &str) -> Option<u64> {
         self.known_surface_versions.get(pane_id).copied()
+    }
+}
+
+pub(crate) fn async_client_input_channel(cap: usize) -> (AsyncClientInputTx, AsyncClientInputRx) {
+    let (tx, rx) = mpsc::channel(cap);
+    (AsyncClientInputTx { tx }, AsyncClientInputRx { rx })
+}
+
+impl AsyncClientInputTx {
+    async fn send(&self, event: ClientInputEvent) -> Result<(), ClientInputError> {
+        self.tx
+            .send(event)
+            .await
+            .map_err(|_| ClientInputError::EventQueueClosed)
+    }
+}
+
+impl AsyncClientInputRx {
+    pub(crate) async fn recv(&mut self) -> Option<ClientInputEvent> {
+        self.rx.recv().await
     }
 }
 
@@ -298,6 +349,82 @@ where
     }
 }
 
+pub(crate) async fn run_client_read_task<R>(
+    mut reader: R,
+    events: AsyncClientInputTx,
+) -> Result<(), ClientInputError>
+where
+    R: AsyncRead + Unpin,
+{
+    loop {
+        match async_read_default_frame(&mut reader).await {
+            Ok(frame) => events.send(client_input_event_from_frame(&frame)?).await?,
+            Err(ClientInputError::Io(err)) if async_read_closed_error(&err) => {
+                let _ = events.send(ClientInputEvent::Closed).await;
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn client_input_event_from_frame(frame: &[u8]) -> Result<ClientInputEvent, ClientInputError> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)
+        .map_err(|err| ClientInputError::Wire(err.to_string()))?;
+    match envelope.body_type() {
+        protocol::EnvelopeBody::ResizeIntent => resize_intent_from_frame(frame)
+            .map(ClientInputEvent::Resize)
+            .map_err(|err| ClientInputError::Wire(err.to_string())),
+        protocol::EnvelopeBody::ScrollbackFetch => scrollback_fetch_from_frame(frame)
+            .map(ClientInputEvent::Scrollback)
+            .map_err(|err| ClientInputError::Wire(err.to_string())),
+        protocol::EnvelopeBody::InputEvent => input_summary_from_frame(frame)
+            .map(ClientInputEvent::Input)
+            .map_err(|err| ClientInputError::Wire(err.to_string())),
+        protocol::EnvelopeBody::Ping => ping_from_frame(frame)
+            .map(ClientInputEvent::Ping)
+            .map_err(|err| ClientInputError::Wire(err.to_string())),
+        other => Err(ClientInputError::UnexpectedFrame(format!("{other:?}"))),
+    }
+}
+
+async fn async_read_default_frame<R>(reader: &mut R) -> Result<Vec<u8>, ClientInputError>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut prefix = [0_u8; 4];
+    reader
+        .read_exact(&mut prefix)
+        .await
+        .map_err(|err| ClientInputError::Io(format!("{:?}: {err}", err.kind())))?;
+    let payload_len = u32::from_le_bytes(prefix) as usize;
+    if payload_len > wire::DEFAULT_MAX_FRAME_LEN {
+        return Err(ClientInputError::Wire(format!(
+            "wire frame too large: {} bytes exceeds {} byte limit",
+            payload_len,
+            wire::DEFAULT_MAX_FRAME_LEN
+        )));
+    }
+
+    let mut frame = Vec::with_capacity(4 + payload_len);
+    frame.extend_from_slice(&prefix);
+    frame.resize(4 + payload_len, 0);
+    reader
+        .read_exact(&mut frame[4..])
+        .await
+        .map_err(|err| ClientInputError::Io(format!("{:?}: {err}", err.kind())))?;
+
+    protocol::size_prefixed_root_as_envelope(&frame)
+        .map_err(|err| ClientInputError::Wire(err.to_string()))?;
+    Ok(frame)
+}
+
+fn async_read_closed_error(error: &str) -> bool {
+    error.starts_with("UnexpectedEof")
+        || error.starts_with("ConnectionReset")
+        || error.starts_with("BrokenPipe")
+}
+
 async fn write_surface_signals<W, S>(
     writer: &mut W,
     surface_source: &mut S,
@@ -365,6 +492,7 @@ fn io_cursor(bytes: Vec<u8>) -> io::Cursor<Vec<u8>> {
 mod tests {
     use super::*;
     use flatbuffers::FlatBufferBuilder;
+    use nmux_core::session::{InputFrameContext, ScrollbackFetchSpec, ScrollbackRange, Session};
     use nmux_proto::PROTOCOL_VERSION;
 
     #[derive(Default)]
@@ -424,6 +552,14 @@ mod tests {
             count += 1;
         }
         count
+    }
+
+    fn joined_frames(frames: &[Vec<u8>]) -> Vec<u8> {
+        let mut joined = Vec::new();
+        for frame in frames {
+            joined.extend_from_slice(frame);
+        }
+        joined
     }
 
     #[tokio::test]
@@ -635,5 +771,106 @@ mod tests {
         assert!(source.patches.is_empty());
         assert_eq!(source.snapshots, vec![("pane-1".to_owned(), 10)]);
         assert_eq!(state.known_surface_version("pane-1"), Some(2));
+    }
+
+    #[tokio::test]
+    async fn client_read_task_forwards_input_events_through_bounded_queue() {
+        let frame =
+            Session::initial().key_input_frame("local-client", 3, "actor-1", "pane-1", 2, "x");
+        let (tx, mut rx) = async_client_input_channel(2);
+
+        run_client_read_task(frame.as_slice(), tx)
+            .await
+            .expect("read task");
+
+        match rx.recv().await {
+            Some(ClientInputEvent::Input(input)) => {
+                assert_eq!(input.pane_id, "pane-1");
+                assert_eq!(input.actor_id, "actor-1");
+                assert_eq!(input.input_seq, 2);
+                assert_eq!(input.bytes, b"x");
+            }
+            other => panic!("expected input event, got {other:?}"),
+        }
+        assert_eq!(rx.recv().await, Some(ClientInputEvent::Closed));
+    }
+
+    #[tokio::test]
+    async fn client_read_task_forwards_control_plane_live_events_in_order() {
+        let session = Session::initial();
+        let resize = session.resize_intent_frame(
+            "local-client",
+            1,
+            "actor-1",
+            "pane-1",
+            100,
+            40,
+            protocol::ResizeReason::FrontendViewport,
+        );
+        let fetch = session.scrollback_fetch_frame(
+            InputFrameContext {
+                connection_id: "local-client",
+                seq: 2,
+                actor_id: "actor-1",
+                pane_id: "pane-1",
+                input_seq: 0,
+            },
+            ScrollbackFetchSpec {
+                range: ScrollbackRange {
+                    start_line: 1,
+                    line_count: 10,
+                },
+                known_scrollback_version: 3,
+            },
+        );
+        let ping = PingSummary {
+            actor_id: "actor-1".to_owned(),
+            ping_seq: 9,
+        }
+        .frame("local", "local-client", 3, protocol::EnvelopeBody::Ping);
+        let frames = joined_frames(&[resize, fetch, ping]);
+        let (tx, mut rx) = async_client_input_channel(4);
+
+        run_client_read_task(frames.as_slice(), tx)
+            .await
+            .expect("read task");
+
+        match rx.recv().await {
+            Some(ClientInputEvent::Resize(resize)) => {
+                assert_eq!(resize.pane_id, "pane-1");
+                assert_eq!(resize.cols, 100);
+                assert_eq!(resize.rows, 40);
+            }
+            other => panic!("expected resize event, got {other:?}"),
+        }
+        match rx.recv().await {
+            Some(ClientInputEvent::Scrollback(fetch)) => {
+                assert_eq!(fetch.pane_id, "pane-1");
+                assert_eq!(fetch.start_line, 1);
+                assert_eq!(fetch.line_count, 10);
+                assert_eq!(fetch.known_scrollback_version, 3);
+            }
+            other => panic!("expected scrollback event, got {other:?}"),
+        }
+        assert_eq!(
+            rx.recv().await,
+            Some(ClientInputEvent::Ping(PingSummary {
+                actor_id: "actor-1".to_owned(),
+                ping_seq: 9,
+            }))
+        );
+        assert_eq!(rx.recv().await, Some(ClientInputEvent::Closed));
+    }
+
+    #[tokio::test]
+    async fn client_read_task_reports_unexpected_server_surface_frames() {
+        let frame = Session::initial().pane_surface_frame("local-client", 1);
+        let (tx, _rx) = async_client_input_channel(1);
+
+        let err = run_client_read_task(frame.as_slice(), tx)
+            .await
+            .expect_err("surface frames are not client input events");
+
+        assert!(matches!(err, ClientInputError::UnexpectedFrame(_)));
     }
 }
