@@ -34,6 +34,8 @@ pub use crate::speculative_echo::{
     SpeculativeEchoOverlay, SpeculativeEchoPrediction, SpeculativeEchoReconcile,
 };
 
+#[allow(dead_code)]
+mod async_live;
 mod client_state;
 mod control;
 mod state_file;
