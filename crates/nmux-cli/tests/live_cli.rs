@@ -2119,6 +2119,166 @@ fn bare_tty_nmux_detach_keeps_shared_default_daemon_running() {
 }
 
 #[test]
+fn bare_tty_nmux_replaces_default_daemon_after_pane_exit() {
+    let socket_path = test_socket_path();
+    let stale_shell_path = socket_path.with_extension("stale-shell");
+    let fresh_shell_path = socket_path.with_extension("fresh-shell");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&stale_shell_path);
+    let _ = fs::remove_file(&fresh_shell_path);
+    fs::write(
+        &stale_shell_path,
+        "#!/bin/sh\nprintf 'stale-ready\\n'\nexit 0\n",
+    )
+    .expect("write stale test shell");
+    fs::write(
+        &fresh_shell_path,
+        "#!/bin/sh\nprintf 'fresh-ready\\n'\nwhile :; do sleep 1; done\n",
+    )
+    .expect("write fresh test shell");
+    fs::set_permissions(&stale_shell_path, fs::Permissions::from_mode(0o755))
+        .expect("chmod stale test shell");
+    fs::set_permissions(&fresh_shell_path, fs::Permissions::from_mode(0o755))
+        .expect("chmod fresh test shell");
+    let socket = socket_path.to_str().expect("socket path");
+    let stale_shell = stale_shell_path.to_str().expect("stale shell path");
+    let fresh_shell = fresh_shell_path.to_str().expect("fresh shell path");
+
+    let mut stale_daemon = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live-forever",
+            "--command",
+            stale_shell,
+        ])
+        .spawn()
+        .expect("spawn stale daemon");
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(500));
+
+    let mut client =
+        spawn_nmux_client_in_pty_with_env(&[], &[("NMUX_SOCKET", socket), ("SHELL", fresh_shell)]);
+    thread::sleep(Duration::from_millis(500));
+    client.detach();
+    let output = client.wait();
+
+    let kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill replacement daemon");
+    let _ = stale_daemon.kill();
+    let _ = stale_daemon.wait();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&stale_shell_path);
+    let _ = fs::remove_file(&fresh_shell_path);
+
+    assert!(
+        output.success,
+        "reattach through stale default daemon failed:\n{}",
+        output.output
+    );
+    assert!(
+        output.output.contains("fresh-ready"),
+        "client did not attach to replacement daemon:\n{}",
+        output.output
+    );
+    assert!(
+        !output.output.contains("pane process is not running"),
+        "client saw stale pane failure instead of replacing daemon:\n{}",
+        output.output
+    );
+    assert!(
+        kill.status.success(),
+        "kill failed: {}\n{}",
+        String::from_utf8_lossy(&kill.stderr),
+        String::from_utf8_lossy(&kill.stdout)
+    );
+}
+
+#[test]
+fn bare_tty_nmux_replaces_default_daemon_when_probe_resize_exits_pane() {
+    let socket_path = test_socket_path();
+    let stale_shell_path = socket_path.with_extension("stale-shell");
+    let fresh_shell_path = socket_path.with_extension("fresh-shell");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&stale_shell_path);
+    let _ = fs::remove_file(&fresh_shell_path);
+    fs::write(
+        &stale_shell_path,
+        "#!/bin/sh\ntrap 'exit 0' WINCH\nprintf 'resize-exit-ready\\n'\nwhile :; do sleep 1; done\n",
+    )
+    .expect("write stale test shell");
+    fs::write(
+        &fresh_shell_path,
+        "#!/bin/sh\nprintf 'fresh-after-resize-ready\\n'\nwhile :; do sleep 1; done\n",
+    )
+    .expect("write fresh test shell");
+    fs::set_permissions(&stale_shell_path, fs::Permissions::from_mode(0o755))
+        .expect("chmod stale test shell");
+    fs::set_permissions(&fresh_shell_path, fs::Permissions::from_mode(0o755))
+        .expect("chmod fresh test shell");
+    let socket = socket_path.to_str().expect("socket path");
+    let stale_shell = stale_shell_path.to_str().expect("stale shell path");
+    let fresh_shell = fresh_shell_path.to_str().expect("fresh shell path");
+
+    let mut stale_daemon = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live-forever",
+            "--command",
+            stale_shell,
+        ])
+        .spawn()
+        .expect("spawn stale daemon");
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(200));
+
+    let mut client =
+        spawn_nmux_client_in_pty_with_env(&[], &[("NMUX_SOCKET", socket), ("SHELL", fresh_shell)]);
+    thread::sleep(Duration::from_millis(700));
+    client.detach();
+    thread::sleep(Duration::from_millis(700));
+    client.detach();
+    let output = client.wait();
+
+    let kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill replacement daemon");
+    let _ = stale_daemon.kill();
+    let _ = stale_daemon.wait();
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&stale_shell_path);
+    let _ = fs::remove_file(&fresh_shell_path);
+
+    assert!(
+        output.success,
+        "bare attach failed after probe-triggered pane exit:\n{}",
+        output.output
+    );
+    assert!(
+        output.output.contains("fresh-after-resize-ready"),
+        "client did not attach to replacement daemon:\n{}",
+        output.output
+    );
+    assert!(
+        !output.output.contains("pane process is not running"),
+        "client saw stale pane failure instead of replacing daemon:\n{}",
+        output.output
+    );
+    assert!(
+        kill.status.success(),
+        "kill failed: {}\n{}",
+        String::from_utf8_lossy(&kill.stderr),
+        String::from_utf8_lossy(&kill.stdout)
+    );
+}
+
+#[test]
 fn bare_tty_nmux_allows_two_shared_default_attachers() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

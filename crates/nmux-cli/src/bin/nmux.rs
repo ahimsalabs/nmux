@@ -218,17 +218,7 @@ fn run_default(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
         replace_default_daemon_socket(&args);
     }
     if !args.socket_path.exists() {
-        let shell = std::env::var("SHELL")
-            .ok()
-            .filter(|command| !command.trim().is_empty())
-            .unwrap_or_else(|| "sh".to_owned());
-        let command = format!("exec {} -i", shell_quote_for_sh(&shell));
-        if let Err(err) = PersistentDaemon::start(
-            &args.socket_path,
-            args.target_session_id.as_deref(),
-            &command,
-            Duration::from_millis(args.startup_timeout_ms),
-        ) {
+        if let Err(err) = start_default_daemon(&args) {
             report_live_setup_error(&args, err.as_ref())?;
             return Err(err);
         }
@@ -246,7 +236,33 @@ fn configure_default_live_args(args: &mut Args) {
     }
 }
 
+fn start_default_daemon(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|command| !command.trim().is_empty())
+        .unwrap_or_else(|| "sh".to_owned());
+    let command = format!("exec {} -i", shell_quote_for_sh(&shell));
+    PersistentDaemon::start(
+        &args.socket_path,
+        args.target_session_id.as_deref(),
+        &command,
+        Duration::from_millis(args.startup_timeout_ms),
+    )
+    .map(|_| ())
+}
+
 fn default_daemon_needs_restart(args: &Args) -> bool {
+    if default_daemon_resize_probe_needs_restart(args) {
+        return true;
+    }
+    // A probe resize can itself be the thing that reveals a dead pane. Some
+    // shells exit on SIGWINCH; verify the daemon again before the user attach
+    // commits to this socket.
+    std::thread::sleep(Duration::from_millis(25));
+    default_daemon_resize_probe_needs_restart(args)
+}
+
+fn default_daemon_resize_probe_needs_restart(args: &Args) -> bool {
     let mut stream = match local::connect_to_daemon_with_timeout(
         &args.socket_path,
         Duration::from_millis(args.startup_timeout_ms),
@@ -289,7 +305,28 @@ fn default_daemon_needs_restart(args: &Args) -> bool {
     }
     match local::read_live_surface_update_from_stream(&mut stream) {
         Ok(local::LiveSurfaceRead::Error(error)) => error_summary_needs_default_restart(&error),
-        Ok(_) => false,
+        Ok(_) => {
+            std::thread::sleep(Duration::from_millis(50));
+            if local::send_resize_intent_with_reason_and_sequence(
+                &mut stream,
+                &mut sequence,
+                &snapshot.status.pane_id,
+                cols,
+                rows,
+                protocol::ResizeReason::FrontendViewport,
+            )
+            .is_err()
+            {
+                return true;
+            }
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
+            match local::read_live_surface_update_from_stream(&mut stream) {
+                Ok(local::LiveSurfaceRead::Error(error)) => {
+                    error_summary_needs_default_restart(&error)
+                }
+                Ok(_) | Err(_) => false,
+            }
+        }
         Err(_) => false,
     }
 }
