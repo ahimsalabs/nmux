@@ -359,6 +359,16 @@ table PresenceUpdate {
   focused_pane_id:string;
 }
 
+table Ping {
+  actor_id:string;
+  ping_seq:ulong;
+}
+
+table Pong {
+  actor_id:string;
+  ping_seq:ulong;
+}
+
 table Error {
   code:ErrorCode = Unknown;
   message:string;
@@ -400,6 +410,8 @@ union EnvelopeBody {
   AttachRequest,
   AttachStatus,
   ControlCommand,
+  Ping,
+  Pong,
 }
 
 table Envelope {

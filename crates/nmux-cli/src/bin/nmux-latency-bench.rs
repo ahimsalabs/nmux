@@ -202,6 +202,7 @@ fn measure_echo_latency(
             }
             local::LiveSurfaceRead::Workspace(_)
             | local::LiveSurfaceRead::Presence(_)
+            | local::LiveSurfaceRead::Pong(_)
             | local::LiveSurfaceRead::NoFrame => {}
         }
     }

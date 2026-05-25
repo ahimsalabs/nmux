@@ -1749,10 +1749,10 @@ impl ::flatbuffers::SimpleToVerifyInSlice for PresenceKind {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_ENVELOPE_BODY: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_ENVELOPE_BODY: u8 = 12;
+pub const ENUM_MAX_ENVELOPE_BODY: u8 = 14;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 13] = [
+pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 15] = [
   EnvelopeBody::NONE,
   EnvelopeBody::WorkspaceTreeSnapshot,
   EnvelopeBody::PaneSurfaceSnapshot,
@@ -1766,6 +1766,8 @@ pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 13] = [
   EnvelopeBody::AttachRequest,
   EnvelopeBody::AttachStatus,
   EnvelopeBody::ControlCommand,
+  EnvelopeBody::Ping,
+  EnvelopeBody::Pong,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -1786,9 +1788,11 @@ impl EnvelopeBody {
   pub const AttachRequest: Self = Self(10);
   pub const AttachStatus: Self = Self(11);
   pub const ControlCommand: Self = Self(12);
+  pub const Ping: Self = Self(13);
+  pub const Pong: Self = Self(14);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 12;
+  pub const ENUM_MAX: u8 = 14;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::NONE,
     Self::WorkspaceTreeSnapshot,
@@ -1803,6 +1807,8 @@ impl EnvelopeBody {
     Self::AttachRequest,
     Self::AttachStatus,
     Self::ControlCommand,
+    Self::Ping,
+    Self::Pong,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -1820,6 +1826,8 @@ impl EnvelopeBody {
       Self::AttachRequest => Some("AttachRequest"),
       Self::AttachStatus => Some("AttachStatus"),
       Self::ControlCommand => Some("ControlCommand"),
+      Self::Ping => Some("Ping"),
+      Self::Pong => Some("Pong"),
       _ => None,
     }
   }
@@ -6497,6 +6505,232 @@ impl ::core::fmt::Debug for PresenceUpdate<'_> {
       ds.finish()
   }
 }
+pub enum PingOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct Ping<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for Ping<'a> {
+  type Inner = Ping<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> Ping<'a> {
+  pub const VT_ACTOR_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_PING_SEQ: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    Ping { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args PingArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<Ping<'bldr>> {
+    let mut builder = PingBuilder::new(_fbb);
+    builder.add_ping_seq(args.ping_seq);
+    if let Some(x) = args.actor_id { builder.add_actor_id(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn actor_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Ping::VT_ACTOR_ID, None)}
+  }
+  #[inline]
+  pub fn ping_seq(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Ping::VT_PING_SEQ, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for Ping<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("actor_id", Self::VT_ACTOR_ID, false)?
+     .visit_field::<u64>("ping_seq", Self::VT_PING_SEQ, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct PingArgs<'a> {
+    pub actor_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub ping_seq: u64,
+}
+impl<'a> Default for PingArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    PingArgs {
+      actor_id: None,
+      ping_seq: 0,
+    }
+  }
+}
+
+pub struct PingBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PingBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_actor_id(&mut self, actor_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Ping::VT_ACTOR_ID, actor_id);
+  }
+  #[inline]
+  pub fn add_ping_seq(&mut self, ping_seq: u64) {
+    self.fbb_.push_slot::<u64>(Ping::VT_PING_SEQ, ping_seq, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PingBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    PingBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<Ping<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for Ping<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("Ping");
+      ds.field("actor_id", &self.actor_id());
+      ds.field("ping_seq", &self.ping_seq());
+      ds.finish()
+  }
+}
+pub enum PongOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct Pong<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for Pong<'a> {
+  type Inner = Pong<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> Pong<'a> {
+  pub const VT_ACTOR_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_PING_SEQ: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    Pong { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args PongArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<Pong<'bldr>> {
+    let mut builder = PongBuilder::new(_fbb);
+    builder.add_ping_seq(args.ping_seq);
+    if let Some(x) = args.actor_id { builder.add_actor_id(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn actor_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Pong::VT_ACTOR_ID, None)}
+  }
+  #[inline]
+  pub fn ping_seq(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Pong::VT_PING_SEQ, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for Pong<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("actor_id", Self::VT_ACTOR_ID, false)?
+     .visit_field::<u64>("ping_seq", Self::VT_PING_SEQ, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct PongArgs<'a> {
+    pub actor_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub ping_seq: u64,
+}
+impl<'a> Default for PongArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    PongArgs {
+      actor_id: None,
+      ping_seq: 0,
+    }
+  }
+}
+
+pub struct PongBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PongBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_actor_id(&mut self, actor_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Pong::VT_ACTOR_ID, actor_id);
+  }
+  #[inline]
+  pub fn add_ping_seq(&mut self, ping_seq: u64) {
+    self.fbb_.push_slot::<u64>(Pong::VT_PING_SEQ, ping_seq, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PongBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    PongBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<Pong<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for Pong<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("Pong");
+      ds.field("actor_id", &self.actor_id());
+      ds.field("ping_seq", &self.ping_seq());
+      ds.finish()
+  }
+}
 pub enum ErrorOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -7368,6 +7602,36 @@ impl<'a> Envelope<'a> {
     }
   }
 
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_ping(&self) -> Option<Ping<'a>> {
+    if self.body_type() == EnvelopeBody::Ping {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { Ping::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_pong(&self) -> Option<Pong<'a>> {
+    if self.body_type() == EnvelopeBody::Pong {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { Pong::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
 }
 
 impl ::flatbuffers::Verifiable for Envelope<'_> {
@@ -7396,6 +7660,8 @@ impl ::flatbuffers::Verifiable for Envelope<'_> {
           EnvelopeBody::AttachRequest => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<AttachRequest>>("EnvelopeBody::AttachRequest", pos),
           EnvelopeBody::AttachStatus => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<AttachStatus>>("EnvelopeBody::AttachStatus", pos),
           EnvelopeBody::ControlCommand => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ControlCommand>>("EnvelopeBody::ControlCommand", pos),
+          EnvelopeBody::Ping => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<Ping>>("EnvelopeBody::Ping", pos),
+          EnvelopeBody::Pong => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<Pong>>("EnvelopeBody::Pong", pos),
           _ => Ok(()),
         }
      })?
@@ -7571,6 +7837,20 @@ impl ::core::fmt::Debug for Envelope<'_> {
         },
         EnvelopeBody::ControlCommand => {
           if let Some(x) = self.body_as_control_command() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::Ping => {
+          if let Some(x) = self.body_as_ping() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::Pong => {
+          if let Some(x) = self.body_as_pong() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")

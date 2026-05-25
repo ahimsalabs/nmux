@@ -109,6 +109,8 @@ const LOCAL_ECHO_NAMES: &[&str] = &["off", "tty"];
 const DETACH_KEY_NAMES: &[&str] = &["ctrl-]", "none"];
 const DEFAULT_MANAGED_STARTUP_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_REMOTE_PORT: u16 = 7007;
+const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
+const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn main() {
     if let Err(err) = run() {
@@ -896,6 +898,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::LiveSurfaceRead::Presence(presence) => {
                     recorder.record(&format_live_presence_json(&presence))?;
                 }
+                local::LiveSurfaceRead::Pong(_) => {}
                 local::LiveSurfaceRead::Error(error) => {
                     recorder.record(&format_live_error_json(&error))?;
                     return Err(format!("live server error: {error}").into());
@@ -917,6 +920,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    let mut rtt_tracker = redraw_state
+        .as_ref()
+        .map(|_| RttTracker::new(options.request.actor_id.clone()));
     let mut host_mouse_modes = HostMouseModeMirror::enable_if_needed(HostMouseModeContext {
         stdin_bytes: args.stdin_bytes,
         redraw: args.redraw,
@@ -972,6 +978,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let detach_reason = loop {
         if cycle_limit.is_some_and(|iterations| cycles >= iterations) {
             break LiveDetachReason::IterationLimit;
+        }
+
+        if let Some(tracker) = rtt_tracker.as_mut() {
+            tracker.maybe_send_ping(&mut stream, &mut client_sequence)?;
         }
 
         if options.request.mode == AttachMode::ReadWrite {
@@ -1154,6 +1164,24 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     if args.output_json {
                         println!("{event}");
                         flush_stdout()?;
+                    }
+                }
+                local::LiveSurfaceRead::Pong(pong) => {
+                    if let Some(tracker) = rtt_tracker.as_mut()
+                        && let Some(rtt) = tracker.record_pong(&pong)
+                    {
+                        if let Some(state) = redraw_state.as_mut() {
+                            state.record_rtt(rtt);
+                            print_live_surface(
+                                &current_workspace,
+                                &surface_state.current_surface_metadata,
+                                &surface_state.current_surface_text,
+                                args.redraw,
+                                Some(state),
+                                Some(&surface_state.current_pane_surfaces),
+                            );
+                            flush_stdout()?;
+                        }
                     }
                 }
                 local::LiveSurfaceRead::Update(update) => {
@@ -2531,6 +2559,64 @@ struct FrameStats {
     rows_changed: usize,
     /// Total rows in the surface.
     rows_total: usize,
+    /// Most recently observed client/server ping round-trip time.
+    rtt: Option<Duration>,
+}
+
+#[derive(Debug)]
+struct RttTracker {
+    actor_id: String,
+    pending: Option<PendingPing>,
+    next_ping_at: Instant,
+}
+
+#[derive(Debug)]
+struct PendingPing {
+    seq: u64,
+    sent_at: Instant,
+}
+
+impl RttTracker {
+    fn new(actor_id: String) -> Self {
+        Self {
+            actor_id,
+            pending: None,
+            next_ping_at: Instant::now(),
+        }
+    }
+
+    fn maybe_send_ping(
+        &mut self,
+        stream: &mut UnixStream,
+        sequence: &mut local::ClientFrameSequence,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let now = Instant::now();
+        if let Some(pending) = self.pending.as_ref()
+            && now.duration_since(pending.sent_at) < LIVE_RTT_PING_TIMEOUT
+        {
+            return Ok(());
+        }
+        if now < self.next_ping_at {
+            return Ok(());
+        }
+        let seq = local::send_ping_with_sequence(stream, sequence, &self.actor_id)?;
+        self.pending = Some(PendingPing { seq, sent_at: now });
+        self.next_ping_at = now + LIVE_RTT_PING_INTERVAL;
+        Ok(())
+    }
+
+    fn record_pong(&mut self, pong: &local::PingSummary) -> Option<Duration> {
+        if pong.actor_id != self.actor_id {
+            return None;
+        }
+        let pending = self.pending.as_ref()?;
+        if pong.ping_seq != pending.seq {
+            return None;
+        }
+        let rtt = pending.sent_at.elapsed();
+        self.pending = None;
+        Some(rtt)
+    }
 }
 
 /// Tracks displayed rows for differential rendering with a status bar.
@@ -2545,6 +2631,8 @@ struct RedrawState {
     last_stats: FrameStats,
     /// Pending decode time set before render_diff is called.
     pending_decode_time: Duration,
+    /// Most recently observed ping round-trip time.
+    last_rtt: Option<Duration>,
     /// Local hostname, resolved once at startup.
     hostname: String,
 }
@@ -2557,6 +2645,7 @@ impl RedrawState {
             last_frame_time: Instant::now(),
             last_stats: FrameStats::default(),
             pending_decode_time: Duration::ZERO,
+            last_rtt: None,
             hostname: resolve_short_hostname(),
         }
     }
@@ -2570,6 +2659,10 @@ impl RedrawState {
     /// Record decode time so the next render_diff can include it in stats.
     fn record_decode_time(&mut self, decode_time: Duration) {
         self.pending_decode_time = decode_time;
+    }
+
+    fn record_rtt(&mut self, rtt: Duration) {
+        self.last_rtt = Some(rtt);
     }
 
     /// Build the full-width inverse-video status bar line.
@@ -2653,6 +2746,7 @@ impl RedrawState {
             render_time,
             rows_changed,
             rows_total: content_rows.len(),
+            rtt: self.last_rtt,
         };
         self.pending_decode_time = Duration::ZERO;
         self.last_frame_time = Instant::now();
@@ -2696,6 +2790,7 @@ impl RedrawState {
         let content_rows: Vec<String> = surface_text.lines().map(String::from).collect();
         self.last_stats.rows_changed = content_rows.len();
         self.last_stats.rows_total = content_rows.len();
+        self.last_stats.rtt = self.last_rtt;
 
         let status_bar = self.format_status_bar(workspace);
 
@@ -2753,10 +2848,15 @@ fn format_stats_right(stats: &FrameStats) -> String {
     } else {
         0
     };
+    let rtt = stats
+        .rtt
+        .map(|rtt| format!("rtt:{}  ", format_duration_short(rtt.as_micros())))
+        .unwrap_or_default();
     format!(
-        "{rows}/{total} rows  decode:{decode}  render:{render}  {interval}ms ({fps}fps) ",
+        "{rows}/{total} rows  {rtt}decode:{decode}  render:{render}  {interval}ms ({fps}fps) ",
         rows = stats.rows_changed,
         total = stats.rows_total,
+        rtt = rtt,
         decode = format_duration_short(decode_us),
         render = format_duration_short(render_us),
         interval = interval_ms,
@@ -6489,6 +6589,13 @@ mod tests {
         assert!(
             update.contains("rows") && update.contains("fps"),
             "status bar should contain frame stats: {update:?}"
+        );
+
+        state.record_rtt(std::time::Duration::from_millis(3));
+        let rtt_update = state.render_diff_text(&ws, "pane output\nsecond line changed");
+        assert!(
+            rtt_update.contains("rtt:3ms"),
+            "status bar should contain RTT after a pong: {rtt_update:?}"
         );
     }
 

@@ -43,6 +43,11 @@ pub use client_state::{
     SocketIdentitySummary,
 };
 use control::{ControlCommandOutcome, serve_control_command};
+pub use surface::{
+    CachedSurfaceSummary, CellRunSummary, ClientPaneSurface, CursorSummary, HyperlinkSummary,
+    RenderedSurfaceSummary, StyleSummary, SurfaceRowUpdate, SurfaceUpdate, SurfaceUpdateKind,
+    TerminalColorSummary, TerminalMetadataSummary, TerminalModeSummary,
+};
 use surface::{
     decoded_cell_runs, decoded_hyperlinks, decoded_styles, decoded_surface_row,
     decoded_surface_rows, decoded_terminal_colors, default_style_summaries, render_decoded_rows,
@@ -54,11 +59,6 @@ use surface::{
     validate_patch_kind, validate_row_semantic_prompt, validate_row_update_hyperlink_ids,
     validate_row_update_style_ids, validate_row_update_terminal_enums, validate_surface_kind,
     validate_terminal_mode_summary,
-};
-pub use surface::{
-    CachedSurfaceSummary, CellRunSummary, ClientPaneSurface, CursorSummary, HyperlinkSummary,
-    RenderedSurfaceSummary, StyleSummary, SurfaceRowUpdate, SurfaceUpdate, SurfaceUpdateKind,
-    TerminalColorSummary, TerminalMetadataSummary, TerminalModeSummary,
 };
 
 const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
@@ -182,14 +182,7 @@ impl ServeConfig {
             }
             for _ in 0..self.clients {
                 let (stream, _) = listener.accept()?;
-                serve_stream_impl(
-                    stream,
-                    session,
-                    host,
-                    engines,
-                    true,
-                    self.cycles_per_client,
-                )?;
+                serve_stream_impl(stream, session, host, engines, true, self.cycles_per_client)?;
             }
         } else {
             for _ in 0..self.clients {
@@ -841,6 +834,23 @@ fn write_presence_frame(
     Ok(())
 }
 
+fn write_pong_frame(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    ping: &PingSummary,
+) -> Result<(), ServeError> {
+    let pong_frame = ping.frame(
+        &session.id,
+        "local-client",
+        *seq,
+        protocol::EnvelopeBody::Pong,
+    );
+    wire::write_default_frame(stream, &pong_frame)?;
+    *seq += 1;
+    Ok(())
+}
+
 fn drain_live_client_frames(
     client: &mut LiveAttachedClient,
     session: &mut Session,
@@ -965,6 +975,9 @@ fn drain_live_client_frames(
                 )?;
                 had_input = true;
                 input_pane_ids.push(input_pane_id);
+            }
+            LiveClientRead::Frame(LiveClientFrame::Ping(ping)) => {
+                write_pong_frame(&mut client.stream, session, &mut client.seq, &ping)?;
             }
             LiveClientRead::NoFrame => break,
             LiveClientRead::Closed => {
@@ -1375,6 +1388,10 @@ fn serve_live_attached_client(
                             return Ok(());
                         }
                     }
+                    LiveClientRead::Frame(LiveClientFrame::Ping(ping)) => {
+                        count_cycle = false;
+                        write_pong_frame(stream, session, &mut seq, &ping)?;
+                    }
                     LiveClientRead::NoFrame => break,
                     LiveClientRead::Closed => return Ok(()),
                 }
@@ -1614,6 +1631,9 @@ fn read_live_client_frame_from_stream(
                 protocol::EnvelopeBody::InputEvent => Ok(LiveClientRead::Frame(
                     LiveClientFrame::Input(input_summary_from_frame(&frame)?),
                 )),
+                protocol::EnvelopeBody::Ping => Ok(LiveClientRead::Frame(LiveClientFrame::Ping(
+                    ping_from_frame(&frame)?,
+                ))),
                 other => Err(format!("unexpected live client frame: {other:?}").into()),
             }
         }
@@ -1793,6 +1813,7 @@ enum LiveClientFrame {
     Resize(ResizeIntentSummary),
     Scrollback(ScrollbackFetchSummary),
     Input(InputSummary),
+    Ping(PingSummary),
 }
 
 enum AttachedClientFrame {
@@ -1897,7 +1918,8 @@ fn serve_health_probe(
         if let Some(notify_fd) = host.notify_fd() {
             drain_notify_fd(notify_fd)?;
         }
-        if let Err(err) = poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
+        if let Err(err) =
+            poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
         {
             let error_pane_id = host_error_pane_id(&err).to_owned();
             write_protocol_error_with_retryability(
@@ -2798,7 +2820,9 @@ pub fn attach_from_stream(
             protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
                 workspace = workspace_summary_from_frame(&frame)?;
             }
-            protocol::EnvelopeBody::Error => return Err(server_error(error_summary_from_frame(&frame)?)),
+            protocol::EnvelopeBody::Error => {
+                return Err(server_error(error_summary_from_frame(&frame)?));
+            }
             other => return Err(format!("unexpected envelope body: {other:?}").into()),
         }
     };
@@ -2810,7 +2834,9 @@ pub fn attach_from_stream(
             protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
                 workspace = workspace_summary_from_frame(&frame)?;
             }
-            protocol::EnvelopeBody::Error => return Err(server_error(error_summary_from_frame(&frame)?)),
+            protocol::EnvelopeBody::Error => {
+                return Err(server_error(error_summary_from_frame(&frame)?));
+            }
             other => return Err(format!("unexpected envelope body: {other:?}").into()),
         }
     };
@@ -2827,7 +2853,9 @@ pub fn attach_from_stream(
                     protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
                         workspace = workspace_summary_from_frame(&frame)?;
                     }
-                    protocol::EnvelopeBody::Error => return Err(server_error(error_summary_from_frame(&frame)?)),
+                    protocol::EnvelopeBody::Error => {
+                        return Err(server_error(error_summary_from_frame(&frame)?));
+                    }
                     other => return Err(format!("unexpected envelope body: {other:?}").into()),
                 }
             };
@@ -2963,6 +2991,27 @@ pub fn send_raw_input_with_sequence(
     write_span.in_scope(|| wire::write_default_frame(stream, &frame))?;
     stream.flush()?;
     Ok(input_seq)
+}
+
+pub fn send_ping_with_sequence(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    actor_id: &str,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    let ping_seq = sequence.next_ping_seq();
+    let ping = PingSummary {
+        actor_id: actor_id.to_owned(),
+        ping_seq,
+    };
+    let frame = ping.frame(
+        &Session::initial().id,
+        "local-client",
+        sequence.next_envelope_seq(),
+        protocol::EnvelopeBody::Ping,
+    );
+    wire::write_default_frame(stream, &frame)?;
+    stream.flush()?;
+    Ok(ping_seq)
 }
 
 pub(crate) fn send_paste_input(
@@ -3171,6 +3220,7 @@ pub fn send_scrollback_fetch_with_known_version(
 pub struct ClientFrameSequence {
     next_envelope_seq: u64,
     next_input_seq: u64,
+    next_ping_seq: u64,
 }
 
 impl Default for ClientFrameSequence {
@@ -3178,6 +3228,7 @@ impl Default for ClientFrameSequence {
         Self {
             next_envelope_seq: 1,
             next_input_seq: 1,
+            next_ping_seq: 1,
         }
     }
 }
@@ -3194,11 +3245,15 @@ impl ClientFrameSequence {
         self.next_input_seq += 1;
         seq
     }
+
+    fn next_ping_seq(&mut self) -> u64 {
+        let seq = self.next_ping_seq;
+        self.next_ping_seq += 1;
+        seq
+    }
 }
 
-pub(crate) fn workspace_summary_from_frame(
-    frame: &[u8],
-) -> Result<WorkspaceSummary, ServeError> {
+pub(crate) fn workspace_summary_from_frame(frame: &[u8]) -> Result<WorkspaceSummary, ServeError> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     if envelope.body_type() != protocol::EnvelopeBody::WorkspaceTreeSnapshot {
         return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
@@ -3243,9 +3298,7 @@ pub(crate) fn surface_text_from_frame(frame: &[u8]) -> Result<String, ServeError
     Ok(surface_update_from_frame(frame)?.text)
 }
 
-pub(crate) fn surface_update_from_frame(
-    frame: &[u8],
-) -> Result<SurfaceUpdate, ServeError> {
+pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, ServeError> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     match envelope.body_type() {
         protocol::EnvelopeBody::PaneSurfaceSnapshot => {
@@ -3651,9 +3704,7 @@ pub(crate) fn read_optional_surface_update_from_stream(
     }
 }
 
-fn read_optional_server_error_from_stream(
-    stream: &mut UnixStream,
-) -> Result<(), ServeError> {
+fn read_optional_server_error_from_stream(stream: &mut UnixStream) -> Result<(), ServeError> {
     let previous_timeout = match stream.read_timeout() {
         Ok(timeout) => timeout,
         Err(err) if socket_closed_error(&err) => return Ok(()),
@@ -3710,9 +3761,7 @@ fn read_optional_server_error_from_stream(
     }
 }
 
-fn read_control_command_response(
-    stream: &mut UnixStream,
-) -> Result<WorkspaceSummary, ServeError> {
+fn read_control_command_response(stream: &mut UnixStream) -> Result<WorkspaceSummary, ServeError> {
     loop {
         let frame = wire::read_default_frame(stream)?;
         let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
@@ -3749,6 +3798,7 @@ pub fn read_live_surface_update_from_stream(
                 protocol::EnvelopeBody::PresenceUpdate => {
                     Ok(LiveSurfaceRead::Presence(presence_from_frame(&frame)?))
                 }
+                protocol::EnvelopeBody::Pong => Ok(LiveSurfaceRead::Pong(pong_from_frame(&frame)?)),
                 other => Err(format!("unexpected live server frame: {other:?}").into()),
             }
         }
@@ -3790,6 +3840,30 @@ pub(crate) fn error_summary_from_frame(frame: &[u8]) -> Result<ErrorSummary, Ser
         retryable: error.retryable(),
         pane_id,
         input_seq: error.input_seq(),
+    })
+}
+
+pub(crate) fn ping_from_frame(frame: &[u8]) -> Result<PingSummary, ServeError> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::Ping {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+    let ping = envelope.body_as_ping().ok_or("missing ping body")?;
+    Ok(PingSummary {
+        actor_id: required_string(ping.actor_id(), "ping actor_id")?,
+        ping_seq: ping.ping_seq(),
+    })
+}
+
+pub(crate) fn pong_from_frame(frame: &[u8]) -> Result<PingSummary, ServeError> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::Pong {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+    let pong = envelope.body_as_pong().ok_or("missing pong body")?;
+    Ok(PingSummary {
+        actor_id: required_string(pong.actor_id(), "pong actor_id")?,
+        ping_seq: pong.ping_seq(),
     })
 }
 
@@ -3898,9 +3972,7 @@ fn validate_input_modifiers(modifiers: u32) -> Result<u32, ServeError> {
     Ok(modifiers)
 }
 
-fn mouse_action_from_protocol(
-    action: protocol::MouseAction,
-) -> Result<MouseAction, ServeError> {
+fn mouse_action_from_protocol(action: protocol::MouseAction) -> Result<MouseAction, ServeError> {
     if action.variant_name().is_none() {
         return Err(format!("unknown mouse action {}", action.0).into());
     }
@@ -3912,9 +3984,7 @@ fn mouse_action_from_protocol(
     })
 }
 
-fn mouse_button_from_protocol(
-    button: protocol::MouseButton,
-) -> Result<MouseButton, ServeError> {
+fn mouse_button_from_protocol(button: protocol::MouseButton) -> Result<MouseButton, ServeError> {
     if button.variant_name().is_none() {
         return Err(format!("unknown mouse button {}", button.0).into());
     }
@@ -3945,10 +4015,7 @@ impl BracketedPasteMode {
     }
 }
 
-fn paste_input_bytes(
-    text: &str,
-    mode: BracketedPasteMode,
-) -> Result<Vec<u8>, ServeError> {
+fn paste_input_bytes(text: &str, mode: BracketedPasteMode) -> Result<Vec<u8>, ServeError> {
     if text.contains("\x1b[201~") {
         return Err("paste input contains a bracketed paste terminator".into());
     }
@@ -3963,9 +4030,7 @@ fn paste_input_bytes(
     Ok(bytes)
 }
 
-pub(crate) fn resize_intent_from_frame(
-    frame: &[u8],
-) -> Result<ResizeIntentSummary, ServeError> {
+pub(crate) fn resize_intent_from_frame(frame: &[u8]) -> Result<ResizeIntentSummary, ServeError> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     if envelope.body_type() != protocol::EnvelopeBody::ResizeIntent {
         return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
@@ -4019,9 +4084,7 @@ fn write_presence_summary_frame<W: Write>(
     Ok(())
 }
 
-pub(crate) fn attach_status_from_frame(
-    frame: &[u8],
-) -> Result<AttachStatusSummary, ServeError> {
+pub(crate) fn attach_status_from_frame(frame: &[u8]) -> Result<AttachStatusSummary, ServeError> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     if envelope.body_type() != protocol::EnvelopeBody::AttachStatus {
         return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
@@ -4125,10 +4188,7 @@ pub fn write_attach_request<W: Write>(writer: &mut W, request: &AttachRequest) -
     wire::write_frame(writer, &frame, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)
 }
 
-pub fn write_health_probe<W: Write>(
-    writer: &mut W,
-    probe: &PresenceSummary,
-) -> io::Result<()> {
+pub fn write_health_probe<W: Write>(writer: &mut W, probe: &PresenceSummary) -> io::Result<()> {
     let frame = probe.frame("local", "local-client", 0);
     wire::write_frame(writer, &frame, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)?;
     writer.flush()
@@ -4147,7 +4207,9 @@ pub fn read_health_probe_response<R: Read>(
                     return Ok(presence);
                 }
             }
-            protocol::EnvelopeBody::Error => return Err(server_error(error_summary_from_frame(&frame)?)),
+            protocol::EnvelopeBody::Error => {
+                return Err(server_error(error_summary_from_frame(&frame)?));
+            }
             protocol::EnvelopeBody::WorkspaceTreeSnapshot
             | protocol::EnvelopeBody::PaneSurfaceSnapshot
             | protocol::EnvelopeBody::PaneSurfacePatch => {}
@@ -4507,18 +4569,14 @@ fn validate_resize_policy(
     Ok(policy)
 }
 
-fn validate_pane_kind(
-    kind: protocol::PaneKind,
-) -> Result<protocol::PaneKind, ServeError> {
+fn validate_pane_kind(kind: protocol::PaneKind) -> Result<protocol::PaneKind, ServeError> {
     if kind.variant_name().is_none() {
         return Err(format!("unknown pane kind {}", kind.0).into());
     }
     Ok(kind)
 }
 
-fn validate_split_axis(
-    axis: protocol::SplitAxis,
-) -> Result<protocol::SplitAxis, ServeError> {
+fn validate_split_axis(axis: protocol::SplitAxis) -> Result<protocol::SplitAxis, ServeError> {
     if axis.variant_name().is_none() {
         return Err(format!("unknown split axis {}", axis.0).into());
     }
@@ -4586,9 +4644,7 @@ fn validate_resize_reason(
     Ok(reason)
 }
 
-fn validate_error_code(
-    code: protocol::ErrorCode,
-) -> Result<protocol::ErrorCode, ServeError> {
+fn validate_error_code(code: protocol::ErrorCode) -> Result<protocol::ErrorCode, ServeError> {
     if code.variant_name().is_none() {
         return Err(format!("unknown error code {}", code.0).into());
     }
@@ -4613,9 +4669,7 @@ fn validate_presence_kind(
     Ok(kind)
 }
 
-fn attach_mode_from_protocol(
-    mode: protocol::AttachMode,
-) -> Result<AttachMode, ServeError> {
+fn attach_mode_from_protocol(mode: protocol::AttachMode) -> Result<AttachMode, ServeError> {
     if mode.variant_name().is_none() {
         return Err(format!("unknown attach mode {}", mode.0).into());
     }
@@ -4672,6 +4726,7 @@ pub enum LiveSurfaceRead {
     Workspace(WorkspaceSummary),
     Presence(PresenceSummary),
     Update(SurfaceUpdate),
+    Pong(PingSummary),
     Error(ErrorSummary),
     NoFrame,
     Closed,
@@ -4719,10 +4774,7 @@ fn server_error(error: ErrorSummary) -> Box<dyn std::error::Error> {
     Box::new(ServerError { error })
 }
 
-fn validate_scrollback_fetch_range(
-    start_line: u64,
-    line_count: u32,
-) -> Result<(), ServeError> {
+fn validate_scrollback_fetch_range(start_line: u64, line_count: u32) -> Result<(), ServeError> {
     if start_line == 0 {
         return Err("scrollback fetch start_line must be 1-based".into());
     }
@@ -5003,6 +5055,62 @@ impl PresenceSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PingSummary {
+    pub actor_id: String,
+    pub ping_seq: u64,
+}
+
+impl PingSummary {
+    fn frame(
+        &self,
+        session_id: &str,
+        connection_id: &str,
+        seq: u64,
+        body_type: protocol::EnvelopeBody,
+    ) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let actor_id = builder.create_string(&self.actor_id);
+        let body = match body_type {
+            protocol::EnvelopeBody::Ping => protocol::Ping::create(
+                &mut builder,
+                &protocol::PingArgs {
+                    actor_id: Some(actor_id),
+                    ping_seq: self.ping_seq,
+                },
+            )
+            .as_union_value(),
+            protocol::EnvelopeBody::Pong => protocol::Pong::create(
+                &mut builder,
+                &protocol::PongArgs {
+                    actor_id: Some(actor_id),
+                    ping_seq: self.ping_seq,
+                },
+            )
+            .as_union_value(),
+            other => panic!("unsupported ping frame body: {other:?}"),
+        };
+
+        let session_id = builder.create_string(session_id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type,
+                body: Some(body),
+            },
+        );
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScrollbackFetchSummary {
     pub(crate) pane_id: String,
     pub(crate) actor_id: String,
@@ -5092,8 +5200,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use nmux_core::host::{
-        CommandSpec, HostError, HostEvent, HostKind, HostSpec, PaneProcess, PlanningHost, ProcessHost,
-        ProcessOutput, ProcessStatus, RecordingOutput,
+        CommandSpec, HostError, HostEvent, HostKind, HostSpec, PaneProcess, PlanningHost,
+        ProcessHost, ProcessOutput, ProcessStatus, RecordingOutput,
     };
     use nmux_core::terminal::{
         CELL_RUN_FLAG_HYPERLINK_PRESENT, CellRun, PaneStyle, TerminalEngine, TerminalInput,
@@ -6541,7 +6649,11 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let snapshot = attach(&socket_path).expect("attach snapshot");
         server.join().expect("server thread");
 
@@ -9019,7 +9131,11 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::from_pane_output(b"real process output\n");
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let snapshot = attach(&socket_path).expect("attach snapshot");
         server.join().expect("server thread");
 
@@ -9054,7 +9170,9 @@ mod tests {
         output.push_output("pane-1", b"real output\n");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve_with_output(&listener, &mut session, &mut output).expect("serve one")
+            ServeConfig::one()
+                .serve_with_output(&listener, &mut session, &mut output)
+                .expect("serve one")
         });
         let snapshot = attach(&socket_path).expect("attach snapshot");
         server.join().expect("server thread");
@@ -9078,7 +9196,9 @@ mod tests {
         output.push_output("pane-1", b"new output\n");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve_with_output(&listener, &mut session, &mut output).expect("serve one")
+            ServeConfig::one()
+                .serve_with_output(&listener, &mut session, &mut output)
+                .expect("serve one")
         });
         let snapshot = attach_with_known_surfaces(
             &socket_path,
@@ -9115,7 +9235,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach(&socket_path).expect("attach snapshot");
@@ -9141,7 +9263,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -9454,7 +9578,9 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live");
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -9496,6 +9622,51 @@ mod tests {
     }
 
     #[test]
+    fn live_daemon_replies_to_ping_without_host_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![Vec::new()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        let mut request = AttachOptions::default().request;
+        request.actor_id = "actor-1".to_owned();
+        request.mode = AttachMode::ReadOnly;
+        write_attach_request(&mut stream, &request).expect("write attach request");
+        attach_from_stream(&mut stream).expect("initial attach");
+
+        let mut sequence = ClientFrameSequence::default();
+        send_ping_with_sequence(&mut stream, &mut sequence, "actor-1").expect("send ping");
+
+        assert_eq!(
+            read_live_surface_update_from_stream(&mut stream).expect("read pong"),
+            LiveSurfaceRead::Pong(PingSummary {
+                actor_id: "actor-1".to_owned(),
+                ping_seq: 1,
+            })
+        );
+
+        drop(stream);
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn concurrent_live_clients_exchange_join_presence() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -9505,7 +9676,8 @@ mod tests {
             .expect("start echo pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(2, usize::MAX).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(2, usize::MAX)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve concurrent live");
         });
 
@@ -9580,7 +9752,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(2, usize::MAX).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(2, usize::MAX)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve concurrent live");
             host
         });
@@ -9673,7 +9846,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(2, usize::MAX).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(2, usize::MAX)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve concurrent live");
             host
         });
@@ -9767,7 +9941,11 @@ mod tests {
         let mut session = Session::initial();
         session.tabs[0].active_pane_id = "missing-pane".to_owned();
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         let mut request = AttachOptions::default().request;
         request.focused_pane_id = None;
@@ -9795,7 +9973,11 @@ mod tests {
         let mut session = Session::initial();
         session.active_tab_id = "missing-tab".to_owned();
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         let mut request = AttachOptions::default().request;
         request.focused_pane_id = None;
@@ -9826,7 +10008,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach_with_options(
@@ -9864,7 +10048,9 @@ mod tests {
             .expect("start echo pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(
@@ -9921,7 +10107,9 @@ mod tests {
             .expect("start echo pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
         });
         let snapshot = attach_with_client_options(
             &socket_path,
@@ -9962,7 +10150,9 @@ mod tests {
             .expect("start echo pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
         });
         let snapshot = attach_with_client_options(
             &socket_path,
@@ -10004,7 +10194,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -10040,7 +10232,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -10075,7 +10269,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -10115,7 +10311,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -10164,7 +10362,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -10212,7 +10412,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -10251,7 +10453,9 @@ mod tests {
             .expect("start failing write pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
         });
         let err = attach_with_client_options(
             &socket_path,
@@ -10283,7 +10487,8 @@ mod tests {
             .expect("start failing read pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host)
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve one with read failure");
         });
         let err = attach_with_client_options(
@@ -10317,7 +10522,8 @@ mod tests {
         host.fail_reads = false;
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host)
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve one with post-input read failure");
         });
         let err = attach_with_client_options(
@@ -10346,7 +10552,11 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(
             &mut stream,
@@ -10395,7 +10605,11 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(
             &mut stream,
@@ -10468,7 +10682,11 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(
             &mut stream,
@@ -10520,7 +10738,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -10561,7 +10781,9 @@ mod tests {
             .expect("start echo pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 2).serve(&listener, &mut session, &mut host).expect("serve live");
+            ServeConfig::live(1, 2)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve live");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(&mut stream, &AttachOptions::default().request)
@@ -10604,7 +10826,8 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve read-write live");
             host
         });
@@ -10646,7 +10869,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live")
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve live")
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(&mut stream, &AttachOptions::default().request)
@@ -10712,7 +10937,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live")
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve live")
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(
@@ -10760,7 +10987,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live");
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -10837,7 +11066,8 @@ mod tests {
             .expect("start failing resize pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve live with resize failure");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -10874,7 +11104,8 @@ mod tests {
         host.fail_reads = false;
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve live with read failure");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -10910,7 +11141,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live");
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve live");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(&mut stream, &AttachOptions::default().request)
@@ -10946,7 +11179,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live");
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve live");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(&mut stream, &AttachOptions::default().request)
@@ -11003,7 +11238,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve live with missing resize pane");
             host
         });
@@ -11048,7 +11284,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve live with missing input pane");
             host
         });
@@ -11090,7 +11327,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live");
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -11137,7 +11376,8 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve read-only live");
             host
         });
@@ -11189,7 +11429,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve read-only live");
             host
         });
@@ -11244,7 +11485,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve read-only live");
             host
         });
@@ -11301,7 +11543,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve focus-disabled live");
             host
         });
@@ -11356,7 +11599,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 2).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 2)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve current focus-disabled live");
             host
         });
@@ -11416,7 +11660,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve current focus live");
             host
         });
@@ -11461,7 +11706,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve current key live");
             host
         });
@@ -11507,7 +11753,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve current paste live");
             host
         });
@@ -11552,7 +11799,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve current named-key live");
             host
         });
@@ -11597,7 +11845,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 2).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 2)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve current mouse-disabled live");
             host
         });
@@ -12208,7 +12457,8 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve mouse-bounds live");
             host
         });
@@ -12276,7 +12526,8 @@ mod tests {
             .expect("start failing write pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve live with write failure");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -12323,7 +12574,8 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
                 .expect("serve live scrollback");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -12374,7 +12626,11 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let snapshot = attach_with_known_surfaces(
             &socket_path,
             vec![KnownSurfaceVersion {
@@ -12586,7 +12842,11 @@ mod tests {
             })
             .expect("seed cached state");
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let rendered = attach_render_once(&socket_path, read_only_attach_options(), &mut state)
             .expect("attach render");
         server.join().expect("server thread");
@@ -12619,7 +12879,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -12676,7 +12938,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -12732,7 +12996,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -12788,7 +13054,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -12850,7 +13118,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -12906,7 +13176,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -12973,7 +13245,9 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one()
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -13266,7 +13540,11 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let snapshot = attach_with_options(
             &socket_path,
             AttachRequest {
@@ -13295,7 +13573,12 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || ServeConfig::one().clients(2).serve_without_host(&listener, &mut session).expect("serve two"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .clients(2)
+                .serve_without_host(&listener, &mut session)
+                .expect("serve two")
+        });
         let first = attach(&socket_path).expect("first attach");
         let second = attach_with_options(
             &socket_path,
@@ -13333,7 +13616,9 @@ mod tests {
         };
 
         let server = thread::spawn(move || {
-            ServeConfig::one().clients(3).serve_with_output(&listener, &mut session, &mut server_output)
+            ServeConfig::one()
+                .clients(3)
+                .serve_with_output(&listener, &mut session, &mut server_output)
                 .expect("serve three")
         });
         let mut state = ClientAttachState::default();
@@ -13791,6 +14076,89 @@ mod tests {
     }
 
     #[test]
+    fn client_frame_sequence_tracks_ping_without_consuming_input_sequence() {
+        let (mut client, mut server) = UnixStream::pair().expect("socket pair");
+        let mut sequence = ClientFrameSequence::default();
+
+        send_key_input_with_sequence(&mut client, &mut sequence, "pane-1", "first")
+            .expect("send first key");
+        let first_ping_seq =
+            send_ping_with_sequence(&mut client, &mut sequence, "actor-1").expect("send ping");
+        let second_ping_seq =
+            send_ping_with_sequence(&mut client, &mut sequence, "actor-1").expect("send ping");
+        send_key_input_with_sequence(&mut client, &mut sequence, "pane-1", "second")
+            .expect("send second key");
+
+        let first_frame = wire::read_default_frame(&mut server).expect("read first input");
+        let first_ping_frame = wire::read_default_frame(&mut server).expect("read first ping");
+        let second_ping_frame = wire::read_default_frame(&mut server).expect("read second ping");
+        let second_frame = wire::read_default_frame(&mut server).expect("read second input");
+
+        assert_eq!(first_ping_seq, 1);
+        assert_eq!(second_ping_seq, 2);
+        assert_eq!(
+            protocol::size_prefixed_root_as_envelope(&first_frame)
+                .expect("first envelope")
+                .seq(),
+            1
+        );
+        assert_eq!(
+            protocol::size_prefixed_root_as_envelope(&first_ping_frame)
+                .expect("first ping envelope")
+                .seq(),
+            2
+        );
+        assert_eq!(
+            protocol::size_prefixed_root_as_envelope(&second_ping_frame)
+                .expect("second ping envelope")
+                .seq(),
+            3
+        );
+        assert_eq!(
+            protocol::size_prefixed_root_as_envelope(&second_frame)
+                .expect("second envelope")
+                .seq(),
+            4
+        );
+
+        let first = input_summary_from_frame(&first_frame).expect("first input");
+        let first_ping = ping_from_frame(&first_ping_frame).expect("first ping");
+        let second_ping = ping_from_frame(&second_ping_frame).expect("second ping");
+        let second = input_summary_from_frame(&second_frame).expect("second input");
+        assert_eq!(first.input_seq, 1);
+        assert_eq!(first_ping.actor_id, "actor-1");
+        assert_eq!(first_ping.ping_seq, 1);
+        assert_eq!(second_ping.ping_seq, 2);
+        assert_eq!(second.input_seq, 2);
+    }
+
+    #[test]
+    fn live_surface_read_decodes_pong_frames() {
+        let (mut client, mut server) = UnixStream::pair().expect("socket pair");
+        let session = Session::initial();
+        let mut seq = 7;
+        write_pong_frame(
+            &mut server,
+            &session,
+            &mut seq,
+            &PingSummary {
+                actor_id: "actor-1".to_owned(),
+                ping_seq: 42,
+            },
+        )
+        .expect("write pong");
+
+        assert_eq!(seq, 8);
+        assert_eq!(
+            read_live_surface_update_from_stream(&mut client).expect("read pong"),
+            LiveSurfaceRead::Pong(PingSummary {
+                actor_id: "actor-1".to_owned(),
+                ping_seq: 42,
+            })
+        );
+    }
+
+    #[test]
     fn resize_intent_sequence_can_mark_user_command_reason() {
         let (mut client, mut server) = UnixStream::pair().expect("socket pair");
         let mut sequence = ClientFrameSequence::default();
@@ -13818,7 +14186,11 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let snapshot = attach_with_known_surfaces(
             &socket_path,
             vec![KnownSurfaceVersion {
@@ -13846,7 +14218,11 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
         let snapshot = attach_with_known_surfaces(
             &socket_path,
             vec![KnownSurfaceVersion {

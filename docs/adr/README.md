@@ -47,3 +47,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0037: Event-Driven Host Output Wakeups](0037-event-driven-host-output-wakeups.md) | Accepted |
 | [0038: Default Daemon Health Probe](0038-default-daemon-health-probe.md) | Superseded by ADR 0039 |
 | [0039: Presence-Based Daemon Liveness](0039-presence-based-daemon-liveness.md) | Accepted |
+| [0040: Ping-Pong RTT Metrics](0040-ping-pong-rtt.md) | Accepted |
