@@ -1261,6 +1261,50 @@ where
     serve_live_attached_client(&mut stream, request, session, host, engines, cycles)
 }
 
+/// Write the attach handshake frames shared by live and one-shot attach paths.
+///
+/// Sends workspace, presence, status, and (optionally) surface frames. Returns
+/// the resolved pane id, actor, and the next sequence number so the caller can
+/// continue the session.
+fn write_attach_handshake(
+    stream: &mut UnixStream,
+    request: &AttachRequest,
+    session: &mut Session,
+    seq: &mut u64,
+) -> Result<Option<(String, Actor)>, Box<dyn std::error::Error>> {
+    let Some(pane_id) = attach_target_pane_id(session, request) else {
+        write_attach_target_not_found_error(stream, session, seq, request)?;
+        return Ok(None);
+    };
+
+    let workspace_frame = session.workspace_tree_frame("local-client", *seq);
+    wire::write_default_frame(stream, &workspace_frame)?;
+    *seq += 1;
+
+    let actor = request_actor_for_pane(request, &pane_id);
+    let presence_frame = session.presence_update_frame("local-client", *seq, &actor);
+    wire::write_default_frame(stream, &presence_frame)?;
+    *seq += 1;
+
+    let response = request.surface_response(session, &pane_id);
+    let status_frame = session.attach_status_frame(
+        "local-client",
+        *seq,
+        &pane_id,
+        attach_surface_state(response),
+    );
+    wire::write_default_frame(stream, &status_frame)?;
+    *seq += 1;
+    if let Some(response) = response
+        && let Some(surface_frame) = surface_response_frame(session, &pane_id, response, *seq)
+    {
+        wire::write_default_frame(stream, &surface_frame)?;
+        *seq += 1;
+    }
+
+    Ok(Some((pane_id, actor)))
+}
+
 fn serve_live_attached_client(
     stream: &mut UnixStream,
     request: AttachRequest,
@@ -1270,35 +1314,11 @@ fn serve_live_attached_client(
     cycles: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut seq = 1;
-    let Some(pane_id) = attach_target_pane_id(session, &request) else {
-        write_attach_target_not_found_error(stream, session, &mut seq, &request)?;
+    let Some((pane_id, actor)) = write_attach_handshake(stream, &request, session, &mut seq)?
+    else {
         return Ok(());
     };
     let leaf_pane_ids = session.leaf_pane_ids();
-    let workspace_frame = session.workspace_tree_frame("local-client", seq);
-    wire::write_default_frame(stream, &workspace_frame)?;
-    seq += 1;
-
-    let actor = request_actor_for_pane(&request, &pane_id);
-    let presence_frame = session.presence_update_frame("local-client", seq, &actor);
-    wire::write_default_frame(stream, &presence_frame)?;
-    seq += 1;
-
-    let response = request.surface_response(session, &pane_id);
-    let status_frame = session.attach_status_frame(
-        "local-client",
-        seq,
-        &pane_id,
-        attach_surface_state(response),
-    );
-    wire::write_default_frame(stream, &status_frame)?;
-    seq += 1;
-    if let Some(response) = response
-        && let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq)
-    {
-        wire::write_default_frame(stream, &surface_frame)?;
-        seq += 1;
-    }
     let mut known_surface_versions = known_surface_versions_from_request(&request);
     if let Some(current) = session.surface_version(&pane_id) {
         known_surface_versions.insert(pane_id.clone(), current);
@@ -1834,35 +1854,10 @@ fn serve_attached_client(
     engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut seq = 1;
-    let Some(pane_id) = attach_target_pane_id(session, &request) else {
-        write_attach_target_not_found_error(stream, session, &mut seq, &request)?;
+    let Some((pane_id, actor)) = write_attach_handshake(stream, &request, session, &mut seq)?
+    else {
         return Ok(());
     };
-
-    let workspace_frame = session.workspace_tree_frame("local-client", seq);
-    wire::write_default_frame(stream, &workspace_frame)?;
-    seq += 1;
-
-    let actor = request_actor_for_pane(&request, &pane_id);
-    let presence_frame = session.presence_update_frame("local-client", seq, &actor);
-    wire::write_default_frame(stream, &presence_frame)?;
-    seq += 1;
-
-    let response = request.surface_response(session, &pane_id);
-    let status_frame = session.attach_status_frame(
-        "local-client",
-        seq,
-        &pane_id,
-        attach_surface_state(response),
-    );
-    wire::write_default_frame(stream, &status_frame)?;
-    seq += 1;
-    if let Some(response) = response
-        && let Some(surface_frame) = surface_response_frame(session, &pane_id, response, seq)
-    {
-        wire::write_default_frame(stream, &surface_frame)?;
-        seq += 1;
-    }
     let mut wait_for_more = true;
     loop {
         let read = if wait_for_more {

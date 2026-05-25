@@ -893,20 +893,24 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or_default();
     }
     let mut current_workspace = rendered.workspace.clone();
-    let mut current_surface_metadata = rendered.surface_metadata.clone();
-    let mut current_surface_text = rendered
+    let initial_surface_text = rendered
         .surface_text
         .clone()
         .unwrap_or_else(|| current_workspace.display_line());
-    let mut current_pane_surfaces = BTreeMap::new();
-    current_pane_surfaces.insert(attached_pane_id.clone(), current_surface_text.clone());
+    let mut initial_pane_surfaces = BTreeMap::new();
+    initial_pane_surfaces.insert(attached_pane_id.clone(), initial_surface_text.clone());
     seed_cached_pane_surfaces(
-        &mut current_pane_surfaces,
+        &mut initial_pane_surfaces,
         &current_workspace,
         &client_state,
         use_styled,
     );
-    let mut current_modes = rendered.modes;
+    let mut surface_state = LiveSurfaceState {
+        current_surface_metadata: rendered.surface_metadata.clone(),
+        current_modes: rendered.modes,
+        current_surface_text: initial_surface_text,
+        current_pane_surfaces: initial_pane_surfaces,
+    };
     let (scrollback, pending_surface_updates) = match initial_live_scrollback(
         args,
         &mut stream,
@@ -952,12 +956,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     };
                     let update_surface_text =
                         client_state.render_surface_update_styled(&update, use_styled)?;
-                    current_pane_surfaces
+                    surface_state
+                        .current_pane_surfaces
                         .insert(update.pane_id.clone(), update_surface_text.clone());
                     if update.pane_id == current_workspace.pane_id {
-                        current_surface_metadata = update_metadata;
-                        current_modes = update.modes;
-                        current_surface_text = update_surface_text;
+                        surface_state.current_surface_metadata = update_metadata;
+                        surface_state.current_modes = update.modes;
+                        surface_state.current_surface_text = update_surface_text;
                     }
                 }
                 local::LiveSurfaceRead::Presence(presence) => {
@@ -972,9 +977,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }
         let _ = stream.set_read_timeout(Some(setup_read_timeout));
         rendered.workspace = current_workspace.clone();
-        rendered.surface_metadata = current_surface_metadata.clone();
-        rendered.surface_text = Some(current_surface_text.clone());
-        rendered.modes = current_modes;
+        rendered.surface_metadata = surface_state.current_surface_metadata.clone();
+        rendered.surface_text = Some(surface_state.current_surface_text.clone());
+        rendered.modes = surface_state.current_modes;
     }
     // Differential rendering with latency overlay is only useful on real
     // terminals. When stdout is captured (tests, pipes), fall back to the
@@ -999,69 +1004,31 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         recorder.record(&format_live_attach_json(&rendered))?;
         recorder.record(&format_live_presence_json(&initial_presence))?;
         if let Some(mouse_modes) = host_mouse_modes.as_mut() {
-            mouse_modes.sync(current_modes)?;
+            mouse_modes.sync(surface_state.current_modes)?;
         }
         print_live_rendered(
             rendered,
             args.redraw,
             scrollback,
             redraw_state.as_mut(),
-            Some(&current_pane_surfaces),
+            Some(&surface_state.current_pane_surfaces),
         );
     }
     flush_stdout()?;
 
     for update in pending_surface_updates {
-        let decode_start = Instant::now();
-        speculative_echo.reconcile_update(&update);
-        let previous_metadata = current_surface_metadata.clone();
-        let update_metadata = local::TerminalMetadataSummary {
-            title: update.title.clone(),
-            working_directory: update.working_directory.clone(),
-        };
-        let update_surface_text = client_state.render_surface_update_styled(&update, use_styled)?;
-        current_pane_surfaces.insert(update.pane_id.clone(), update_surface_text.clone());
-        if update.pane_id == current_workspace.pane_id {
-            current_surface_metadata = update_metadata.clone();
-            current_modes = update.modes;
-            if let Some(mouse_modes) = host_mouse_modes.as_mut() {
-                mouse_modes.sync(current_modes)?;
-            }
-            current_surface_text = update_surface_text.clone();
-        } else if let Some(active_text) = current_pane_surfaces.get(&current_workspace.pane_id) {
-            current_surface_text = active_text.clone();
-        }
-        if let Some(ref mut rs) = redraw_state {
-            rs.record_decode_time(decode_start.elapsed());
-        }
-        if args.output_json {
-            let event = format_live_surface_update_json(
-                &current_workspace,
-                &update_metadata,
-                &update_surface_text,
-                &update,
-            );
-            recorder.record(&event)?;
-            println!("{event}");
-        } else {
-            recorder.record(&format_live_surface_update_json(
-                &current_workspace,
-                &update_metadata,
-                &update_surface_text,
-                &update,
-            ))?;
-            print_live_update(
-                &current_workspace,
-                &previous_metadata,
-                &current_surface_metadata,
-                &current_surface_text,
-                &update,
-                args.redraw,
-                redraw_state.as_mut(),
-                Some(&current_pane_surfaces),
-            );
-        }
-        flush_stdout()?;
+        process_surface_update(
+            &update,
+            &mut surface_state,
+            &mut speculative_echo,
+            &mut client_state,
+            &mut host_mouse_modes,
+            &mut redraw_state,
+            &mut recorder,
+            &current_workspace,
+            args,
+            use_styled,
+        )?;
     }
     if let Err(err) = stream.set_read_timeout(Some(live_poll_timeout)) {
         report_live_setup_error(args, &err)?;
@@ -1109,11 +1076,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 } else if args.redraw {
                     print_live_surface(
                         &current_workspace,
-                        &current_surface_metadata,
-                        &current_surface_text,
+                        &surface_state.current_surface_metadata,
+                        &surface_state.current_surface_text,
                         args.redraw,
                         redraw_state.as_mut(),
-                        Some(&current_pane_surfaces),
+                        Some(&surface_state.current_pane_surfaces),
                     );
                 } else {
                     println!("{}", current_workspace.display_line());
@@ -1223,8 +1190,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     input_seq,
                     input_text,
                     &current_workspace,
-                    &current_surface_metadata,
-                    &mut current_surface_text,
+                    &surface_state.current_surface_metadata,
+                    &mut surface_state.current_surface_text,
                     redraw_state.as_mut(),
                     use_styled,
                 )?;
@@ -1242,11 +1209,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     } else if args.redraw {
                         print_live_surface(
                             &current_workspace,
-                            &current_surface_metadata,
-                            &current_surface_text,
+                            &surface_state.current_surface_metadata,
+                            &surface_state.current_surface_text,
                             args.redraw,
                             redraw_state.as_mut(),
-                            Some(&current_pane_surfaces),
+                            Some(&surface_state.current_pane_surfaces),
                         );
                     } else {
                         println!("{}", current_workspace.display_line());
@@ -1262,60 +1229,18 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 local::LiveSurfaceRead::Update(update) => {
-                    let decode_start = Instant::now();
-                    speculative_echo.reconcile_update(&update);
-                    let previous_metadata = current_surface_metadata.clone();
-                    let update_metadata = local::TerminalMetadataSummary {
-                        title: update.title.clone(),
-                        working_directory: update.working_directory.clone(),
-                    };
-                    let update_surface_text =
-                        client_state.render_surface_update_styled(&update, use_styled)?;
-                    current_pane_surfaces
-                        .insert(update.pane_id.clone(), update_surface_text.clone());
-                    if update.pane_id == current_workspace.pane_id {
-                        current_surface_metadata = update_metadata.clone();
-                        current_modes = update.modes;
-                        if let Some(mouse_modes) = host_mouse_modes.as_mut() {
-                            mouse_modes.sync(current_modes)?;
-                        }
-                        current_surface_text = update_surface_text.clone();
-                    } else if let Some(active_text) =
-                        current_pane_surfaces.get(&current_workspace.pane_id)
-                    {
-                        current_surface_text = active_text.clone();
-                    }
-                    if let Some(ref mut rs) = redraw_state {
-                        rs.record_decode_time(decode_start.elapsed());
-                    }
-                    if args.output_json {
-                        let event = format_live_surface_update_json(
-                            &current_workspace,
-                            &update_metadata,
-                            &update_surface_text,
-                            &update,
-                        );
-                        recorder.record(&event)?;
-                        println!("{event}");
-                    } else {
-                        recorder.record(&format_live_surface_update_json(
-                            &current_workspace,
-                            &update_metadata,
-                            &update_surface_text,
-                            &update,
-                        ))?;
-                        print_live_update(
-                            &current_workspace,
-                            &previous_metadata,
-                            &current_surface_metadata,
-                            &current_surface_text,
-                            &update,
-                            args.redraw,
-                            redraw_state.as_mut(),
-                            Some(&current_pane_surfaces),
-                        );
-                    }
-                    flush_stdout()?;
+                    process_surface_update(
+                        &update,
+                        &mut surface_state,
+                        &mut speculative_echo,
+                        &mut client_state,
+                        &mut host_mouse_modes,
+                        &mut redraw_state,
+                        &mut recorder,
+                        &current_workspace,
+                        args,
+                        use_styled,
+                    )?;
                 }
                 local::LiveSurfaceRead::Error(error) => {
                     let event = format_live_error_json(&error);
@@ -1354,6 +1279,89 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     finish_live(args, &client_state, &mut recorder, detach_reason)
+}
+
+/// Mutable state that tracks the current surface across live poll iterations.
+///
+/// Grouping these fields avoids threading a dozen `&mut` parameters through
+/// helpers that process surface updates.
+struct LiveSurfaceState {
+    current_surface_metadata: local::TerminalMetadataSummary,
+    current_modes: local::TerminalModeSummary,
+    current_surface_text: String,
+    current_pane_surfaces: BTreeMap<String, String>,
+}
+
+/// Process a single surface update: reconcile speculative echo, render the
+/// styled text, update pane surface state, and emit output (JSON or redraw).
+///
+/// This is the common path shared between the pending-surface-updates drain
+/// after initial attach and the steady-state poll loop.
+fn process_surface_update(
+    update: &local::SurfaceUpdate,
+    state: &mut LiveSurfaceState,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    client_state: &mut local::ClientAttachState,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    redraw_state: &mut Option<RedrawState>,
+    recorder: &mut LiveRecorder,
+    current_workspace: &local::WorkspaceSummary,
+    args: &Args,
+    use_styled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let decode_start = Instant::now();
+    speculative_echo.reconcile_update(update);
+    let previous_metadata = state.current_surface_metadata.clone();
+    let update_metadata = local::TerminalMetadataSummary {
+        title: update.title.clone(),
+        working_directory: update.working_directory.clone(),
+    };
+    let update_surface_text = client_state.render_surface_update_styled(update, use_styled)?;
+    state
+        .current_pane_surfaces
+        .insert(update.pane_id.clone(), update_surface_text.clone());
+    if update.pane_id == current_workspace.pane_id {
+        state.current_surface_metadata = update_metadata.clone();
+        state.current_modes = update.modes;
+        if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+            mouse_modes.sync(state.current_modes)?;
+        }
+        state.current_surface_text = update_surface_text.clone();
+    } else if let Some(active_text) = state.current_pane_surfaces.get(&current_workspace.pane_id) {
+        state.current_surface_text = active_text.clone();
+    }
+    if let Some(rs) = redraw_state {
+        rs.record_decode_time(decode_start.elapsed());
+    }
+    if args.output_json {
+        let event = format_live_surface_update_json(
+            current_workspace,
+            &update_metadata,
+            &update_surface_text,
+            update,
+        );
+        recorder.record(&event)?;
+        println!("{event}");
+    } else {
+        recorder.record(&format_live_surface_update_json(
+            current_workspace,
+            &update_metadata,
+            &update_surface_text,
+            update,
+        ))?;
+        print_live_update(
+            current_workspace,
+            &previous_metadata,
+            &state.current_surface_metadata,
+            &state.current_surface_text,
+            update,
+            args.redraw,
+            redraw_state.as_mut(),
+            Some(&state.current_pane_surfaces),
+        );
+    }
+    flush_stdout()?;
+    Ok(())
 }
 
 fn apply_frontend_workspace_size(workspace: &mut local::WorkspaceSummary, cols: u32, rows: u32) {
