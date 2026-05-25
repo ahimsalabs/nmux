@@ -43,3 +43,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0033: Remove nmuxd Shim](0033-remove-nmuxd-shim.md) | Accepted |
 | [0034: Ghostty VT Default Engine](0034-ghostty-vt-default-engine.md) | Accepted |
 | [0035: Restore Portable Default Engine](0035-restore-portable-default-engine.md) | Superseded by ADR 0034 |
+| [0036: Event-Driven Live Surface Delivery](0036-event-driven-live-surface-delivery.md) | Accepted |

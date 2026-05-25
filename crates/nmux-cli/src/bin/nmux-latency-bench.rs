@@ -13,6 +13,7 @@ use tracing::instrument;
 const DEFAULT_ITERATIONS: usize = 50;
 const DEFAULT_WARMUP: usize = 5;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
+const SAMPLE_COOLDOWN: Duration = Duration::from_millis(10);
 
 fn main() {
     if let Err(err) = run() {
@@ -118,6 +119,7 @@ fn run_single_client_case(
     let mut stream = local::connect_to_daemon_with_timeout(socket_path, Duration::from_secs(5))?;
     stream.set_read_timeout(Some(DEFAULT_TIMEOUT))?;
     let pane_id = attach_live_stream(&mut stream, AttachMode::ReadWrite, case.pane_id)?;
+    stream.set_nonblocking(true)?;
     let mut sequence = local::ClientFrameSequence::default();
     let mut samples = Vec::with_capacity(iterations);
 
@@ -133,6 +135,7 @@ fn run_single_client_case(
         if index >= warmup {
             samples.push(elapsed);
         }
+        std::thread::sleep(SAMPLE_COOLDOWN);
     }
 
     Ok(LatencyCaseReport::from_samples(case.name, samples))
@@ -203,7 +206,7 @@ fn start_daemon(
     trace_path: Option<&Path>,
     concurrent_cycles: Option<usize>,
 ) -> Result<Child, Box<dyn std::error::Error>> {
-    let command = "while IFS= read -r line; do printf 'nmux-latency:%s\\n' \"$line\"; done";
+    let command = "python3 -u -c 'import os, termios; fd = 0; attrs = termios.tcgetattr(fd); attrs[3] &= ~(termios.ECHO | termios.ICANON); attrs[6][termios.VMIN] = 1; attrs[6][termios.VTIME] = 0; termios.tcsetattr(fd, termios.TCSANOW, attrs); buf = b\"\"\nwhile True:\n    chunk = os.read(fd, 4096)\n    if not chunk:\n        break\n    buf += chunk\n    while b\"\\n\" in buf:\n        line, buf = buf.split(b\"\\n\", 1)\n        line = line.rstrip(b\"\\r\")\n        os.write(1, b\"\\rnmux-latency:\" + line)'";
     let mut args = vec![
         "daemon".to_owned(),
         "--socket".to_owned(),

@@ -52,6 +52,7 @@ const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
 const INPUT_MODIFIER_MASK: u32 = 0x0f;
 const LIVE_IDLE_POLL_TIMEOUT: Duration = Duration::from_millis(20);
 const LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT: Duration = Duration::from_millis(20);
+const LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(3);
 
 pub trait ProcessHostOutput: ProcessHost + ProcessOutput {}
@@ -254,6 +255,7 @@ where
         }
 
         let mut had_input = false;
+        let mut input_pane_ids = Vec::new();
         let mut changed_workspace = false;
         let mut closed_clients = Vec::new();
         for client_index in readiness.client_indices {
@@ -263,9 +265,11 @@ where
             match drain_live_client_frames(client, session, host, engines) {
                 Ok(ClientDrainStatus::Open {
                     had_input: client_had_input,
+                    input_pane_ids: client_input_pane_ids,
                     changed_workspace: client_changed_workspace,
                 }) => {
                     had_input |= client_had_input;
+                    input_pane_ids.extend(client_input_pane_ids);
                     changed_workspace |= client_changed_workspace;
                 }
                 Ok(ClientDrainStatus::Closed) => closed_clients.push(client_index),
@@ -287,7 +291,7 @@ where
                 listener,
                 &clients,
                 Some(notify_fd),
-                LIVE_POST_INPUT_POLL_TIMEOUT,
+                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
             )?;
             if readiness.host_output {
                 drain_notify_fd(notify_fd)?;
@@ -295,12 +299,115 @@ where
         }
 
         let leaf_pane_ids = session.leaf_pane_ids();
+        let attempted_fast_output = had_input || readiness.host_output;
+        let mut fast_changed = false;
+        if attempted_fast_output {
+            let output_result = {
+                let poll_span = tracing::trace_span!(
+                    "host.output.first_poll",
+                    reason = if had_input {
+                        "post_input"
+                    } else {
+                        "host_ready"
+                    },
+                    panes = leaf_pane_ids.len(),
+                    priority_panes = input_pane_ids.len()
+                );
+                poll_span.in_scope(|| {
+                    poll_panes_output_with_host_once(
+                        session,
+                        engines,
+                        host,
+                        &leaf_pane_ids,
+                        &input_pane_ids,
+                    )
+                })
+            };
+            let first_changed = match output_result {
+                Ok(changed) => changed,
+                Err(err) => {
+                    let error_pane_id = host_error_pane_id(&err).to_owned();
+                    for client in &mut clients {
+                        let _ = write_host_output_error(
+                            &mut client.stream,
+                            session,
+                            &mut client.seq,
+                            &error_pane_id,
+                            err.clone(),
+                        );
+                    }
+                    listener.set_nonblocking(false)?;
+                    return Ok(());
+                }
+            };
+
+            if first_changed {
+                fast_changed = true;
+                let surface_span = tracing::trace_span!(
+                    "surface.write_first_changed",
+                    reason = if had_input {
+                        "post_input"
+                    } else {
+                        "host_ready"
+                    },
+                    panes = leaf_pane_ids.len()
+                );
+                let write_result = surface_span.in_scope(|| {
+                    for (index, client) in clients.iter_mut().enumerate() {
+                        if changed_workspace {
+                            let workspace_frame =
+                                session.workspace_tree_frame("local-client", client.seq);
+                            if let Err(err) =
+                                wire::write_default_frame(&mut client.stream, &workspace_frame)
+                            {
+                                if socket_closed_error_from_wire(&err) {
+                                    closed_clients.push(index);
+                                    continue;
+                                }
+                                return Err(err.into());
+                            }
+                            client.seq += 1;
+                        }
+                        if let Err(err) = write_changed_surface_frames(
+                            &mut client.stream,
+                            session,
+                            &mut client.seq,
+                            &leaf_pane_ids,
+                            &mut client.known_surface_versions,
+                        ) {
+                            if boxed_socket_closed_error(err.as_ref()) {
+                                closed_clients.push(index);
+                                continue;
+                            }
+                            return Err(err);
+                        }
+                    }
+                    Ok::<(), Box<dyn std::error::Error>>(())
+                });
+                if let Err(err) = write_result {
+                    listener.set_nonblocking(false)?;
+                    return Err(err);
+                }
+                changed_workspace = false;
+            }
+        }
+
         let quiet_timeout = if had_input {
             LIVE_POST_INPUT_POLL_TIMEOUT
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
-        let output_result = if host.notify_fd().is_some() {
+        let output_result = if fast_changed && had_input && host.notify_fd().is_some() {
+            poll_panes_output_with_host_until_poll_quiet_after_change(
+                session,
+                engines,
+                host,
+                &leaf_pane_ids,
+                quiet_timeout,
+            )
+        } else if attempted_fast_output && host.notify_fd().is_some() {
+            Ok(false)
+        } else if host.notify_fd().is_some() {
             poll_panes_output_with_host_until_poll_quiet(
                 session,
                 engines,
@@ -397,6 +504,7 @@ struct LiveConcurrentReadiness {
 enum ClientDrainStatus {
     Open {
         had_input: bool,
+        input_pane_ids: Vec<String>,
         changed_workspace: bool,
     },
     Closed,
@@ -536,6 +644,7 @@ fn drain_live_client_frames(
     engines: &mut PaneTerminalEngines,
 ) -> Result<ClientDrainStatus, Box<dyn std::error::Error>> {
     let mut had_input = false;
+    let mut input_pane_ids = Vec::new();
     let mut changed_workspace = false;
     loop {
         match read_live_client_frame_from_stream(&mut client.stream)? {
@@ -620,6 +729,7 @@ fn drain_live_client_frames(
                 }
             }
             LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
+                let input_pane_id = input.pane_id.clone();
                 if !Session::input_allowed(&client.actor) {
                     write_protocol_error(
                         &mut client.stream,
@@ -641,6 +751,7 @@ fn drain_live_client_frames(
                     input,
                 )?;
                 had_input = true;
+                input_pane_ids.push(input_pane_id);
             }
             LiveClientRead::NoFrame => break,
             LiveClientRead::Closed => return Ok(ClientDrainStatus::Closed),
@@ -652,6 +763,7 @@ fn drain_live_client_frames(
     }
     Ok(ClientDrainStatus::Open {
         had_input,
+        input_pane_ids,
         changed_workspace,
     })
 }
@@ -1246,10 +1358,66 @@ fn serve_live_attached_client(
             && !readiness.host_output
             && let Some(notify_fd) = host.notify_fd()
         {
-            let readiness =
-                poll_live_client_sources(stream, Some(notify_fd), LIVE_POST_INPUT_POLL_TIMEOUT)?;
+            let readiness = poll_live_client_sources(
+                stream,
+                Some(notify_fd),
+                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+            )?;
             if readiness.host_output {
                 drain_notify_fd(notify_fd)?;
+            }
+        }
+
+        let input_pane_ids = input_pane_id.iter().cloned().collect::<Vec<_>>();
+        let attempted_fast_output = input_pane_id.is_some() || readiness.host_output;
+        let mut fast_changed = false;
+        if attempted_fast_output {
+            let poll_span = tracing::trace_span!(
+                "host.output.first_poll",
+                reason = if input_pane_id.is_some() {
+                    "post_input"
+                } else {
+                    "host_ready"
+                },
+                panes = leaf_pane_ids.len(),
+                priority_panes = input_pane_ids.len(),
+            );
+            match poll_span.in_scope(|| {
+                poll_panes_output_with_host_once(
+                    session,
+                    engines,
+                    host,
+                    &leaf_pane_ids,
+                    &input_pane_ids,
+                )
+            }) {
+                Ok(true) => {
+                    fast_changed = true;
+                    let surface_span = tracing::trace_span!(
+                        "surface.write_first_changed",
+                        reason = if input_pane_id.is_some() {
+                            "post_input"
+                        } else {
+                            "host_ready"
+                        },
+                        panes = leaf_pane_ids.len()
+                    );
+                    surface_span.in_scope(|| {
+                        write_changed_surface_frames(
+                            stream,
+                            session,
+                            &mut seq,
+                            &leaf_pane_ids,
+                            &mut known_surface_versions,
+                        )
+                    })?;
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    let error_pane_id = host_error_pane_id(&err).to_owned();
+                    write_host_output_error(stream, session, &mut seq, &error_pane_id, err)?;
+                    return Ok(());
+                }
             }
         }
 
@@ -1258,7 +1426,27 @@ fn serve_live_attached_client(
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
-        let output_result = if host.notify_fd().is_some() {
+        let output_result = if fast_changed && input_pane_id.is_some() && host.notify_fd().is_some()
+        {
+            let poll_span = tracing::trace_span!(
+                "host.output.poll",
+                reason = "post_input",
+                panes = leaf_pane_ids.len(),
+                notify_fd = true,
+                after_first = true
+            );
+            poll_span.in_scope(|| {
+                poll_panes_output_with_host_until_poll_quiet_after_change(
+                    session,
+                    engines,
+                    host,
+                    &leaf_pane_ids,
+                    quiet_timeout,
+                )
+            })
+        } else if attempted_fast_output && host.notify_fd().is_some() {
+            Ok(false)
+        } else if host.notify_fd().is_some() {
             let poll_span = tracing::trace_span!(
                 "host.output.poll",
                 reason = if input_pane_id.is_some() {
@@ -1959,6 +2147,26 @@ pub fn poll_pane_output_with_host_and_engines(
     Ok(changed)
 }
 
+fn poll_panes_output_with_host_once(
+    session: &mut Session,
+    engines: &mut PaneTerminalEngines,
+    host: &mut dyn ProcessHostOutput,
+    pane_ids: &[String],
+    priority_pane_ids: &[String],
+) -> Result<bool, HostError> {
+    let mut changed = false;
+    for pane_id in priority_pane_ids {
+        changed |= poll_pane_output_with_host_and_engines(session, engines, host, pane_id)?;
+    }
+    for pane_id in pane_ids {
+        if priority_pane_ids.iter().any(|priority| priority == pane_id) {
+            continue;
+        }
+        changed |= poll_pane_output_with_host_and_engines(session, engines, host, pane_id)?;
+    }
+    Ok(changed)
+}
+
 fn poll_panes_output_with_host_until_quiet(
     session: &mut Session,
     engines: &mut PaneTerminalEngines,
@@ -2001,12 +2209,47 @@ fn poll_panes_output_with_host_until_poll_quiet(
     pane_ids: &[String],
     quiet_timeout: Duration,
 ) -> Result<bool, HostError> {
+    poll_panes_output_with_host_until_poll_quiet_state(
+        session,
+        engines,
+        host,
+        pane_ids,
+        quiet_timeout,
+        false,
+    )
+}
+
+fn poll_panes_output_with_host_until_poll_quiet_after_change(
+    session: &mut Session,
+    engines: &mut PaneTerminalEngines,
+    host: &mut dyn ProcessHostOutput,
+    pane_ids: &[String],
+    quiet_timeout: Duration,
+) -> Result<bool, HostError> {
+    poll_panes_output_with_host_until_poll_quiet_state(
+        session,
+        engines,
+        host,
+        pane_ids,
+        quiet_timeout,
+        true,
+    )
+}
+
+fn poll_panes_output_with_host_until_poll_quiet_state(
+    session: &mut Session,
+    engines: &mut PaneTerminalEngines,
+    host: &mut dyn ProcessHostOutput,
+    pane_ids: &[String],
+    quiet_timeout: Duration,
+    initial_changed: bool,
+) -> Result<bool, HostError> {
     let Some(notify_fd) = host.notify_fd() else {
         return poll_panes_output_with_host_until_quiet(session, engines, host, pane_ids);
     };
     let deadline = Instant::now() + Duration::from_millis(120);
-    let mut quiet_since = None;
-    let mut changed = false;
+    let mut quiet_since = initial_changed.then(Instant::now);
+    let mut changed = initial_changed;
 
     loop {
         if let Err(error) = drain_notify_fd(notify_fd) {
