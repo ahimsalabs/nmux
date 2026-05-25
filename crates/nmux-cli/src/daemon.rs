@@ -5,6 +5,7 @@ use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::error::ServeError;
 use crate::local;
 use clap::{ArgAction, Parser, ValueEnum};
 use nmux_core::host::{CommandSpec, HostKind, HostSpec, LocalPtyHost, ProcessHost};
@@ -193,9 +194,9 @@ where
         };
         let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
         if let Err(err) = serve_result
-            && !local::is_session_shutdown(err.as_ref())
+            && !local::is_session_shutdown(&err)
         {
-            return Err(err);
+            return Err(err.into());
         }
         stop_result?;
         return Ok(());
@@ -214,9 +215,9 @@ where
         };
         let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
         if let Err(err) = serve_result
-            && !local::is_session_shutdown(err.as_ref())
+            && !local::is_session_shutdown(&err)
         {
-            return Err(err);
+            return Err(err.into());
         }
         stop_result?;
         return Ok(());
@@ -234,11 +235,11 @@ where
             }
         };
         if let Err(err) = serve_result {
-            if local::is_session_shutdown(err.as_ref()) {
+            if local::is_session_shutdown(&err) {
                 stop_panes(&mut pty_host, &session.leaf_pane_ids())?;
                 return Ok(());
             }
-            return Err(err);
+            return Err(err.into());
         }
     }
 }
@@ -249,7 +250,7 @@ fn serve_tcp(
     args: &Args,
     session: &mut Session,
     host: &mut LocalPtyHost,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), ServeError> {
     let token = args
         .tcp_token
         .as_deref()

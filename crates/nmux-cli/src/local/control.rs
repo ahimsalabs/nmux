@@ -5,6 +5,7 @@ use nmux_core::session::Session;
 use nmux_proto::{protocol, wire};
 
 use super::{ControlCommandSummary, write_protocol_error};
+use crate::error::ServeError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ControlCommandOutcome {
@@ -17,7 +18,7 @@ pub(super) fn serve_control_command(
     command: ControlCommandSummary,
     session: &mut Session,
     host: Option<&mut dyn ProcessHost>,
-) -> Result<ControlCommandOutcome, Box<dyn std::error::Error>> {
+) -> Result<ControlCommandOutcome, ServeError> {
     let mut seq = 1;
     match apply_control_command(session, host, &command) {
         Ok(outcome) => {

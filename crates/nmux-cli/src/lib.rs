@@ -1,5 +1,6 @@
 pub mod build_info;
 pub mod daemon;
+pub(crate) mod error;
 pub mod json;
 pub mod local;
 pub mod observability;
