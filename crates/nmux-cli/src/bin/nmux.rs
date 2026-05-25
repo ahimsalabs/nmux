@@ -2147,9 +2147,9 @@ struct SigwinchGuard {
 
 impl SigwinchGuard {
     fn install() -> io::Result<Self> {
+        let handler = handle_sigwinch as *const () as libc::sighandler_t;
         // SAFETY: installing a process signal handler is inherently global.
         // The handler only stores to an AtomicBool, which is signal-safe.
-        let handler = handle_sigwinch as *const () as libc::sighandler_t;
         let previous = unsafe { libc::signal(libc::SIGWINCH, handler) };
         if previous == libc::SIG_ERR {
             return Err(io::Error::last_os_error());

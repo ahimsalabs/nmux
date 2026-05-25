@@ -278,13 +278,16 @@ fn run_echo_helper() -> Result<(), Box<dyn std::error::Error>> {
 fn configure_raw_echo_stdin() -> io::Result<()> {
     let fd = 0;
     let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+    // SAFETY: fd 0 (stdin) is open; termios is a valid MaybeUninit pointer.
     if unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
+    // SAFETY: tcgetattr succeeded, so termios is fully initialized.
     let mut termios = unsafe { termios.assume_init() };
     termios.c_lflag &= !(libc::ECHO | libc::ICANON);
     termios.c_cc[libc::VMIN] = 1;
     termios.c_cc[libc::VTIME] = 0;
+    // SAFETY: fd 0 is open and termios is a valid, initialized struct.
     if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) } != 0 {
         return Err(io::Error::last_os_error());
     }
