@@ -27,11 +27,12 @@ exited pane. Missing pane process state remains an error, but a known pane whose
 child process has exited is a valid terminal-history object.
 
 Bare default mode also performs a cheap health probe before reusing an existing
-default socket. The probe opens the socket, sends a read-only attach request,
-and reads the attach response. If the daemon returns the structured server error
-whose message reports that the pane process is not running, default mode treats
-that daemon as unhealthy for interactive reuse, sends a best-effort session kill,
-unlinks the shared socket, and starts a fresh persistent daemon.
+default socket. The probe opens the socket, sends a read-write attach request,
+reads the attach response, then sends the same frontend resize kind that default
+interactive mode sends on entry. If either step returns the structured server
+error whose message reports that the pane process is not running, default mode
+treats that daemon as unhealthy for interactive reuse, sends a best-effort
+session kill, unlinks the shared socket, and starts a fresh persistent daemon.
 
 This probe is limited to bare default mode. Explicit `--socket`, `--live`, TCP,
 and scripted commands do not silently replace a daemon selected by the user.
@@ -47,4 +48,4 @@ the decision local to default launcher policy and avoids a schema change.
 
 An exited pane in a healthy daemon can still be displayed. The restart path is a
 compatibility fallback for older or inconsistent daemons that report exited
-panes as attach-time output polling failures.
+panes as attach-time output polling or resize failures.

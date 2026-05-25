@@ -247,11 +247,12 @@ fn default_daemon_needs_restart(args: &Args) -> bool {
         Ok(stream) => stream,
         Err(_) => return true,
     };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(args.startup_timeout_ms)));
     let request = local::AttachRequest {
         actor_id: args.actor_id.clone(),
         user_id: args.user_id.clone(),
         display_name: args.display_name.clone(),
-        mode: AttachMode::ReadOnly,
+        mode: AttachMode::ReadWrite,
         focused_pane_id: args
             .target_pane_id
             .clone()
@@ -261,16 +262,45 @@ fn default_daemon_needs_restart(args: &Args) -> bool {
     if local::write_attach_request(&mut stream, &request).is_err() {
         return true;
     }
-    match local::attach_from_stream(&mut stream) {
+    let snapshot = match local::attach_from_stream(&mut stream) {
+        Ok(snapshot) => snapshot,
+        Err(err) => return default_attach_error_needs_restart(err.as_ref()),
+    };
+    let (cols, rows) = default_probe_resize();
+    let mut sequence = local::ClientFrameSequence::default();
+    if local::send_resize_intent_with_reason_and_sequence(
+        &mut stream,
+        &mut sequence,
+        &snapshot.status.pane_id,
+        cols,
+        rows,
+        protocol::ResizeReason::FrontendViewport,
+    )
+    .is_err()
+    {
+        return true;
+    }
+    match local::read_live_surface_update_from_stream(&mut stream) {
+        Ok(local::LiveSurfaceRead::Error(error)) => error_summary_needs_default_restart(&error),
         Ok(_) => false,
-        Err(err) => default_attach_error_needs_restart(err.as_ref()),
+        Err(_) => false,
     }
 }
 
 fn default_attach_error_needs_restart(error: &(dyn std::error::Error + 'static)) -> bool {
     error
         .downcast_ref::<local::ServerError>()
-        .is_some_and(|error| error.error.message.contains("pane process is not running"))
+        .is_some_and(|error| error_summary_needs_default_restart(&error.error))
+}
+
+fn error_summary_needs_default_restart(error: &local::ErrorSummary) -> bool {
+    error.message.contains("pane process is not running")
+}
+
+fn default_probe_resize() -> (u32, u32) {
+    terminal::size()
+        .map(|(cols, rows)| (u32::from(cols), u32::from(rows)))
+        .unwrap_or((80, 24))
 }
 
 fn replace_default_daemon_socket(args: &Args) {
