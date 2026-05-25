@@ -650,22 +650,19 @@ where
                             let workspace_frame =
                                 session.workspace_tree_frame("local-client", client.seq);
                             if let Err(err) =
-                                wire::write_default_frame(&mut client.stream, &workspace_frame)
+                                queue_reliable_frame_to_live_client(client, workspace_frame)
                             {
-                                if socket_closed_error_from_wire(&err) {
+                                if is_socket_closed(&err) {
                                     closed_clients.push(index);
                                     continue;
                                 }
-                                return Err(err.into());
+                                return Err(err);
                             }
-                            client.seq += 1;
                         }
-                        if let Err(err) = write_changed_surface_frames(
-                            &mut client.stream,
+                        if let Err(err) = signal_changed_surface_frames_to_live_client(
+                            client,
                             session,
-                            &mut client.seq,
                             &leaf_pane_ids,
-                            &mut client.known_surface_versions,
                         ) {
                             if is_socket_closed(&err) {
                                 closed_clients.push(index);
@@ -730,22 +727,17 @@ where
         for (index, client) in clients.iter_mut().enumerate() {
             if changed_workspace {
                 let workspace_frame = session.workspace_tree_frame("local-client", client.seq);
-                if let Err(err) = wire::write_default_frame(&mut client.stream, &workspace_frame) {
-                    if socket_closed_error_from_wire(&err) {
+                if let Err(err) = queue_reliable_frame_to_live_client(client, workspace_frame) {
+                    if is_socket_closed(&err) {
                         closed_clients.push(index);
                         continue;
                     }
-                    return Err(err.into());
+                    return Err(err);
                 }
-                client.seq += 1;
             }
-            if let Err(err) = write_changed_surface_frames(
-                &mut client.stream,
-                session,
-                &mut client.seq,
-                &leaf_pane_ids,
-                &mut client.known_surface_versions,
-            ) {
+            if let Err(err) =
+                signal_changed_surface_frames_to_live_client(client, session, &leaf_pane_ids)
+            {
                 if is_socket_closed(&err) {
                     closed_clients.push(index);
                     continue;
@@ -795,6 +787,7 @@ where
 
 struct LiveAttachedClient {
     stream: UnixStream,
+    output: Option<async_live::AsyncClientOutput>,
     connection_id: String,
     actor: Actor,
     hostname: String,
@@ -842,8 +835,63 @@ fn write_client_inventory_snapshot_to_client(
     }
     let snapshot = ClientInventorySnapshotSummary { version, clients };
     let frame = snapshot.frame(&session.id, "local-client", client.seq);
+    queue_reliable_frame_to_live_client(client, frame)
+}
+
+fn queue_reliable_frame_to_live_client(
+    client: &mut LiveAttachedClient,
+    frame: Vec<u8>,
+) -> Result<(), ServeError> {
+    if let Some(output) = client.output.as_ref() {
+        output
+            .try_send_reliable(async_live::ReliableFrame::new(frame))
+            .map_err(|err| format!("live client output queue failed: {err:?}"))?;
+        client.seq += 1;
+        return Ok(());
+    }
     wire::write_default_frame(&mut client.stream, &frame)?;
     client.seq += 1;
+    Ok(())
+}
+
+fn signal_changed_surface_frames_to_live_client(
+    client: &mut LiveAttachedClient,
+    session: &Session,
+    pane_ids: &[String],
+) -> Result<(), ServeError> {
+    let Some(output) = client.output.as_mut() else {
+        return write_changed_surface_frames(
+            &mut client.stream,
+            session,
+            &mut client.seq,
+            pane_ids,
+            &mut client.known_surface_versions,
+        );
+    };
+
+    for pane_id in pane_ids {
+        let Some(current) = session.surface_version(pane_id) else {
+            continue;
+        };
+        if client.known_surface_versions.get(pane_id).copied() == Some(current) {
+            continue;
+        }
+        let Some(bundle) = surface_frame_bundle_for_pane(session, pane_id, client.seq) else {
+            continue;
+        };
+        output
+            .signal_surface_frame_bundle(
+                pane_id.clone(),
+                bundle.version,
+                bundle.snapshot_frame,
+                bundle.patch_frame,
+            )
+            .map_err(|err| format!("live client surface queue failed: {err:?}"))?;
+        client.seq += 1;
+        client
+            .known_surface_versions
+            .insert(pane_id.clone(), current);
+    }
     Ok(())
 }
 
@@ -871,8 +919,7 @@ fn write_client_inventory_patch_to_subscribers(
             left_connection_ids: left_connection_ids.clone(),
         };
         let frame = patch.frame(&session.id, "local-client", client.seq);
-        wire::write_default_frame(&mut client.stream, &frame)?;
-        client.seq += 1;
+        queue_reliable_frame_to_live_client(client, frame)?;
     }
     Ok(())
 }
@@ -966,6 +1013,7 @@ fn accept_live_client(
             write_host_output_error(&mut stream, session, &mut seq, &error_pane_id, err)?;
             return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
                 stream,
+                output: None,
                 connection_id,
                 actor,
                 hostname: request.hostname,
@@ -991,6 +1039,7 @@ fn accept_live_client(
         }
         return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
             stream,
+            output: None,
             connection_id,
             actor,
             hostname: request.hostname,
@@ -1010,6 +1059,7 @@ fn accept_live_client(
     write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
     Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
         stream,
+        output: None,
         connection_id,
         actor: request.actor(),
         hostname: request.hostname,
@@ -15103,6 +15153,53 @@ mod tests {
         assert_eq!(patch_update.kind, SurfaceUpdateKind::Patch);
         assert_eq!(patch_update.version, 2);
         assert_eq!(patch_update.base_version, Some(1));
+    }
+
+    #[tokio::test]
+    async fn live_client_surface_helper_signals_mailbox_bundle() {
+        let (_client_stream, server_stream) = UnixStream::pair().expect("socket pair");
+        let (output, mut output_rx) = async_live::AsyncClientOutput::new(8, 1024 * 1024);
+        let mut client = LiveAttachedClient {
+            stream: server_stream,
+            output: Some(output),
+            connection_id: "conn-1".to_owned(),
+            actor: Actor {
+                id: "actor-1".to_owned(),
+                user_id: "user-1".to_owned(),
+                display_name: "user one".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+            },
+            hostname: "host".to_owned(),
+            client_kind: "test".to_owned(),
+            inventory_subscribed: false,
+            connected_at_mono_ms: 0,
+            last_seen_mono_ms: 0,
+            last_input_mono_ms: None,
+            seq: 9,
+            known_surface_versions: BTreeMap::from([("pane-1".to_owned(), 1)]),
+            frontend_resize_constraints: BTreeMap::new(),
+            completed_cycles: 0,
+        };
+        let session = Session::initial();
+
+        signal_changed_surface_frames_to_live_client(&mut client, &session, &["pane-1".to_owned()])
+            .expect("signal surface");
+
+        assert_eq!(client.seq, 10);
+        assert_eq!(client.known_surface_versions.get("pane-1"), Some(&2));
+        match output_rx.recv_write_event().await {
+            async_live::ClientWriteEvent::Surface(surfaces) => {
+                let signal = surfaces.panes.get("pane-1").expect("pane surface signal");
+                assert_eq!(signal.version, 2);
+                assert!(signal.snapshot_frame.is_some());
+                assert_eq!(
+                    signal.patch_frame.as_ref().map(|patch| patch.base_version),
+                    Some(1)
+                );
+            }
+            other => panic!("expected surface signal, got {other:?}"),
+        }
     }
 
     #[test]
