@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fs;
-use std::io;
+use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -23,6 +23,9 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--echo-helper")) {
+        return run_echo_helper();
+    }
     let args = Args::parse(std::env::args_os().skip(1))?;
     if args.help {
         print!("{}", usage());
@@ -168,7 +171,7 @@ fn measure_echo_latency(
     input_kind: InputKind,
 ) -> Result<Duration, Box<dyn std::error::Error>> {
     let input = format!("{token}\n");
-    let expected = format!("nmux-latency:{token}");
+    let expected = token.to_owned();
     let start = Instant::now();
     let deadline = start + DEFAULT_TIMEOUT;
     send_input(stream, sequence, pane_id, &input, input_kind)?;
@@ -206,7 +209,8 @@ fn start_daemon(
     trace_path: Option<&Path>,
     concurrent_cycles: Option<usize>,
 ) -> Result<Child, Box<dyn std::error::Error>> {
-    let command = "python3 -u -c 'import os, termios; fd = 0; attrs = termios.tcgetattr(fd); attrs[3] &= ~(termios.ECHO | termios.ICANON); attrs[6][termios.VMIN] = 1; attrs[6][termios.VTIME] = 0; termios.tcsetattr(fd, termios.TCSANOW, attrs); buf = b\"\"\nwhile True:\n    chunk = os.read(fd, 4096)\n    if not chunk:\n        break\n    buf += chunk\n    while b\"\\n\" in buf:\n        line, buf = buf.split(b\"\\n\", 1)\n        line = line.rstrip(b\"\\r\")\n        os.write(1, b\"\\rnmux-latency:\" + line)'";
+    let helper = std::env::current_exe()?;
+    let command = format!("{} --echo-helper", shell_quote(&helper));
     let mut args = vec![
         "daemon".to_owned(),
         "--socket".to_owned(),
@@ -216,7 +220,7 @@ fn start_daemon(
             .to_owned(),
         "--ready-json".to_owned(),
         "--command".to_owned(),
-        command.to_owned(),
+        command,
     ];
     if let Some(cycles) = concurrent_cycles {
         args.extend([
@@ -238,6 +242,54 @@ fn start_daemon(
         .map_err(|err| format!("failed to spawn nmux daemon: {err}"))?;
     wait_for_ready(&mut child)?;
     Ok(child)
+}
+
+fn run_echo_helper() -> Result<(), Box<dyn std::error::Error>> {
+    configure_raw_echo_stdin()?;
+    let mut stdin = io::stdin().lock();
+    let mut stdout = io::stdout().lock();
+    let mut buffer = [0_u8; 4096];
+    let mut line = Vec::new();
+    loop {
+        let count = stdin.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(());
+        }
+        for byte in &buffer[..count] {
+            if *byte == b'\n' {
+                while line.last() == Some(&b'\r') {
+                    line.pop();
+                }
+                stdout.write_all(b"\r")?;
+                stdout.write_all(&line)?;
+                stdout.flush()?;
+                line.clear();
+            } else {
+                line.push(*byte);
+            }
+        }
+    }
+}
+
+fn configure_raw_echo_stdin() -> io::Result<()> {
+    let fd = 0;
+    let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+    if unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut termios = unsafe { termios.assume_init() };
+    termios.c_lflag &= !(libc::ECHO | libc::ICANON);
+    termios.c_cc[libc::VMIN] = 1;
+    termios.c_cc[libc::VTIME] = 0;
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn shell_quote(path: &Path) -> String {
+    let value = path.as_os_str().to_string_lossy();
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn wait_for_ready(child: &mut Child) -> Result<(), Box<dyn std::error::Error>> {

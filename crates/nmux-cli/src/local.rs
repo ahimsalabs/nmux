@@ -397,27 +397,29 @@ where
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
-        let output_result = if fast_changed && had_input && host.notify_fd().is_some() {
-            poll_panes_output_with_host_until_poll_quiet_after_change(
-                session,
-                engines,
-                host,
-                &leaf_pane_ids,
-                quiet_timeout,
-            )
-        } else if attempted_fast_output && host.notify_fd().is_some() {
-            Ok(false)
-        } else if host.notify_fd().is_some() {
-            poll_panes_output_with_host_until_poll_quiet(
-                session,
-                engines,
-                host,
-                &leaf_pane_ids,
-                quiet_timeout,
-            )
-        } else {
-            poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
-        };
+        let coalesce_after_input = cycles_per_client != usize::MAX;
+        let output_result =
+            if fast_changed && had_input && coalesce_after_input && host.notify_fd().is_some() {
+                poll_panes_output_with_host_until_poll_quiet_after_change(
+                    session,
+                    engines,
+                    host,
+                    &leaf_pane_ids,
+                    quiet_timeout,
+                )
+            } else if attempted_fast_output && host.notify_fd().is_some() {
+                Ok(false)
+            } else if host.notify_fd().is_some() {
+                poll_panes_output_with_host_until_poll_quiet(
+                    session,
+                    engines,
+                    host,
+                    &leaf_pane_ids,
+                    quiet_timeout,
+                )
+            } else {
+                poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
+            };
         if let Err(err) = output_result {
             let error_pane_id = host_error_pane_id(&err).to_owned();
             for client in &mut clients {
@@ -1426,7 +1428,11 @@ fn serve_live_attached_client(
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
-        let output_result = if fast_changed && input_pane_id.is_some() && host.notify_fd().is_some()
+        let coalesce_after_input = cycles != usize::MAX;
+        let output_result = if fast_changed
+            && input_pane_id.is_some()
+            && host.notify_fd().is_some()
+            && coalesce_after_input
         {
             let poll_span = tracing::trace_span!(
                 "host.output.poll",
