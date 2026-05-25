@@ -2040,6 +2040,85 @@ fn bare_tty_nmux_starts_shared_default_session_and_can_reattach() {
 }
 
 #[test]
+fn bare_tty_nmux_detach_keeps_shared_default_daemon_running() {
+    let socket_path = test_socket_path();
+    let shell_path = socket_path.with_extension("shell");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+    fs::write(
+        &shell_path,
+        "#!/bin/sh\nprintf 'detach-ready\\n'\nwhile :; do sleep 1; done\n",
+    )
+    .expect("write test shell");
+    fs::set_permissions(&shell_path, fs::Permissions::from_mode(0o755)).expect("chmod test shell");
+    let socket = socket_path.to_str().expect("socket path");
+    let shell = shell_path.to_str().expect("shell path");
+
+    let mut client =
+        spawn_nmux_client_in_pty_with_env(&[], &[("NMUX_SOCKET", socket), ("SHELL", shell)]);
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(500));
+    client.detach();
+    let output = client.wait();
+
+    assert!(
+        output.success,
+        "detaching client failed:\n{}",
+        output.output
+    );
+    assert!(
+        output.output.contains("detach-ready"),
+        "detaching client did not render daemon output:\n{}",
+        output.output
+    );
+    assert!(
+        socket_path.exists(),
+        "detach removed shared daemon socket: {}",
+        socket_path.display()
+    );
+
+    let reattach = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .args([
+            "--live",
+            "--no-input",
+            "--no-scrollback",
+            "--iterations",
+            "1",
+            "--connect-timeout-ms",
+            "5000",
+        ])
+        .output()
+        .expect("reattach after local detach");
+
+    let kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill bare nmux daemon");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+
+    assert!(
+        reattach.status.success(),
+        "reattach after detach failed: {}\n{}",
+        String::from_utf8_lossy(&reattach.stderr),
+        String::from_utf8_lossy(&reattach.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&reattach.stdout).contains("session=local"),
+        "reattach did not see shared session:\n{}",
+        String::from_utf8_lossy(&reattach.stdout)
+    );
+    assert!(
+        kill.status.success(),
+        "kill failed: {}\n{}",
+        String::from_utf8_lossy(&kill.stderr),
+        String::from_utf8_lossy(&kill.stdout)
+    );
+}
+
+#[test]
 fn bare_tty_nmux_allows_two_shared_default_attachers() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
