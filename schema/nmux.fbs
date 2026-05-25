@@ -369,6 +369,34 @@ table Pong {
   ping_seq:ulong;
 }
 
+table ClientConnection {
+  connection_id:string;
+  actor_id:string;
+  user_id:string;
+  display_name:string;
+  hostname:string;
+  client_kind:string;
+  mode:AttachMode = ReadOnly;
+  focused_pane_id:string;
+  connected_at_mono_ms:ulong;
+  last_seen_mono_ms:ulong;
+  has_last_input:bool;
+  last_input_mono_ms:ulong;
+}
+
+table ClientInventorySnapshot {
+  version:ulong;
+  clients:[ClientConnection];
+}
+
+table ClientInventoryPatch {
+  base_version:ulong;
+  version:ulong;
+  joined:[ClientConnection];
+  updated:[ClientConnection];
+  left_connection_ids:[string];
+}
+
 table Error {
   code:ErrorCode = Unknown;
   message:string;
@@ -389,6 +417,9 @@ table AttachRequest {
   mode:AttachMode = ReadOnly;
   focused_pane_id:string;
   known_surfaces:[KnownPaneSurfaceVersion];
+  hostname:string;
+  client_kind:string;
+  subscribe_client_inventory:bool;
 }
 
 table AttachStatus {
@@ -412,6 +443,8 @@ union EnvelopeBody {
   ControlCommand,
   Ping,
   Pong,
+  ClientInventorySnapshot,
+  ClientInventoryPatch,
 }
 
 table Envelope {

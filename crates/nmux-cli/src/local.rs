@@ -311,6 +311,9 @@ where
     let _guard = NonblockingGuard::set(listener)?;
     let mut accepted_clients = 0_usize;
     let mut clients = Vec::new();
+    let inventory_started_at = Instant::now();
+    let mut inventory_version = 0_u64;
+    let mut next_connection_id = 1_u64;
 
     while accepted_clients < max_clients || !clients.is_empty() {
         let readiness = poll_live_concurrent_sources(
@@ -327,16 +330,37 @@ where
 
         if readiness.listener && accepted_clients < max_clients {
             loop {
-                match accept_live_client(listener, session, host, engines) {
+                let connection_id = format!("conn-{next_connection_id}");
+                match accept_live_client(
+                    listener,
+                    session,
+                    host,
+                    engines,
+                    connection_id,
+                    inventory_elapsed_ms(inventory_started_at),
+                ) {
                     Ok(Some(LiveClientAccept::Attached(mut client))) => {
                         accepted_clients += 1;
+                        next_connection_id += 1;
                         let existing_actors = clients
                             .iter()
                             .map(|client| client.actor.clone())
                             .collect::<Vec<_>>();
+                        let joined = client.inventory_entry();
+                        let base_version = inventory_version;
+                        inventory_version += 1;
                         for existing in &mut clients {
                             let _ = write_presence_to_live_client(existing, session, &client.actor);
                         }
+                        write_client_inventory_patch_to_subscribers(
+                            &mut clients,
+                            session,
+                            base_version,
+                            inventory_version,
+                            vec![joined],
+                            Vec::new(),
+                            Vec::new(),
+                        )?;
                         for actor in existing_actors {
                             let _ = write_presence_frame(
                                 &mut client.stream,
@@ -346,6 +370,17 @@ where
                             );
                         }
                         clients.push(client);
+                        let client_index = clients.len() - 1;
+                        let snapshot_clients = clients
+                            .iter()
+                            .map(LiveAttachedClient::inventory_entry)
+                            .collect();
+                        write_client_inventory_snapshot_to_client(
+                            &mut clients[client_index],
+                            session,
+                            inventory_version,
+                            snapshot_clients,
+                        )?;
                         if accepted_clients >= max_clients {
                             break;
                         }
@@ -372,6 +407,7 @@ where
         let mut frontend_resize_pane_ids = Vec::new();
         let mut changed_workspace = false;
         let mut closed_clients = Vec::new();
+        let mut inventory_updates = Vec::new();
         let mut readable_client_indices = readiness.client_indices;
         for client_index in 0..clients.len() {
             if readable_client_indices.binary_search(&client_index).is_ok() {
@@ -387,7 +423,13 @@ where
             let Some(client) = clients.get_mut(client_index) else {
                 continue;
             };
-            match drain_live_client_frames(client, session, host, engines) {
+            match drain_live_client_frames(
+                client,
+                session,
+                host,
+                engines,
+                inventory_elapsed_ms(inventory_started_at),
+            ) {
                 Ok(ClientDrainStatus::Open {
                     had_input: client_had_input,
                     input_pane_ids: client_input_pane_ids,
@@ -399,6 +441,9 @@ where
                     input_pane_ids.extend(client_input_pane_ids);
                     frontend_resize_pane_ids.extend(client_frontend_resize_pane_ids);
                     changed_workspace |= client_changed_workspace;
+                    if client_had_input {
+                        inventory_updates.push(client.inventory_entry());
+                    }
                     if close_after_drain {
                         closed_clients.push(client_index);
                     }
@@ -420,6 +465,11 @@ where
         }
         closed_clients.sort_unstable();
         closed_clients.dedup();
+        let left_connection_ids = closed_clients
+            .iter()
+            .filter_map(|index| clients.get(*index))
+            .map(|client| client.connection_id.clone())
+            .collect::<Vec<_>>();
         frontend_resize_pane_ids.sort();
         frontend_resize_pane_ids.dedup();
         for pane_id in frontend_resize_pane_ids {
@@ -437,10 +487,42 @@ where
                 clients.remove(*index);
             }
         }
+        if !left_connection_ids.is_empty() {
+            let base_version = inventory_version;
+            inventory_version += 1;
+            write_client_inventory_patch_to_subscribers(
+                &mut clients,
+                session,
+                base_version,
+                inventory_version,
+                Vec::new(),
+                Vec::new(),
+                left_connection_ids,
+            )?;
+        }
         closed_clients.clear();
         for pane_id in closing_frontend_resize_pane_ids {
             changed_workspace |=
                 apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
+        }
+
+        inventory_updates.retain(|updated| {
+            clients
+                .iter()
+                .any(|client| client.connection_id == updated.connection_id)
+        });
+        if !inventory_updates.is_empty() {
+            let base_version = inventory_version;
+            inventory_version += 1;
+            write_client_inventory_patch_to_subscribers(
+                &mut clients,
+                session,
+                base_version,
+                inventory_version,
+                Vec::new(),
+                inventory_updates,
+                Vec::new(),
+            )?;
         }
 
         if had_input
@@ -626,10 +708,28 @@ where
 
         closed_clients.sort_unstable();
         closed_clients.dedup();
+        let left_connection_ids = closed_clients
+            .iter()
+            .filter_map(|index| clients.get(*index))
+            .map(|client| client.connection_id.clone())
+            .collect::<Vec<_>>();
         for index in closed_clients.into_iter().rev() {
             if index < clients.len() {
                 clients.remove(index);
             }
+        }
+        if !left_connection_ids.is_empty() {
+            let base_version = inventory_version;
+            inventory_version += 1;
+            write_client_inventory_patch_to_subscribers(
+                &mut clients,
+                session,
+                base_version,
+                inventory_version,
+                Vec::new(),
+                Vec::new(),
+                left_connection_ids,
+            )?;
         }
     }
 
@@ -639,11 +739,86 @@ where
 
 struct LiveAttachedClient {
     stream: UnixStream,
+    connection_id: String,
     actor: Actor,
+    hostname: String,
+    client_kind: String,
+    inventory_subscribed: bool,
+    connected_at_mono_ms: u64,
+    last_seen_mono_ms: u64,
+    last_input_mono_ms: Option<u64>,
     seq: u64,
     known_surface_versions: BTreeMap<String, u64>,
     frontend_resize_constraints: BTreeMap<String, (u32, u32)>,
     completed_cycles: usize,
+}
+
+impl LiveAttachedClient {
+    fn inventory_entry(&self) -> ClientConnectionSummary {
+        ClientConnectionSummary {
+            connection_id: self.connection_id.clone(),
+            actor_id: self.actor.id.clone(),
+            user_id: self.actor.user_id.clone(),
+            display_name: self.actor.display_name.clone(),
+            hostname: self.hostname.clone(),
+            client_kind: self.client_kind.clone(),
+            mode: self.actor.mode,
+            focused_pane_id: self.actor.focused_pane_id.clone(),
+            connected_at_mono_ms: self.connected_at_mono_ms,
+            last_seen_mono_ms: self.last_seen_mono_ms,
+            last_input_mono_ms: self.last_input_mono_ms,
+        }
+    }
+}
+
+fn inventory_elapsed_ms(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u64::MAX as u128) as u64
+}
+
+fn write_client_inventory_snapshot_to_client(
+    client: &mut LiveAttachedClient,
+    session: &Session,
+    version: u64,
+    clients: Vec<ClientConnectionSummary>,
+) -> Result<(), ServeError> {
+    if !client.inventory_subscribed {
+        return Ok(());
+    }
+    let snapshot = ClientInventorySnapshotSummary { version, clients };
+    let frame = snapshot.frame(&session.id, "local-client", client.seq);
+    wire::write_default_frame(&mut client.stream, &frame)?;
+    client.seq += 1;
+    Ok(())
+}
+
+fn write_client_inventory_patch_to_subscribers(
+    clients: &mut [LiveAttachedClient],
+    session: &Session,
+    base_version: u64,
+    version: u64,
+    joined: Vec<ClientConnectionSummary>,
+    updated: Vec<ClientConnectionSummary>,
+    left_connection_ids: Vec<String>,
+) -> Result<(), ServeError> {
+    if joined.is_empty() && updated.is_empty() && left_connection_ids.is_empty() {
+        return Ok(());
+    }
+    for client in clients {
+        if !client.inventory_subscribed {
+            continue;
+        }
+        let patch = ClientInventoryPatchSummary {
+            base_version,
+            version,
+            joined: joined.clone(),
+            updated: updated.clone(),
+            left_connection_ids: left_connection_ids.clone(),
+        };
+        let frame = patch.frame(&session.id, "local-client", client.seq);
+        wire::write_default_frame(&mut client.stream, &frame)?;
+        client.seq += 1;
+    }
+    Ok(())
 }
 
 enum LiveClientAccept {
@@ -702,6 +877,8 @@ fn accept_live_client(
     session: &mut Session,
     host: &mut dyn ProcessHostOutput,
     engines: &mut PaneTerminalEngines,
+    connection_id: String,
+    now_mono_ms: u64,
 ) -> Result<Option<LiveClientAccept>, ServeError> {
     let (mut stream, _) = match listener.accept() {
         Ok(accepted) => accepted,
@@ -733,7 +910,14 @@ fn accept_live_client(
             write_host_output_error(&mut stream, session, &mut seq, &error_pane_id, err)?;
             return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
                 stream,
+                connection_id,
                 actor,
+                hostname: request.hostname,
+                client_kind: request.client_kind,
+                inventory_subscribed: request.subscribe_client_inventory,
+                connected_at_mono_ms: now_mono_ms,
+                last_seen_mono_ms: now_mono_ms,
+                last_input_mono_ms: None,
                 seq,
                 known_surface_versions: BTreeMap::new(),
                 frontend_resize_constraints: BTreeMap::new(),
@@ -751,7 +935,14 @@ fn accept_live_client(
         }
         return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
             stream,
+            connection_id,
             actor,
+            hostname: request.hostname,
+            client_kind: request.client_kind,
+            inventory_subscribed: request.subscribe_client_inventory,
+            connected_at_mono_ms: now_mono_ms,
+            last_seen_mono_ms: now_mono_ms,
+            last_input_mono_ms: None,
             seq,
             known_surface_versions,
             frontend_resize_constraints: BTreeMap::new(),
@@ -763,7 +954,14 @@ fn accept_live_client(
     write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
     Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
         stream,
+        connection_id,
         actor: request.actor(),
+        hostname: request.hostname,
+        client_kind: request.client_kind,
+        inventory_subscribed: request.subscribe_client_inventory,
+        connected_at_mono_ms: now_mono_ms,
+        last_seen_mono_ms: now_mono_ms,
+        last_input_mono_ms: None,
         seq,
         known_surface_versions: BTreeMap::new(),
         frontend_resize_constraints: BTreeMap::new(),
@@ -856,6 +1054,7 @@ fn drain_live_client_frames(
     session: &mut Session,
     host: &mut dyn ProcessHostOutput,
     engines: &mut PaneTerminalEngines,
+    now_mono_ms: u64,
 ) -> Result<ClientDrainStatus, ServeError> {
     let mut had_input = false;
     let mut input_pane_ids = Vec::new();
@@ -865,6 +1064,7 @@ fn drain_live_client_frames(
     loop {
         match read_live_client_frame_from_stream(&mut client.stream)? {
             LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
+                client.last_seen_mono_ms = now_mono_ms;
                 if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
                     write_scrollback_fetch_error(
                         &mut client.stream,
@@ -897,6 +1097,7 @@ fn drain_live_client_frames(
                 client.seq += 1;
             }
             LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
+                client.last_seen_mono_ms = now_mono_ms;
                 if !Session::input_allowed(&client.actor) {
                     write_protocol_error(
                         &mut client.stream,
@@ -952,6 +1153,8 @@ fn drain_live_client_frames(
                 }
             }
             LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
+                client.last_seen_mono_ms = now_mono_ms;
+                client.last_input_mono_ms = Some(now_mono_ms);
                 let input_pane_id = input.pane_id.clone();
                 if !Session::input_allowed(&client.actor) {
                     write_protocol_error(
@@ -977,6 +1180,7 @@ fn drain_live_client_frames(
                 input_pane_ids.push(input_pane_id);
             }
             LiveClientRead::Frame(LiveClientFrame::Ping(ping)) => {
+                client.last_seen_mono_ms = now_mono_ms;
                 write_pong_frame(&mut client.stream, session, &mut client.seq, &ping)?;
             }
             LiveClientRead::NoFrame => break,
@@ -2567,6 +2771,9 @@ pub(crate) fn attach_with_known_surfaces(
             mode: AttachMode::ReadWrite,
             focused_pane_id: None,
             known_surfaces,
+            hostname: String::new(),
+            client_kind: "nmux".to_owned(),
+            subscribe_client_inventory: false,
         },
     )
 }
@@ -2619,6 +2826,9 @@ impl Default for AttachOptions {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
             input_text: Some("a".to_owned()),
             key_name: None,
@@ -3508,7 +3718,7 @@ pub(crate) fn read_scrollback_fetch_from_stream(
 pub(crate) fn read_scrollback_chunk_from_stream(
     stream: &mut UnixStream,
 ) -> Result<ScrollbackChunkSummary, ServeError> {
-    match read_scrollback_response_from_stream(stream, None)? {
+    match read_scrollback_response_from_stream(stream, None, None)? {
         ScrollbackRead::Chunk(chunk) => Ok(chunk),
         ScrollbackRead::Error(error) => Err(server_error(error).into()),
     }
@@ -3522,7 +3732,7 @@ pub(crate) fn read_scrollback_chunk_with_stale_retry(
     line_count: u32,
 ) -> Result<ScrollbackChunkSummary, ServeError> {
     read_scrollback_chunk_with_stale_retry_and_pending_updates(
-        stream, sequence, pane_id, start_line, line_count, None,
+        stream, sequence, pane_id, start_line, line_count, None, None,
     )
 }
 
@@ -3533,8 +3743,13 @@ fn read_scrollback_chunk_with_stale_retry_and_pending_updates(
     start_line: u64,
     line_count: u32,
     mut pending_updates: Option<&mut Vec<SurfaceUpdate>>,
+    mut pending_live: Option<&mut Vec<LiveSurfaceRead>>,
 ) -> Result<ScrollbackChunkSummary, ServeError> {
-    match read_scrollback_response_from_stream(stream, pending_updates.as_deref_mut())? {
+    match read_scrollback_response_from_stream(
+        stream,
+        pending_updates.as_deref_mut(),
+        pending_live.as_deref_mut(),
+    )? {
         ScrollbackRead::Chunk(chunk) => Ok(chunk),
         ScrollbackRead::Error(error) if error.code == protocol::ErrorCode::StaleVersion => {
             send_scrollback_fetch_with_known_version(
@@ -3549,7 +3764,7 @@ fn read_scrollback_chunk_with_stale_retry_and_pending_updates(
                     known_scrollback_version: 0,
                 },
             )?;
-            match read_scrollback_response_from_stream(stream, pending_updates)? {
+            match read_scrollback_response_from_stream(stream, pending_updates, pending_live)? {
                 ScrollbackRead::Chunk(chunk) => Ok(chunk),
                 ScrollbackRead::Error(error) => Err(server_error(error).into()),
             }
@@ -3590,6 +3805,31 @@ pub fn fetch_scrollback_chunk_with_selection_and_pending_updates(
     known_version_for: impl Fn(u64, u32) -> u64,
     mut pending_updates: Option<&mut Vec<SurfaceUpdate>>,
 ) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
+    fetch_scrollback_chunk_with_selection_and_pending_live(
+        stream,
+        sequence,
+        pane_id,
+        start_line,
+        line_count,
+        tail_count,
+        known_version_for,
+        pending_updates.as_deref_mut(),
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn fetch_scrollback_chunk_with_selection_and_pending_live(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    start_line: u64,
+    line_count: u32,
+    tail_count: Option<u32>,
+    known_version_for: impl Fn(u64, u32) -> u64,
+    mut pending_updates: Option<&mut Vec<SurfaceUpdate>>,
+    mut pending_live: Option<&mut Vec<LiveSurfaceRead>>,
+) -> Result<ScrollbackChunkSummary, Box<dyn std::error::Error>> {
     let (start_line, line_count) = if let Some(tail_count) = tail_count {
         send_scrollback_fetch_with_known_version(
             stream,
@@ -3610,6 +3850,7 @@ pub fn fetch_scrollback_chunk_with_selection_and_pending_updates(
             1,
             1,
             pending_updates.as_deref_mut(),
+            pending_live.as_deref_mut(),
         )?;
         let tail_count_u64 = u64::from(tail_count);
         let start_line = if probe.total_lines > tail_count_u64 {
@@ -3640,12 +3881,14 @@ pub fn fetch_scrollback_chunk_with_selection_and_pending_updates(
         start_line,
         line_count,
         pending_updates,
+        pending_live,
     )?)
 }
 
 fn read_scrollback_response_from_stream(
     stream: &mut UnixStream,
     mut pending_updates: Option<&mut Vec<SurfaceUpdate>>,
+    mut pending_live: Option<&mut Vec<LiveSurfaceRead>>,
 ) -> Result<ScrollbackRead, ServeError> {
     loop {
         let frame = wire::read_default_frame(stream)?;
@@ -3666,6 +3909,22 @@ fn read_scrollback_response_from_stream(
                     .as_deref_mut()
                     .expect("pending updates checked")
                     .push(surface_update_from_frame(&frame)?);
+            }
+            protocol::EnvelopeBody::ClientInventorySnapshot if pending_live.is_some() => {
+                pending_live
+                    .as_deref_mut()
+                    .expect("pending live checked")
+                    .push(LiveSurfaceRead::ClientInventorySnapshot(
+                        client_inventory_snapshot_from_frame(&frame)?,
+                    ));
+            }
+            protocol::EnvelopeBody::ClientInventoryPatch if pending_live.is_some() => {
+                pending_live
+                    .as_deref_mut()
+                    .expect("pending live checked")
+                    .push(LiveSurfaceRead::ClientInventoryPatch(
+                        client_inventory_patch_from_frame(&frame)?,
+                    ));
             }
             protocol::EnvelopeBody::PresenceUpdate
             | protocol::EnvelopeBody::WorkspaceTreeSnapshot => {}
@@ -3798,6 +4057,16 @@ pub fn read_live_surface_update_from_stream(
                 protocol::EnvelopeBody::PresenceUpdate => {
                     Ok(LiveSurfaceRead::Presence(presence_from_frame(&frame)?))
                 }
+                protocol::EnvelopeBody::ClientInventorySnapshot => {
+                    Ok(LiveSurfaceRead::ClientInventorySnapshot(
+                        client_inventory_snapshot_from_frame(&frame)?,
+                    ))
+                }
+                protocol::EnvelopeBody::ClientInventoryPatch => {
+                    Ok(LiveSurfaceRead::ClientInventoryPatch(
+                        client_inventory_patch_from_frame(&frame)?,
+                    ))
+                }
                 protocol::EnvelopeBody::Pong => Ok(LiveSurfaceRead::Pong(pong_from_frame(&frame)?)),
                 other => Err(format!("unexpected live server frame: {other:?}").into()),
             }
@@ -3865,6 +4134,83 @@ pub(crate) fn pong_from_frame(frame: &[u8]) -> Result<PingSummary, ServeError> {
         actor_id: required_string(pong.actor_id(), "pong actor_id")?,
         ping_seq: pong.ping_seq(),
     })
+}
+
+pub(crate) fn client_inventory_snapshot_from_frame(
+    frame: &[u8],
+) -> Result<ClientInventorySnapshotSummary, ServeError> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::ClientInventorySnapshot {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+    let snapshot = envelope
+        .body_as_client_inventory_snapshot()
+        .ok_or("missing client inventory snapshot body")?;
+    Ok(ClientInventorySnapshotSummary {
+        version: snapshot.version(),
+        clients: decoded_client_connections(snapshot.clients())?,
+    })
+}
+
+pub(crate) fn client_inventory_patch_from_frame(
+    frame: &[u8],
+) -> Result<ClientInventoryPatchSummary, ServeError> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::ClientInventoryPatch {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+    let patch = envelope
+        .body_as_client_inventory_patch()
+        .ok_or("missing client inventory patch body")?;
+    let left = patch
+        .left_connection_ids()
+        .map(|ids| {
+            (0..ids.len())
+                .map(|index| required_string(Some(ids.get(index)), "left connection_id"))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(ClientInventoryPatchSummary {
+        base_version: patch.base_version(),
+        version: patch.version(),
+        joined: decoded_client_connections(patch.joined())?,
+        updated: decoded_client_connections(patch.updated())?,
+        left_connection_ids: left,
+    })
+}
+
+fn decoded_client_connections(
+    clients: Option<
+        flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<protocol::ClientConnection<'_>>>,
+    >,
+) -> Result<Vec<ClientConnectionSummary>, ServeError> {
+    let Some(clients) = clients else {
+        return Ok(Vec::new());
+    };
+    let mut decoded = Vec::with_capacity(clients.len());
+    for index in 0..clients.len() {
+        let client = clients.get(index);
+        decoded.push(ClientConnectionSummary {
+            connection_id: required_string(client.connection_id(), "client connection_id")?,
+            actor_id: required_string(client.actor_id(), "client actor_id")?,
+            user_id: required_string(client.user_id(), "client user_id")?,
+            display_name: required_string(client.display_name(), "client display_name")?,
+            hostname: client.hostname().unwrap_or_default().to_owned(),
+            client_kind: client.client_kind().unwrap_or_default().to_owned(),
+            mode: attach_mode_from_protocol(client.mode())?,
+            focused_pane_id: client
+                .focused_pane_id()
+                .map(|pane_id| required_string(Some(pane_id), "client focused_pane_id"))
+                .transpose()?,
+            connected_at_mono_ms: client.connected_at_mono_ms(),
+            last_seen_mono_ms: client.last_seen_mono_ms(),
+            last_input_mono_ms: client
+                .has_last_input()
+                .then_some(client.last_input_mono_ms()),
+        });
+    }
+    Ok(decoded)
 }
 
 pub(crate) fn input_summary_from_frame(frame: &[u8]) -> Result<InputSummary, ServeError> {
@@ -4280,6 +4626,9 @@ fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
         })?,
         focused_pane_id,
         known_surfaces,
+        hostname: request.hostname().unwrap_or_default().to_owned(),
+        client_kind: request.client_kind().unwrap_or("nmux").to_owned(),
+        subscribe_client_inventory: request.subscribe_client_inventory(),
     })
 }
 
@@ -4376,6 +4725,9 @@ pub struct AttachRequest {
     pub mode: AttachMode,
     pub focused_pane_id: Option<String>,
     pub known_surfaces: Vec<KnownSurfaceVersion>,
+    pub hostname: String,
+    pub client_kind: String,
+    pub subscribe_client_inventory: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4463,6 +4815,8 @@ impl AttachRequest {
         let actor_id = builder.create_string(&self.actor_id);
         let user_id = builder.create_string(&self.user_id);
         let display_name = builder.create_string(&self.display_name);
+        let hostname = builder.create_string(&self.hostname);
+        let client_kind = builder.create_string(&self.client_kind);
         let focused_pane_id = self
             .focused_pane_id
             .as_ref()
@@ -4476,6 +4830,9 @@ impl AttachRequest {
                 mode: attach_mode_as_protocol(self.mode),
                 focused_pane_id,
                 known_surfaces: Some(known_surfaces),
+                hostname: Some(hostname),
+                client_kind: Some(client_kind),
+                subscribe_client_inventory: self.subscribe_client_inventory,
             },
         );
 
@@ -4725,6 +5082,8 @@ pub struct AttachStatusSummary {
 pub enum LiveSurfaceRead {
     Workspace(WorkspaceSummary),
     Presence(PresenceSummary),
+    ClientInventorySnapshot(ClientInventorySnapshotSummary),
+    ClientInventoryPatch(ClientInventoryPatchSummary),
     Update(SurfaceUpdate),
     Pong(PingSummary),
     Error(ErrorSummary),
@@ -5103,6 +5462,158 @@ impl PingSummary {
                 sent_at_mono_ms: 0,
                 body_type,
                 body: Some(body),
+            },
+        );
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientConnectionSummary {
+    pub connection_id: String,
+    pub actor_id: String,
+    pub user_id: String,
+    pub display_name: String,
+    pub hostname: String,
+    pub client_kind: String,
+    pub mode: AttachMode,
+    pub focused_pane_id: Option<String>,
+    pub connected_at_mono_ms: u64,
+    pub last_seen_mono_ms: u64,
+    pub last_input_mono_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientInventorySnapshotSummary {
+    pub version: u64,
+    pub clients: Vec<ClientConnectionSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientInventoryPatchSummary {
+    pub base_version: u64,
+    pub version: u64,
+    pub joined: Vec<ClientConnectionSummary>,
+    pub updated: Vec<ClientConnectionSummary>,
+    pub left_connection_ids: Vec<String>,
+}
+
+impl ClientConnectionSummary {
+    fn create<'a>(
+        &self,
+        builder: &mut FlatBufferBuilder<'a>,
+    ) -> flatbuffers::WIPOffset<protocol::ClientConnection<'a>> {
+        let connection_id = builder.create_string(&self.connection_id);
+        let actor_id = builder.create_string(&self.actor_id);
+        let user_id = builder.create_string(&self.user_id);
+        let display_name = builder.create_string(&self.display_name);
+        let hostname = builder.create_string(&self.hostname);
+        let client_kind = builder.create_string(&self.client_kind);
+        let focused_pane_id = self
+            .focused_pane_id
+            .as_ref()
+            .map(|pane_id| builder.create_string(pane_id));
+        protocol::ClientConnection::create(
+            builder,
+            &protocol::ClientConnectionArgs {
+                connection_id: Some(connection_id),
+                actor_id: Some(actor_id),
+                user_id: Some(user_id),
+                display_name: Some(display_name),
+                hostname: Some(hostname),
+                client_kind: Some(client_kind),
+                mode: attach_mode_as_protocol(self.mode),
+                focused_pane_id,
+                connected_at_mono_ms: self.connected_at_mono_ms,
+                last_seen_mono_ms: self.last_seen_mono_ms,
+                has_last_input: self.last_input_mono_ms.is_some(),
+                last_input_mono_ms: self.last_input_mono_ms.unwrap_or_default(),
+            },
+        )
+    }
+}
+
+impl ClientInventorySnapshotSummary {
+    fn frame(&self, session_id: &str, connection_id: &str, seq: u64) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let clients = self
+            .clients
+            .iter()
+            .map(|client| client.create(&mut builder))
+            .collect::<Vec<_>>();
+        let clients = builder.create_vector(&clients);
+        let snapshot = protocol::ClientInventorySnapshot::create(
+            &mut builder,
+            &protocol::ClientInventorySnapshotArgs {
+                version: self.version,
+                clients: Some(clients),
+            },
+        );
+        let session_id = builder.create_string(session_id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::ClientInventorySnapshot,
+                body: Some(snapshot.as_union_value()),
+            },
+        );
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
+}
+
+impl ClientInventoryPatchSummary {
+    fn frame(&self, session_id: &str, connection_id: &str, seq: u64) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let joined = self
+            .joined
+            .iter()
+            .map(|client| client.create(&mut builder))
+            .collect::<Vec<_>>();
+        let updated = self
+            .updated
+            .iter()
+            .map(|client| client.create(&mut builder))
+            .collect::<Vec<_>>();
+        let left = self
+            .left_connection_ids
+            .iter()
+            .map(|connection_id| builder.create_string(connection_id))
+            .collect::<Vec<_>>();
+        let joined = builder.create_vector(&joined);
+        let updated = builder.create_vector(&updated);
+        let left = builder.create_vector(&left);
+        let patch = protocol::ClientInventoryPatch::create(
+            &mut builder,
+            &protocol::ClientInventoryPatchArgs {
+                base_version: self.base_version,
+                version: self.version,
+                joined: Some(joined),
+                updated: Some(updated),
+                left_connection_ids: Some(left),
+            },
+        );
+        let session_id = builder.create_string(session_id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::ClientInventoryPatch,
+                body: Some(patch.as_union_value()),
             },
         );
         protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
@@ -5593,6 +6104,9 @@ mod tests {
                 mode,
                 focused_pane_id: Some(focused_pane_id),
                 known_surfaces: None,
+                hostname: None,
+                client_kind: None,
+                subscribe_client_inventory: false,
             },
         );
         envelope_frame(
@@ -5635,6 +6149,9 @@ mod tests {
                 mode: protocol::AttachMode::ReadWrite,
                 focused_pane_id,
                 known_surfaces,
+                hostname: None,
+                client_kind: None,
+                subscribe_client_inventory: false,
             },
         );
         envelope_frame(
@@ -6596,6 +7113,41 @@ mod tests {
         }
     }
 
+    fn read_inventory_snapshot(stream: &mut UnixStream) -> ClientInventorySnapshotSummary {
+        for _ in 0..20 {
+            match read_live_surface_update_from_stream(stream).expect("read live frame") {
+                LiveSurfaceRead::ClientInventorySnapshot(snapshot) => return snapshot,
+                LiveSurfaceRead::NoFrame => continue,
+                LiveSurfaceRead::Closed => panic!("server closed before inventory snapshot"),
+                _ => {}
+            }
+        }
+        panic!("inventory snapshot not received");
+    }
+
+    fn read_inventory_patch_with_join(stream: &mut UnixStream) -> ClientInventoryPatchSummary {
+        read_inventory_patch_matching(stream, |patch| !patch.joined.is_empty())
+    }
+
+    fn read_inventory_patch_with_update(stream: &mut UnixStream) -> ClientInventoryPatchSummary {
+        read_inventory_patch_matching(stream, |patch| !patch.updated.is_empty())
+    }
+
+    fn read_inventory_patch_matching(
+        stream: &mut UnixStream,
+        matches: impl Fn(&ClientInventoryPatchSummary) -> bool,
+    ) -> ClientInventoryPatchSummary {
+        for _ in 0..40 {
+            match read_live_surface_update_from_stream(stream).expect("read live frame") {
+                LiveSurfaceRead::ClientInventoryPatch(patch) if matches(&patch) => return patch,
+                LiveSurfaceRead::NoFrame => continue,
+                LiveSurfaceRead::Closed => panic!("server closed before inventory patch"),
+                _ => {}
+            }
+        }
+        panic!("matching inventory patch not received");
+    }
+
     fn attach_status_summary(pane_id: &str, surface_version: u64) -> AttachStatusSummary {
         attach_status_summary_with_state(
             pane_id,
@@ -6625,6 +7177,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
             input_text: None,
             key_name: None,
@@ -9667,6 +10222,87 @@ mod tests {
     }
 
     #[test]
+    fn live_daemon_streams_client_inventory_snapshot_and_patches() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = EchoHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start echo pane");
+
+        let server = thread::spawn(move || {
+            ServeConfig::live(2, usize::MAX)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve concurrent live");
+        });
+
+        let mut reader = UnixStream::connect(&socket_path).expect("connect reader");
+        write_attach_request(
+            &mut reader,
+            &AttachRequest {
+                actor_id: "reader".to_owned(),
+                user_id: "cbro".to_owned(),
+                display_name: "Reader".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+                hostname: "machine-a".to_owned(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: true,
+            },
+        )
+        .expect("write reader attach");
+        attach_from_stream(&mut reader).expect("reader attach");
+        let snapshot = read_inventory_snapshot(&mut reader);
+        assert_eq!(snapshot.version, 1);
+        assert_eq!(snapshot.clients.len(), 1);
+        assert_eq!(snapshot.clients[0].user_id, "cbro");
+        assert_eq!(snapshot.clients[0].hostname, "machine-a");
+        assert_eq!(snapshot.clients[0].mode, AttachMode::ReadOnly);
+
+        let mut writer = UnixStream::connect(&socket_path).expect("connect writer");
+        write_attach_request(
+            &mut writer,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "agent-x".to_owned(),
+                display_name: "Agent X".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+                hostname: "machine-b".to_owned(),
+                client_kind: "agent".to_owned(),
+                subscribe_client_inventory: true,
+            },
+        )
+        .expect("write writer attach");
+        attach_from_stream(&mut writer).expect("writer attach");
+
+        let join = read_inventory_patch_with_join(&mut reader);
+        assert_eq!(join.base_version, 1);
+        assert_eq!(join.version, 2);
+        assert_eq!(join.joined.len(), 1);
+        assert_eq!(join.joined[0].actor_id, "writer");
+        assert_eq!(join.joined[0].user_id, "agent-x");
+        assert_eq!(join.joined[0].hostname, "machine-b");
+        assert_eq!(join.joined[0].client_kind, "agent");
+        assert_eq!(join.joined[0].mode, AttachMode::ReadWrite);
+        assert_eq!(join.joined[0].last_input_mono_ms, None);
+
+        send_key_input(&mut writer, "pane-1", "x").expect("send writer input");
+        let update = read_inventory_patch_with_update(&mut reader);
+        assert_eq!(update.updated.len(), 1);
+        assert_eq!(update.updated[0].actor_id, "writer");
+        assert!(update.updated[0].last_input_mono_ms.is_some());
+
+        drop(reader);
+        drop(writer);
+        server.join().expect("server thread");
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn concurrent_live_clients_exchange_join_presence() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -9691,6 +10327,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write reader attach");
@@ -9707,6 +10346,9 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write writer attach");
@@ -9768,6 +10410,9 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write first attach");
@@ -9784,6 +10429,9 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write second attach");
@@ -9862,6 +10510,9 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write smaller attach");
@@ -9878,6 +10529,9 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write larger attach");
@@ -10022,6 +10676,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("attach snapshot");
@@ -10062,6 +10719,9 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -10567,6 +11227,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -10620,6 +11283,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -10697,6 +11363,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -10949,6 +11618,9 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: current_version - 1,
                 }],
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
                 ..AttachOptions::default().request
             },
         )
@@ -11391,6 +12063,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -11444,6 +12119,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -11500,6 +12178,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -11558,6 +12239,9 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -11617,6 +12301,9 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -11678,6 +12365,9 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -11724,6 +12414,9 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -11771,6 +12464,9 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -11817,6 +12513,9 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -11863,6 +12562,9 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -11938,6 +12640,9 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 3,
                 }],
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -12472,6 +13177,9 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -12540,6 +13248,9 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -12588,6 +13299,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("write attach request");
@@ -12897,6 +13611,9 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    hostname: String::new(),
+                    client_kind: "nmux".to_owned(),
+                    subscribe_client_inventory: false,
                 },
                 input_text: Some("current-input".to_owned()),
                 key_name: None,
@@ -12956,6 +13673,9 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    hostname: String::new(),
+                    client_kind: "nmux".to_owned(),
+                    subscribe_client_inventory: false,
                 },
                 input_text: None,
                 key_name: None,
@@ -13014,6 +13734,9 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    hostname: String::new(),
+                    client_kind: "nmux".to_owned(),
+                    subscribe_client_inventory: false,
                 },
                 input_text: None,
                 key_name: Some("delete".to_owned()),
@@ -13072,6 +13795,9 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    hostname: String::new(),
+                    client_kind: "nmux".to_owned(),
+                    subscribe_client_inventory: false,
                 },
                 input_text: None,
                 key_name: None,
@@ -13136,6 +13862,9 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    hostname: String::new(),
+                    client_kind: "nmux".to_owned(),
+                    subscribe_client_inventory: false,
                 },
                 input_text: None,
                 key_name: None,
@@ -13194,6 +13923,9 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    hostname: String::new(),
+                    client_kind: "nmux".to_owned(),
+                    subscribe_client_inventory: false,
                 },
                 input_text: None,
                 key_name: None,
@@ -13263,6 +13995,9 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    hostname: String::new(),
+                    client_kind: "nmux".to_owned(),
+                    subscribe_client_inventory: false,
                 },
                 input_text: None,
                 key_name: None,
@@ -13336,6 +14071,9 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 3,
                     }],
+                    hostname: String::new(),
+                    client_kind: "nmux".to_owned(),
+                    subscribe_client_inventory: false,
                 },
                 input_text: None,
                 key_name: None,
@@ -13386,6 +14124,9 @@ mod tests {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
+            hostname: String::new(),
+            client_kind: "nmux".to_owned(),
+            subscribe_client_inventory: false,
         };
 
         let mut buffer = Vec::new();
@@ -13554,6 +14295,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("attach snapshot");
@@ -13589,6 +14333,9 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
             },
         )
         .expect("second attach");
@@ -14281,6 +15028,9 @@ mod tests {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
+            hostname: String::new(),
+            client_kind: "nmux".to_owned(),
+            subscribe_client_inventory: false,
             ..AttachOptions::default().request
         };
 

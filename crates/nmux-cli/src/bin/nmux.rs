@@ -289,6 +289,9 @@ fn wait_for_default_daemon_attach(args: &Args) -> Result<(), Box<dyn std::error:
             .clone()
             .or_else(|| args.target_tab_id.clone()),
         known_surfaces: Vec::new(),
+        hostname: resolve_short_hostname(),
+        client_kind: "nmux".to_owned(),
+        subscribe_client_inventory: false,
     };
     let mut last_error: Option<Box<dyn std::error::Error>> = None;
     while Instant::now() < deadline {
@@ -736,6 +739,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut detach_requested = false;
     let mut client_sequence = local::ClientFrameSequence::default();
     let mut speculative_echo = local::SpeculativeEchoOverlay::default();
+    let mut client_inventory = ClientInventoryCache::default();
 
     let mut options = local::AttachOptions {
         input_text: args.input_text.clone(),
@@ -761,6 +765,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         ..local::AttachOptions::default()
     };
     apply_client_identity(args, &mut options.request);
+    options.request.hostname = resolve_short_hostname();
+    options.request.client_kind = "nmux".to_owned();
+    options.request.subscribe_client_inventory = args.redraw && stdout_is_tty();
     options.request.focused_pane_id = args
         .target_pane_id
         .clone()
@@ -841,7 +848,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         current_surface_text: initial_surface_text,
         current_pane_surfaces: initial_pane_surfaces,
     };
-    let (scrollback, pending_surface_updates) = match initial_live_scrollback(
+    let (scrollback, pending_surface_updates, pending_live_reads) = match initial_live_scrollback(
         args,
         &mut stream,
         &mut client_sequence,
@@ -855,6 +862,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             return Err(err);
         }
     };
+    for pending in pending_live_reads {
+        match pending {
+            local::LiveSurfaceRead::ClientInventorySnapshot(snapshot) => {
+                client_inventory.apply_snapshot(snapshot);
+            }
+            local::LiveSurfaceRead::ClientInventoryPatch(patch) => {
+                let _ = client_inventory.apply_patch(patch);
+            }
+            _ => {}
+        }
+    }
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
     }
@@ -898,6 +916,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 local::LiveSurfaceRead::Presence(presence) => {
                     recorder.record(&format_live_presence_json(&presence))?;
                 }
+                local::LiveSurfaceRead::ClientInventorySnapshot(snapshot) => {
+                    client_inventory.apply_snapshot(snapshot);
+                }
+                local::LiveSurfaceRead::ClientInventoryPatch(patch) => {
+                    let _ = client_inventory.apply_patch(patch);
+                }
                 local::LiveSurfaceRead::Pong(_) => {}
                 local::LiveSurfaceRead::Error(error) => {
                     recorder.record(&format_live_error_json(&error))?;
@@ -920,6 +944,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    if let Some(state) = redraw_state.as_mut()
+        && client_inventory.count() > 0
+    {
+        state.record_client_count(client_inventory.count());
+    }
     let mut rtt_tracker = redraw_state
         .as_ref()
         .map(|_| RttTracker::new(options.request.actor_id.clone()));
@@ -1163,6 +1192,37 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     recorder.record(&event)?;
                     if args.output_json {
                         println!("{event}");
+                        flush_stdout()?;
+                    }
+                }
+                local::LiveSurfaceRead::ClientInventorySnapshot(snapshot) => {
+                    client_inventory.apply_snapshot(snapshot);
+                    if let Some(state) = redraw_state.as_mut() {
+                        state.record_client_count(client_inventory.count());
+                        print_live_surface(
+                            &current_workspace,
+                            &surface_state.current_surface_metadata,
+                            &surface_state.current_surface_text,
+                            args.redraw,
+                            Some(state),
+                            Some(&surface_state.current_pane_surfaces),
+                        );
+                        flush_stdout()?;
+                    }
+                }
+                local::LiveSurfaceRead::ClientInventoryPatch(patch) => {
+                    if client_inventory.apply_patch(patch).is_ok()
+                        && let Some(state) = redraw_state.as_mut()
+                    {
+                        state.record_client_count(client_inventory.count());
+                        print_live_surface(
+                            &current_workspace,
+                            &surface_state.current_surface_metadata,
+                            &surface_state.current_surface_text,
+                            args.redraw,
+                            Some(state),
+                            Some(&surface_state.current_pane_surfaces),
+                        );
                         flush_stdout()?;
                     }
                 }
@@ -1874,14 +1934,16 @@ fn initial_live_scrollback(
     (
         Option<local::ScrollbackChunkSummary>,
         Vec<local::SurfaceUpdate>,
+        Vec<local::LiveSurfaceRead>,
     ),
     Box<dyn std::error::Error>,
 > {
     if args.no_scrollback {
-        return Ok((None, Vec::new()));
+        return Ok((None, Vec::new(), Vec::new()));
     }
     let mut pending_updates = Vec::new();
-    let scrollback = local::fetch_scrollback_chunk_with_selection_and_pending_updates(
+    let mut pending_live = Vec::new();
+    let scrollback = local::fetch_scrollback_chunk_with_selection_and_pending_live(
         stream,
         sequence,
         pane_id,
@@ -1894,8 +1956,9 @@ fn initial_live_scrollback(
                 .unwrap_or(0)
         },
         Some(&mut pending_updates),
+        Some(&mut pending_live),
     )?;
-    Ok((Some(scrollback), pending_updates))
+    Ok((Some(scrollback), pending_updates, pending_live))
 }
 
 fn spawn_stdin_line_reader() -> mpsc::Receiver<StdinLineRead> {
@@ -2322,6 +2385,9 @@ fn attach_once(
         ..local::AttachOptions::default()
     };
     apply_client_identity(args, &mut options.request);
+    options.request.hostname = resolve_short_hostname();
+    options.request.client_kind = "nmux".to_owned();
+    options.request.subscribe_client_inventory = false;
     options.request.focused_pane_id = args
         .target_pane_id
         .clone()
@@ -2561,6 +2627,8 @@ struct FrameStats {
     rows_total: usize,
     /// Most recently observed client/server ping round-trip time.
     rtt: Option<Duration>,
+    /// Most recently observed subscribed live client count.
+    client_count: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -2619,6 +2687,44 @@ impl RttTracker {
     }
 }
 
+#[derive(Debug, Default)]
+struct ClientInventoryCache {
+    version: u64,
+    clients: BTreeMap<String, local::ClientConnectionSummary>,
+}
+
+impl ClientInventoryCache {
+    fn apply_snapshot(&mut self, snapshot: local::ClientInventorySnapshotSummary) {
+        self.version = snapshot.version;
+        self.clients = snapshot
+            .clients
+            .into_iter()
+            .map(|client| (client.connection_id.clone(), client))
+            .collect();
+    }
+
+    fn apply_patch(
+        &mut self,
+        patch: local::ClientInventoryPatchSummary,
+    ) -> Result<(), &'static str> {
+        if patch.base_version != self.version {
+            return Err("client inventory patch base version mismatch");
+        }
+        for connection_id in patch.left_connection_ids {
+            self.clients.remove(&connection_id);
+        }
+        for client in patch.joined.into_iter().chain(patch.updated) {
+            self.clients.insert(client.connection_id.clone(), client);
+        }
+        self.version = patch.version;
+        Ok(())
+    }
+
+    fn count(&self) -> usize {
+        self.clients.len()
+    }
+}
+
 /// Tracks displayed rows for differential rendering with a status bar.
 struct RedrawState {
     /// Previously displayed rows (row 0 = status bar, then content rows).
@@ -2633,6 +2739,8 @@ struct RedrawState {
     pending_decode_time: Duration,
     /// Most recently observed ping round-trip time.
     last_rtt: Option<Duration>,
+    /// Most recently observed subscribed live client count.
+    last_client_count: Option<usize>,
     /// Local hostname, resolved once at startup.
     hostname: String,
 }
@@ -2646,6 +2754,7 @@ impl RedrawState {
             last_stats: FrameStats::default(),
             pending_decode_time: Duration::ZERO,
             last_rtt: None,
+            last_client_count: None,
             hostname: resolve_short_hostname(),
         }
     }
@@ -2663,6 +2772,11 @@ impl RedrawState {
 
     fn record_rtt(&mut self, rtt: Duration) {
         self.last_rtt = Some(rtt);
+    }
+
+    fn record_client_count(&mut self, count: usize) {
+        self.last_client_count = Some(count);
+        self.last_stats.client_count = Some(count);
     }
 
     /// Build the full-width inverse-video status bar line.
@@ -2747,6 +2861,7 @@ impl RedrawState {
             rows_changed,
             rows_total: content_rows.len(),
             rtt: self.last_rtt,
+            client_count: self.last_client_count,
         };
         self.pending_decode_time = Duration::ZERO;
         self.last_frame_time = Instant::now();
@@ -2791,6 +2906,7 @@ impl RedrawState {
         self.last_stats.rows_changed = content_rows.len();
         self.last_stats.rows_total = content_rows.len();
         self.last_stats.rtt = self.last_rtt;
+        self.last_stats.client_count = self.last_client_count;
 
         let status_bar = self.format_status_bar(workspace);
 
@@ -2852,10 +2968,15 @@ fn format_stats_right(stats: &FrameStats) -> String {
         .rtt
         .map(|rtt| format!("rtt:{}  ", format_duration_short(rtt.as_micros())))
         .unwrap_or_default();
+    let clients = stats
+        .client_count
+        .map(|count| format!("clients:{count}  "))
+        .unwrap_or_default();
     format!(
-        "{rows}/{total} rows  {rtt}decode:{decode}  render:{render}  {interval}ms ({fps}fps) ",
+        "{rows}/{total} rows  {clients}{rtt}decode:{decode}  render:{render}  {interval}ms ({fps}fps) ",
         rows = stats.rows_changed,
         total = stats.rows_total,
+        clients = clients,
         rtt = rtt,
         decode = format_duration_short(decode_us),
         render = format_duration_short(render_us),
@@ -6596,6 +6717,13 @@ mod tests {
         assert!(
             rtt_update.contains("rtt:3ms"),
             "status bar should contain RTT after a pong: {rtt_update:?}"
+        );
+
+        state.record_client_count(5);
+        let clients_update = state.render_diff_text(&ws, "pane output\nsecond line changed");
+        assert!(
+            clients_update.contains("clients:5"),
+            "status bar should contain live client count: {clients_update:?}"
         );
     }
 

@@ -1749,10 +1749,10 @@ impl ::flatbuffers::SimpleToVerifyInSlice for PresenceKind {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_ENVELOPE_BODY: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_ENVELOPE_BODY: u8 = 14;
+pub const ENUM_MAX_ENVELOPE_BODY: u8 = 16;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 15] = [
+pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 17] = [
   EnvelopeBody::NONE,
   EnvelopeBody::WorkspaceTreeSnapshot,
   EnvelopeBody::PaneSurfaceSnapshot,
@@ -1768,6 +1768,8 @@ pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 15] = [
   EnvelopeBody::ControlCommand,
   EnvelopeBody::Ping,
   EnvelopeBody::Pong,
+  EnvelopeBody::ClientInventorySnapshot,
+  EnvelopeBody::ClientInventoryPatch,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -1790,9 +1792,11 @@ impl EnvelopeBody {
   pub const ControlCommand: Self = Self(12);
   pub const Ping: Self = Self(13);
   pub const Pong: Self = Self(14);
+  pub const ClientInventorySnapshot: Self = Self(15);
+  pub const ClientInventoryPatch: Self = Self(16);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 14;
+  pub const ENUM_MAX: u8 = 16;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::NONE,
     Self::WorkspaceTreeSnapshot,
@@ -1809,6 +1813,8 @@ impl EnvelopeBody {
     Self::ControlCommand,
     Self::Ping,
     Self::Pong,
+    Self::ClientInventorySnapshot,
+    Self::ClientInventoryPatch,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -1828,6 +1834,8 @@ impl EnvelopeBody {
       Self::ControlCommand => Some("ControlCommand"),
       Self::Ping => Some("Ping"),
       Self::Pong => Some("Pong"),
+      Self::ClientInventorySnapshot => Some("ClientInventorySnapshot"),
+      Self::ClientInventoryPatch => Some("ClientInventoryPatch"),
       _ => None,
     }
   }
@@ -6731,6 +6739,566 @@ impl ::core::fmt::Debug for Pong<'_> {
       ds.finish()
   }
 }
+pub enum ClientConnectionOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ClientConnection<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ClientConnection<'a> {
+  type Inner = ClientConnection<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ClientConnection<'a> {
+  pub const VT_CONNECTION_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_ACTOR_ID: ::flatbuffers::VOffsetT = 6;
+  pub const VT_USER_ID: ::flatbuffers::VOffsetT = 8;
+  pub const VT_DISPLAY_NAME: ::flatbuffers::VOffsetT = 10;
+  pub const VT_HOSTNAME: ::flatbuffers::VOffsetT = 12;
+  pub const VT_CLIENT_KIND: ::flatbuffers::VOffsetT = 14;
+  pub const VT_MODE: ::flatbuffers::VOffsetT = 16;
+  pub const VT_FOCUSED_PANE_ID: ::flatbuffers::VOffsetT = 18;
+  pub const VT_CONNECTED_AT_MONO_MS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_LAST_SEEN_MONO_MS: ::flatbuffers::VOffsetT = 22;
+  pub const VT_HAS_LAST_INPUT: ::flatbuffers::VOffsetT = 24;
+  pub const VT_LAST_INPUT_MONO_MS: ::flatbuffers::VOffsetT = 26;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ClientConnection { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ClientConnectionArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ClientConnection<'bldr>> {
+    let mut builder = ClientConnectionBuilder::new(_fbb);
+    builder.add_last_input_mono_ms(args.last_input_mono_ms);
+    builder.add_last_seen_mono_ms(args.last_seen_mono_ms);
+    builder.add_connected_at_mono_ms(args.connected_at_mono_ms);
+    if let Some(x) = args.focused_pane_id { builder.add_focused_pane_id(x); }
+    if let Some(x) = args.client_kind { builder.add_client_kind(x); }
+    if let Some(x) = args.hostname { builder.add_hostname(x); }
+    if let Some(x) = args.display_name { builder.add_display_name(x); }
+    if let Some(x) = args.user_id { builder.add_user_id(x); }
+    if let Some(x) = args.actor_id { builder.add_actor_id(x); }
+    if let Some(x) = args.connection_id { builder.add_connection_id(x); }
+    builder.add_has_last_input(args.has_last_input);
+    builder.add_mode(args.mode);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn connection_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ClientConnection::VT_CONNECTION_ID, None)}
+  }
+  #[inline]
+  pub fn actor_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ClientConnection::VT_ACTOR_ID, None)}
+  }
+  #[inline]
+  pub fn user_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ClientConnection::VT_USER_ID, None)}
+  }
+  #[inline]
+  pub fn display_name(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ClientConnection::VT_DISPLAY_NAME, None)}
+  }
+  #[inline]
+  pub fn hostname(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ClientConnection::VT_HOSTNAME, None)}
+  }
+  #[inline]
+  pub fn client_kind(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ClientConnection::VT_CLIENT_KIND, None)}
+  }
+  #[inline]
+  pub fn mode(&self) -> AttachMode {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<AttachMode>(ClientConnection::VT_MODE, Some(AttachMode::ReadOnly)).unwrap()}
+  }
+  #[inline]
+  pub fn focused_pane_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ClientConnection::VT_FOCUSED_PANE_ID, None)}
+  }
+  #[inline]
+  pub fn connected_at_mono_ms(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ClientConnection::VT_CONNECTED_AT_MONO_MS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn last_seen_mono_ms(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ClientConnection::VT_LAST_SEEN_MONO_MS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn has_last_input(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(ClientConnection::VT_HAS_LAST_INPUT, Some(false)).unwrap()}
+  }
+  #[inline]
+  pub fn last_input_mono_ms(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ClientConnection::VT_LAST_INPUT_MONO_MS, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ClientConnection<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("connection_id", Self::VT_CONNECTION_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("actor_id", Self::VT_ACTOR_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("user_id", Self::VT_USER_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("display_name", Self::VT_DISPLAY_NAME, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("hostname", Self::VT_HOSTNAME, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("client_kind", Self::VT_CLIENT_KIND, false)?
+     .visit_field::<AttachMode>("mode", Self::VT_MODE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("focused_pane_id", Self::VT_FOCUSED_PANE_ID, false)?
+     .visit_field::<u64>("connected_at_mono_ms", Self::VT_CONNECTED_AT_MONO_MS, false)?
+     .visit_field::<u64>("last_seen_mono_ms", Self::VT_LAST_SEEN_MONO_MS, false)?
+     .visit_field::<bool>("has_last_input", Self::VT_HAS_LAST_INPUT, false)?
+     .visit_field::<u64>("last_input_mono_ms", Self::VT_LAST_INPUT_MONO_MS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ClientConnectionArgs<'a> {
+    pub connection_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub actor_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub user_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub display_name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub hostname: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub client_kind: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub mode: AttachMode,
+    pub focused_pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub connected_at_mono_ms: u64,
+    pub last_seen_mono_ms: u64,
+    pub has_last_input: bool,
+    pub last_input_mono_ms: u64,
+}
+impl<'a> Default for ClientConnectionArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ClientConnectionArgs {
+      connection_id: None,
+      actor_id: None,
+      user_id: None,
+      display_name: None,
+      hostname: None,
+      client_kind: None,
+      mode: AttachMode::ReadOnly,
+      focused_pane_id: None,
+      connected_at_mono_ms: 0,
+      last_seen_mono_ms: 0,
+      has_last_input: false,
+      last_input_mono_ms: 0,
+    }
+  }
+}
+
+pub struct ClientConnectionBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ClientConnectionBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_connection_id(&mut self, connection_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientConnection::VT_CONNECTION_ID, connection_id);
+  }
+  #[inline]
+  pub fn add_actor_id(&mut self, actor_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientConnection::VT_ACTOR_ID, actor_id);
+  }
+  #[inline]
+  pub fn add_user_id(&mut self, user_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientConnection::VT_USER_ID, user_id);
+  }
+  #[inline]
+  pub fn add_display_name(&mut self, display_name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientConnection::VT_DISPLAY_NAME, display_name);
+  }
+  #[inline]
+  pub fn add_hostname(&mut self, hostname: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientConnection::VT_HOSTNAME, hostname);
+  }
+  #[inline]
+  pub fn add_client_kind(&mut self, client_kind: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientConnection::VT_CLIENT_KIND, client_kind);
+  }
+  #[inline]
+  pub fn add_mode(&mut self, mode: AttachMode) {
+    self.fbb_.push_slot::<AttachMode>(ClientConnection::VT_MODE, mode, AttachMode::ReadOnly);
+  }
+  #[inline]
+  pub fn add_focused_pane_id(&mut self, focused_pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientConnection::VT_FOCUSED_PANE_ID, focused_pane_id);
+  }
+  #[inline]
+  pub fn add_connected_at_mono_ms(&mut self, connected_at_mono_ms: u64) {
+    self.fbb_.push_slot::<u64>(ClientConnection::VT_CONNECTED_AT_MONO_MS, connected_at_mono_ms, 0);
+  }
+  #[inline]
+  pub fn add_last_seen_mono_ms(&mut self, last_seen_mono_ms: u64) {
+    self.fbb_.push_slot::<u64>(ClientConnection::VT_LAST_SEEN_MONO_MS, last_seen_mono_ms, 0);
+  }
+  #[inline]
+  pub fn add_has_last_input(&mut self, has_last_input: bool) {
+    self.fbb_.push_slot::<bool>(ClientConnection::VT_HAS_LAST_INPUT, has_last_input, false);
+  }
+  #[inline]
+  pub fn add_last_input_mono_ms(&mut self, last_input_mono_ms: u64) {
+    self.fbb_.push_slot::<u64>(ClientConnection::VT_LAST_INPUT_MONO_MS, last_input_mono_ms, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ClientConnectionBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ClientConnectionBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ClientConnection<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ClientConnection<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ClientConnection");
+      ds.field("connection_id", &self.connection_id());
+      ds.field("actor_id", &self.actor_id());
+      ds.field("user_id", &self.user_id());
+      ds.field("display_name", &self.display_name());
+      ds.field("hostname", &self.hostname());
+      ds.field("client_kind", &self.client_kind());
+      ds.field("mode", &self.mode());
+      ds.field("focused_pane_id", &self.focused_pane_id());
+      ds.field("connected_at_mono_ms", &self.connected_at_mono_ms());
+      ds.field("last_seen_mono_ms", &self.last_seen_mono_ms());
+      ds.field("has_last_input", &self.has_last_input());
+      ds.field("last_input_mono_ms", &self.last_input_mono_ms());
+      ds.finish()
+  }
+}
+pub enum ClientInventorySnapshotOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ClientInventorySnapshot<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ClientInventorySnapshot<'a> {
+  type Inner = ClientInventorySnapshot<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ClientInventorySnapshot<'a> {
+  pub const VT_VERSION: ::flatbuffers::VOffsetT = 4;
+  pub const VT_CLIENTS: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ClientInventorySnapshot { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ClientInventorySnapshotArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ClientInventorySnapshot<'bldr>> {
+    let mut builder = ClientInventorySnapshotBuilder::new(_fbb);
+    builder.add_version(args.version);
+    if let Some(x) = args.clients { builder.add_clients(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ClientInventorySnapshot::VT_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn clients(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClientConnection<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClientConnection>>>>(ClientInventorySnapshot::VT_CLIENTS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ClientInventorySnapshot<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("version", Self::VT_VERSION, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ClientConnection>>>>("clients", Self::VT_CLIENTS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ClientInventorySnapshotArgs<'a> {
+    pub version: u64,
+    pub clients: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClientConnection<'a>>>>>,
+}
+impl<'a> Default for ClientInventorySnapshotArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ClientInventorySnapshotArgs {
+      version: 0,
+      clients: None,
+    }
+  }
+}
+
+pub struct ClientInventorySnapshotBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ClientInventorySnapshotBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_version(&mut self, version: u64) {
+    self.fbb_.push_slot::<u64>(ClientInventorySnapshot::VT_VERSION, version, 0);
+  }
+  #[inline]
+  pub fn add_clients(&mut self, clients: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<ClientConnection<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientInventorySnapshot::VT_CLIENTS, clients);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ClientInventorySnapshotBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ClientInventorySnapshotBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ClientInventorySnapshot<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ClientInventorySnapshot<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ClientInventorySnapshot");
+      ds.field("version", &self.version());
+      ds.field("clients", &self.clients());
+      ds.finish()
+  }
+}
+pub enum ClientInventoryPatchOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ClientInventoryPatch<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ClientInventoryPatch<'a> {
+  type Inner = ClientInventoryPatch<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ClientInventoryPatch<'a> {
+  pub const VT_BASE_VERSION: ::flatbuffers::VOffsetT = 4;
+  pub const VT_VERSION: ::flatbuffers::VOffsetT = 6;
+  pub const VT_JOINED: ::flatbuffers::VOffsetT = 8;
+  pub const VT_UPDATED: ::flatbuffers::VOffsetT = 10;
+  pub const VT_LEFT_CONNECTION_IDS: ::flatbuffers::VOffsetT = 12;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ClientInventoryPatch { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ClientInventoryPatchArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ClientInventoryPatch<'bldr>> {
+    let mut builder = ClientInventoryPatchBuilder::new(_fbb);
+    builder.add_version(args.version);
+    builder.add_base_version(args.base_version);
+    if let Some(x) = args.left_connection_ids { builder.add_left_connection_ids(x); }
+    if let Some(x) = args.updated { builder.add_updated(x); }
+    if let Some(x) = args.joined { builder.add_joined(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn base_version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ClientInventoryPatch::VT_BASE_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(ClientInventoryPatch::VT_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn joined(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClientConnection<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClientConnection>>>>(ClientInventoryPatch::VT_JOINED, None)}
+  }
+  #[inline]
+  pub fn updated(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClientConnection<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClientConnection>>>>(ClientInventoryPatch::VT_UPDATED, None)}
+  }
+  #[inline]
+  pub fn left_connection_ids(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>(ClientInventoryPatch::VT_LEFT_CONNECTION_IDS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ClientInventoryPatch<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("base_version", Self::VT_BASE_VERSION, false)?
+     .visit_field::<u64>("version", Self::VT_VERSION, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ClientConnection>>>>("joined", Self::VT_JOINED, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ClientConnection>>>>("updated", Self::VT_UPDATED, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<&'_ str>>>>("left_connection_ids", Self::VT_LEFT_CONNECTION_IDS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ClientInventoryPatchArgs<'a> {
+    pub base_version: u64,
+    pub version: u64,
+    pub joined: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClientConnection<'a>>>>>,
+    pub updated: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClientConnection<'a>>>>>,
+    pub left_connection_ids: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<&'a str>>>>,
+}
+impl<'a> Default for ClientInventoryPatchArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ClientInventoryPatchArgs {
+      base_version: 0,
+      version: 0,
+      joined: None,
+      updated: None,
+      left_connection_ids: None,
+    }
+  }
+}
+
+pub struct ClientInventoryPatchBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ClientInventoryPatchBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_base_version(&mut self, base_version: u64) {
+    self.fbb_.push_slot::<u64>(ClientInventoryPatch::VT_BASE_VERSION, base_version, 0);
+  }
+  #[inline]
+  pub fn add_version(&mut self, version: u64) {
+    self.fbb_.push_slot::<u64>(ClientInventoryPatch::VT_VERSION, version, 0);
+  }
+  #[inline]
+  pub fn add_joined(&mut self, joined: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<ClientConnection<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientInventoryPatch::VT_JOINED, joined);
+  }
+  #[inline]
+  pub fn add_updated(&mut self, updated: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<ClientConnection<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientInventoryPatch::VT_UPDATED, updated);
+  }
+  #[inline]
+  pub fn add_left_connection_ids(&mut self, left_connection_ids: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<&'b  str>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ClientInventoryPatch::VT_LEFT_CONNECTION_IDS, left_connection_ids);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ClientInventoryPatchBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ClientInventoryPatchBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ClientInventoryPatch<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ClientInventoryPatch<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ClientInventoryPatch");
+      ds.field("base_version", &self.base_version());
+      ds.field("version", &self.version());
+      ds.field("joined", &self.joined());
+      ds.field("updated", &self.updated());
+      ds.field("left_connection_ids", &self.left_connection_ids());
+      ds.finish()
+  }
+}
 pub enum ErrorOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -7030,6 +7598,9 @@ impl<'a> AttachRequest<'a> {
   pub const VT_MODE: ::flatbuffers::VOffsetT = 10;
   pub const VT_FOCUSED_PANE_ID: ::flatbuffers::VOffsetT = 12;
   pub const VT_KNOWN_SURFACES: ::flatbuffers::VOffsetT = 14;
+  pub const VT_HOSTNAME: ::flatbuffers::VOffsetT = 16;
+  pub const VT_CLIENT_KIND: ::flatbuffers::VOffsetT = 18;
+  pub const VT_SUBSCRIBE_CLIENT_INVENTORY: ::flatbuffers::VOffsetT = 20;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -7041,11 +7612,14 @@ impl<'a> AttachRequest<'a> {
     args: &'args AttachRequestArgs<'args>
   ) -> ::flatbuffers::WIPOffset<AttachRequest<'bldr>> {
     let mut builder = AttachRequestBuilder::new(_fbb);
+    if let Some(x) = args.client_kind { builder.add_client_kind(x); }
+    if let Some(x) = args.hostname { builder.add_hostname(x); }
     if let Some(x) = args.known_surfaces { builder.add_known_surfaces(x); }
     if let Some(x) = args.focused_pane_id { builder.add_focused_pane_id(x); }
     if let Some(x) = args.display_name { builder.add_display_name(x); }
     if let Some(x) = args.user_id { builder.add_user_id(x); }
     if let Some(x) = args.actor_id { builder.add_actor_id(x); }
+    builder.add_subscribe_client_inventory(args.subscribe_client_inventory);
     builder.add_mode(args.mode);
     builder.finish()
   }
@@ -7093,6 +7667,27 @@ impl<'a> AttachRequest<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion>>>>(AttachRequest::VT_KNOWN_SURFACES, None)}
   }
+  #[inline]
+  pub fn hostname(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AttachRequest::VT_HOSTNAME, None)}
+  }
+  #[inline]
+  pub fn client_kind(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AttachRequest::VT_CLIENT_KIND, None)}
+  }
+  #[inline]
+  pub fn subscribe_client_inventory(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(AttachRequest::VT_SUBSCRIBE_CLIENT_INVENTORY, Some(false)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for AttachRequest<'_> {
@@ -7107,6 +7702,9 @@ impl ::flatbuffers::Verifiable for AttachRequest<'_> {
      .visit_field::<AttachMode>("mode", Self::VT_MODE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("focused_pane_id", Self::VT_FOCUSED_PANE_ID, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion>>>>("known_surfaces", Self::VT_KNOWN_SURFACES, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("hostname", Self::VT_HOSTNAME, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("client_kind", Self::VT_CLIENT_KIND, false)?
+     .visit_field::<bool>("subscribe_client_inventory", Self::VT_SUBSCRIBE_CLIENT_INVENTORY, false)?
      .finish();
     Ok(())
   }
@@ -7118,6 +7716,9 @@ pub struct AttachRequestArgs<'a> {
     pub mode: AttachMode,
     pub focused_pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub known_surfaces: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion<'a>>>>>,
+    pub hostname: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub client_kind: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub subscribe_client_inventory: bool,
 }
 impl<'a> Default for AttachRequestArgs<'a> {
   #[inline]
@@ -7129,6 +7730,9 @@ impl<'a> Default for AttachRequestArgs<'a> {
       mode: AttachMode::ReadOnly,
       focused_pane_id: None,
       known_surfaces: None,
+      hostname: None,
+      client_kind: None,
+      subscribe_client_inventory: false,
     }
   }
 }
@@ -7163,6 +7767,18 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> AttachRequestBuilder<'a, 'b, 
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_KNOWN_SURFACES, known_surfaces);
   }
   #[inline]
+  pub fn add_hostname(&mut self, hostname: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_HOSTNAME, hostname);
+  }
+  #[inline]
+  pub fn add_client_kind(&mut self, client_kind: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_CLIENT_KIND, client_kind);
+  }
+  #[inline]
+  pub fn add_subscribe_client_inventory(&mut self, subscribe_client_inventory: bool) {
+    self.fbb_.push_slot::<bool>(AttachRequest::VT_SUBSCRIBE_CLIENT_INVENTORY, subscribe_client_inventory, false);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> AttachRequestBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     AttachRequestBuilder {
@@ -7186,6 +7802,9 @@ impl ::core::fmt::Debug for AttachRequest<'_> {
       ds.field("mode", &self.mode());
       ds.field("focused_pane_id", &self.focused_pane_id());
       ds.field("known_surfaces", &self.known_surfaces());
+      ds.field("hostname", &self.hostname());
+      ds.field("client_kind", &self.client_kind());
+      ds.field("subscribe_client_inventory", &self.subscribe_client_inventory());
       ds.finish()
   }
 }
@@ -7632,6 +8251,36 @@ impl<'a> Envelope<'a> {
     }
   }
 
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_client_inventory_snapshot(&self) -> Option<ClientInventorySnapshot<'a>> {
+    if self.body_type() == EnvelopeBody::ClientInventorySnapshot {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { ClientInventorySnapshot::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_client_inventory_patch(&self) -> Option<ClientInventoryPatch<'a>> {
+    if self.body_type() == EnvelopeBody::ClientInventoryPatch {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { ClientInventoryPatch::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
 }
 
 impl ::flatbuffers::Verifiable for Envelope<'_> {
@@ -7662,6 +8311,8 @@ impl ::flatbuffers::Verifiable for Envelope<'_> {
           EnvelopeBody::ControlCommand => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ControlCommand>>("EnvelopeBody::ControlCommand", pos),
           EnvelopeBody::Ping => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<Ping>>("EnvelopeBody::Ping", pos),
           EnvelopeBody::Pong => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<Pong>>("EnvelopeBody::Pong", pos),
+          EnvelopeBody::ClientInventorySnapshot => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ClientInventorySnapshot>>("EnvelopeBody::ClientInventorySnapshot", pos),
+          EnvelopeBody::ClientInventoryPatch => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ClientInventoryPatch>>("EnvelopeBody::ClientInventoryPatch", pos),
           _ => Ok(()),
         }
      })?
@@ -7851,6 +8502,20 @@ impl ::core::fmt::Debug for Envelope<'_> {
         },
         EnvelopeBody::Pong => {
           if let Some(x) = self.body_as_pong() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::ClientInventorySnapshot => {
+          if let Some(x) = self.body_as_client_inventory_snapshot() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::ClientInventoryPatch => {
+          if let Some(x) = self.body_as_client_inventory_patch() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")

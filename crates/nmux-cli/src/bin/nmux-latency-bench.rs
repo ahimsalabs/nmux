@@ -152,9 +152,12 @@ fn attach_live_stream(
         actor_id: format!("latency-bench-{pane_id}-{mode:?}"),
         user_id: "latency-bench".to_owned(),
         display_name: "latency bench".to_owned(),
+        hostname: "latency-bench".to_owned(),
+        client_kind: "nmux-latency-bench".to_owned(),
         mode,
         focused_pane_id: Some(pane_id.to_owned()),
         known_surfaces: Vec::new(),
+        subscribe_client_inventory: false,
     };
     local::write_attach_request(stream, &request)?;
     let snapshot = local::attach_from_stream(stream)?;
@@ -202,6 +205,8 @@ fn measure_echo_latency(
             }
             local::LiveSurfaceRead::Workspace(_)
             | local::LiveSurfaceRead::Presence(_)
+            | local::LiveSurfaceRead::ClientInventorySnapshot(_)
+            | local::LiveSurfaceRead::ClientInventoryPatch(_)
             | local::LiveSurfaceRead::Pong(_)
             | local::LiveSurfaceRead::NoFrame => {}
         }
