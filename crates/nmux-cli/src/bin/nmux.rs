@@ -2631,9 +2631,9 @@ fn live_update_print_kind(
     {
         LiveUpdatePrintKind::Surface
     } else if redraw && metadata != previous_metadata {
-        // In redraw mode, metadata changes trigger a differential surface
-        // repaint (the header rows contain metadata). Cursor-only and
-        // mode-only patches with unchanged metadata are no-ops.
+        // In redraw mode without a status bar, metadata changes trigger a
+        // differential repaint. Cursor-only and mode-only patches with
+        // unchanged metadata are no-ops.
         LiveUpdatePrintKind::Metadata
     } else if !redraw && metadata != previous_metadata {
         LiveUpdatePrintKind::Metadata
@@ -2957,12 +2957,15 @@ impl RedrawState {
         let status_bar = self.format_status_bar(workspace);
 
         // Clear screen, draw status bar on row 1, then content starting row 2.
+        // The status bar is full-width; moving explicitly avoids terminal
+        // autowrap shifting the first content byte to the right edge.
         let mut output = String::new();
         output.push_str(&format!(
-            "{}{}{}\n{}",
+            "{}{}{}{}{}",
             Clear(ClearType::All),
             cursor::MoveTo(0, 0),
             status_bar,
+            cursor::MoveTo(0, 1),
             surface_text
         ));
 
@@ -3056,8 +3059,8 @@ fn redraw_text_with_context(
         // Without a status bar, include workspace info as a header line.
         text.push_str(&workspace.display_line());
         text.push('\n');
+        append_terminal_metadata(&mut text, metadata);
     }
-    append_terminal_metadata(&mut text, metadata);
     if let Some(scrollback) = scrollback {
         text.push_str(&format_scrollback(&scrollback));
     }
@@ -5693,8 +5696,9 @@ mod tests {
         parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
         parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
         preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, redraw_workspace_surface_text, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, terminal_size_from_fds, terminal_size_unavailable, usage,
+        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_fds,
+        terminal_size_unavailable, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -6754,6 +6758,10 @@ mod tests {
             initial.contains("pane output"),
             "initial frame should contain content: {initial:?}"
         );
+        assert!(
+            initial.contains("\x1b[2;1Hpane output"),
+            "initial frame should position content below the full-width status bar: {initial:?}"
+        );
 
         let update = state.render_diff_text(&ws, "pane output\nsecond line changed");
         // Row 1 is the status bar (always redrawn).
@@ -6784,6 +6792,40 @@ mod tests {
         assert!(
             clients_update.contains("clients:5"),
             "status bar should contain live client count: {clients_update:?}"
+        );
+    }
+
+    #[test]
+    fn redraw_context_omits_metadata_rows_when_status_bar_is_present() {
+        let ws = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+        };
+        let metadata = local::TerminalMetadataSummary {
+            title: "shell title".to_owned(),
+            working_directory: "file://localhost/tmp/nmux".to_owned(),
+        };
+
+        let status_bar_text =
+            redraw_text_with_context(&ws, &metadata, "pane output", None, true, None);
+        assert!(
+            !status_bar_text.contains("title=")
+                && !status_bar_text.contains("working-directory="),
+            "status-bar redraw should not inject metadata rows: {status_bar_text:?}"
+        );
+        assert!(status_bar_text.contains("pane output"));
+
+        let fallback_text =
+            redraw_text_with_context(&ws, &metadata, "pane output", None, false, None);
+        assert!(
+            fallback_text.contains("title=shell title")
+                && fallback_text.contains("working-directory=file://localhost/tmp/nmux"),
+            "non-status redraw should keep metadata rows: {fallback_text:?}"
         );
     }
 
