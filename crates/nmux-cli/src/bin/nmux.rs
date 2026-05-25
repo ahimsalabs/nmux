@@ -217,6 +217,9 @@ fn run_default(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
     args.stdin_bytes = true;
     args.redraw = true;
     args.interval_ms = 16;
+    if args.socket_path.exists() && default_daemon_needs_restart(&args) {
+        replace_default_daemon_socket(&args);
+    }
     if !args.socket_path.exists() {
         let shell = std::env::var("SHELL")
             .ok()
@@ -234,6 +237,59 @@ fn run_default(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     run_live(&args)
+}
+
+fn default_daemon_needs_restart(args: &Args) -> bool {
+    let mut stream = match local::connect_to_daemon_with_timeout(
+        &args.socket_path,
+        Duration::from_millis(args.startup_timeout_ms),
+    ) {
+        Ok(stream) => stream,
+        Err(_) => return true,
+    };
+    let request = local::AttachRequest {
+        actor_id: args.actor_id.clone(),
+        user_id: args.user_id.clone(),
+        display_name: args.display_name.clone(),
+        mode: AttachMode::ReadOnly,
+        focused_pane_id: args
+            .target_pane_id
+            .clone()
+            .or_else(|| args.target_tab_id.clone()),
+        known_surfaces: Vec::new(),
+    };
+    if local::write_attach_request(&mut stream, &request).is_err() {
+        return true;
+    }
+    match local::attach_from_stream(&mut stream) {
+        Ok(_) => false,
+        Err(err) => default_attach_error_needs_restart(err.as_ref()),
+    }
+}
+
+fn default_attach_error_needs_restart(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<local::ServerError>()
+        .is_some_and(|error| error.error.message.contains("pane process is not running"))
+}
+
+fn replace_default_daemon_socket(args: &Args) {
+    let command = local::ControlCommandSummary {
+        actor_id: args.actor_id.clone(),
+        command_seq: 1,
+        kind: protocol::ControlCommandKind::SessionKill,
+        pane_id: None,
+        tab_id: None,
+        split_axis: protocol::SplitAxis::None,
+        title: None,
+        session_id: args.target_session_id.clone(),
+    };
+    let _ = local::run_control_command(
+        &args.socket_path,
+        Some(Duration::from_millis(args.startup_timeout_ms)),
+        command,
+    );
+    let _ = fs::remove_file(&args.socket_path);
 }
 
 fn shell_quote_for_sh(value: &str) -> String {
@@ -5140,19 +5196,20 @@ mod tests {
         LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
         PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
         STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags,
-        SigwinchResizeContext, StateInfoSocketSummary, args_from_iter, format_cli_error_json,
-        format_context_json, format_input_choices_json, format_key_names_json,
-        format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
-        format_live_error_json, format_live_presence_json, format_live_surface_update_json,
-        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        format_state_info_json, format_state_info_text, host_mouse_mode_disable_sequence,
-        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
-        interim_surface_fidelity_warning_needed, live_update_print_kind,
-        managed_ready_error_message, parse_detach_key, parse_env_assignment, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
-        raw_terminal_mode_needed, redraw_terminal_guard_needed, redraw_workspace_surface_text,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, usage,
+        SigwinchResizeContext, StateInfoSocketSummary, args_from_iter,
+        default_attach_error_needs_restart, format_cli_error_json, format_context_json,
+        format_input_choices_json, format_key_names_json, format_live_attach_json,
+        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
+        format_live_presence_json, format_live_surface_update_json, format_live_workspace_json,
+        format_rendered_attach_json, format_scrollback, format_state_info_json,
+        format_state_info_text, host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
+        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
+        live_update_print_kind, managed_ready_error_message, parse_detach_key,
+        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, redraw_workspace_surface_text, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -5230,6 +5287,21 @@ mod tests {
         assert!(!args.print_socket_json);
         assert!(!args.state_info);
         assert!(!args.state_info_json);
+    }
+
+    #[test]
+    fn default_attach_error_restarts_on_exited_pane_process() {
+        let error = super::local::ServerError {
+            error: super::local::ErrorSummary {
+                code: super::protocol::ErrorCode::Unknown,
+                message: "output polling failed: pane process is not running: pane-1".to_owned(),
+                retryable: false,
+                pane_id: Some("pane-1".to_owned()),
+                input_seq: 0,
+            },
+        };
+
+        assert!(default_attach_error_needs_restart(&error));
     }
 
     #[test]

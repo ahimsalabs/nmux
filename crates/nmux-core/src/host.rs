@@ -529,8 +529,28 @@ fn set_fd_nonblocking(fd: RawFd) -> io::Result<()> {
 
 impl ProcessOutput for LocalPtyHost {
     fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
-        let process = self.process_mut(pane_id)?;
-        Ok(Self::drain_pumped_output(process, bytes))
+        let process = self
+            .processes
+            .get_mut(pane_id)
+            .ok_or_else(|| HostError::NotRunning {
+                pane_id: pane_id.to_owned(),
+            })?;
+        let count = Self::drain_pumped_output(process, bytes);
+        if count > 0 {
+            return Ok(count);
+        }
+        if process.process.status != ProcessStatus::Running {
+            return Ok(0);
+        }
+        if process
+            .child
+            .try_wait()
+            .map_err(|error| Self::io_error(pane_id, "try_wait", error))?
+            .is_some()
+        {
+            process.process.status = ProcessStatus::Exited;
+        }
+        Ok(0)
     }
 
     fn notify_fd(&self) -> Option<RawFd> {
@@ -1235,6 +1255,55 @@ mod tests {
             Err(HostError::NotRunning {
                 pane_id: "pane-1".to_owned(),
             })
+        );
+    }
+
+    #[test]
+    fn local_pty_output_returns_quiet_after_process_exit() {
+        let spec = HostSpec::local(
+            "local",
+            CommandSpec::new("sh").with_args(["-c", "printf 'done\\n'"]),
+        );
+        let mut host = LocalPtyHost::default();
+        let mut buffer = [0_u8; 128];
+
+        host.start_pane("pane-1", &spec).expect("start pty pane");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut output = String::new();
+        while Instant::now() < deadline && !output.contains("done") {
+            let count = host
+                .try_read_output("pane-1", &mut buffer)
+                .expect("read pty output");
+            if count > 0 {
+                output.push_str(&String::from_utf8_lossy(&buffer[..count]));
+            } else {
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let count = host
+                .try_read_output("pane-1", &mut buffer)
+                .expect("exited pty output should be quiet");
+            if count == 0 && host.processes["pane-1"].process.status == ProcessStatus::Exited {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "pty process did not exit after output: {output:?}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        assert!(
+            output.contains("done"),
+            "missing final pty output before exit:\n{output}"
+        );
+        assert_eq!(
+            host.try_read_output("pane-1", &mut buffer),
+            Ok(0),
+            "exited pty should remain attachable and quiet"
         );
     }
 
