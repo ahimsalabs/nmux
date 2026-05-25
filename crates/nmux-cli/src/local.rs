@@ -257,6 +257,7 @@ where
 
         let mut had_input = false;
         let mut input_pane_ids = Vec::new();
+        let mut frontend_resize_pane_ids = Vec::new();
         let mut changed_workspace = false;
         let mut closed_clients = Vec::new();
         for client_index in readiness.client_indices {
@@ -267,14 +268,26 @@ where
                 Ok(ClientDrainStatus::Open {
                     had_input: client_had_input,
                     input_pane_ids: client_input_pane_ids,
+                    frontend_resize_pane_ids: client_frontend_resize_pane_ids,
                     changed_workspace: client_changed_workspace,
+                    close_after_drain,
                 }) => {
                     had_input |= client_had_input;
                     input_pane_ids.extend(client_input_pane_ids);
+                    frontend_resize_pane_ids.extend(client_frontend_resize_pane_ids);
                     changed_workspace |= client_changed_workspace;
+                    if close_after_drain {
+                        closed_clients.push(client_index);
+                    }
                 }
-                Ok(ClientDrainStatus::Closed) => closed_clients.push(client_index),
+                Ok(ClientDrainStatus::Closed) => {
+                    frontend_resize_pane_ids
+                        .extend(client.frontend_resize_constraints.keys().cloned());
+                    closed_clients.push(client_index);
+                }
                 Err(err) if boxed_socket_closed_error(err.as_ref()) => {
+                    frontend_resize_pane_ids
+                        .extend(client.frontend_resize_constraints.keys().cloned());
                     closed_clients.push(client_index);
                 }
                 Err(err) => {
@@ -283,6 +296,20 @@ where
                 }
             }
         }
+        closed_clients.sort_unstable();
+        closed_clients.dedup();
+        frontend_resize_pane_ids.sort();
+        frontend_resize_pane_ids.dedup();
+        for pane_id in frontend_resize_pane_ids {
+            changed_workspace |=
+                apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
+        }
+        for index in closed_clients.iter().rev() {
+            if *index < clients.len() {
+                clients.remove(*index);
+            }
+        }
+        closed_clients.clear();
 
         if had_input
             && !readiness.host_output
@@ -488,6 +515,7 @@ struct LiveAttachedClient {
     actor: Actor,
     seq: u64,
     known_surface_versions: BTreeMap<String, u64>,
+    frontend_resize_constraints: BTreeMap<String, (u32, u32)>,
     completed_cycles: usize,
 }
 
@@ -507,9 +535,39 @@ enum ClientDrainStatus {
     Open {
         had_input: bool,
         input_pane_ids: Vec<String>,
+        frontend_resize_pane_ids: Vec<String>,
         changed_workspace: bool,
+        close_after_drain: bool,
     },
     Closed,
+}
+
+fn apply_concurrent_frontend_resize(
+    session: &mut Session,
+    host: &mut dyn ProcessHostOutput,
+    engines: &mut PaneTerminalEngines,
+    clients: &[LiveAttachedClient],
+    pane_id: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let Some((cols, rows)) = smallest_read_write_frontend_resize(clients, pane_id) else {
+        return Ok(false);
+    };
+    if session.pane_size(pane_id) == Some((cols, rows)) {
+        return Ok(false);
+    }
+    host.resize_pane(pane_id, cols, rows)?;
+    Ok(session.commit_pane_resize_with_engine(pane_id, cols, rows, engines.engine_mut(pane_id)))
+}
+
+fn smallest_read_write_frontend_resize(
+    clients: &[LiveAttachedClient],
+    pane_id: &str,
+) -> Option<(u32, u32)> {
+    clients
+        .iter()
+        .filter(|client| Session::input_allowed(&client.actor))
+        .filter_map(|client| client.frontend_resize_constraints.get(pane_id).copied())
+        .reduce(|(min_cols, min_rows), (cols, rows)| (min_cols.min(cols), min_rows.min(rows)))
 }
 
 fn accept_live_client(
@@ -547,6 +605,7 @@ fn accept_live_client(
                 actor,
                 seq,
                 known_surface_versions: BTreeMap::new(),
+                frontend_resize_constraints: BTreeMap::new(),
                 completed_cycles: usize::MAX,
             })));
         }
@@ -564,6 +623,7 @@ fn accept_live_client(
             actor,
             seq,
             known_surface_versions,
+            frontend_resize_constraints: BTreeMap::new(),
             completed_cycles: 0,
         })));
     }
@@ -575,6 +635,7 @@ fn accept_live_client(
         actor: request.actor(),
         seq,
         known_surface_versions: BTreeMap::new(),
+        frontend_resize_constraints: BTreeMap::new(),
         completed_cycles: usize::MAX,
     })))
 }
@@ -650,7 +711,9 @@ fn drain_live_client_frames(
 ) -> Result<ClientDrainStatus, Box<dyn std::error::Error>> {
     let mut had_input = false;
     let mut input_pane_ids = Vec::new();
+    let mut frontend_resize_pane_ids = Vec::new();
     let mut changed_workspace = false;
+    let mut close_after_drain = false;
     loop {
         match read_live_client_frame_from_stream(&mut client.stream)? {
             LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
@@ -711,6 +774,13 @@ fn drain_live_client_frames(
                     .pane_resize_policy(&resize.pane_id)
                     .unwrap_or(protocol::ResizePolicy::Fixed);
                 if Session::resize_intent_allowed(policy, resize.reason) {
+                    if resize.reason == protocol::ResizeReason::FrontendViewport {
+                        client
+                            .frontend_resize_constraints
+                            .insert(resize.pane_id.clone(), (resize.cols, resize.rows));
+                        frontend_resize_pane_ids.push(resize.pane_id);
+                        continue;
+                    }
                     if let Err(err) = host.resize_pane(&resize.pane_id, resize.cols, resize.rows) {
                         write_protocol_error(
                             &mut client.stream,
@@ -759,7 +829,10 @@ fn drain_live_client_frames(
                 input_pane_ids.push(input_pane_id);
             }
             LiveClientRead::NoFrame => break,
-            LiveClientRead::Closed => return Ok(ClientDrainStatus::Closed),
+            LiveClientRead::Closed => {
+                close_after_drain = true;
+                break;
+            }
         }
 
         if !stream_readable_within(&client.stream, Duration::ZERO)? {
@@ -769,7 +842,9 @@ fn drain_live_client_frames(
     Ok(ClientDrainStatus::Open {
         had_input,
         input_pane_ids,
+        frontend_resize_pane_ids,
         changed_workspace,
+        close_after_drain,
     })
 }
 
@@ -9192,6 +9267,99 @@ mod tests {
         drop(reader);
         drop(writer);
         server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn concurrent_live_clients_use_smallest_read_write_frontend_resize() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_n_with_host(&listener, &mut session, &mut host, 2, usize::MAX)
+                .expect("serve concurrent live");
+            host
+        });
+
+        let mut first = UnixStream::connect(&socket_path).expect("connect first");
+        write_attach_request(
+            &mut first,
+            &AttachRequest {
+                actor_id: "first".to_owned(),
+                user_id: "first-user".to_owned(),
+                display_name: "First".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write first attach");
+        let first_attach = attach_from_stream(&mut first).expect("first attach");
+        assert_eq!(first_attach.presence.actor_id, "first");
+
+        let mut second = UnixStream::connect(&socket_path).expect("connect second");
+        write_attach_request(
+            &mut second,
+            &AttachRequest {
+                actor_id: "second".to_owned(),
+                user_id: "second-user".to_owned(),
+                display_name: "Second".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write second attach");
+        let second_attach = attach_from_stream(&mut second).expect("second attach");
+        assert_eq!(second_attach.presence.actor_id, "second");
+
+        send_resize_intent_with_reason_and_sequence(
+            &mut first,
+            &mut ClientFrameSequence::default(),
+            "pane-1",
+            100,
+            40,
+            protocol::ResizeReason::FrontendViewport,
+        )
+        .expect("send first resize");
+        send_resize_intent_with_reason_and_sequence(
+            &mut second,
+            &mut ClientFrameSequence::default(),
+            "pane-1",
+            80,
+            50,
+            protocol::ResizeReason::FrontendViewport,
+        )
+        .expect("send second resize");
+        send_key_input(&mut second, "pane-1", "after-resize").expect("send input");
+
+        thread::sleep(Duration::from_millis(200));
+        drop(first);
+        drop(second);
+        let host = server.join().expect("server thread");
+        let resize_events = host
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                HostEvent::Resized {
+                    pane_id,
+                    cols,
+                    rows,
+                } if pane_id == "pane-1" => Some((*cols, *rows)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            resize_events,
+            vec![(80, 40)],
+            "host events: {:?}",
+            host.events()
+        );
         let _ = fs::remove_file(socket_path);
     }
 
