@@ -344,6 +344,9 @@ fn sandbox_spawn_command(
 }
 
 impl LocalProcessHost {
+    // Structurally identical to LocalPtyHost::process_mut, but the value types
+    // differ (LocalProcess vs LocalPtyProcess) so a shared generic isn't worth
+    // the trait-bound complexity for a 4-line method.
     fn process_mut(&mut self, pane_id: &str) -> Result<&mut LocalProcess, HostError> {
         self.processes
             .get_mut(pane_id)
@@ -351,14 +354,6 @@ impl LocalProcessHost {
             .ok_or_else(|| HostError::NotRunning {
                 pane_id: pane_id.to_owned(),
             })
-    }
-
-    fn io_error(pane_id: &str, operation: &str, error: impl ToString) -> HostError {
-        HostError::Io {
-            pane_id: pane_id.to_owned(),
-            operation: operation.to_owned(),
-            message: error.to_string(),
-        }
     }
 }
 
@@ -397,7 +392,7 @@ impl LocalPtyHost {
         if process
             .child
             .try_wait()
-            .map_err(|error| Self::io_error(pane_id, "try_wait", error))?
+            .map_err(|error| host_io_error(pane_id, "try_wait", error))?
             .is_some()
         {
             process.process.status = ProcessStatus::Exited;
@@ -406,6 +401,8 @@ impl LocalPtyHost {
         Ok(false)
     }
 
+    // Structurally identical to LocalProcessHost::process_mut, but the value
+    // types differ (LocalPtyProcess vs LocalProcess) so kept separate.
     fn process_mut(&mut self, pane_id: &str) -> Result<&mut LocalPtyProcess, HostError> {
         self.processes
             .get_mut(pane_id)
@@ -415,14 +412,6 @@ impl LocalPtyHost {
             })
     }
 
-    fn io_error(pane_id: &str, operation: &str, error: impl ToString) -> HostError {
-        HostError::Io {
-            pane_id: pane_id.to_owned(),
-            operation: operation.to_owned(),
-            message: error.to_string(),
-        }
-    }
-
     fn closed_pane_write_error(error: &io::Error) -> bool {
         error.kind() == io::ErrorKind::BrokenPipe || error.raw_os_error() == Some(libc::EIO)
     }
@@ -430,7 +419,7 @@ impl LocalPtyHost {
     fn ensure_notify_pipe(&mut self, pane_id: &str) -> Result<&NotifyPipe, HostError> {
         if self.notify_pipe.is_none() {
             self.notify_pipe = Some(
-                NotifyPipe::new().map_err(|error| Self::io_error(pane_id, "notify_pipe", error))?,
+                NotifyPipe::new().map_err(|error| host_io_error(pane_id, "notify_pipe", error))?,
             );
         }
         Ok(self.notify_pipe.as_ref().expect("notify pipe initialized"))
@@ -523,6 +512,14 @@ impl Drop for NotifyPipeWriter {
     }
 }
 
+fn host_io_error(pane_id: &str, operation: &str, error: impl ToString) -> HostError {
+    HostError::Io {
+        pane_id: pane_id.to_owned(),
+        operation: operation.to_owned(),
+        message: error.to_string(),
+    }
+}
+
 fn set_fd_nonblocking(fd: RawFd) -> io::Result<()> {
     // SAFETY: fd is a valid file descriptor; F_GETFL only reads flags and has no side effects.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
@@ -554,7 +551,7 @@ impl ProcessOutput for LocalPtyHost {
         if process
             .child
             .try_wait()
-            .map_err(|error| Self::io_error(pane_id, "try_wait", error))?
+            .map_err(|error| host_io_error(pane_id, "try_wait", error))?
             .is_some()
         {
             process.process.status = ProcessStatus::Exited;
@@ -586,7 +583,7 @@ impl ProcessHost for LocalPtyHost {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|error| Self::io_error(pane_id, "openpty", error))?;
+            .map_err(|error| host_io_error(pane_id, "openpty", error))?;
         let spawn_command = spawn_command_for_host(spec, true, pane_id)?;
         let mut command = CommandBuilder::new(&spawn_command.program);
         command.args(&spawn_command.args);
@@ -600,20 +597,20 @@ impl ProcessHost for LocalPtyHost {
         let child = pair
             .slave
             .spawn_command(command)
-            .map_err(|error| Self::io_error(pane_id, "start", error))?;
+            .map_err(|error| host_io_error(pane_id, "start", error))?;
         let writer = pair
             .master
             .take_writer()
-            .map_err(|error| Self::io_error(pane_id, "take_writer", error))?;
+            .map_err(|error| host_io_error(pane_id, "take_writer", error))?;
         let mut reader = pair
             .master
             .try_clone_reader()
-            .map_err(|error| Self::io_error(pane_id, "try_clone_reader", error))?;
+            .map_err(|error| host_io_error(pane_id, "try_clone_reader", error))?;
         let (output_sender, output) = mpsc::channel();
         let notify_writer = self
             .ensure_notify_pipe(pane_id)?
             .duplicate_writer()
-            .map_err(|error| Self::io_error(pane_id, "notify_pipe", error))?;
+            .map_err(|error| host_io_error(pane_id, "notify_pipe", error))?;
         let pump = thread::spawn(move || {
             let mut buffer = [0_u8; 4096];
             loop {
@@ -673,7 +670,7 @@ impl ProcessHost for LocalPtyHost {
                     pane_id: pane_id.to_owned(),
                 });
             }
-            return Err(Self::io_error(pane_id, "write_input", error));
+            return Err(host_io_error(pane_id, "write_input", error));
         }
         Ok(())
     }
@@ -693,7 +690,7 @@ impl ProcessHost for LocalPtyHost {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|error| Self::io_error(pane_id, "resize_pane", error))
+            .map_err(|error| host_io_error(pane_id, "resize_pane", error))
     }
 
     fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError> {
@@ -718,7 +715,7 @@ impl ProcessHost for LocalPtyHost {
         if process
             .child
             .try_wait()
-            .map_err(|error| Self::io_error(pane_id, "stop", error))?
+            .map_err(|error| host_io_error(pane_id, "stop", error))?
             .is_none()
         {
             match process.child.kill() {
@@ -730,19 +727,19 @@ impl ProcessHost for LocalPtyHost {
                     if process
                         .child
                         .try_wait()
-                        .map_err(|error| Self::io_error(pane_id, "stop", error))?
+                        .map_err(|error| host_io_error(pane_id, "stop", error))?
                         .is_none()
                     {
-                        return Err(Self::io_error(pane_id, "stop", error));
+                        return Err(host_io_error(pane_id, "stop", error));
                     }
                 }
-                Err(error) => return Err(Self::io_error(pane_id, "stop", error)),
+                Err(error) => return Err(host_io_error(pane_id, "stop", error)),
             }
         }
         process
             .child
             .wait()
-            .map_err(|error| Self::io_error(pane_id, "stop", error))?;
+            .map_err(|error| host_io_error(pane_id, "stop", error))?;
         if let Some(pump) = process.pump.take() {
             let _ = pump.join();
         }
@@ -776,7 +773,7 @@ impl ProcessHost for LocalProcessHost {
 
         let mut child = command
             .spawn()
-            .map_err(|error| Self::io_error(pane_id, "start", error))?;
+            .map_err(|error| host_io_error(pane_id, "start", error))?;
         let stdin = child.stdin.take();
         let process = PaneProcess {
             pane_id: pane_id.to_owned(),
@@ -805,7 +802,7 @@ impl ProcessHost for LocalProcessHost {
         stdin
             .write_all(bytes)
             .and_then(|()| stdin.flush())
-            .map_err(|error| Self::io_error(pane_id, "write_input", error))
+            .map_err(|error| host_io_error(pane_id, "write_input", error))
     }
 
     fn resize_pane(&mut self, pane_id: &str, _cols: u32, _rows: u32) -> Result<(), HostError> {
@@ -833,18 +830,18 @@ impl ProcessHost for LocalProcessHost {
         if process
             .child
             .try_wait()
-            .map_err(|error| Self::io_error(pane_id, "stop", error))?
+            .map_err(|error| host_io_error(pane_id, "stop", error))?
             .is_none()
         {
             process
                 .child
                 .kill()
-                .map_err(|error| Self::io_error(pane_id, "stop", error))?;
+                .map_err(|error| host_io_error(pane_id, "stop", error))?;
         }
         process
             .child
             .wait()
-            .map_err(|error| Self::io_error(pane_id, "stop", error))?;
+            .map_err(|error| host_io_error(pane_id, "stop", error))?;
 
         process.process.status = ProcessStatus::Exited;
         Ok(process.process)

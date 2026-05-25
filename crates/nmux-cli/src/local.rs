@@ -75,6 +75,30 @@ pub fn is_session_shutdown(error: &(dyn std::error::Error + 'static)) -> bool {
     error.is::<SessionShutdown>()
 }
 
+// SAFETY: RAII guard that ensures a `UnixListener` is restored to blocking mode.
+//
+// `NonblockingGuard::set` switches the listener to nonblocking and returns a
+// guard.  When the guard is dropped — whether through normal control flow,
+// an early `?` return, or an unwind — the `Drop` impl restores the listener
+// to blocking mode.  This eliminates the need to manually call
+// `listener.set_nonblocking(false)` at every exit path.
+struct NonblockingGuard<'a> {
+    listener: &'a UnixListener,
+}
+
+impl<'a> NonblockingGuard<'a> {
+    fn set(listener: &'a UnixListener) -> io::Result<Self> {
+        listener.set_nonblocking(true)?;
+        Ok(Self { listener })
+    }
+}
+
+impl Drop for NonblockingGuard<'_> {
+    fn drop(&mut self) {
+        let _ = self.listener.set_nonblocking(false);
+    }
+}
+
 pub fn serve_one(
     listener: &UnixListener,
     session: &mut Session,
@@ -194,7 +218,7 @@ fn serve_live_concurrent_n_with_host_and_engines<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
-    listener.set_nonblocking(true)?;
+    let _guard = NonblockingGuard::set(listener)?;
     let mut accepted_clients = 0_usize;
     let mut clients = Vec::new();
 
@@ -243,12 +267,10 @@ where
                         }
                     }
                     Ok(Some(LiveClientAccept::Shutdown)) => {
-                        listener.set_nonblocking(false)?;
                         return Err(SessionShutdown.into());
                     }
                     Ok(None) => break,
                     Err(err) => {
-                        listener.set_nonblocking(false)?;
                         return Err(err);
                     }
                 }
@@ -302,7 +324,6 @@ where
                     closed_clients.push(client_index);
                 }
                 Err(err) => {
-                    listener.set_nonblocking(false)?;
                     return Err(err);
                 }
             }
@@ -385,7 +406,6 @@ where
                             err.clone(),
                         );
                     }
-                    listener.set_nonblocking(false)?;
                     return Ok(());
                 }
             };
@@ -434,7 +454,6 @@ where
                     Ok::<(), Box<dyn std::error::Error>>(())
                 });
                 if let Err(err) = write_result {
-                    listener.set_nonblocking(false)?;
                     return Err(err);
                 }
                 changed_workspace = false;
@@ -476,7 +495,6 @@ where
                         err.clone(),
                     );
                 }
-                listener.set_nonblocking(false)?;
                 return Ok(());
             }
         };
@@ -489,7 +507,6 @@ where
                         closed_clients.push(index);
                         continue;
                     }
-                    listener.set_nonblocking(false)?;
                     return Err(err.into());
                 }
                 client.seq += 1;
@@ -505,7 +522,6 @@ where
                     closed_clients.push(index);
                     continue;
                 }
-                listener.set_nonblocking(false)?;
                 return Err(err);
             }
             let host_completion =
@@ -527,7 +543,7 @@ where
         }
     }
 
-    listener.set_nonblocking(false)?;
+    drop(_guard);
     Ok(())
 }
 
