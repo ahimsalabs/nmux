@@ -49,3 +49,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0039: Presence-Based Daemon Liveness](0039-presence-based-daemon-liveness.md) | Accepted |
 | [0040: Ping-Pong RTT Metrics](0040-ping-pong-rtt.md) | Accepted |
 | [0041: Client Inventory Subscription](0041-client-inventory-subscription.md) | Accepted |
+| [0042: Session-Driven Daemon Lifetime](0042-session-driven-daemon-lifetime.md) | Accepted |

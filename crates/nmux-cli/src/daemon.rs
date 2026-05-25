@@ -176,33 +176,29 @@ where
     }
 
     if args.live || args.live_forever || args.live_cycles.is_some() || args.live_clients.is_some() {
-        let cycles = args.live_cycles.unwrap_or(usize::MAX);
-        let clients = if args.live_forever {
-            usize::MAX
+        let config = if args.live_forever {
+            local::ServeConfig::live_forever()
         } else {
-            args.live_clients.unwrap_or(1)
+            let cycles = args.live_cycles.unwrap_or(usize::MAX);
+            let clients = args.live_clients.unwrap_or(1);
+            local::ServeConfig::live(clients, cycles)
         };
-        let config = local::ServeConfig::live(clients, cycles)
-            .terminal_engine_kind(args.terminal_engine_kind);
+        let config = config.terminal_engine_kind(args.terminal_engine_kind);
         let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => {
-                config.serve_with_engines(
-                    listener,
-                    &mut session,
-                    &mut pty_host,
-                    &mut terminal_engines,
-                )
-            }
-            DaemonListener::Tcp(listener) => {
-                serve_tcp(
-                    &config,
-                    listener,
-                    &args,
-                    &mut session,
-                    &mut pty_host,
-                    &mut terminal_engines,
-                )
-            }
+            DaemonListener::Unix { listener, .. } => config.serve_with_engines(
+                listener,
+                &mut session,
+                &mut pty_host,
+                &mut terminal_engines,
+            ),
+            DaemonListener::Tcp(listener) => serve_tcp(
+                &config,
+                listener,
+                &args,
+                &mut session,
+                &mut pty_host,
+                &mut terminal_engines,
+            ),
         };
         let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
         if let Err(err) = serve_result
@@ -215,27 +211,22 @@ where
     }
 
     if args.one_shot {
-        let config = local::ServeConfig::one()
-            .terminal_engine_kind(args.terminal_engine_kind);
+        let config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
         let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => {
-                config.serve_with_engines(
-                    listener,
-                    &mut session,
-                    &mut pty_host,
-                    &mut terminal_engines,
-                )
-            }
-            DaemonListener::Tcp(listener) => {
-                serve_tcp(
-                    &config,
-                    listener,
-                    &args,
-                    &mut session,
-                    &mut pty_host,
-                    &mut terminal_engines,
-                )
-            }
+            DaemonListener::Unix { listener, .. } => config.serve_with_engines(
+                listener,
+                &mut session,
+                &mut pty_host,
+                &mut terminal_engines,
+            ),
+            DaemonListener::Tcp(listener) => serve_tcp(
+                &config,
+                listener,
+                &args,
+                &mut session,
+                &mut pty_host,
+                &mut terminal_engines,
+            ),
         };
         let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
         if let Err(err) = serve_result
@@ -247,28 +238,23 @@ where
         return Ok(());
     }
 
-    let default_config = local::ServeConfig::one()
-        .terminal_engine_kind(args.terminal_engine_kind);
+    let default_config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
     loop {
         let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => {
-                default_config.serve_with_engines(
-                    listener,
-                    &mut session,
-                    &mut pty_host,
-                    &mut terminal_engines,
-                )
-            }
-            DaemonListener::Tcp(listener) => {
-                serve_tcp(
-                    &default_config,
-                    listener,
-                    &args,
-                    &mut session,
-                    &mut pty_host,
-                    &mut terminal_engines,
-                )
-            }
+            DaemonListener::Unix { listener, .. } => default_config.serve_with_engines(
+                listener,
+                &mut session,
+                &mut pty_host,
+                &mut terminal_engines,
+            ),
+            DaemonListener::Tcp(listener) => serve_tcp(
+                &default_config,
+                listener,
+                &args,
+                &mut session,
+                &mut pty_host,
+                &mut terminal_engines,
+            ),
         };
         if let Err(err) = serve_result {
             if local::is_session_shutdown(&err) {
@@ -292,8 +278,10 @@ fn serve_tcp(
         .tcp_token
         .as_deref()
         .ok_or("--listen requires --token, --tcp-token, or NMUX_TOKEN")?;
-    for _ in 0..config.clients {
+    let mut accepted_connections = 0_usize;
+    while config.connection_limit.accepts_more(accepted_connections) {
         let stream = local::accept_authenticated_tcp_client(listener, token)?;
+        accepted_connections = accepted_connections.saturating_add(1);
         config.serve_stream_with_engines(stream, session, host, engines)?;
     }
     Ok(())
@@ -1060,9 +1048,9 @@ Options:
   --ready-json                          Print a JSON ready event after bind and pane startup
   --one-shot                            Serve one attach client
   --live                                Serve one live client until detach
-  --live-forever                        Serve sequential live clients until stopped
+  --live-forever                        Serve live clients until session shutdown
   --live-cycles COUNT                   Serve a bounded live client
-  --live-clients COUNT                  Serve bounded sequential live clients
+  --live-clients COUNT                  Bound accepted live clients for tests
   --command SHELL                       Run a shell command in the pane PTY
   --cwd DIR                             Run the pane command from existing DIR
   --env KEY=VALUE                       Add an environment variable to the pane command
@@ -1122,9 +1110,9 @@ Options:
   --ready-json                          Print a JSON ready event after bind and pane startup
   --one-shot                            Serve one attach client
   --live                                Serve one live client until detach
-  --live-forever                        Serve sequential live clients until stopped
+  --live-forever                        Serve live clients until session shutdown
   --live-cycles COUNT                   Serve a bounded live client
-  --live-clients COUNT                  Serve bounded sequential live clients
+  --live-clients COUNT                  Bound accepted live clients for tests
   --command SHELL                       Run a shell command in the pane PTY
   --cwd DIR                             Run the pane command from existing DIR
   --env KEY=VALUE                       Add an environment variable to the pane command

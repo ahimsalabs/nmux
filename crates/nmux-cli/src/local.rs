@@ -107,17 +107,46 @@ impl Drop for NonblockingGuard<'_> {
 /// `serve_live_n_with_host_and_engines`, etc. convenience functions with a
 /// single builder that collects optional parameters.
 pub(crate) struct ServeConfig {
-    pub clients: usize,
+    pub connection_limit: ConnectionLimit,
     pub live: bool,
     pub cycles_per_client: usize,
     pub terminal_engine_kind: TerminalEngineKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConnectionLimit {
+    Bounded(usize),
+    Unbounded,
+}
+
+impl ConnectionLimit {
+    pub(crate) fn accepts_more(self, accepted: usize) -> bool {
+        match self {
+            Self::Bounded(limit) => accepted < limit,
+            Self::Unbounded => true,
+        }
+    }
+
+    fn bounded_count(self) -> Option<usize> {
+        match self {
+            Self::Bounded(limit) => Some(limit),
+            Self::Unbounded => None,
+        }
+    }
+
+    fn uses_concurrent_live_loop(self) -> bool {
+        match self {
+            Self::Bounded(limit) => limit > 1,
+            Self::Unbounded => true,
+        }
+    }
 }
 
 impl ServeConfig {
     /// One snapshot-mode client with default terminal engine.
     pub fn one() -> Self {
         Self {
-            clients: 1,
+            connection_limit: ConnectionLimit::Bounded(1),
             live: false,
             cycles_per_client: usize::MAX,
             terminal_engine_kind: TerminalEngineKind::InterimText,
@@ -127,16 +156,26 @@ impl ServeConfig {
     /// Live-mode serve with the given client count and cycles per client.
     pub fn live(clients: usize, cycles_per_client: usize) -> Self {
         Self {
-            clients,
+            connection_limit: ConnectionLimit::Bounded(clients),
             live: true,
             cycles_per_client,
             terminal_engine_kind: TerminalEngineKind::InterimText,
         }
     }
 
+    /// Live-mode serve until explicit shutdown.
+    pub fn live_forever() -> Self {
+        Self {
+            connection_limit: ConnectionLimit::Unbounded,
+            live: true,
+            cycles_per_client: usize::MAX,
+            terminal_engine_kind: TerminalEngineKind::InterimText,
+        }
+    }
+
     /// Override the number of clients to serve.
     pub fn clients(mut self, n: usize) -> Self {
-        self.clients = n;
+        self.connection_limit = ConnectionLimit::Bounded(n);
         self
     }
 
@@ -148,8 +187,9 @@ impl ServeConfig {
 
     /// Serve clients accepted from `listener` using the given host.
     ///
-    /// In snapshot mode, serves `self.clients` sequentially via accept/handle.
-    /// In live mode with >1 client, uses the concurrent accept loop.
+    /// In snapshot mode, serves a bounded number of clients sequentially via
+    /// accept/handle. In live mode with multiple or unbounded connections, uses
+    /// the concurrent accept loop.
     pub fn serve<H: ProcessHost + ProcessOutput>(
         &self,
         listener: &UnixListener,
@@ -170,22 +210,25 @@ impl ServeConfig {
         engines: &mut PaneTerminalEngines,
     ) -> Result<(), ServeError> {
         if self.live {
-            if self.clients > 1 {
+            if self.connection_limit.uses_concurrent_live_loop() {
                 return serve_live_concurrent_n_with_host_and_engines(
                     listener,
                     session,
                     host,
-                    self.clients,
+                    self.connection_limit,
                     self.cycles_per_client,
                     engines,
                 );
             }
-            for _ in 0..self.clients {
+            for _ in 0..self.connection_limit.bounded_count().unwrap_or(0) {
                 let (stream, _) = listener.accept()?;
                 serve_stream_impl(stream, session, host, engines, true, self.cycles_per_client)?;
             }
         } else {
-            for _ in 0..self.clients {
+            let Some(clients) = self.connection_limit.bounded_count() else {
+                return Err("snapshot serve requires a bounded connection limit".into());
+            };
+            for _ in 0..clients {
                 serve_next_with_host(listener, session, host, engines)?;
             }
         }
@@ -233,7 +276,10 @@ impl ServeConfig {
         session: &mut Session,
     ) -> Result<(), ServeError> {
         let mut engines = PaneTerminalEngines::new(self.terminal_engine_kind);
-        for _ in 0..self.clients {
+        let Some(clients) = self.connection_limit.bounded_count() else {
+            return Err("snapshot serve requires a bounded connection limit".into());
+        };
+        for _ in 0..clients {
             serve_next(listener, session, &mut engines)?;
         }
         Ok(())
@@ -248,7 +294,10 @@ impl ServeConfig {
         output: &mut O,
     ) -> Result<(), ServeError> {
         let mut engines = PaneTerminalEngines::new(self.terminal_engine_kind);
-        for _ in 0..self.clients {
+        let Some(clients) = self.connection_limit.bounded_count() else {
+            return Err("snapshot serve requires a bounded connection limit".into());
+        };
+        for _ in 0..clients {
             serve_next_with_output(listener, session, Some(output), &mut engines)?;
         }
         Ok(())
@@ -301,7 +350,7 @@ fn serve_live_concurrent_n_with_host_and_engines<H>(
     listener: &UnixListener,
     session: &mut Session,
     host: &mut H,
-    max_clients: usize,
+    connection_limit: ConnectionLimit,
     cycles_per_client: usize,
     engines: &mut PaneTerminalEngines,
 ) -> Result<(), ServeError>
@@ -315,7 +364,7 @@ where
     let mut inventory_version = 0_u64;
     let mut next_connection_id = 1_u64;
 
-    while accepted_clients < max_clients || !clients.is_empty() {
+    while connection_limit.accepts_more(accepted_clients) || !clients.is_empty() {
         let readiness = poll_live_concurrent_sources(
             listener,
             &clients,
@@ -328,7 +377,7 @@ where
             drain_notify_fd(notify_fd)?;
         }
 
-        if readiness.listener && accepted_clients < max_clients {
+        if readiness.listener && connection_limit.accepts_more(accepted_clients) {
             loop {
                 let connection_id = format!("conn-{next_connection_id}");
                 match accept_live_client(
@@ -381,13 +430,13 @@ where
                             inventory_version,
                             snapshot_clients,
                         )?;
-                        if accepted_clients >= max_clients {
+                        if !connection_limit.accepts_more(accepted_clients) {
                             break;
                         }
                     }
                     Ok(Some(LiveClientAccept::Command)) => {
                         accepted_clients += 1;
-                        if accepted_clients >= max_clients {
+                        if !connection_limit.accepts_more(accepted_clients) {
                             break;
                         }
                     }
