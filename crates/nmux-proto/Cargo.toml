@@ -5,5 +5,13 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# Generated flatbuffers code uses unsafe without docs/guards, so
+# workspace lint overrides for unsafe_op_in_unsafe_fn and
+# undocumented_unsafe_blocks are not inherited here.
+[lints.rust]
+unused_must_use = "deny"
+
+[lints.clippy]
+
 [dependencies]
 flatbuffers.workspace = true

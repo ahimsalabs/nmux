@@ -455,11 +455,13 @@ impl LocalPtyHost {
 impl NotifyPipe {
     fn new() -> io::Result<Self> {
         let mut fds = [-1; 2];
+        // SAFETY: fds is a valid mutable pointer to a 2-element c_int array.
         if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
             return Err(io::Error::last_os_error());
         }
         for fd in fds {
             if let Err(error) = set_fd_nonblocking(fd) {
+                // SAFETY: fds[0] and fds[1] are valid file descriptors returned by pipe(2) above.
                 unsafe {
                     libc::close(fds[0]);
                     libc::close(fds[1]);
@@ -474,11 +476,13 @@ impl NotifyPipe {
     }
 
     fn duplicate_writer(&self) -> io::Result<NotifyPipeWriter> {
+        // SAFETY: self.write_fd is a valid fd owned by this NotifyPipe, opened by pipe(2).
         let fd = unsafe { libc::dup(self.write_fd) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
         if let Err(error) = set_fd_nonblocking(fd) {
+            // SAFETY: fd is a valid file descriptor just returned by dup(2) above.
             unsafe {
                 libc::close(fd);
             }
@@ -490,6 +494,7 @@ impl NotifyPipe {
 
 impl Drop for NotifyPipe {
     fn drop(&mut self) {
+        // SAFETY: read_fd and write_fd are valid fds opened by pipe(2) and owned exclusively by self.
         unsafe {
             libc::close(self.read_fd);
             libc::close(self.write_fd);
@@ -504,12 +509,14 @@ struct NotifyPipeWriter {
 impl NotifyPipeWriter {
     fn notify(&self) {
         let byte = [1_u8];
+        // SAFETY: self.fd is a valid pipe write fd; byte is a valid 1-byte buffer for the duration of the call.
         let _ = unsafe { libc::write(self.fd, byte.as_ptr().cast(), byte.len()) };
     }
 }
 
 impl Drop for NotifyPipeWriter {
     fn drop(&mut self) {
+        // SAFETY: self.fd is a valid fd obtained from dup(2) and owned exclusively by self.
         unsafe {
             libc::close(self.fd);
         }
@@ -517,10 +524,12 @@ impl Drop for NotifyPipeWriter {
 }
 
 fn set_fd_nonblocking(fd: RawFd) -> io::Result<()> {
+    // SAFETY: fd is a valid file descriptor; F_GETFL only reads flags and has no side effects.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags < 0 {
         return Err(io::Error::last_os_error());
     }
+    // SAFETY: fd is valid and flags were just read successfully; adding O_NONBLOCK is well-defined.
     if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
         return Err(io::Error::last_os_error());
     }

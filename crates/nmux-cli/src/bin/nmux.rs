@@ -2211,7 +2211,7 @@ struct SigwinchGuard {
 
 impl SigwinchGuard {
     fn install() -> io::Result<Self> {
-        // Safety: installing a process signal handler is inherently global.
+        // SAFETY: installing a process signal handler is inherently global.
         // The handler only stores to an AtomicBool, which is signal-safe.
         let handler = handle_sigwinch as *const () as libc::sighandler_t;
         let previous = unsafe { libc::signal(libc::SIGWINCH, handler) };
@@ -2224,7 +2224,7 @@ impl SigwinchGuard {
 
 impl Drop for SigwinchGuard {
     fn drop(&mut self) {
-        // Safety: previous was returned by signal during install. Drop must not
+        // SAFETY: previous was returned by signal during install. Drop must not
         // panic, so restoration errors are intentionally ignored.
         let _ = unsafe { libc::signal(libc::SIGWINCH, self.previous) };
     }
@@ -2270,6 +2270,7 @@ fn terminal_size_from_fd(fd: i32) -> io::Result<Option<(u32, u32)>> {
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
+    // SAFETY: size is a valid winsize struct and fd is an open file descriptor.
     let result = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut size) };
     if result < 0 {
         let err = io::Error::last_os_error();
@@ -2291,7 +2292,7 @@ fn apply_raw_terminal_fixups(local_echo: LocalEcho) -> io::Result<()> {
     let mut termios = read_stdin_termios()?;
     termios = raw_terminal_fixup_termios(termios, local_echo);
 
-    // Safety: termios was fetched from STDIN_FILENO and only adjusted by this
+    // SAFETY: termios was fetched from STDIN_FILENO and only adjusted by this
     // process before being applied back to the same descriptor.
     if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) } != 0 {
         return Err(io::Error::last_os_error());
@@ -2301,12 +2302,12 @@ fn apply_raw_terminal_fixups(local_echo: LocalEcho) -> io::Result<()> {
 
 fn read_stdin_termios() -> io::Result<libc::termios> {
     let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
-    // Safety: STDIN_FILENO is a valid process file descriptor when raw mode is
+    // SAFETY: STDIN_FILENO is a valid process file descriptor when raw mode is
     // enabled, and termios points to writable storage initialized by tcgetattr.
     if unsafe { libc::tcgetattr(libc::STDIN_FILENO, termios.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    // Safety: successful tcgetattr initialized the termios storage.
+    // SAFETY: successful tcgetattr initialized the termios storage.
     Ok(unsafe { termios.assume_init() })
 }
 
@@ -2790,6 +2791,7 @@ fn terminal_row(row_1_based: usize) -> u16 {
 
 fn resolve_short_hostname() -> String {
     let mut buf = [0u8; 256];
+    // SAFETY: buf is a valid fixed-size buffer and gethostname writes a NUL-terminated string into it.
     let c_hostname = unsafe {
         if libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) == 0 {
             let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
@@ -5500,7 +5502,7 @@ mod tests {
     use std::path::Path;
 
     fn zero_termios() -> libc::termios {
-        // Safety: tests assign the termios fields read by raw_terminal_fixup_termios
+        // SAFETY: tests assign the termios fields read by raw_terminal_fixup_termios
         // before asserting against the returned value.
         unsafe { std::mem::zeroed() }
     }

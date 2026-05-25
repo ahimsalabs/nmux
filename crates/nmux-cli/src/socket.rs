@@ -73,6 +73,7 @@ pub(crate) fn default_socket_path_and_source_from(
 }
 
 fn effective_uid() -> u32 {
+    // SAFETY: geteuid is always safe to call; it has no preconditions and cannot fail.
     unsafe { libc::geteuid() }
 }
 

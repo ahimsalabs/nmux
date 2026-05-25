@@ -972,6 +972,7 @@ fn poll_live_concurrent_sources(
     }
 
     loop {
+        // SAFETY: fds is a valid, mutable slice of pollfd structs and len matches the slice length.
         let result = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
         if result >= 0 {
             break;
@@ -1674,6 +1675,7 @@ fn poll_live_client_sources(
     }
 
     loop {
+        // SAFETY: fds is a valid, mutable slice of pollfd structs and len matches the slice length.
         let result = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
         if result >= 0 {
             break;
@@ -1697,6 +1699,7 @@ fn poll_live_client_sources(
 fn drain_notify_fd(fd: std::os::fd::RawFd) -> io::Result<()> {
     let mut buffer = [0_u8; 1024];
     loop {
+        // SAFETY: buffer is a valid, mutable byte array and fd is an open file descriptor.
         let count = unsafe { libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
         if count > 0 {
             continue;
@@ -1723,6 +1726,7 @@ fn poll_notify_fd(fd: std::os::fd::RawFd, timeout: Duration) -> io::Result<bool>
         revents: 0,
     };
     loop {
+        // SAFETY: pollfd is a valid, mutable pollfd struct and we pass exactly 1 as the count.
         let result = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
         if result >= 0 {
             return Ok(result > 0);
@@ -3244,6 +3248,7 @@ fn stream_readable_within(stream: &UnixStream, timeout: Duration) -> io::Result<
         events: libc::POLLIN,
         revents: 0,
     };
+    // SAFETY: pollfd is a valid, mutable pollfd struct and we pass exactly 1 as the count.
     let result = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
     if result < 0 {
         return Err(io::Error::last_os_error());
