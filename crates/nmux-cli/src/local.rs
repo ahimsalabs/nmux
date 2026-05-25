@@ -70,6 +70,9 @@ const LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT: Duration = Duration::from_millis(20)
 const LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(3);
+const ASYNC_LIVE_INPUT_EVENT_CAP: usize = 1024;
+const ASYNC_LIVE_RELIABLE_FRAME_CAP: usize = 256;
+const ASYNC_LIVE_RELIABLE_BYTE_CAP: usize = 8 * 1024 * 1024;
 
 pub(crate) trait ProcessHostOutput: ProcessHost + ProcessOutput {}
 
@@ -413,12 +416,7 @@ where
                             Vec::new(),
                         )?;
                         for actor in existing_actors {
-                            let _ = write_presence_frame(
-                                &mut client.stream,
-                                session,
-                                &mut client.seq,
-                                &actor,
-                            );
+                            let _ = write_presence_to_live_client(&mut client, session, &actor);
                         }
                         clients.push(client);
                         let client_index = clients.len() - 1;
@@ -464,7 +462,13 @@ where
             if readable_client_indices.binary_search(&client_index).is_ok() {
                 continue;
             }
-            if stream_readable_within(&clients[client_index].stream, Duration::ZERO)? {
+            if clients[client_index].is_async() {
+                readable_client_indices.push(client_index);
+                continue;
+            }
+            if let Some(stream) = clients[client_index].legacy_stream()
+                && stream_readable_within(stream, Duration::ZERO)?
+            {
                 readable_client_indices.push(client_index);
             }
         }
@@ -621,10 +625,9 @@ where
                 Err(err) => {
                     let error_pane_id = host_error_pane_id(&err).to_owned();
                     for client in &mut clients {
-                        let _ = write_host_output_error(
-                            &mut client.stream,
+                        let _ = queue_host_output_error_to_live_client(
+                            client,
                             session,
-                            &mut client.seq,
                             &error_pane_id,
                             err.clone(),
                         );
@@ -712,10 +715,9 @@ where
             Err(err) => {
                 let error_pane_id = host_error_pane_id(&err).to_owned();
                 for client in &mut clients {
-                    let _ = write_host_output_error(
-                        &mut client.stream,
+                    let _ = queue_host_output_error_to_live_client(
+                        client,
                         session,
-                        &mut client.seq,
                         &error_pane_id,
                         err.clone(),
                     );
@@ -761,10 +763,18 @@ where
             .filter_map(|index| clients.get(*index))
             .map(|client| client.connection_id.clone())
             .collect::<Vec<_>>();
+        let closing_frontend_resize_pane_ids = closed_clients
+            .iter()
+            .filter_map(|index| clients.get(*index))
+            .flat_map(|client| client.frontend_resize_constraints.keys().cloned())
+            .collect::<Vec<_>>();
         for index in closed_clients.into_iter().rev() {
             if index < clients.len() {
                 clients.remove(index);
             }
+        }
+        for pane_id in closing_frontend_resize_pane_ids {
+            apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
         }
         if !left_connection_ids.is_empty() {
             let base_version = inventory_version;
@@ -785,9 +795,37 @@ where
     Ok(())
 }
 
+enum LiveClientTransport {
+    Legacy { stream: UnixStream },
+    Async {
+        input: async_live::AsyncClientInputRx,
+        output: async_live::AsyncClientOutput,
+    },
+}
+
+struct BundledSurfaceFrameSource;
+
+impl async_live::SurfaceFrameSource for BundledSurfaceFrameSource {
+    fn surface_patch_kind(&self, _pane_id: &str) -> protocol::PatchKind {
+        protocol::PatchKind::FullRefreshRequired
+    }
+
+    fn surface_snapshot_frame(&mut self, _pane_id: &str, _seq: u64) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn surface_patch_frame(
+        &mut self,
+        _pane_id: &str,
+        _base_version: u64,
+        _seq: u64,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+}
+
 struct LiveAttachedClient {
-    stream: UnixStream,
-    output: Option<async_live::AsyncClientOutput>,
+    transport: LiveClientTransport,
     connection_id: String,
     actor: Actor,
     hostname: String,
@@ -803,6 +841,38 @@ struct LiveAttachedClient {
 }
 
 impl LiveAttachedClient {
+    fn legacy_stream(&self) -> Option<&UnixStream> {
+        match &self.transport {
+            LiveClientTransport::Legacy { stream } => Some(stream),
+            LiveClientTransport::Async { .. } => None,
+        }
+    }
+
+    fn legacy_stream_mut(&mut self) -> Option<&mut UnixStream> {
+        match &mut self.transport {
+            LiveClientTransport::Legacy { stream } => Some(stream),
+            LiveClientTransport::Async { .. } => None,
+        }
+    }
+
+    fn output(&self) -> Option<&async_live::AsyncClientOutput> {
+        match &self.transport {
+            LiveClientTransport::Legacy { .. } => None,
+            LiveClientTransport::Async { output, .. } => Some(output),
+        }
+    }
+
+    fn async_input_mut(&mut self) -> Option<&mut async_live::AsyncClientInputRx> {
+        match &mut self.transport {
+            LiveClientTransport::Legacy { .. } => None,
+            LiveClientTransport::Async { input, .. } => Some(input),
+        }
+    }
+
+    fn is_async(&self) -> bool {
+        matches!(self.transport, LiveClientTransport::Async { .. })
+    }
+
     fn inventory_entry(&self) -> ClientConnectionSummary {
         ClientConnectionSummary {
             connection_id: self.connection_id.clone(),
@@ -842,14 +912,17 @@ fn queue_reliable_frame_to_live_client(
     client: &mut LiveAttachedClient,
     frame: Vec<u8>,
 ) -> Result<(), ServeError> {
-    if let Some(output) = client.output.as_ref() {
+    if let Some(output) = client.output() {
         output
             .try_send_reliable(async_live::ReliableFrame::new(frame))
-            .map_err(|err| format!("live client output queue failed: {err:?}"))?;
+            .map_err(live_client_output_error)?;
         client.seq += 1;
         return Ok(());
     }
-    wire::write_default_frame(&mut client.stream, &frame)?;
+    let stream = client
+        .legacy_stream_mut()
+        .ok_or("live client has no writable transport")?;
+    wire::write_default_frame(stream, &frame)?;
     client.seq += 1;
     Ok(())
 }
@@ -859,40 +932,42 @@ fn signal_changed_surface_frames_to_live_client(
     session: &Session,
     pane_ids: &[String],
 ) -> Result<(), ServeError> {
-    let Some(output) = client.output.as_mut() else {
-        return write_changed_surface_frames(
-            &mut client.stream,
+    match &mut client.transport {
+        LiveClientTransport::Legacy { stream } => write_changed_surface_frames(
+            stream,
             session,
             &mut client.seq,
             pane_ids,
             &mut client.known_surface_versions,
-        );
-    };
-
-    for pane_id in pane_ids {
-        let Some(current) = session.surface_version(pane_id) else {
-            continue;
-        };
-        if client.known_surface_versions.get(pane_id).copied() == Some(current) {
-            continue;
+        ),
+        LiveClientTransport::Async { output, .. } => {
+            for pane_id in pane_ids {
+                let Some(current) = session.surface_version(pane_id) else {
+                    continue;
+                };
+                if client.known_surface_versions.get(pane_id).copied() == Some(current) {
+                    continue;
+                }
+                let Some(bundle) = surface_frame_bundle_for_pane(session, pane_id, client.seq)
+                else {
+                    continue;
+                };
+                output
+                    .signal_surface_frame_bundle(
+                        pane_id.clone(),
+                        bundle.version,
+                        bundle.snapshot_frame,
+                        bundle.patch_frame,
+                    )
+                    .map_err(live_client_output_error)?;
+                client.seq += 1;
+                client
+                    .known_surface_versions
+                    .insert(pane_id.clone(), current);
+            }
+            Ok(())
         }
-        let Some(bundle) = surface_frame_bundle_for_pane(session, pane_id, client.seq) else {
-            continue;
-        };
-        output
-            .signal_surface_frame_bundle(
-                pane_id.clone(),
-                bundle.version,
-                bundle.snapshot_frame,
-                bundle.patch_frame,
-            )
-            .map_err(|err| format!("live client surface queue failed: {err:?}"))?;
-        client.seq += 1;
-        client
-            .known_surface_versions
-            .insert(pane_id.clone(), current);
     }
-    Ok(())
 }
 
 fn write_client_inventory_patch_to_subscribers(
@@ -919,7 +994,11 @@ fn write_client_inventory_patch_to_subscribers(
             left_connection_ids: left_connection_ids.clone(),
         };
         let frame = patch.frame(&session.id, "local-client", client.seq);
-        queue_reliable_frame_to_live_client(client, frame)?;
+        if let Err(err) = queue_reliable_frame_to_live_client(client, frame)
+            && !is_socket_closed(&err)
+        {
+            return Err(err);
+        }
     }
     Ok(())
 }
@@ -975,6 +1054,90 @@ fn smallest_read_write_frontend_resize(
         .reduce(|(min_cols, min_rows), (cols, rows)| (min_cols.min(cols), min_rows.min(rows)))
 }
 
+fn async_live_client_transport(
+    stream: UnixStream,
+    next_seq: u64,
+    known_surface_versions: BTreeMap<String, u64>,
+) -> Result<LiveClientTransport, ServeError> {
+    let read_stream = stream.try_clone()?;
+    read_stream.set_nonblocking(true)?;
+    stream.set_nonblocking(true)?;
+
+    let (input_tx, input) = async_live::async_client_input_channel(ASYNC_LIVE_INPUT_EVENT_CAP);
+    let (output, output_rx) = async_live::AsyncClientOutput::new(
+        ASYNC_LIVE_RELIABLE_FRAME_CAP,
+        ASYNC_LIVE_RELIABLE_BYTE_CAP,
+    );
+    spawn_async_live_client_tasks(
+        read_stream,
+        stream,
+        input_tx,
+        output_rx,
+        next_seq,
+        known_surface_versions,
+    );
+    Ok(LiveClientTransport::Async { input, output })
+}
+
+fn spawn_async_live_client_tasks(
+    read_stream: UnixStream,
+    write_stream: UnixStream,
+    input_tx: async_live::AsyncClientInputTx,
+    output_rx: async_live::AsyncClientOutputRx,
+    next_seq: u64,
+    known_surface_versions: BTreeMap<String, u64>,
+) {
+    thread::spawn(move || {
+        if let Err(err) = run_async_live_client_tasks(
+            read_stream,
+            write_stream,
+            input_tx,
+            output_rx,
+            next_seq,
+            known_surface_versions,
+        ) {
+            tracing::debug!(error = %err, "async live client task exited");
+        }
+    });
+}
+
+fn run_async_live_client_tasks(
+    read_stream: UnixStream,
+    write_stream: UnixStream,
+    input_tx: async_live::AsyncClientInputTx,
+    output_rx: async_live::AsyncClientOutputRx,
+    next_seq: u64,
+    known_surface_versions: BTreeMap<String, u64>,
+) -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()
+        .map_err(|err| format!("failed to build async live runtime: {err}"))?;
+    runtime.block_on(async move {
+        let reader = tokio::net::UnixStream::from_std(read_stream)
+            .map_err(|err| format!("failed to register live client reader: {err}"))?;
+        let writer = tokio::net::UnixStream::from_std(write_stream)
+            .map_err(|err| format!("failed to register live client writer: {err}"))?;
+        let mut surface_source = BundledSurfaceFrameSource;
+        let mut state =
+            async_live::ClientWriteTaskState::new(next_seq, known_surface_versions);
+
+        tokio::select! {
+            result = async_live::run_client_read_task(reader, input_tx) => {
+                result.map_err(|err| format!("live client read task failed: {err:?}"))
+            }
+            result = async_live::run_client_write_task(
+                writer,
+                output_rx,
+                &mut surface_source,
+                &mut state,
+            ) => {
+                result.map_err(|err| format!("live client write task failed: {err:?}"))
+            }
+        }
+    })
+}
+
 fn accept_live_client(
     listener: &UnixListener,
     session: &mut Session,
@@ -1012,8 +1175,7 @@ fn accept_live_client(
             let error_pane_id = host_error_pane_id(&err).to_owned();
             write_host_output_error(&mut stream, session, &mut seq, &error_pane_id, err)?;
             return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
-                stream,
-                output: None,
+                transport: LiveClientTransport::Legacy { stream },
                 connection_id,
                 actor,
                 hostname: request.hostname,
@@ -1037,9 +1199,9 @@ fn accept_live_client(
         if let Some(current) = session.surface_version(&pane_id) {
             known_surface_versions.insert(pane_id, current);
         }
+        let transport = async_live_client_transport(stream, seq, known_surface_versions.clone())?;
         return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
-            stream,
-            output: None,
+            transport,
             connection_id,
             actor,
             hostname: request.hostname,
@@ -1058,8 +1220,7 @@ fn accept_live_client(
     let mut seq = 1;
     write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
     Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
-        stream,
-        output: None,
+        transport: LiveClientTransport::Legacy { stream },
         connection_id,
         actor: request.actor(),
         hostname: request.hostname,
@@ -1120,22 +1281,11 @@ fn request_actor_for_pane(request: &AttachRequest, pane_id: &str) -> Actor {
 
 fn write_presence_to_live_client(
     client: &mut LiveAttachedClient,
-    session: &mut Session,
-    actor: &Actor,
-) -> Result<(), ServeError> {
-    write_presence_frame(&mut client.stream, session, &mut client.seq, actor)
-}
-
-fn write_presence_frame(
-    stream: &mut UnixStream,
     session: &Session,
-    seq: &mut u64,
     actor: &Actor,
 ) -> Result<(), ServeError> {
-    let presence_frame = session.presence_update_frame("local-client", *seq, actor);
-    wire::write_default_frame(stream, &presence_frame)?;
-    *seq += 1;
-    Ok(())
+    let frame = session.presence_update_frame("local-client", client.seq, actor);
+    queue_reliable_frame_to_live_client(client, frame)
 }
 
 fn write_pong_frame(
@@ -1155,6 +1305,53 @@ fn write_pong_frame(
     Ok(())
 }
 
+fn queue_pong_frame_to_live_client(
+    client: &mut LiveAttachedClient,
+    session: &Session,
+    ping: &PingSummary,
+) -> Result<(), ServeError> {
+    let frame = ping.frame(
+        &session.id,
+        "local-client",
+        client.seq,
+        protocol::EnvelopeBody::Pong,
+    );
+    queue_reliable_frame_to_live_client(client, frame)
+}
+
+fn read_live_client_frame(client: &mut LiveAttachedClient) -> Result<LiveClientRead, ServeError> {
+    let Some(input) = client.async_input_mut() else {
+        let stream = client
+            .legacy_stream_mut()
+            .ok_or("live client has no readable transport")?;
+        return read_live_client_frame_from_stream(stream);
+    };
+    match input.try_recv() {
+        Ok(async_live::ClientInputEvent::Input(input)) => {
+            Ok(LiveClientRead::Frame(LiveClientFrame::Input(input)))
+        }
+        Ok(async_live::ClientInputEvent::Resize(resize)) => {
+            Ok(LiveClientRead::Frame(LiveClientFrame::Resize(resize)))
+        }
+        Ok(async_live::ClientInputEvent::Scrollback(fetch)) => {
+            Ok(LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)))
+        }
+        Ok(async_live::ClientInputEvent::Ping(ping)) => {
+            Ok(LiveClientRead::Frame(LiveClientFrame::Ping(ping)))
+        }
+        Ok(async_live::ClientInputEvent::Closed) => Ok(LiveClientRead::Closed),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Ok(LiveClientRead::NoFrame),
+        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => Ok(LiveClientRead::Closed),
+    }
+}
+
+fn live_client_has_more_input(client: &LiveAttachedClient) -> Result<bool, ServeError> {
+    let Some(stream) = client.legacy_stream() else {
+        return Ok(true);
+    };
+    Ok(stream_readable_within(stream, Duration::ZERO)?)
+}
+
 fn drain_live_client_frames(
     client: &mut LiveAttachedClient,
     session: &mut Session,
@@ -1168,17 +1365,11 @@ fn drain_live_client_frames(
     let mut changed_workspace = false;
     let mut close_after_drain = false;
     loop {
-        match read_live_client_frame_from_stream(&mut client.stream)? {
+        match read_live_client_frame(client)? {
             LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
                 client.last_seen_mono_ms = now_mono_ms;
                 if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
-                    write_scrollback_fetch_error(
-                        &mut client.stream,
-                        session,
-                        &mut client.seq,
-                        &fetch,
-                        error,
-                    )?;
+                    queue_scrollback_fetch_error_to_live_client(client, session, &fetch, error)?;
                     if error == protocol::ErrorCode::StaleVersion {
                         continue;
                     }
@@ -1191,24 +1382,17 @@ fn drain_live_client_frames(
                     fetch.start_line,
                     fetch.line_count,
                 ) else {
-                    write_pane_not_found_error(
-                        &mut client.stream,
-                        session,
-                        &mut client.seq,
-                        &fetch.pane_id,
-                    )?;
+                    queue_pane_not_found_error_to_live_client(client, session, &fetch.pane_id, 0)?;
                     return Ok(ClientDrainStatus::Closed);
                 };
-                wire::write_default_frame(&mut client.stream, &chunk)?;
-                client.seq += 1;
+                queue_reliable_frame_to_live_client(client, chunk)?;
             }
             LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                 client.last_seen_mono_ms = now_mono_ms;
                 if !Session::input_allowed(&client.actor) {
-                    write_protocol_error(
-                        &mut client.stream,
+                    queue_protocol_error_to_live_client(
+                        client,
                         session,
-                        &mut client.seq,
                         protocol::ErrorCode::PermissionDenied,
                         "resize rejected: actor is read-only",
                         Some(&resize.pane_id),
@@ -1217,12 +1401,7 @@ fn drain_live_client_frames(
                     return Ok(ClientDrainStatus::Closed);
                 }
                 if session.surface_version(&resize.pane_id).is_none() {
-                    write_pane_not_found_error(
-                        &mut client.stream,
-                        session,
-                        &mut client.seq,
-                        &resize.pane_id,
-                    )?;
+                    queue_pane_not_found_error_to_live_client(client, session, &resize.pane_id, 0)?;
                     return Ok(ClientDrainStatus::Closed);
                 }
                 let policy = session
@@ -1237,10 +1416,9 @@ fn drain_live_client_frames(
                         continue;
                     }
                     if let Err(err) = host.resize_pane(&resize.pane_id, resize.cols, resize.rows) {
-                        write_protocol_error(
-                            &mut client.stream,
+                        queue_protocol_error_to_live_client(
+                            client,
                             session,
-                            &mut client.seq,
                             protocol::ErrorCode::Unknown,
                             &format!("resize failed: {err}"),
                             Some(&resize.pane_id),
@@ -1263,10 +1441,9 @@ fn drain_live_client_frames(
                 client.last_input_mono_ms = Some(now_mono_ms);
                 let input_pane_id = input.pane_id.clone();
                 if !Session::input_allowed(&client.actor) {
-                    write_protocol_error(
-                        &mut client.stream,
+                    queue_protocol_error_to_live_client(
+                        client,
                         session,
-                        &mut client.seq,
                         protocol::ErrorCode::PermissionDenied,
                         "input rejected: actor is read-only",
                         Some(&input.pane_id),
@@ -1274,20 +1451,13 @@ fn drain_live_client_frames(
                     )?;
                     return Ok(ClientDrainStatus::Closed);
                 }
-                forward_live_input(
-                    &mut client.stream,
-                    session,
-                    host,
-                    engines,
-                    &mut client.seq,
-                    input,
-                )?;
+                forward_live_input_to_live_client(client, session, host, engines, input)?;
                 had_input = true;
                 input_pane_ids.push(input_pane_id);
             }
             LiveClientRead::Frame(LiveClientFrame::Ping(ping)) => {
                 client.last_seen_mono_ms = now_mono_ms;
-                write_pong_frame(&mut client.stream, session, &mut client.seq, &ping)?;
+                queue_pong_frame_to_live_client(client, session, &ping)?;
             }
             LiveClientRead::NoFrame => break,
             LiveClientRead::Closed => {
@@ -1296,7 +1466,7 @@ fn drain_live_client_frames(
             }
         }
 
-        if !stream_readable_within(&client.stream, Duration::ZERO)? {
+        if !live_client_has_more_input(client)? {
             break;
         }
     }
@@ -1309,34 +1479,105 @@ fn drain_live_client_frames(
     })
 }
 
+fn queue_scrollback_fetch_error_to_live_client(
+    client: &mut LiveAttachedClient,
+    session: &Session,
+    fetch: &ScrollbackFetchSummary,
+    code: protocol::ErrorCode,
+) -> Result<(), ServeError> {
+    let Some(current) = session.scrollback_version(&fetch.pane_id) else {
+        return queue_pane_not_found_error_to_live_client(client, session, &fetch.pane_id, 0);
+    };
+    queue_protocol_error_to_live_client(
+        client,
+        session,
+        code,
+        &format!(
+            "stale scrollback version for {}: client={} server={current}",
+            fetch.pane_id, fetch.known_scrollback_version
+        ),
+        Some(&fetch.pane_id),
+        0,
+    )
+}
+
+fn queue_pane_not_found_error_to_live_client(
+    client: &mut LiveAttachedClient,
+    session: &Session,
+    pane_id: &str,
+    input_seq: u64,
+) -> Result<(), ServeError> {
+    queue_protocol_error_to_live_client(
+        client,
+        session,
+        protocol::ErrorCode::PaneNotFound,
+        &format!("pane not found: {pane_id}"),
+        Some(pane_id),
+        input_seq,
+    )
+}
+
+fn queue_host_output_error_to_live_client(
+    client: &mut LiveAttachedClient,
+    session: &Session,
+    pane_id: &str,
+    error: HostError,
+) -> Result<(), ServeError> {
+    queue_protocol_error_to_live_client(
+        client,
+        session,
+        protocol::ErrorCode::Unknown,
+        &format!("output polling failed: {error}"),
+        Some(pane_id),
+        0,
+    )
+}
+
+fn queue_protocol_error_to_live_client(
+    client: &mut LiveAttachedClient,
+    session: &Session,
+    code: protocol::ErrorCode,
+    message: &str,
+    pane_id: Option<&str>,
+    input_seq: u64,
+) -> Result<(), ServeError> {
+    let frame = session.error_frame_with_context(
+        "local-client",
+        client.seq,
+        code,
+        message,
+        ErrorRetryability::NotRetryable,
+        pane_id,
+        input_seq,
+    );
+    queue_reliable_frame_to_live_client(client, frame)
+}
+
 #[instrument(
     level = "trace",
     skip_all,
     fields(pane_id = %input.pane_id, input_seq = input.input_seq)
 )]
-fn forward_live_input(
-    stream: &mut UnixStream,
+fn forward_live_input_to_live_client(
+    client: &mut LiveAttachedClient,
     session: &mut Session,
     host: &mut dyn ProcessHostOutput,
     engines: &mut PaneTerminalEngines,
-    seq: &mut u64,
     input: InputSummary,
 ) -> Result<(), ServeError> {
     if session.surface_version(&input.pane_id).is_none() {
-        write_pane_not_found_error_with_input_seq(
-            stream,
+        queue_pane_not_found_error_to_live_client(
+            client,
             session,
-            seq,
             &input.pane_id,
             input.input_seq,
         )?;
         return Ok(());
     }
     if let Some(rejection) = input.forwarding_rejection(session) {
-        write_protocol_error(
-            stream,
+        queue_protocol_error_to_live_client(
+            client,
             session,
-            seq,
             protocol::ErrorCode::PermissionDenied,
             rejection.message(),
             Some(&input.pane_id),
@@ -1347,10 +1588,9 @@ fn forward_live_input(
     let bytes = match input.forwarded_bytes(session, engines) {
         Ok(bytes) => bytes,
         Err(err) => {
-            write_protocol_error(
-                stream,
+            queue_protocol_error_to_live_client(
+                client,
                 session,
-                seq,
                 protocol::ErrorCode::Unknown,
                 &err.to_string(),
                 Some(&input.pane_id),
@@ -1370,10 +1610,9 @@ fn forward_live_input(
         if input_write_target_exited(&err, &input.pane_id) {
             return Ok(());
         }
-        write_protocol_error(
-            stream,
+        queue_protocol_error_to_live_client(
+            client,
             session,
-            seq,
             protocol::ErrorCode::Unknown,
             &format!("input forwarding failed: {err}"),
             Some(&input.pane_id),
@@ -1396,12 +1635,17 @@ fn poll_live_concurrent_sources(
         events: libc::POLLIN,
         revents: 0,
     });
-    for client in clients {
+    let mut fd_client_indices = Vec::new();
+    for (index, client) in clients.iter().enumerate() {
+        let Some(stream) = client.legacy_stream() else {
+            continue;
+        };
         fds.push(libc::pollfd {
-            fd: client.stream.as_raw_fd(),
+            fd: stream.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         });
+        fd_client_indices.push(index);
     }
     if let Some(fd) = notify_fd {
         fds.push(libc::pollfd {
@@ -1427,12 +1671,12 @@ fn poll_live_concurrent_sources(
         .first()
         .is_some_and(|fd| fd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0);
     let mut client_indices = Vec::new();
-    for index in 0..clients.len() {
+    for (poll_index, client_index) in fd_client_indices.into_iter().enumerate() {
         if fds
-            .get(index + 1)
+            .get(poll_index + 1)
             .is_some_and(|fd| fd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0)
         {
-            client_indices.push(index);
+            client_indices.push(client_index);
         }
     }
     let host_output = notify_fd.is_some_and(|_| {
@@ -2592,6 +2836,16 @@ fn surface_response_frame(
         SurfaceResponse::Patch { base_version } => {
             session.pane_surface_patch_frame_for_pane("local-client", seq, pane_id, base_version)
         }
+    }
+}
+
+fn live_client_output_error(err: async_live::ClientOutputError) -> ServeError {
+    match err {
+        async_live::ClientOutputError::ReliableQueueClosed
+        | async_live::ClientOutputError::SurfaceQueueClosed => {
+            io::Error::new(io::ErrorKind::BrokenPipe, format!("{err:?}")).into()
+        }
+        other => format!("live client output queue failed: {other:?}").into(),
     }
 }
 
@@ -15157,11 +15411,10 @@ mod tests {
 
     #[tokio::test]
     async fn live_client_surface_helper_signals_mailbox_bundle() {
-        let (_client_stream, server_stream) = UnixStream::pair().expect("socket pair");
         let (output, mut output_rx) = async_live::AsyncClientOutput::new(8, 1024 * 1024);
+        let (_input_tx, input) = async_live::async_client_input_channel(8);
         let mut client = LiveAttachedClient {
-            stream: server_stream,
-            output: Some(output),
+            transport: LiveClientTransport::Async { input, output },
             connection_id: "conn-1".to_owned(),
             actor: Actor {
                 id: "actor-1".to_owned(),

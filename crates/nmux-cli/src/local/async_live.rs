@@ -163,6 +163,10 @@ impl AsyncClientInputRx {
     pub(crate) async fn recv(&mut self) -> Option<ClientInputEvent> {
         self.rx.recv().await
     }
+
+    pub(crate) fn try_recv(&mut self) -> Result<ClientInputEvent, mpsc::error::TryRecvError> {
+        self.rx.try_recv()
+    }
 }
 
 impl AsyncClientOutput {
