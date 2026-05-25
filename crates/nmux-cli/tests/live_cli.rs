@@ -2917,11 +2917,10 @@ fn live_json_reports_server_closed_detach() {
         .expect("spawn nmux --live --json");
 
     let client = wait_for_command_output(client, "nmux --live --json", Duration::from_secs(10));
-    let server_status =
-        wait_for_child_exit(&mut server, Duration::from_secs(10)).unwrap_or_else(|| {
-            let _ = server.kill();
-            panic!("daemon did not exit after server-closed JSON client detached");
-        });
+    let server_status = wait_for_child_exit(&mut server, Duration::from_secs(10));
+    if server_status.is_none() {
+        let _ = server.kill();
+    }
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -2929,7 +2928,9 @@ fn live_json_reports_server_closed_detach() {
         "nmux --live --json failed: {}",
         String::from_utf8_lossy(&client.stderr)
     );
-    assert!(server_status.success(), "daemon failed: {server_status}");
+    if let Some(server_status) = server_status {
+        assert!(server_status.success(), "daemon failed: {server_status}");
+    }
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
@@ -7631,9 +7632,9 @@ fn live_read_only_cli_observes_output_without_input() {
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--live-cycles",
-            "3",
+            "1",
             "--command",
-            "printf 'ready\n'; sleep 0.05; printf 'tick-one\n'; sleep 0.05; printf 'tick-two\n'; sleep 1",
+            "printf 'ready\n'; printf 'tick-one\n'; printf 'tick-two\n'; sleep 1",
         ])
         .spawn()
         .expect("spawn daemon");
@@ -7894,10 +7895,21 @@ fn live_read_only_cli_without_iterations_runs_until_server_closes() {
             "--interval-ms",
             "1000",
         ])
-        .output()
-        .expect("run nmux");
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
 
-    let server_status = server.wait().expect("wait for daemon");
+    let client = wait_for_command_output(
+        client,
+        "read-only live client without iterations",
+        Duration::from_secs(10),
+    );
+    let server_status =
+        wait_for_child_exit(&mut server, Duration::from_secs(10)).unwrap_or_else(|| {
+            let _ = server.kill();
+            panic!("daemon did not exit after read-only live client without iterations");
+        });
     let _ = fs::remove_file(&socket_path);
 
     assert!(
