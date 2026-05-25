@@ -8271,7 +8271,7 @@ fn live_cycles_coalesces_delayed_echo_after_input() {
             "--live-cycles",
             "1",
             "--command",
-            "printf 'ready\\n'; while IFS= read -r line; do sleep 0.05; printf 'echo:%s\\n' \"$line\"; done",
+            "stty -icanon -echo min 9 time 20; printf 'ready\\n'; bytes=$(dd bs=9 count=1 2>/dev/null); printf 'typed:%s\\n' \"$bytes\"; sleep 0.05; printf 'echo:%s\\n' \"$bytes\"",
         ])
         .spawn()
         .expect("spawn daemon");
@@ -8286,7 +8286,7 @@ fn live_cycles_coalesces_delayed_echo_after_input() {
             "--iterations",
             "1",
             "--key",
-            "coalesce\n",
+            "coalesce!",
             "--interval-ms",
             "2000",
         ])
@@ -8305,7 +8305,7 @@ fn live_cycles_coalesces_delayed_echo_after_input() {
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stdout.contains("echo:coalesce"),
+        stdout.contains("echo:coalesce!"),
         "daemon exited before delayed echo arrived — post-input coalescing is broken:\n{stdout}"
     );
 }

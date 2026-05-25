@@ -69,7 +69,7 @@ const LIVE_IDLE_POLL_TIMEOUT: Duration = Duration::from_millis(20);
 const LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT: Duration = Duration::from_millis(20);
 const LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT: Duration = Duration::ZERO;
-const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(3);
+const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(75);
 const ASYNC_LIVE_INPUT_EVENT_CAP: usize = 1024;
 const ASYNC_LIVE_RELIABLE_FRAME_CAP: usize = 256;
 const ASYNC_LIVE_RELIABLE_BYTE_CAP: usize = 8 * 1024 * 1024;
@@ -596,6 +596,9 @@ where
 
         let leaf_pane_ids = session.leaf_pane_ids();
         let attempted_fast_output = had_input || readiness.host_output;
+        let coalesce_after_input = cycles_per_client != usize::MAX;
+        let hold_first_surface_for_coalesce =
+            had_input && coalesce_after_input && host.notify_fd().is_some();
         let mut fast_changed = false;
         if attempted_fast_output {
             let output_result = {
@@ -637,23 +640,39 @@ where
 
             if first_changed {
                 fast_changed = true;
-                let surface_span = tracing::trace_span!(
-                    "surface.write_first_changed",
-                    reason = if had_input {
-                        "post_input"
-                    } else {
-                        "host_ready"
-                    },
-                    panes = leaf_pane_ids.len()
-                );
-                let write_result = surface_span.in_scope(|| {
-                    for (index, client) in clients.iter_mut().enumerate() {
-                        if changed_workspace {
-                            let workspace_frame =
-                                session.workspace_tree_frame("local-client", client.seq);
-                            if let Err(err) =
-                                queue_reliable_frame_to_live_client(client, workspace_frame)
-                            {
+                // Bounded clients count surface frames as iterations. Hold the
+                // first post-input frame so the coalesced frame can include
+                // prompt echo plus command output.
+                if !hold_first_surface_for_coalesce {
+                    let surface_span = tracing::trace_span!(
+                        "surface.write_first_changed",
+                        reason = if had_input {
+                            "post_input"
+                        } else {
+                            "host_ready"
+                        },
+                        panes = leaf_pane_ids.len()
+                    );
+                    let write_result = surface_span.in_scope(|| {
+                        for (index, client) in clients.iter_mut().enumerate() {
+                            if changed_workspace {
+                                let workspace_frame =
+                                    session.workspace_tree_frame("local-client", client.seq);
+                                if let Err(err) =
+                                    queue_reliable_frame_to_live_client(client, workspace_frame)
+                                {
+                                    if is_socket_closed(&err) {
+                                        closed_clients.push(index);
+                                        continue;
+                                    }
+                                    return Err(err);
+                                }
+                            }
+                            if let Err(err) = signal_changed_surface_frames_to_live_client(
+                                client,
+                                session,
+                                &leaf_pane_ids,
+                            ) {
                                 if is_socket_closed(&err) {
                                     closed_clients.push(index);
                                     continue;
@@ -661,24 +680,13 @@ where
                                 return Err(err);
                             }
                         }
-                        if let Err(err) = signal_changed_surface_frames_to_live_client(
-                            client,
-                            session,
-                            &leaf_pane_ids,
-                        ) {
-                            if is_socket_closed(&err) {
-                                closed_clients.push(index);
-                                continue;
-                            }
-                            return Err(err);
-                        }
+                        Ok::<(), ServeError>(())
+                    });
+                    if let Err(err) = write_result {
+                        return Err(err);
                     }
-                    Ok::<(), ServeError>(())
-                });
-                if let Err(err) = write_result {
-                    return Err(err);
+                    changed_workspace = false;
                 }
-                changed_workspace = false;
             }
         }
 
@@ -687,28 +695,26 @@ where
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
-        let coalesce_after_input = cycles_per_client != usize::MAX;
-        let output_result =
-            if had_input && coalesce_after_input && host.notify_fd().is_some() {
-                // Use initial_changed=false: any prior fast-output changes
-                // (e.g. from a resize) were already written to clients.
-                // Start fresh so the quiet timer doesn't fire before the
-                // input echo arrives from the PTY.
-                poll_panes_output_with_host_until_poll_quiet_state(
-                    session,
-                    engines,
-                    host,
-                    &leaf_pane_ids,
-                    quiet_timeout,
-                    false,
-                )
-            } else if attempted_fast_output && host.notify_fd().is_some() {
-                Ok(false)
-            } else if host.notify_fd().is_some() {
-                Ok(false)
-            } else {
-                poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
-            };
+        let output_result = if had_input && coalesce_after_input && host.notify_fd().is_some() {
+            // Use initial_changed=false: any prior fast-output changes
+            // (e.g. from a resize) were already written to clients.
+            // Start fresh so the quiet timer doesn't fire before the
+            // input echo arrives from the PTY.
+            poll_panes_output_with_host_until_poll_quiet_state(
+                session,
+                engines,
+                host,
+                &leaf_pane_ids,
+                quiet_timeout,
+                false,
+            )
+        } else if attempted_fast_output && host.notify_fd().is_some() {
+            Ok(false)
+        } else if host.notify_fd().is_some() {
+            Ok(false)
+        } else {
+            poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
+        };
         let output_changed = match output_result {
             Ok(changed) => fast_changed || changed,
             Err(err) => {
@@ -2060,6 +2066,9 @@ fn serve_live_attached_client(
 
         let input_pane_ids = input_pane_id.iter().cloned().collect::<Vec<_>>();
         let attempted_fast_output = input_pane_id.is_some() || readiness.host_output;
+        let coalesce_after_input = cycles != usize::MAX;
+        let hold_first_surface_for_coalesce =
+            input_pane_id.is_some() && coalesce_after_input && host.notify_fd().is_some();
         let mut fast_changed = false;
         if attempted_fast_output {
             let poll_span = tracing::trace_span!(
@@ -2083,24 +2092,29 @@ fn serve_live_attached_client(
             }) {
                 Ok(true) => {
                     fast_changed = true;
-                    let surface_span = tracing::trace_span!(
-                        "surface.write_first_changed",
-                        reason = if input_pane_id.is_some() {
-                            "post_input"
-                        } else {
-                            "host_ready"
-                        },
-                        panes = leaf_pane_ids.len()
-                    );
-                    surface_span.in_scope(|| {
-                        write_changed_surface_frames(
-                            stream,
-                            session,
-                            &mut seq,
-                            &leaf_pane_ids,
-                            &mut known_surface_versions,
-                        )
-                    })?;
+                    // Bounded clients count surface frames as iterations. Hold
+                    // the first post-input frame so delayed output can be
+                    // delivered in the same coalesced frame.
+                    if !hold_first_surface_for_coalesce {
+                        let surface_span = tracing::trace_span!(
+                            "surface.write_first_changed",
+                            reason = if input_pane_id.is_some() {
+                                "post_input"
+                            } else {
+                                "host_ready"
+                            },
+                            panes = leaf_pane_ids.len()
+                        );
+                        surface_span.in_scope(|| {
+                            write_changed_surface_frames(
+                                stream,
+                                session,
+                                &mut seq,
+                                &leaf_pane_ids,
+                                &mut known_surface_versions,
+                            )
+                        })?;
+                    }
                 }
                 Ok(false) => {}
                 Err(err) => {
@@ -2116,51 +2130,48 @@ fn serve_live_attached_client(
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
-        let coalesce_after_input = cycles != usize::MAX;
-        let output_result = if input_pane_id.is_some()
-            && host.notify_fd().is_some()
-            && coalesce_after_input
-        {
-            let poll_span = tracing::trace_span!(
-                "host.output.poll",
-                reason = "post_input",
-                panes = leaf_pane_ids.len(),
-                notify_fd = true,
-                after_first = fast_changed
-            );
-            // Use initial_changed=false: any prior fast-output changes
-            // (e.g. from a resize) were already written to the client.
-            // Start fresh so the quiet timer doesn't fire before the
-            // input echo arrives from the PTY.
-            poll_span.in_scope(|| {
-                poll_panes_output_with_host_until_poll_quiet_state(
-                    session,
-                    engines,
-                    host,
-                    &leaf_pane_ids,
-                    quiet_timeout,
-                    false,
-                )
-            })
-        } else if attempted_fast_output && host.notify_fd().is_some() {
-            Ok(false)
-        } else if host.notify_fd().is_some() {
-            Ok(false)
-        } else {
-            let poll_span = tracing::trace_span!(
-                "host.output.poll",
-                reason = if input_pane_id.is_some() {
-                    "post_input"
-                } else {
-                    "background"
-                },
-                panes = leaf_pane_ids.len(),
-                notify_fd = false
-            );
-            poll_span.in_scope(|| {
-                poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
-            })
-        };
+        let output_result =
+            if input_pane_id.is_some() && host.notify_fd().is_some() && coalesce_after_input {
+                let poll_span = tracing::trace_span!(
+                    "host.output.poll",
+                    reason = "post_input",
+                    panes = leaf_pane_ids.len(),
+                    notify_fd = true,
+                    after_first = fast_changed
+                );
+                // Use initial_changed=false: any prior fast-output changes
+                // (e.g. from a resize) were already written to the client.
+                // Start fresh so the quiet timer doesn't fire before the
+                // input echo arrives from the PTY.
+                poll_span.in_scope(|| {
+                    poll_panes_output_with_host_until_poll_quiet_state(
+                        session,
+                        engines,
+                        host,
+                        &leaf_pane_ids,
+                        quiet_timeout,
+                        false,
+                    )
+                })
+            } else if attempted_fast_output && host.notify_fd().is_some() {
+                Ok(false)
+            } else if host.notify_fd().is_some() {
+                Ok(false)
+            } else {
+                let poll_span = tracing::trace_span!(
+                    "host.output.poll",
+                    reason = if input_pane_id.is_some() {
+                        "post_input"
+                    } else {
+                        "background"
+                    },
+                    panes = leaf_pane_ids.len(),
+                    notify_fd = false
+                );
+                poll_span.in_scope(|| {
+                    poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
+                })
+            };
         let output_changed = match output_result {
             Ok(changed) => fast_changed || changed,
             Err(err) => {
