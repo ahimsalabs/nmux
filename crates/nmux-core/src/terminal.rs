@@ -281,7 +281,7 @@ fn terminal_engine_for_kind(kind: TerminalEngineKind) -> Box<dyn TerminalEngine>
 }
 
 #[cfg(feature = "libghostty-vt")]
-pub(crate) fn libghostty_vt_supports_kitty_graphics() -> bool {
+pub fn libghostty_vt_supports_kitty_graphics() -> bool {
     libghostty_vt::build_info::supports_kitty_graphics().unwrap_or(false)
 }
 

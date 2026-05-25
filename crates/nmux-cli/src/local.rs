@@ -256,6 +256,9 @@ fn serve_stream_impl<H: ProcessHost + ProcessOutput>(
                 ControlCommandOutcome::Shutdown => Err(ServeError::SessionShutdown),
             };
         }
+        ClientInitialFrame::HealthProbe(probe) => {
+            return serve_health_probe(&mut stream, probe, session, Some(host), Some(engines));
+        }
     };
     let Some(pane_id) = attach_target_pane_id(session, &request) else {
         let mut seq = 1;
@@ -697,6 +700,10 @@ fn accept_live_client(
                 ControlCommandOutcome::Shutdown => Ok(Some(LiveClientAccept::Shutdown)),
             };
         }
+        ClientInitialFrame::HealthProbe(probe) => {
+            serve_health_probe(&mut stream, probe, session, Some(host), Some(engines))?;
+            return Ok(Some(LiveClientAccept::Command));
+        }
     };
     let leaf_pane_ids = session.leaf_pane_ids();
     if let Some(pane_id) = attach_target_pane_id(session, &request) {
@@ -749,7 +756,7 @@ fn accept_live_client(
 
 fn write_live_attach_initial(
     stream: &mut UnixStream,
-    session: &Session,
+    session: &mut Session,
     request: &AttachRequest,
     pane_id: &str,
     seq: &mut u64,
@@ -792,7 +799,7 @@ fn request_actor_for_pane(request: &AttachRequest, pane_id: &str) -> Actor {
 
 fn write_presence_to_live_client(
     client: &mut LiveAttachedClient,
-    session: &Session,
+    session: &mut Session,
     actor: &Actor,
 ) -> Result<(), ServeError> {
     write_presence_frame(&mut client.stream, session, &mut client.seq, actor)
@@ -1120,6 +1127,9 @@ fn serve_next(
                 ControlCommandOutcome::Shutdown => Err(ServeError::SessionShutdown),
             }
         }
+        ClientInitialFrame::HealthProbe(probe) => {
+            serve_health_probe(&mut stream, probe, session, None, Some(engines))
+        }
     }
 }
 
@@ -1137,6 +1147,9 @@ fn serve_next_with_output(
                 ControlCommandOutcome::Continue => Ok(()),
                 ControlCommandOutcome::Shutdown => Err(ServeError::SessionShutdown),
             };
+        }
+        ClientInitialFrame::HealthProbe(probe) => {
+            return serve_health_probe(&mut stream, probe, session, None, Some(engines));
         }
     };
     if let Some(output) = output {
@@ -1705,6 +1718,7 @@ fn socket_closed_error(err: &io::Error) -> bool {
 enum ClientInitialFrame {
     Attach(AttachRequest),
     Control(ControlCommandSummary),
+    HealthProbe(PresenceSummary),
 }
 
 fn read_client_initial_frame<R: Read>(reader: &mut R) -> io::Result<ClientInitialFrame> {
@@ -1721,6 +1735,21 @@ fn read_client_initial_frame<R: Read>(reader: &mut R) -> io::Result<ClientInitia
         }
         protocol::EnvelopeBody::ControlCommand => {
             control_command_from_frame(&frame).map(ClientInitialFrame::Control)
+        }
+        protocol::EnvelopeBody::PresenceUpdate => {
+            let presence = presence_from_frame(&frame).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid presence update frame: {err}"),
+                )
+            })?;
+            if presence.kind != protocol::PresenceKind::HealthProbe {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unexpected initial presence kind: {:?}", presence.kind),
+                ));
+            }
+            Ok(ClientInitialFrame::HealthProbe(presence))
         }
         other => Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -1760,7 +1789,7 @@ fn serve_attached_client(
     engines: &mut PaneTerminalEngines,
 ) -> Result<(), ServeError> {
     let mut seq = 1;
-    let Some((pane_id, actor)) = write_attach_handshake(stream, &request, session, &mut seq)?
+    let Some((_pane_id, actor)) = write_attach_handshake(stream, &request, session, &mut seq)?
     else {
         return Ok(());
     };
@@ -1824,6 +1853,99 @@ fn serve_attached_client(
 
 fn active_pane_id(session: &Session) -> Option<&str> {
     session.active_pane_id()
+}
+
+fn serve_health_probe(
+    stream: &mut UnixStream,
+    probe: PresenceSummary,
+    session: &mut Session,
+    mut host: Option<&mut dyn ProcessHostOutput>,
+    mut engines: Option<&mut PaneTerminalEngines>,
+) -> Result<(), ServeError> {
+    let mut seq = 1;
+    let Some(pane_id) = presence_target_pane_id(session, &probe) else {
+        write_presence_target_not_found_error(stream, session, &mut seq, &probe)?;
+        return Ok(());
+    };
+    if let (Some(host), Some(engines)) = (host.as_deref_mut(), engines.as_deref_mut()) {
+        let leaf_pane_ids = session.leaf_pane_ids();
+        if let Some(notify_fd) = host.notify_fd() {
+            drain_notify_fd(notify_fd)?;
+        }
+        if let Err(err) = poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
+        {
+            let error_pane_id = host_error_pane_id(&err).to_owned();
+            write_protocol_error_with_retryability(
+                stream,
+                session,
+                &mut seq,
+                protocol::ErrorCode::Unknown,
+                &err.to_string(),
+                ErrorRetryability::Retryable,
+                Some(&error_pane_id),
+                0,
+            )?;
+            return Ok(());
+        }
+    }
+    if let Some(host) = host.as_deref_mut()
+        && let Err(err) = host.check_pane(&pane_id)
+    {
+        write_protocol_error_with_retryability(
+            stream,
+            session,
+            &mut seq,
+            protocol::ErrorCode::Unknown,
+            &err.to_string(),
+            ErrorRetryability::Retryable,
+            Some(&pane_id),
+            0,
+        )?;
+        return Ok(());
+    }
+
+    let heartbeat = PresenceSummary {
+        actor_id: "nmuxd".to_owned(),
+        user_id: session.id.clone(),
+        display_name: "nmuxd".to_owned(),
+        mode: AttachMode::ReadOnly,
+        kind: protocol::PresenceKind::Heartbeat,
+        focused_pane_id: Some(pane_id),
+    };
+    write_presence_summary_frame(stream, session, &mut seq, &heartbeat)
+}
+
+fn presence_target_pane_id(session: &Session, presence: &PresenceSummary) -> Option<String> {
+    match presence.focused_pane_id.as_deref() {
+        Some(target_id) => {
+            if session.surface_version(target_id).is_some() {
+                return Some(target_id.to_owned());
+            }
+            session
+                .tabs
+                .iter()
+                .find(|tab| tab.id == target_id)
+                .and_then(|tab| {
+                    session
+                        .surface_version(&tab.active_pane_id)
+                        .map(|_| tab.active_pane_id.clone())
+                })
+        }
+        None => active_pane_id(session).map(ToOwned::to_owned),
+    }
+}
+
+fn write_presence_target_not_found_error(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    presence: &PresenceSummary,
+) -> Result<(), ServeError> {
+    if let Some(pane_id) = presence.focused_pane_id.as_deref() {
+        write_pane_not_found_error(stream, session, seq, pane_id)
+    } else {
+        write_active_pane_not_found_error(stream, session, seq)
+    }
 }
 
 fn attach_target_pane_id(session: &mut Session, request: &AttachRequest) -> Option<String> {
@@ -2059,12 +2181,35 @@ fn write_protocol_error(
     pane_id: Option<&str>,
     input_seq: u64,
 ) -> Result<(), ServeError> {
+    write_protocol_error_with_retryability(
+        stream,
+        session,
+        seq,
+        code,
+        message,
+        ErrorRetryability::NotRetryable,
+        pane_id,
+        input_seq,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_protocol_error_with_retryability(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    code: protocol::ErrorCode,
+    message: &str,
+    retryability: ErrorRetryability,
+    pane_id: Option<&str>,
+    input_seq: u64,
+) -> Result<(), ServeError> {
     let error = session.error_frame_with_context(
         "local-client",
         *seq,
         code,
         message,
-        ErrorRetryability::NotRetryable,
+        retryability,
         pane_id,
         input_seq,
     );
@@ -2595,18 +2740,48 @@ pub fn attach_from_stream(
         let error = error_summary_from_frame(&workspace_frame)?;
         return Err(server_error(error));
     }
-    let workspace = workspace_summary_from_frame(&workspace_frame)?;
+    let mut workspace = workspace_summary_from_frame(&workspace_frame)?;
 
-    let presence_frame = wire::read_default_frame(stream)?;
-    let presence = presence_from_frame(&presence_frame)?;
+    let presence = loop {
+        let frame = wire::read_default_frame(stream)?;
+        match protocol::size_prefixed_root_as_envelope(&frame)?.body_type() {
+            protocol::EnvelopeBody::PresenceUpdate => break presence_from_frame(&frame)?,
+            protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
+                workspace = workspace_summary_from_frame(&frame)?;
+            }
+            protocol::EnvelopeBody::Error => return Err(server_error(error_summary_from_frame(&frame)?)),
+            other => return Err(format!("unexpected envelope body: {other:?}").into()),
+        }
+    };
 
-    let status_frame = wire::read_default_frame(stream)?;
-    let status = attach_status_from_frame(&status_frame)?;
+    let status = loop {
+        let frame = wire::read_default_frame(stream)?;
+        match protocol::size_prefixed_root_as_envelope(&frame)?.body_type() {
+            protocol::EnvelopeBody::AttachStatus => break attach_status_from_frame(&frame)?,
+            protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
+                workspace = workspace_summary_from_frame(&frame)?;
+            }
+            protocol::EnvelopeBody::Error => return Err(server_error(error_summary_from_frame(&frame)?)),
+            other => return Err(format!("unexpected envelope body: {other:?}").into()),
+        }
+    };
     let surface = match status.surface_state {
         protocol::AttachSurfaceState::Current => None,
         protocol::AttachSurfaceState::Snapshot | protocol::AttachSurfaceState::Patch => {
-            let surface_frame = wire::read_default_frame(stream)?;
-            let update = surface_update_from_frame(&surface_frame)?;
+            let update = loop {
+                let frame = wire::read_default_frame(stream)?;
+                match protocol::size_prefixed_root_as_envelope(&frame)?.body_type() {
+                    protocol::EnvelopeBody::PaneSurfaceSnapshot
+                    | protocol::EnvelopeBody::PaneSurfacePatch => {
+                        break surface_update_from_frame(&frame)?;
+                    }
+                    protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
+                        workspace = workspace_summary_from_frame(&frame)?;
+                    }
+                    protocol::EnvelopeBody::Error => return Err(server_error(error_summary_from_frame(&frame)?)),
+                    other => return Err(format!("unexpected envelope body: {other:?}").into()),
+                }
+            };
             validate_attach_surface_update(&status, &update)?;
             Some(update)
         }
@@ -3390,7 +3565,8 @@ fn read_scrollback_response_from_stream(
                     .expect("pending updates checked")
                     .push(surface_update_from_frame(&frame)?);
             }
-            protocol::EnvelopeBody::PresenceUpdate => {}
+            protocol::EnvelopeBody::PresenceUpdate
+            | protocol::EnvelopeBody::WorkspaceTreeSnapshot => {}
             other => return Err(format!("unexpected envelope body: {other:?}").into()),
         }
     }
@@ -3777,8 +3953,21 @@ pub(crate) fn presence_from_frame(frame: &[u8]) -> Result<PresenceSummary, Serve
         user_id: required_string(presence.user_id(), "presence user_id")?,
         display_name: required_string(presence.display_name(), "presence display_name")?,
         mode: attach_mode_from_protocol(presence.mode())?,
+        kind: presence.kind(),
         focused_pane_id,
     })
+}
+
+fn write_presence_summary_frame<W: Write>(
+    writer: &mut W,
+    session: &Session,
+    seq: &mut u64,
+    presence: &PresenceSummary,
+) -> Result<(), ServeError> {
+    let frame = presence.frame(&session.id, "local-client", *seq);
+    wire::write_default_frame(writer, &frame)?;
+    *seq += 1;
+    Ok(())
 }
 
 pub(crate) fn attach_status_from_frame(
@@ -3885,6 +4074,37 @@ pub(crate) fn scrollback_chunk_from_frame(
 pub fn write_attach_request<W: Write>(writer: &mut W, request: &AttachRequest) -> io::Result<()> {
     let frame = request.frame();
     wire::write_frame(writer, &frame, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)
+}
+
+pub fn write_health_probe<W: Write>(
+    writer: &mut W,
+    probe: &PresenceSummary,
+) -> io::Result<()> {
+    let frame = probe.frame("local", "local-client", 0);
+    wire::write_frame(writer, &frame, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)?;
+    writer.flush()
+}
+
+pub fn read_health_probe_response<R: Read>(
+    reader: &mut R,
+) -> Result<PresenceSummary, Box<dyn std::error::Error>> {
+    loop {
+        let frame = wire::read_default_frame(reader)?;
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+        match envelope.body_type() {
+            protocol::EnvelopeBody::PresenceUpdate => {
+                let presence = presence_from_frame(&frame)?;
+                if presence.kind == protocol::PresenceKind::Heartbeat {
+                    return Ok(presence);
+                }
+            }
+            protocol::EnvelopeBody::Error => return Err(server_error(error_summary_from_frame(&frame)?)),
+            protocol::EnvelopeBody::WorkspaceTreeSnapshot
+            | protocol::EnvelopeBody::PaneSurfaceSnapshot
+            | protocol::EnvelopeBody::PaneSurfacePatch => {}
+            other => return Err(format!("unexpected health response frame: {other:?}").into()),
+        }
+    }
 }
 
 pub(crate) fn write_control_command<W: Write>(
@@ -4685,7 +4905,50 @@ pub struct PresenceSummary {
     pub user_id: String,
     pub display_name: String,
     pub mode: AttachMode,
+    pub kind: protocol::PresenceKind,
     pub focused_pane_id: Option<String>,
+}
+
+impl PresenceSummary {
+    fn frame(&self, session_id: &str, connection_id: &str, seq: u64) -> Vec<u8> {
+        let mut builder = FlatBufferBuilder::new();
+        let actor_id = builder.create_string(&self.actor_id);
+        let user_id = builder.create_string(&self.user_id);
+        let display_name = builder.create_string(&self.display_name);
+        let focused_pane_id = self
+            .focused_pane_id
+            .as_ref()
+            .map(|focused_pane_id| builder.create_string(focused_pane_id));
+        let presence = protocol::PresenceUpdate::create(
+            &mut builder,
+            &protocol::PresenceUpdateArgs {
+                actor_id: Some(actor_id),
+                user_id: Some(user_id),
+                display_name: Some(display_name),
+                mode: attach_mode_as_protocol(self.mode),
+                kind: self.kind,
+                focused_pane_id,
+            },
+        );
+
+        let session_id = builder.create_string(session_id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::PresenceUpdate,
+                body: Some(presence.as_union_value()),
+            },
+        );
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        builder.finished_data().to_vec()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4778,8 +5041,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use nmux_core::host::{
-        HostError, HostEvent, HostSpec, PaneProcess, PlanningHost, ProcessHost, ProcessOutput,
-        ProcessStatus, RecordingOutput,
+        CommandSpec, HostError, HostEvent, HostKind, HostSpec, PaneProcess, PlanningHost, ProcessHost,
+        ProcessOutput, ProcessStatus, RecordingOutput,
     };
     use nmux_core::terminal::{
         CELL_RUN_FLAG_HYPERLINK_PRESENT, CellRun, PaneStyle, TerminalEngine, TerminalInput,
@@ -6151,6 +6414,18 @@ mod tests {
             user_id: "local-user".to_owned(),
             display_name: "local".to_owned(),
             mode,
+            kind: protocol::PresenceKind::Joined,
+            focused_pane_id: Some("pane-1".to_owned()),
+        }
+    }
+
+    fn health_probe_summary() -> PresenceSummary {
+        PresenceSummary {
+            actor_id: "probe-actor".to_owned(),
+            user_id: "probe-user".to_owned(),
+            display_name: "probe".to_owned(),
+            mode: AttachMode::ReadWrite,
+            kind: protocol::PresenceKind::HealthProbe,
             focused_pane_id: Some("pane-1".to_owned()),
         }
     }
@@ -6242,6 +6517,7 @@ mod tests {
                 user_id: "local-user".to_owned(),
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
+                kind: protocol::PresenceKind::Joined,
                 focused_pane_id: Some("pane-1".to_owned()),
             }
         );
@@ -9214,6 +9490,7 @@ mod tests {
                 user_id: "writer-user".to_owned(),
                 display_name: "Writer".to_owned(),
                 mode: AttachMode::ReadWrite,
+                kind: protocol::PresenceKind::Joined,
                 focused_pane_id: Some("pane-1".to_owned()),
             })
         );
@@ -9224,6 +9501,7 @@ mod tests {
                 user_id: "reader-user".to_owned(),
                 display_name: "Reader".to_owned(),
                 mode: AttachMode::ReadOnly,
+                kind: protocol::PresenceKind::Joined,
                 focused_pane_id: Some("pane-1".to_owned()),
             })
         );
@@ -13049,9 +13327,75 @@ mod tests {
                 user_id: "local-user".to_owned(),
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
+                kind: protocol::PresenceKind::Joined,
                 focused_pane_id: Some("pane-1".to_owned()),
             }
         );
+    }
+
+    #[test]
+    fn health_probe_returns_heartbeat_without_host_side_effects() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &HostSpec::local("local", CommandSpec::new("sh")))
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            ServeConfig::live(1, usize::MAX)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve health probe");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_health_probe(&mut stream, &health_probe_summary()).expect("write health probe");
+        let heartbeat = read_health_probe_response(&mut stream).expect("health response");
+        let host = server.join().expect("server thread");
+
+        assert_eq!(heartbeat.kind, protocol::PresenceKind::Heartbeat);
+        assert_eq!(heartbeat.focused_pane_id.as_deref(), Some("pane-1"));
+        assert_eq!(
+            host.events(),
+            &[HostEvent::Started {
+                pane_id: "pane-1".to_owned(),
+                host_id: "local".to_owned(),
+                kind: HostKind::Local,
+            }]
+        );
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn health_probe_reports_stopped_pane_as_retryable_error() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &HostSpec::local("local", CommandSpec::new("sh")))
+            .expect("start planning pane");
+        host.stop_pane("pane-1").expect("stop planning pane");
+
+        let server = thread::spawn(move || {
+            ServeConfig::live(1, usize::MAX)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve health probe");
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_health_probe(&mut stream, &health_probe_summary()).expect("write health probe");
+        let err = read_health_probe_response(&mut stream).expect_err("health should fail");
+        server.join().expect("server thread");
+
+        let error = err.downcast_ref::<ServerError>().expect("server error");
+        assert!(error.error.retryable);
+        assert_eq!(error.error.pane_id.as_deref(), Some("pane-1"));
+        assert!(
+            error
+                .error
+                .message
+                .contains("pane process is not running: pane-1")
+        );
+        let _ = fs::remove_file(socket_path);
     }
 
     #[test]
@@ -14649,6 +14993,16 @@ mod tests {
             })
         }
 
+        fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+            if self.running {
+                Ok(())
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
+        }
+
         fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
             if !self.running {
                 return Err(HostError::NotRunning {
@@ -14733,6 +15087,16 @@ mod tests {
             })
         }
 
+        fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+            if self.running {
+                Ok(())
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
+        }
+
         fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
             if !self.running {
                 return Err(HostError::NotRunning {
@@ -14814,6 +15178,16 @@ mod tests {
             })
         }
 
+        fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+            if self.running {
+                Ok(())
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
+        }
+
         fn write_input(&mut self, pane_id: &str, _bytes: &[u8]) -> Result<(), HostError> {
             if !self.running {
                 return Err(HostError::NotRunning {
@@ -14881,6 +15255,16 @@ mod tests {
                 host_id: spec.id.clone(),
                 status: ProcessStatus::Running,
             })
+        }
+
+        fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+            if self.running {
+                Ok(())
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
         }
 
         fn write_input(&mut self, pane_id: &str, _bytes: &[u8]) -> Result<(), HostError> {
@@ -14952,6 +15336,16 @@ mod tests {
                 host_id: spec.id.clone(),
                 status: ProcessStatus::Running,
             })
+        }
+
+        fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+            if self.running {
+                Ok(())
+            } else {
+                Err(HostError::NotRunning {
+                    pane_id: pane_id.to_owned(),
+                })
+            }
         }
 
         fn write_input(&mut self, pane_id: &str, _bytes: &[u8]) -> Result<(), HostError> {

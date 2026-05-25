@@ -272,7 +272,7 @@ fn start_default_daemon(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn default_daemon_needs_restart(args: &Args) -> bool {
-    default_daemon_resize_probe_needs_restart(args)
+    default_daemon_health_probe_needs_restart(args)
 }
 
 fn wait_for_default_daemon_attach(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -309,7 +309,7 @@ fn wait_for_default_daemon_attach(args: &Args) -> Result<(), Box<dyn std::error:
     Err(last_error.unwrap_or_else(|| "default daemon did not become attachable".into()))
 }
 
-fn default_daemon_resize_probe_needs_restart(args: &Args) -> bool {
+fn default_daemon_health_probe_needs_restart(args: &Args) -> bool {
     let mut stream = match local::connect_to_daemon_with_timeout(
         &args.socket_path,
         Duration::from_millis(args.startup_timeout_ms),
@@ -318,90 +318,24 @@ fn default_daemon_resize_probe_needs_restart(args: &Args) -> bool {
         Err(_) => return true,
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(args.startup_timeout_ms)));
-    let request = local::AttachRequest {
+    let probe = local::PresenceSummary {
         actor_id: args.actor_id.clone(),
         user_id: args.user_id.clone(),
         display_name: args.display_name.clone(),
         mode: AttachMode::ReadWrite,
+        kind: protocol::PresenceKind::HealthProbe,
         focused_pane_id: args
             .target_pane_id
             .clone()
             .or_else(|| args.target_tab_id.clone()),
-        known_surfaces: Vec::new(),
     };
-    if local::write_attach_request(&mut stream, &request).is_err() {
+    if local::write_health_probe(&mut stream, &probe).is_err() {
         return true;
     }
-    let snapshot = match local::attach_from_stream(&mut stream) {
-        Ok(snapshot) => snapshot,
-        Err(err) => return default_attach_error_needs_restart(err.as_ref()),
-    };
-    let (cols, rows) = default_probe_resize();
-    let alternate_cols = cols.saturating_sub(1).max(1);
-    let mut sequence = local::ClientFrameSequence::default();
-    if local::send_resize_intent_with_reason_and_sequence(
-        &mut stream,
-        &mut sequence,
-        &snapshot.status.pane_id,
-        alternate_cols,
-        rows,
-        protocol::ResizeReason::FrontendViewport,
-    )
-    .is_err()
-    {
-        return true;
+    match local::read_health_probe_response(&mut stream) {
+        Ok(heartbeat) => heartbeat.kind != protocol::PresenceKind::Heartbeat,
+        Err(err) => default_attach_error_needs_restart(err.as_ref()),
     }
-    if drain_default_resize_probe(&mut stream, Duration::from_millis(40)) {
-        return true;
-    }
-    std::thread::sleep(Duration::from_millis(50));
-    if local::send_raw_input_with_sequence(
-        &mut stream,
-        &mut sequence,
-        &snapshot.status.pane_id,
-        &[],
-    )
-    .is_err()
-    {
-        return true;
-    }
-    if drain_default_resize_probe(&mut stream, Duration::from_millis(120)) {
-        return true;
-    }
-    if local::send_resize_intent_with_reason_and_sequence(
-        &mut stream,
-        &mut sequence,
-        &snapshot.status.pane_id,
-        cols,
-        rows,
-        protocol::ResizeReason::UserCommand,
-    )
-    .is_err()
-    {
-        return true;
-    }
-    drain_default_resize_probe(&mut stream, Duration::from_millis(500))
-}
-
-fn drain_default_resize_probe(stream: &mut UnixStream, timeout: Duration) -> bool {
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(20)));
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        match local::read_live_surface_update_from_stream(stream) {
-            Ok(local::LiveSurfaceRead::Error(error)) => {
-                return error_summary_needs_default_restart(&error);
-            }
-            Ok(local::LiveSurfaceRead::Closed) => return true,
-            Ok(local::LiveSurfaceRead::NoFrame) => {}
-            Err(_) => return false,
-            Ok(
-                local::LiveSurfaceRead::Workspace(_)
-                | local::LiveSurfaceRead::Update(_)
-                | local::LiveSurfaceRead::Presence(_),
-            ) => {}
-        }
-    }
-    false
 }
 
 fn default_attach_error_needs_restart(error: &(dyn std::error::Error + 'static)) -> bool {
@@ -418,12 +352,6 @@ fn default_live_error_needs_restart(error: &(dyn std::error::Error + 'static)) -
     error.to_string().contains("pane process is not running")
         || error.to_string().contains("failed to fill whole buffer")
         || error.to_string().contains("Broken pipe")
-}
-
-fn default_probe_resize() -> (u32, u32) {
-    terminal::size()
-        .map(|(cols, rows)| (u32::from(cols), u32::from(rows)))
-        .unwrap_or((80, 24))
 }
 
 fn replace_default_daemon_socket(args: &Args) {
@@ -6142,6 +6070,7 @@ mod tests {
                 user_id: "user-1".to_owned(),
                 display_name: "Writer".to_owned(),
                 mode: AttachMode::ReadWrite,
+                kind: protocol::PresenceKind::Joined,
                 focused_pane_id: Some("pane-1".to_owned()),
             }),
             "{\"event\":\"presence\",\"presence\":{\"actor_id\":\"writer\",\"user_id\":\"user-1\",\"display_name\":\"Writer\",\"mode\":\"read-write\",\"focused_pane_id\":\"pane-1\"}}"

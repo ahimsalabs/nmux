@@ -192,6 +192,7 @@ impl std::error::Error for HostError {}
 
 pub trait ProcessHost {
     fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError>;
+    fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError>;
     fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError>;
     fn resize_pane(&mut self, pane_id: &str, cols: u32, rows: u32) -> Result<(), HostError>;
     fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError>;
@@ -354,6 +355,28 @@ impl LocalProcessHost {
             .ok_or_else(|| HostError::NotRunning {
                 pane_id: pane_id.to_owned(),
             })
+    }
+
+    fn reap_exited_process(&mut self, pane_id: &str) -> Result<bool, HostError> {
+        let process = self
+            .processes
+            .get_mut(pane_id)
+            .ok_or_else(|| HostError::NotRunning {
+                pane_id: pane_id.to_owned(),
+            })?;
+        if process.process.status != ProcessStatus::Running {
+            return Ok(true);
+        }
+        if process
+            .child
+            .try_wait()
+            .map_err(|error| host_io_error(pane_id, "try_wait", error))?
+            .is_some()
+        {
+            process.process.status = ProcessStatus::Exited;
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 
@@ -653,6 +676,15 @@ impl ProcessHost for LocalPtyHost {
         Ok(process)
     }
 
+    fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+        if self.reap_exited_process(pane_id)? {
+            return Err(HostError::NotRunning {
+                pane_id: pane_id.to_owned(),
+            });
+        }
+        self.process_mut(pane_id).map(|_| ())
+    }
+
     fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
         if self.reap_exited_process(pane_id)? {
             return Err(HostError::NotRunning {
@@ -791,6 +823,15 @@ impl ProcessHost for LocalProcessHost {
         Ok(process)
     }
 
+    fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+        if self.reap_exited_process(pane_id)? {
+            return Err(HostError::NotRunning {
+                pane_id: pane_id.to_owned(),
+            });
+        }
+        self.process_mut(pane_id).map(|_| ())
+    }
+
     fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
         let process = self.process_mut(pane_id)?;
         let stdin = process
@@ -887,6 +928,10 @@ impl ProcessHost for PlanningHost {
         Ok(process)
     }
 
+    fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+        self.running_process(pane_id).map(|_| ())
+    }
+
     fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
         self.running_process(pane_id)?;
         self.events.push(HostEvent::Input {
@@ -932,6 +977,12 @@ impl ProcessHost for UnsupportedSandboxHost {
         Err(HostError::UnsupportedHostKind {
             host_id: spec.id.clone(),
             kind: spec.kind.clone(),
+        })
+    }
+
+    fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+        Err(HostError::NotRunning {
+            pane_id: pane_id.to_owned(),
         })
     }
 
