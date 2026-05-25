@@ -12,7 +12,7 @@ see all panes restored.
 
 ## Next features (priority order)
 
-- Supply-chain pin-change review gate (issue #7)
+None queued.
 
 ## Test gaps to close
 
