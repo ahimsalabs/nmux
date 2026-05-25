@@ -6,4 +6,4 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-flatbuffers = "=25.12.19"
+flatbuffers.workspace = true
