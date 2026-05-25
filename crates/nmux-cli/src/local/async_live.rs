@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 use std::io;
+use std::io::Write as _;
+use std::os::unix::net::UnixStream as StdUnixStream;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{
@@ -55,6 +58,10 @@ pub(crate) enum ClientOutputError {
         pending: usize,
         frame_len: usize,
     },
+    SurfaceByteQueueFull {
+        cap: usize,
+        pending: usize,
+    },
     ReliableQueueClosed,
     SurfaceQueueClosed,
     Wire(String),
@@ -88,10 +95,16 @@ pub(crate) enum ClientWriteEvent {
 #[derive(Clone)]
 pub(crate) struct AsyncClientInputTx {
     tx: mpsc::Sender<ClientInputEvent>,
+    wake: Option<AsyncInputWake>,
 }
 
 pub(crate) struct AsyncClientInputRx {
     rx: mpsc::Receiver<ClientInputEvent>,
+}
+
+#[derive(Clone)]
+pub(crate) struct AsyncInputWake {
+    writer: Arc<Mutex<StdUnixStream>>,
 }
 
 pub(crate) struct AsyncClientOutput {
@@ -100,6 +113,7 @@ pub(crate) struct AsyncClientOutput {
     latest_surfaces: SurfaceSignalSet,
     reliable_frame_cap: usize,
     reliable_byte_cap: usize,
+    surface_byte_cap: usize,
     pending_reliable_bytes: Arc<AtomicUsize>,
 }
 
@@ -147,7 +161,23 @@ impl ClientWriteTaskState {
 
 pub(crate) fn async_client_input_channel(cap: usize) -> (AsyncClientInputTx, AsyncClientInputRx) {
     let (tx, rx) = mpsc::channel(cap);
-    (AsyncClientInputTx { tx }, AsyncClientInputRx { rx })
+    (AsyncClientInputTx { tx, wake: None }, AsyncClientInputRx { rx })
+}
+
+pub(crate) fn async_client_input_channel_with_wake(
+    cap: usize,
+    wake_writer: StdUnixStream,
+) -> (AsyncClientInputTx, AsyncClientInputRx) {
+    let (tx, rx) = mpsc::channel(cap);
+    (
+        AsyncClientInputTx {
+            tx,
+            wake: Some(AsyncInputWake {
+                writer: Arc::new(Mutex::new(wake_writer)),
+            }),
+        },
+        AsyncClientInputRx { rx },
+    )
 }
 
 impl AsyncClientInputTx {
@@ -155,7 +185,24 @@ impl AsyncClientInputTx {
         self.tx
             .send(event)
             .await
-            .map_err(|_| ClientInputError::EventQueueClosed)
+            .map_err(|_| ClientInputError::EventQueueClosed)?;
+        if let Some(wake) = self.wake.as_ref() {
+            wake.notify();
+        }
+        Ok(())
+    }
+}
+
+impl AsyncInputWake {
+    fn notify(&self) {
+        let Ok(mut writer) = self.writer.lock() else {
+            return;
+        };
+        match writer.write(&[1]) {
+            Ok(_) => {}
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
+            Err(_) => {}
+        }
     }
 }
 
@@ -185,6 +232,7 @@ impl AsyncClientOutput {
                 latest_surfaces,
                 reliable_frame_cap,
                 reliable_byte_cap,
+                surface_byte_cap: reliable_byte_cap,
                 pending_reliable_bytes: Arc::clone(&pending_reliable_bytes),
             },
             AsyncClientOutputRx {
@@ -282,9 +330,30 @@ impl AsyncClientOutput {
                 patch_frame,
             },
         );
+        self.enforce_surface_budget()?;
         self.surface_tx
             .send(self.latest_surfaces.clone())
             .map_err(|_| ClientOutputError::SurfaceQueueClosed)
+    }
+
+    fn enforce_surface_budget(&mut self) -> Result<(), ClientOutputError> {
+        let pending = surface_signal_set_bytes(&self.latest_surfaces);
+        if pending <= self.surface_byte_cap {
+            return Ok(());
+        }
+
+        for signal in self.latest_surfaces.panes.values_mut() {
+            signal.snapshot_required = true;
+            signal.patch_frame = None;
+        }
+        let pending = surface_signal_set_bytes(&self.latest_surfaces);
+        if pending <= self.surface_byte_cap {
+            return Ok(());
+        }
+        Err(ClientOutputError::SurfaceByteQueueFull {
+            cap: self.surface_byte_cap,
+            pending,
+        })
     }
 
     fn reserve_reliable_bytes(&self, frame_len: usize) -> Result<(), ClientOutputError> {
@@ -320,6 +389,17 @@ impl AsyncClientOutput {
         self.pending_reliable_bytes
             .fetch_sub(frame_len, Ordering::AcqRel);
     }
+}
+
+fn surface_signal_set_bytes(surfaces: &SurfaceSignalSet) -> usize {
+    surfaces
+        .panes
+        .values()
+        .map(|signal| {
+            signal.snapshot_frame.as_ref().map_or(0, Vec::len)
+                + signal.patch_frame.as_ref().map_or(0, |patch| patch.bytes.len())
+        })
+        .sum()
 }
 
 impl AsyncClientOutputRx {
@@ -553,6 +633,7 @@ mod tests {
     use flatbuffers::FlatBufferBuilder;
     use nmux_core::session::{InputFrameContext, ScrollbackFetchSpec, ScrollbackRange, Session};
     use nmux_proto::PROTOCOL_VERSION;
+    use std::io::Read as _;
 
     #[derive(Default)]
     struct MockSurfaceFrameSource {
@@ -715,6 +796,33 @@ mod tests {
                 patch_frame: None,
             })
         );
+    }
+
+    #[tokio::test]
+    async fn surface_budget_drops_patch_and_marks_snapshot_required() {
+        let (mut output, mut rx) = AsyncClientOutput::new(8, 10);
+
+        output
+            .signal_surface_frame_bundle(
+                "pane-1",
+                2,
+                vec![1, 2, 3, 4, 5, 6],
+                Some(SurfacePatchFrame {
+                    base_version: 1,
+                    bytes: vec![7, 8, 9, 10, 11, 12],
+                }),
+            )
+            .expect("surface signal fits after dropping patch");
+
+        match rx.recv_write_event().await {
+            ClientWriteEvent::Surface(surfaces) => {
+                let signal = surfaces.panes.get("pane-1").expect("surface signal");
+                assert!(signal.snapshot_required);
+                assert_eq!(signal.snapshot_frame.as_deref(), Some(&[1, 2, 3, 4, 5, 6][..]));
+                assert_eq!(signal.patch_frame, None);
+            }
+            other => panic!("expected surface signal, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -914,6 +1022,29 @@ mod tests {
             other => panic!("expected input event, got {other:?}"),
         }
         assert_eq!(rx.recv().await, Some(ClientInputEvent::Closed));
+    }
+
+    #[tokio::test]
+    async fn client_read_task_wakes_session_loop_after_enqueue() {
+        let frame =
+            Session::initial().key_input_frame("local-client", 3, "actor-1", "pane-1", 2, "x");
+        let (mut wake_reader, wake_writer) = StdUnixStream::pair().expect("wake socket pair");
+        wake_reader
+            .set_nonblocking(true)
+            .expect("nonblocking wake reader");
+        wake_writer
+            .set_nonblocking(true)
+            .expect("nonblocking wake writer");
+        let (tx, mut rx) = async_client_input_channel_with_wake(2, wake_writer);
+
+        run_client_read_task(frame.as_slice(), tx)
+            .await
+            .expect("read task");
+
+        assert!(matches!(rx.recv().await, Some(ClientInputEvent::Input(_))));
+        let mut buf = [0_u8; 8];
+        let wake_count = wake_reader.read(&mut buf).expect("wake byte");
+        assert!(wake_count > 0);
     }
 
     #[tokio::test]

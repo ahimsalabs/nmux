@@ -462,10 +462,6 @@ where
             if readable_client_indices.binary_search(&client_index).is_ok() {
                 continue;
             }
-            if clients[client_index].is_async() {
-                readable_client_indices.push(client_index);
-                continue;
-            }
             if let Some(stream) = clients[client_index].legacy_stream()
                 && stream_readable_within(stream, Duration::ZERO)?
             {
@@ -478,6 +474,9 @@ where
             let Some(client) = clients.get_mut(client_index) else {
                 continue;
             };
+            if let Some(wake_reader) = client.wake_reader() {
+                drain_wake_reader(wake_reader)?;
+            }
             match drain_live_client_frames(
                 client,
                 session,
@@ -800,6 +799,7 @@ enum LiveClientTransport {
     Async {
         input: async_live::AsyncClientInputRx,
         output: async_live::AsyncClientOutput,
+        wake_reader: UnixStream,
     },
 }
 
@@ -869,8 +869,11 @@ impl LiveAttachedClient {
         }
     }
 
-    fn is_async(&self) -> bool {
-        matches!(self.transport, LiveClientTransport::Async { .. })
+    fn wake_reader(&self) -> Option<&UnixStream> {
+        match &self.transport {
+            LiveClientTransport::Legacy { .. } => None,
+            LiveClientTransport::Async { wake_reader, .. } => Some(wake_reader),
+        }
     }
 
     fn inventory_entry(&self) -> ClientConnectionSummary {
@@ -1062,8 +1065,12 @@ fn async_live_client_transport(
     let read_stream = stream.try_clone()?;
     read_stream.set_nonblocking(true)?;
     stream.set_nonblocking(true)?;
+    let (wake_reader, wake_writer) = UnixStream::pair()?;
+    wake_reader.set_nonblocking(true)?;
+    wake_writer.set_nonblocking(true)?;
 
-    let (input_tx, input) = async_live::async_client_input_channel(ASYNC_LIVE_INPUT_EVENT_CAP);
+    let (input_tx, input) =
+        async_live::async_client_input_channel_with_wake(ASYNC_LIVE_INPUT_EVENT_CAP, wake_writer);
     let (output, output_rx) = async_live::AsyncClientOutput::new(
         ASYNC_LIVE_RELIABLE_FRAME_CAP,
         ASYNC_LIVE_RELIABLE_BYTE_CAP,
@@ -1076,7 +1083,11 @@ fn async_live_client_transport(
         next_seq,
         known_surface_versions,
     );
-    Ok(LiveClientTransport::Async { input, output })
+    Ok(LiveClientTransport::Async {
+        input,
+        output,
+        wake_reader,
+    })
 }
 
 fn spawn_async_live_client_tasks(
@@ -1622,6 +1633,19 @@ fn forward_live_input_to_live_client(
     Ok(())
 }
 
+fn drain_wake_reader(mut stream: &UnixStream) -> io::Result<()> {
+    let mut buf = [0_u8; 256];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => return Ok(()),
+            Ok(_) => {}
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 fn poll_live_concurrent_sources(
     listener: &UnixListener,
     clients: &[LiveAttachedClient],
@@ -1637,7 +1661,7 @@ fn poll_live_concurrent_sources(
     });
     let mut fd_client_indices = Vec::new();
     for (index, client) in clients.iter().enumerate() {
-        let Some(stream) = client.legacy_stream() else {
+        let Some(stream) = client.legacy_stream().or_else(|| client.wake_reader()) else {
             continue;
         };
         fds.push(libc::pollfd {
@@ -15413,8 +15437,13 @@ mod tests {
     async fn live_client_surface_helper_signals_mailbox_bundle() {
         let (output, mut output_rx) = async_live::AsyncClientOutput::new(8, 1024 * 1024);
         let (_input_tx, input) = async_live::async_client_input_channel(8);
+        let (wake_reader, _wake_writer) = UnixStream::pair().expect("wake socket pair");
         let mut client = LiveAttachedClient {
-            transport: LiveClientTransport::Async { input, output },
+            transport: LiveClientTransport::Async {
+                input,
+                output,
+                wake_reader,
+            },
             connection_id: "conn-1".to_owned(),
             actor: Actor {
                 id: "actor-1".to_owned(),
