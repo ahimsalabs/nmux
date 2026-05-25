@@ -2545,6 +2545,42 @@ fn surface_response_frame(
     }
 }
 
+struct SurfaceFrameBundle {
+    version: u64,
+    snapshot_frame: Vec<u8>,
+    patch_frame: Option<async_live::SurfacePatchFrame>,
+}
+
+fn surface_frame_bundle_for_pane(
+    session: &Session,
+    pane_id: &str,
+    seq: u64,
+) -> Option<SurfaceFrameBundle> {
+    let version = session.surface_version(pane_id)?;
+    let snapshot_frame = session.pane_surface_frame_for_pane("local-client", seq, pane_id)?;
+    let patch_frame = if session
+        .surface_patch_kind(pane_id)
+        .unwrap_or(protocol::PatchKind::ReplaceRows)
+        == protocol::PatchKind::FullRefreshRequired
+    {
+        None
+    } else {
+        version.checked_sub(1).and_then(|base_version| {
+            session
+                .pane_surface_patch_frame_for_pane("local-client", seq, pane_id, base_version)
+                .map(|bytes| async_live::SurfacePatchFrame {
+                    base_version,
+                    bytes,
+                })
+        })
+    };
+    Some(SurfaceFrameBundle {
+        version,
+        snapshot_frame,
+        patch_frame,
+    })
+}
+
 fn known_surface_versions_from_request(request: &AttachRequest) -> BTreeMap<String, u64> {
     request
         .known_surfaces
@@ -15047,6 +15083,26 @@ mod tests {
         assert_eq!(surface.text, "nmux pane-1\nserver-owned terminal state");
 
         let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn surface_frame_bundle_carries_snapshot_and_adjacent_patch() {
+        let session = Session::initial();
+        let bundle =
+            surface_frame_bundle_for_pane(&session, "pane-1", 9).expect("surface bundle");
+
+        assert_eq!(bundle.version, 2);
+        let snapshot =
+            surface_update_from_frame(&bundle.snapshot_frame).expect("snapshot surface update");
+        assert_eq!(snapshot.kind, SurfaceUpdateKind::Snapshot);
+        assert_eq!(snapshot.version, 2);
+
+        let patch = bundle.patch_frame.expect("adjacent patch frame");
+        assert_eq!(patch.base_version, 1);
+        let patch_update = surface_update_from_frame(&patch.bytes).expect("patch surface update");
+        assert_eq!(patch_update.kind, SurfaceUpdateKind::Patch);
+        assert_eq!(patch_update.version, 2);
+        assert_eq!(patch_update.base_version, Some(1));
     }
 
     #[test]
