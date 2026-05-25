@@ -944,8 +944,8 @@ mod ghostty_vt {
                 State::Csi => {
                     if (0x40..=0x7e).contains(&byte) {
                         match byte {
-                            b'm' | b'h' | b'l' | b'A' | b'B' | b'C' | b'D' | b'E' | b'F'
-                            | b'G' | b'H' | b'f' | b'd' => state = State::Ground,
+                            b'm' | b'h' | b'l' | b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'G'
+                            | b'H' | b'f' | b'd' => state = State::Ground,
                             _ => return true,
                         }
                     }

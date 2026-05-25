@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
 const STDIN_BYTES_DETACH: u8 = 0x1d;
@@ -2917,10 +2917,11 @@ fn live_json_reports_server_closed_detach() {
         .expect("spawn nmux --live --json");
 
     let client = wait_for_command_output(client, "nmux --live --json", Duration::from_secs(10));
-    let server_status = wait_for_child_exit(&mut server, Duration::from_secs(10)).unwrap_or_else(|| {
-        let _ = server.kill();
-        panic!("daemon did not exit after server-closed JSON client detached");
-    });
+    let server_status =
+        wait_for_child_exit(&mut server, Duration::from_secs(10)).unwrap_or_else(|| {
+            let _ = server.kill();
+            panic!("daemon did not exit after server-closed JSON client detached");
+        });
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -6144,10 +6145,11 @@ fn live_json_clients_exchange_presence_identity() {
         wait_for_command_output(writer_client, "writer nmux", Duration::from_secs(20));
     let reader_output =
         wait_for_command_output(reader_client, "reader nmux", Duration::from_secs(20));
-    let server_status = wait_for_child_exit(&mut server, Duration::from_secs(20)).unwrap_or_else(|| {
-        let _ = server.kill();
-        panic!("daemon did not exit after presence clients detached");
-    });
+    let server_status =
+        wait_for_child_exit(&mut server, Duration::from_secs(20)).unwrap_or_else(|| {
+            let _ = server.kill();
+            panic!("daemon did not exit after presence clients detached");
+        });
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -7648,10 +7650,17 @@ fn live_read_only_cli_observes_output_without_input() {
             "--interval-ms",
             "1000",
         ])
-        .output()
-        .expect("run nmux");
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
 
-    let server_status = server.wait().expect("wait for daemon");
+    let client = wait_for_command_output(client, "read-only live client", Duration::from_secs(10));
+    let server_status =
+        wait_for_child_exit(&mut server, Duration::from_secs(10)).unwrap_or_else(|| {
+            let _ = server.kill();
+            panic!("daemon did not exit after read-only live client");
+        });
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -7703,15 +7712,24 @@ fn live_cli_renders_split_pty_writes_as_one_logical_line() {
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--live",
+            "--no-scrollback",
             "--iterations",
             "1",
             "--interval-ms",
             "1000",
         ])
-        .output()
-        .expect("run nmux");
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
 
-    let server_status = server.wait().expect("wait for daemon");
+    let client =
+        wait_for_command_output(client, "split-write live client", Duration::from_secs(10));
+    let server_status =
+        wait_for_child_exit(&mut server, Duration::from_secs(10)).unwrap_or_else(|| {
+            let _ = server.kill();
+            panic!("daemon did not exit after split-write live client");
+        });
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&ready_path);
 
@@ -8284,7 +8302,16 @@ fn read_until_line(rx: &mpsc::Receiver<String>, expected: &str) -> Vec<String> {
 #[test]
 fn live_cycles_coalesces_delayed_echo_after_input() {
     let socket_path = test_socket_path();
+    let ready_path = socket_path.with_extension("ready");
+    let trigger_path = socket_path.with_extension("trigger");
     let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&ready_path);
+    let _ = fs::remove_file(&trigger_path);
+    let command = format!(
+        "touch {}; while [ ! -f {} ]; do sleep 0.01; done; printf 'typed:coalesce!\\n'; sleep 0.02; printf 'echo:coalesce!\\n'; sleep 1",
+        shell_quote(ready_path.to_str().expect("ready path")),
+        shell_quote(trigger_path.to_str().expect("trigger path")),
+    );
 
     let mut server = daemon_command()
         .args([
@@ -8293,18 +8320,20 @@ fn live_cycles_coalesces_delayed_echo_after_input() {
             "--live-cycles",
             "1",
             "--command",
-            "printf 'ready\\n'; sleep 0.1; printf 'typed:coalesce!\\n'; sleep 0.02; printf 'echo:coalesce!\\n'",
+            &command,
         ])
         .spawn()
         .expect("spawn daemon");
 
     wait_for_socket(&socket_path);
+    wait_for_path(&ready_path);
 
     let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--live",
+            "--no-scrollback",
             "--iterations",
             "1",
             "--key",
@@ -8312,14 +8341,22 @@ fn live_cycles_coalesces_delayed_echo_after_input() {
             "--interval-ms",
             "2000",
         ])
-        .output()
-        .expect("run nmux --live");
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux --live");
+    thread::sleep(Duration::from_millis(50));
+    fs::write(&trigger_path, b"trigger").expect("write trigger path");
 
-    let server_status = wait_for_child_exit(&mut server, Duration::from_secs(5)).unwrap_or_else(|| {
-        let _ = server.kill();
-        panic!("daemon did not exit after bounded live cycle");
-    });
+    let client = wait_for_command_output(client, "coalescing live client", Duration::from_secs(10));
+    let server_status =
+        wait_for_child_exit(&mut server, Duration::from_secs(5)).unwrap_or_else(|| {
+            let _ = server.kill();
+            panic!("daemon did not exit after bounded live cycle");
+        });
     let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&ready_path);
+    let _ = fs::remove_file(&trigger_path);
 
     assert!(
         client.status.success(),

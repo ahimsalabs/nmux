@@ -801,7 +801,9 @@ where
 }
 
 enum LiveClientTransport {
-    Legacy { stream: UnixStream },
+    Legacy {
+        stream: UnixStream,
+    },
     Async {
         input: async_live::AsyncClientInputRx,
         output: async_live::AsyncClientOutput,
@@ -1136,8 +1138,7 @@ fn run_async_live_client_tasks(
         let writer = tokio::net::UnixStream::from_std(write_stream)
             .map_err(|err| format!("failed to register live client writer: {err}"))?;
         let mut surface_source = BundledSurfaceFrameSource;
-        let mut state =
-            async_live::ClientWriteTaskState::new(next_seq, known_surface_versions);
+        let mut state = async_live::ClientWriteTaskState::new(next_seq, known_surface_versions);
 
         tokio::select! {
             result = async_live::run_client_read_task(reader, input_tx) => {
@@ -15427,8 +15428,7 @@ mod tests {
     #[test]
     fn surface_frame_bundle_carries_snapshot_and_adjacent_patch() {
         let session = Session::initial();
-        let bundle =
-            surface_frame_bundle_for_pane(&session, "pane-1", 9).expect("surface bundle");
+        let bundle = surface_frame_bundle_for_pane(&session, "pane-1", 9).expect("surface bundle");
 
         assert_eq!(bundle.version, 2);
         let snapshot =

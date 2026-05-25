@@ -161,7 +161,10 @@ impl ClientWriteTaskState {
 
 pub(crate) fn async_client_input_channel(cap: usize) -> (AsyncClientInputTx, AsyncClientInputRx) {
     let (tx, rx) = mpsc::channel(cap);
-    (AsyncClientInputTx { tx, wake: None }, AsyncClientInputRx { rx })
+    (
+        AsyncClientInputTx { tx, wake: None },
+        AsyncClientInputRx { rx },
+    )
 }
 
 pub(crate) fn async_client_input_channel_with_wake(
@@ -397,7 +400,10 @@ fn surface_signal_set_bytes(surfaces: &SurfaceSignalSet) -> usize {
         .values()
         .map(|signal| {
             signal.snapshot_frame.as_ref().map_or(0, Vec::len)
-                + signal.patch_frame.as_ref().map_or(0, |patch| patch.bytes.len())
+                + signal
+                    .patch_frame
+                    .as_ref()
+                    .map_or(0, |patch| patch.bytes.len())
         })
         .sum()
 }
@@ -818,7 +824,10 @@ mod tests {
             ClientWriteEvent::Surface(surfaces) => {
                 let signal = surfaces.panes.get("pane-1").expect("surface signal");
                 assert!(signal.snapshot_required);
-                assert_eq!(signal.snapshot_frame.as_deref(), Some(&[1, 2, 3, 4, 5, 6][..]));
+                assert_eq!(
+                    signal.snapshot_frame.as_deref(),
+                    Some(&[1, 2, 3, 4, 5, 6][..])
+                );
                 assert_eq!(signal.patch_frame, None);
             }
             other => panic!("expected surface signal, got {other:?}"),
