@@ -72,7 +72,7 @@ fn run_fixture(fixture: RendererFixture) {
                 "5000",
                 "--live",
                 "--iterations",
-                "3",
+                "1",
                 "--cols",
                 cols.as_str(),
                 "--rows",

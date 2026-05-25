@@ -589,14 +589,20 @@ impl ProcessHost for LocalPtyHost {
             let mut buffer = [0_u8; 4096];
             loop {
                 match reader.read(&mut buffer) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        notify_writer.notify();
+                        break;
+                    }
                     Ok(count) => {
                         if output_sender.send(buffer[..count].to_vec()).is_err() {
                             break;
                         }
                         notify_writer.notify();
                     }
-                    Err(_) => break,
+                    Err(_) => {
+                        notify_writer.notify();
+                        break;
+                    }
                 }
             }
         });

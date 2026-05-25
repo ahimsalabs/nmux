@@ -410,30 +410,27 @@ where
             } else if attempted_fast_output && host.notify_fd().is_some() {
                 Ok(false)
             } else if host.notify_fd().is_some() {
-                poll_panes_output_with_host_until_poll_quiet(
-                    session,
-                    engines,
-                    host,
-                    &leaf_pane_ids,
-                    quiet_timeout,
-                )
+                Ok(false)
             } else {
                 poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
             };
-        if let Err(err) = output_result {
-            let error_pane_id = host_error_pane_id(&err).to_owned();
-            for client in &mut clients {
-                let _ = write_host_output_error(
-                    &mut client.stream,
-                    session,
-                    &mut client.seq,
-                    &error_pane_id,
-                    err.clone(),
-                );
+        let output_changed = match output_result {
+            Ok(changed) => fast_changed || changed,
+            Err(err) => {
+                let error_pane_id = host_error_pane_id(&err).to_owned();
+                for client in &mut clients {
+                    let _ = write_host_output_error(
+                        &mut client.stream,
+                        session,
+                        &mut client.seq,
+                        &error_pane_id,
+                        err.clone(),
+                    );
+                }
+                listener.set_nonblocking(false)?;
+                return Ok(());
             }
-            listener.set_nonblocking(false)?;
-            return Ok(());
-        }
+        };
 
         for (index, client) in clients.iter_mut().enumerate() {
             if changed_workspace {
@@ -462,7 +459,9 @@ where
                 listener.set_nonblocking(false)?;
                 return Err(err);
             }
-            if had_input {
+            let host_completion =
+                readiness.host_output && client.actor.mode == AttachMode::ReadOnly;
+            if had_input || output_changed || changed_workspace || host_completion {
                 client.completed_cycles = client.completed_cycles.saturating_add(1);
             }
             if client.completed_cycles >= cycles_per_client {
@@ -549,6 +548,9 @@ fn accept_live_client(
                 known_surface_versions: BTreeMap::new(),
                 completed_cycles: usize::MAX,
             })));
+        }
+        if let Some(notify_fd) = host.notify_fd() {
+            drain_notify_fd(notify_fd)?;
         }
         let mut seq = 1;
         write_live_attach_initial(&mut stream, session, &request, &pane_id, &mut seq)?;
@@ -1128,6 +1130,9 @@ where
         write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
         return Ok(());
     }
+    if let Some(notify_fd) = host.notify_fd() {
+        drain_notify_fd(notify_fd)?;
+    }
     serve_live_attached_client(&mut stream, request, session, host, engines, cycles)
 }
 
@@ -1176,7 +1181,7 @@ fn serve_live_attached_client(
 
     let mut completed_cycles = 0;
     while completed_cycles < cycles {
-        let mut count_cycle = true;
+        let mut count_cycle = false;
         let mut readiness =
             poll_live_client_sources(stream, host.notify_fd(), LIVE_IDLE_POLL_TIMEOUT)?;
         if let Some(notify_fd) = host.notify_fd()
@@ -1453,25 +1458,7 @@ fn serve_live_attached_client(
         } else if attempted_fast_output && host.notify_fd().is_some() {
             Ok(false)
         } else if host.notify_fd().is_some() {
-            let poll_span = tracing::trace_span!(
-                "host.output.poll",
-                reason = if input_pane_id.is_some() {
-                    "post_input"
-                } else {
-                    "background"
-                },
-                panes = leaf_pane_ids.len(),
-                notify_fd = true
-            );
-            poll_span.in_scope(|| {
-                poll_panes_output_with_host_until_poll_quiet(
-                    session,
-                    engines,
-                    host,
-                    &leaf_pane_ids,
-                    quiet_timeout,
-                )
-            })
+            Ok(false)
         } else {
             let poll_span = tracing::trace_span!(
                 "host.output.poll",
@@ -1487,11 +1474,14 @@ fn serve_live_attached_client(
                 poll_panes_output_with_host_until_quiet(session, engines, host, &leaf_pane_ids)
             })
         };
-        if let Err(err) = output_result {
-            let error_pane_id = host_error_pane_id(&err).to_owned();
-            write_host_output_error(stream, session, &mut seq, &error_pane_id, err)?;
-            return Ok(());
-        }
+        let output_changed = match output_result {
+            Ok(changed) => fast_changed || changed,
+            Err(err) => {
+                let error_pane_id = host_error_pane_id(&err).to_owned();
+                write_host_output_error(stream, session, &mut seq, &error_pane_id, err)?;
+                return Ok(());
+            }
+        };
 
         let surface_span = tracing::trace_span!(
             "surface.write_changed",
@@ -1511,7 +1501,8 @@ fn serve_live_attached_client(
                 &mut known_surface_versions,
             )
         })?;
-        if count_cycle {
+        let host_completion = readiness.host_output && actor.mode == AttachMode::ReadOnly;
+        if count_cycle || output_changed || host_completion {
             completed_cycles += 1;
         }
     }
@@ -2206,23 +2197,6 @@ fn poll_panes_output_with_host_until_quiet(
         }
         thread::sleep(Duration::from_millis(5));
     }
-}
-
-fn poll_panes_output_with_host_until_poll_quiet(
-    session: &mut Session,
-    engines: &mut PaneTerminalEngines,
-    host: &mut dyn ProcessHostOutput,
-    pane_ids: &[String],
-    quiet_timeout: Duration,
-) -> Result<bool, HostError> {
-    poll_panes_output_with_host_until_poll_quiet_state(
-        session,
-        engines,
-        host,
-        pane_ids,
-        quiet_timeout,
-        false,
-    )
 }
 
 fn poll_panes_output_with_host_until_poll_quiet_after_change(
@@ -10183,9 +10157,16 @@ mod tests {
         assert_eq!(update.patch_kind, None);
         assert_eq!(update.surface, Some(protocol::SurfaceKind::Alternate));
 
+        stream
+            .set_read_timeout(Some(Duration::from_millis(20)))
+            .expect("set optional read timeout");
         let optional_update =
             read_optional_surface_update_from_stream(&mut stream).expect("optional surface update");
+        stream
+            .set_read_timeout(None)
+            .expect("clear optional read timeout");
         assert_eq!(optional_update, None);
+        drop(stream);
 
         server.join().expect("server thread");
         let _ = fs::remove_file(socket_path);
@@ -10857,7 +10838,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 2)
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
                 .expect("serve current focus live");
             host
         });
@@ -10902,7 +10883,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 2)
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
                 .expect("serve current key live");
             host
         });
@@ -10948,7 +10929,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 2)
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
                 .expect("serve current paste live");
             host
         });
@@ -10993,7 +10974,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 2)
+            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
                 .expect("serve current named-key live");
             host
         });
@@ -11116,7 +11097,7 @@ mod tests {
                 &mut session,
                 &mut host,
                 1,
-                2,
+                1,
                 TerminalEngineKind::LibghosttyVt,
             )
             .expect("serve current mouse live");
@@ -11186,7 +11167,7 @@ mod tests {
                 &mut session,
                 &mut host,
                 1,
-                2,
+                1,
                 TerminalEngineKind::LibghosttyVt,
             )
             .expect("serve mode-only live");
@@ -11264,7 +11245,7 @@ mod tests {
                 &mut session,
                 &mut host,
                 1,
-                2,
+                1,
                 TerminalEngineKind::LibghosttyVt,
             )
             .expect("serve color-only live");
@@ -11353,7 +11334,7 @@ mod tests {
                 &mut session,
                 &mut host,
                 1,
-                2,
+                1,
                 TerminalEngineKind::LibghosttyVt,
             )
             .expect("serve cursor-only live");
@@ -11430,7 +11411,7 @@ mod tests {
                 &mut session,
                 &mut host,
                 1,
-                2,
+                1,
                 TerminalEngineKind::LibghosttyVt,
             )
             .expect("serve replace-rows live");
@@ -11554,7 +11535,7 @@ mod tests {
                 &mut session,
                 &mut host,
                 1,
-                2,
+                1,
                 TerminalEngineKind::LibghosttyVt,
             )
             .expect("serve hyperlink live");
@@ -11833,6 +11814,7 @@ mod tests {
                 ],
             }
         );
+        drop(stream);
 
         server.join().expect("server thread");
         let _ = fs::remove_file(socket_path);
