@@ -22,6 +22,7 @@ struct PtyCommandOutput {
 
 struct PtyCommand {
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     output_rx: mpsc::Receiver<Vec<u8>>,
     reader_thread: thread::JoinHandle<()>,
@@ -87,6 +88,7 @@ fn spawn_nmux_client_in_pty_with_env(args: &[&str], env: &[(&str, &str)]) -> Pty
 
     PtyCommand {
         child,
+        master: pair.master,
         writer,
         output_rx,
         reader_thread,
@@ -103,6 +105,17 @@ impl PtyCommand {
     fn detach(&mut self) {
         let _ = self.writer.write_all(&[STDIN_BYTES_DETACH]);
         let _ = self.writer.flush();
+    }
+
+    fn resize(&mut self, cols: u16, rows: u16) {
+        self.master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("resize client pty");
     }
 
     fn kill(&mut self) {
@@ -2342,6 +2355,70 @@ fn bare_tty_nmux_allows_two_shared_default_attachers() {
         second_output.output
     );
     assert!(!server_status.success(), "daemon should be killed by test");
+}
+
+#[test]
+fn live_tty_client_resize_updates_daemon_pane_size() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let socket = socket_path.to_str().expect("socket path");
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live-forever",
+            "--command",
+            "printf 'resize-ready\n'; while :; do sleep 1; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(200));
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--live", "--stdin-bytes", "--redraw"],
+        &[("NMUX_SOCKET", socket)],
+    );
+    thread::sleep(Duration::from_millis(500));
+    client.resize(72, 19);
+    thread::sleep(Duration::from_millis(500));
+    client.detach();
+    let client_output = client.wait();
+
+    let observe = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .args([
+            "--live",
+            "--no-input",
+            "--no-scrollback",
+            "--iterations",
+            "1",
+            "--connect-timeout-ms",
+            "5000",
+        ])
+        .output()
+        .expect("observe resized daemon");
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client_output.success,
+        "resizing client failed:\n{}",
+        client_output.output
+    );
+    assert!(
+        observe.status.success(),
+        "observe failed: {}\n{}",
+        String::from_utf8_lossy(&observe.stderr),
+        String::from_utf8_lossy(&observe.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&observe.stdout);
+    assert!(
+        stdout.contains("session=local tab=tab-1 pane=pane-1 size=72x19 resize=fixed"),
+        "daemon did not commit tty resize:\n{stdout}"
+    );
 }
 
 #[test]

@@ -304,12 +304,21 @@ where
             changed_workspace |=
                 apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
         }
+        let closing_frontend_resize_pane_ids = closed_clients
+            .iter()
+            .filter_map(|index| clients.get(*index))
+            .flat_map(|client| client.frontend_resize_constraints.keys().cloned())
+            .collect::<Vec<_>>();
         for index in closed_clients.iter().rev() {
             if *index < clients.len() {
                 clients.remove(*index);
             }
         }
         closed_clients.clear();
+        for pane_id in closing_frontend_resize_pane_ids {
+            changed_workspace |=
+                apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
+        }
 
         if had_input
             && !readiness.host_output
@@ -9357,6 +9366,103 @@ mod tests {
         assert_eq!(
             resize_events,
             vec![(80, 40)],
+            "host events: {:?}",
+            host.events()
+        );
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn concurrent_live_clients_resize_to_remaining_writer_after_smaller_detaches() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            serve_live_n_with_host(&listener, &mut session, &mut host, 2, usize::MAX)
+                .expect("serve concurrent live");
+            host
+        });
+
+        let mut smaller = UnixStream::connect(&socket_path).expect("connect smaller");
+        write_attach_request(
+            &mut smaller,
+            &AttachRequest {
+                actor_id: "smaller".to_owned(),
+                user_id: "smaller-user".to_owned(),
+                display_name: "Smaller".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write smaller attach");
+        let smaller_attach = attach_from_stream(&mut smaller).expect("smaller attach");
+        assert_eq!(smaller_attach.presence.actor_id, "smaller");
+
+        let mut larger = UnixStream::connect(&socket_path).expect("connect larger");
+        write_attach_request(
+            &mut larger,
+            &AttachRequest {
+                actor_id: "larger".to_owned(),
+                user_id: "larger-user".to_owned(),
+                display_name: "Larger".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+            },
+        )
+        .expect("write larger attach");
+        let larger_attach = attach_from_stream(&mut larger).expect("larger attach");
+        assert_eq!(larger_attach.presence.actor_id, "larger");
+
+        send_resize_intent_with_reason_and_sequence(
+            &mut smaller,
+            &mut ClientFrameSequence::default(),
+            "pane-1",
+            80,
+            40,
+            protocol::ResizeReason::FrontendViewport,
+        )
+        .expect("send smaller resize");
+        send_resize_intent_with_reason_and_sequence(
+            &mut larger,
+            &mut ClientFrameSequence::default(),
+            "pane-1",
+            100,
+            50,
+            protocol::ResizeReason::FrontendViewport,
+        )
+        .expect("send larger resize");
+        send_key_input(&mut larger, "pane-1", "first-after-resize").expect("send first input");
+        thread::sleep(Duration::from_millis(200));
+
+        drop(smaller);
+        send_key_input(&mut larger, "pane-1", "after-smaller-detach")
+            .expect("send input after detach");
+        thread::sleep(Duration::from_millis(200));
+        drop(larger);
+
+        let host = server.join().expect("server thread");
+        let resize_events = host
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                HostEvent::Resized {
+                    pane_id,
+                    cols,
+                    rows,
+                } if pane_id == "pane-1" => Some((*cols, *rows)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            resize_events,
+            vec![(80, 40), (100, 50)],
             "host events: {:?}",
             host.events()
         );
