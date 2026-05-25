@@ -172,6 +172,21 @@ leader-controlled, active-client-controlled, or manual. Manual resize policy
 rejects automatic frontend viewport changes while still allowing explicit
 user-command resize intents.
 
+## Presence And Liveness
+
+`PresenceUpdate` carries actor presence and side-effect-free daemon liveness.
+Visible client membership uses `PresenceKind::Joined`, `Updated`, and `Left`.
+`PresenceKind::HealthProbe` is a short-lived client request that asks whether
+the daemon can serve the selected session target. The daemon answers with
+`PresenceKind::Heartbeat` when the target is usable, or an `Error` frame when
+the daemon is reachable but cannot serve that target.
+
+Health probes and heartbeats do not add actors to visible presence, do not
+change focus, do not participate in frontend resize policy, and do not require
+surface or scrollback delivery. Bare default mode uses this probe before
+reusing the shared default socket; resize intents are never used as liveness
+checks.
+
 ## Input Model
 
 `InputEvent` is still a client-to-daemon intent, not authoritative terminal state. Text-oriented commands can use `InputKind.Key` with `KeyInput.text_utf8`; named-key commands can use `InputKind.Key` with `KeyInput.key_name`, currently for keypad Enter/digits, arrow keys, Enter, Tab, Backspace, Escape, Insert, Delete, Home, End, PageUp/PageDown, and F1-F12. The local daemon asks the live pane terminal engine to encode named keys from daemon-owned terminal state; the interim engine preserves existing unmodified keypad/application-cursor behavior, while the `libghostty-vt` engine uses its key encoder and preserves `KeyInput.modifiers`. Decoded client input requires the payload table matching its `InputKind` (`KeyInput`, `RawInput`, `PasteInput`, `FocusInput`, or `MouseInput`) instead of treating missing tables as empty input. Public CLI named-key and mouse modifiers use the low four protocol bits: `shift=1`, `ctrl=2`, `alt=4`, and `super=8`; decoded client input rejects unsupported modifier bits outside that mask. Byte-oriented live clients should use `InputKind.RawBytes` with `RawInput.bytes` so control bytes and non-UTF-8 input do not get lossy string conversion before they reach the process host. Paste-oriented commands use `InputKind.Paste` with `PasteInput.text_utf8`; the local daemon rejects embedded bracketed-paste terminators, ignores the historical client-provided `PasteInput.bracketed` preference, and wraps the paste in bracketed-paste delimiters only when daemon-owned pane mode reports bracketed paste enabled. Focus commands use `InputKind.Focus` with `FocusInput.focused`; the local daemon forwards focus gained/lost bytes only when the daemon-owned pane mode reports focus reporting enabled and otherwise returns a protocol `Error`. Mouse commands use `InputKind.Mouse` with zero-based cell coordinates, optional pixel coordinates, button, modifiers, and action; clients reject unknown mouse button/action enum values instead of coercing them to defaults. Attach requests also reject unknown attach modes rather than treating them as read-only. The local daemon gates mouse input by daemon-owned pane size and mouse tracking mode (`None`, `X10`, `Normal`, `Button`, or `Any`) before asking the live pane terminal engine to encode bytes from the current terminal mode and mouse format. Pixel coordinates are used for `MouseFormat::SgrPixels` when present; otherwise the event is encoded at the referenced cell origin. Local clients maintain monotonic `Envelope.seq` values across post-attach client frames and monotonic `InputEvent.input_seq` values across input events on the same connection. ADR 0017 records the input-mode policy and the remaining physical-key/text-event boundary.

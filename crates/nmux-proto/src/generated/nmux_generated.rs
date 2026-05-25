@@ -1653,13 +1653,15 @@ impl ::flatbuffers::SimpleToVerifyInSlice for CellSemanticContent {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_PRESENCE_KIND: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_PRESENCE_KIND: i8 = 2;
+pub const ENUM_MAX_PRESENCE_KIND: i8 = 4;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_PRESENCE_KIND: [PresenceKind; 3] = [
+pub const ENUM_VALUES_PRESENCE_KIND: [PresenceKind; 5] = [
   PresenceKind::Joined,
   PresenceKind::Updated,
   PresenceKind::Left,
+  PresenceKind::HealthProbe,
+  PresenceKind::Heartbeat,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -1670,13 +1672,17 @@ impl PresenceKind {
   pub const Joined: Self = Self(0);
   pub const Updated: Self = Self(1);
   pub const Left: Self = Self(2);
+  pub const HealthProbe: Self = Self(3);
+  pub const Heartbeat: Self = Self(4);
 
   pub const ENUM_MIN: i8 = 0;
-  pub const ENUM_MAX: i8 = 2;
+  pub const ENUM_MAX: i8 = 4;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::Joined,
     Self::Updated,
     Self::Left,
+    Self::HealthProbe,
+    Self::Heartbeat,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -1684,6 +1690,8 @@ impl PresenceKind {
       Self::Joined => Some("Joined"),
       Self::Updated => Some("Updated"),
       Self::Left => Some("Left"),
+      Self::HealthProbe => Some("HealthProbe"),
+      Self::Heartbeat => Some("Heartbeat"),
       _ => None,
     }
   }

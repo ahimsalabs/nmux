@@ -126,6 +126,8 @@ enum PresenceKind : byte {
   Joined = 0,
   Updated = 1,
   Left = 2,
+  HealthProbe = 3,
+  Heartbeat = 4,
 }
 
 table WorkspaceTreeSnapshot {
