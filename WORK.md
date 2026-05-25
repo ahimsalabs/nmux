@@ -12,6 +12,7 @@ see all panes restored.
 
 ## Next features (priority order)
 
+- Complete ADR 0043 session actor runtime and ADR 0044 replay foundation
 - Supply-chain pin-change review gate (issue #7)
 
 ## Test gaps to close

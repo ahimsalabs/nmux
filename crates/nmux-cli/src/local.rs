@@ -11,7 +11,8 @@ use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{
     Actor, AttachMode, ErrorRetryability, FocusInputSpec, InputFrameContext, MouseInputSpec,
-    PasteInputSpec, ScrollbackFetchSpec, ScrollbackRange, Session,
+    PasteInputSpec, ScrollbackFetchSpec, ScrollbackRange, Session, SessionCore, SessionEvent,
+    SessionEventLane,
 };
 use nmux_core::terminal::{
     KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines,
@@ -3030,6 +3031,39 @@ pub(crate) fn poll_pane_output_with_host_and_engines(
     let changed = apply_pumped_pane_output(session, engines, pane_id, &pumped)?;
     let mut wrote_pty_input = false;
     for bytes in engines.engine_mut(pane_id).drain_pty_writes() {
+        tracing::trace!(
+            pane_id = %pane_id,
+            bytes = bytes.len(),
+            "terminal generated pty input"
+        );
+        host.write_input(pane_id, &bytes)?;
+        wrote_pty_input = true;
+    }
+    Ok(changed || wrote_pty_input)
+}
+
+pub(crate) fn poll_pane_output_with_session_core(
+    session_core: &mut SessionCore,
+    host: &mut dyn ProcessHostOutput,
+    pane_id: &str,
+    session_mono_ms: u64,
+) -> Result<bool, HostError> {
+    let pumped = read_available_pane_output(host, pane_id)?;
+    let mut changed = false;
+    if !pumped.is_empty() {
+        let transition = session_core.accept(
+            format!("{pane_id}:pty"),
+            SessionEventLane::Pane,
+            session_mono_ms,
+            SessionEvent::PaneOutput {
+                pane_id: pane_id.to_owned(),
+                bytes: pumped,
+            },
+        );
+        changed = !transition.effects.is_empty();
+    }
+    let mut wrote_pty_input = false;
+    for bytes in session_core.drain_pane_pty_writes(pane_id) {
         tracing::trace!(
             pane_id = %pane_id,
             bytes = bytes.len(),

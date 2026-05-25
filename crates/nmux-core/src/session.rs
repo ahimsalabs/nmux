@@ -5,8 +5,8 @@ use nmux_proto::{PROTOCOL_VERSION, protocol};
 
 use crate::host::{CommandSpec, HostSpec};
 use crate::terminal::{
-    CellRun, InterimTextTerminalEngine, PaneStyle, TerminalColors, TerminalCursor, TerminalEngine,
-    TerminalInput, TerminalModes,
+    CellRun, InterimTextTerminalEngine, PaneStyle, PaneTerminalEngines, TerminalColors,
+    TerminalCursor, TerminalEngine, TerminalEngineKind, TerminalInput, TerminalModes,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,16 +212,71 @@ pub enum SessionEvent {
         pane_id: String,
         policy: protocol::ResizePolicy,
     },
+    PaneOutput {
+        pane_id: String,
+        bytes: Vec<u8>,
+    },
+    CommitPaneResize {
+        pane_id: String,
+        cols: u32,
+        rows: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionEventLane {
+    Control,
+    Client,
+    Pane,
+    Timer,
+    Lifecycle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptedEventMetadata {
+    pub event_index: u64,
+    pub session_mono_ms: u64,
+    pub source_id: String,
+    pub lane: SessionEventLane,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptedSessionEvent {
+    pub metadata: AcceptedEventMetadata,
+    pub event: SessionEvent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionEffect {
-    WorkspaceChanged { version: u64 },
+    WorkspaceChanged {
+        event_index: u64,
+        version: u64,
+    },
+    PaneSurfaceChanged {
+        event_index: u64,
+        pane_id: String,
+        surface_version: u64,
+        scrollback_version: u64,
+        patch_kind: protocol::PatchKind,
+    },
+    PaneResized {
+        event_index: u64,
+        pane_id: String,
+        cols: u32,
+        rows: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionTransition {
+    pub accepted: AcceptedSessionEvent,
+    pub effects: Vec<SessionEffect>,
+}
+
 pub struct SessionCore {
     session: Session,
+    terminal_engines: PaneTerminalEngines,
+    next_event_index: u64,
 }
 
 impl SessionCore {
@@ -230,7 +285,15 @@ impl SessionCore {
     }
 
     pub fn new(session: Session) -> Self {
-        Self { session }
+        Self::with_terminal_engine_kind(session, TerminalEngineKind::InterimText)
+    }
+
+    pub fn with_terminal_engine_kind(session: Session, kind: TerminalEngineKind) -> Self {
+        Self {
+            session,
+            terminal_engines: PaneTerminalEngines::new(kind),
+            next_event_index: 0,
+        }
     }
 
     pub fn session(&self) -> &Session {
@@ -245,17 +308,54 @@ impl SessionCore {
         self.session
     }
 
+    pub fn into_parts(self) -> (Session, PaneTerminalEngines) {
+        (self.session, self.terminal_engines)
+    }
+
+    pub fn drain_pane_pty_writes(&mut self, pane_id: &str) -> Vec<Vec<u8>> {
+        self.terminal_engines.engine_mut(pane_id).drain_pty_writes()
+    }
+
     pub fn apply(&mut self, event: SessionEvent) -> Vec<SessionEffect> {
-        let changed = match event {
+        self.accept("legacy", SessionEventLane::Control, 0, event)
+            .effects
+    }
+
+    pub fn accept(
+        &mut self,
+        source_id: impl Into<String>,
+        lane: SessionEventLane,
+        session_mono_ms: u64,
+        event: SessionEvent,
+    ) -> SessionTransition {
+        let accepted = AcceptedSessionEvent {
+            metadata: AcceptedEventMetadata {
+                event_index: self.next_event_index,
+                session_mono_ms,
+                source_id: source_id.into(),
+                lane,
+            },
+            event,
+        };
+        self.next_event_index = self.next_event_index.saturating_add(1);
+        let effects = self.apply_accepted(&accepted);
+        SessionTransition { accepted, effects }
+    }
+
+    pub fn apply_accepted(&mut self, accepted: &AcceptedSessionEvent) -> Vec<SessionEffect> {
+        let event_index = accepted.metadata.event_index;
+        let changed = match &accepted.event {
             SessionEvent::AddTab {
                 tab_id,
                 title,
                 pane_id,
                 host,
-            } => self.session.add_tab(tab_id, title, pane_id, host),
-            SessionEvent::SwitchTab { tab_id } => self.session.switch_tab(&tab_id),
-            SessionEvent::CloseTab { tab_id } => self.session.close_tab(&tab_id),
-            SessionEvent::FocusPane { pane_id } => self.session.focus_pane(&pane_id),
+            } => self
+                .session
+                .add_tab(tab_id.clone(), title.clone(), pane_id.clone(), host.clone()),
+            SessionEvent::SwitchTab { tab_id } => self.session.switch_tab(tab_id),
+            SessionEvent::CloseTab { tab_id } => self.session.close_tab(tab_id),
+            SessionEvent::FocusPane { pane_id } => self.session.focus_pane(pane_id),
             SessionEvent::SplitPane {
                 pane_id,
                 axis,
@@ -263,18 +363,90 @@ impl SessionCore {
                 new_host,
             } => self
                 .session
-                .split_pane(&pane_id, axis, new_pane_id, new_host),
+                .split_pane(pane_id, *axis, new_pane_id.clone(), new_host.clone()),
             SessionEvent::SetPaneResizePolicy { pane_id, policy } => {
-                self.session.set_pane_resize_policy(&pane_id, policy)
+                self.session.set_pane_resize_policy(pane_id, *policy)
+            }
+            SessionEvent::PaneOutput { pane_id, bytes } => {
+                return self.apply_pane_output_event(event_index, pane_id, bytes);
+            }
+            SessionEvent::CommitPaneResize {
+                pane_id,
+                cols,
+                rows,
+            } => {
+                return self.apply_pane_resize_event(event_index, pane_id, *cols, *rows);
             }
         };
         if changed {
             vec![SessionEffect::WorkspaceChanged {
+                event_index,
                 version: self.session.version,
             }]
         } else {
             Vec::new()
         }
+    }
+
+    fn apply_pane_output_event(
+        &mut self,
+        event_index: u64,
+        pane_id: &str,
+        bytes: &[u8],
+    ) -> Vec<SessionEffect> {
+        let changed = self.session.apply_pane_output_with_engine(
+            pane_id,
+            bytes,
+            self.terminal_engines.engine_mut(pane_id),
+        );
+        if !changed {
+            return Vec::new();
+        }
+        self.pane_surface_effect(event_index, pane_id)
+            .into_iter()
+            .collect()
+    }
+
+    fn apply_pane_resize_event(
+        &mut self,
+        event_index: u64,
+        pane_id: &str,
+        cols: u32,
+        rows: u32,
+    ) -> Vec<SessionEffect> {
+        let changed = self.session.commit_pane_resize_with_engine(
+            pane_id,
+            cols,
+            rows,
+            self.terminal_engines.engine_mut(pane_id),
+        );
+        if !changed {
+            return Vec::new();
+        }
+        let mut effects = vec![SessionEffect::PaneResized {
+            event_index,
+            pane_id: pane_id.to_owned(),
+            cols,
+            rows,
+        }];
+        if let Some(effect) = self.pane_surface_effect(event_index, pane_id) {
+            effects.push(effect);
+        }
+        effects.push(SessionEffect::WorkspaceChanged {
+            event_index,
+            version: self.session.version,
+        });
+        effects
+    }
+
+    fn pane_surface_effect(&self, event_index: u64, pane_id: &str) -> Option<SessionEffect> {
+        Some(SessionEffect::PaneSurfaceChanged {
+            event_index,
+            pane_id: pane_id.to_owned(),
+            surface_version: self.session.surface_version(pane_id)?,
+            scrollback_version: self.session.scrollback_version(pane_id)?,
+            patch_kind: self.session.surface_patch_kind(pane_id)?,
+        })
     }
 }
 
@@ -2472,8 +2644,9 @@ mod tests {
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
     use super::{
-        AttachMode, Cursor, FocusInputSpec, InputFrameContext, MouseInputSpec, PasteInputSpec,
-        ScrollbackFetchSpec, ScrollbackRange, Session, SessionCore, SessionEffect, SessionEvent,
+        AcceptedEventMetadata, AcceptedSessionEvent, AttachMode, Cursor, FocusInputSpec,
+        InputFrameContext, MouseInputSpec, PasteInputSpec, ScrollbackFetchSpec, ScrollbackRange,
+        Session, SessionCore, SessionEffect, SessionEvent, SessionEventLane,
     };
 
     fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -2605,7 +2778,10 @@ mod tests {
         });
         assert_eq!(
             split_effects,
-            vec![SessionEffect::WorkspaceChanged { version: 2 }]
+            vec![SessionEffect::WorkspaceChanged {
+                event_index: 0,
+                version: 2
+            }]
         );
         assert_eq!(core.session().active_pane_id(), Some("pane-2"));
 
@@ -2614,7 +2790,10 @@ mod tests {
         });
         assert_eq!(
             focus_effects,
-            vec![SessionEffect::WorkspaceChanged { version: 3 }]
+            vec![SessionEffect::WorkspaceChanged {
+                event_index: 1,
+                version: 3
+            }]
         );
         assert_eq!(core.session().active_pane_id(), Some("pane-1"));
 
@@ -2655,6 +2834,126 @@ mod tests {
         assert_eq!(core.session().version, 1);
         assert_eq!(core.session().active_pane_id(), Some("pane-1"));
         assert_eq!(core.session().leaf_pane_ids(), vec!["pane-1".to_owned()]);
+    }
+
+    #[test]
+    fn session_core_accepts_injected_metadata_for_replay_order() {
+        let mut core = SessionCore::initial();
+
+        let first = core.accept(
+            "client-1",
+            SessionEventLane::Client,
+            42,
+            SessionEvent::FocusPane {
+                pane_id: "pane-1".to_owned(),
+            },
+        );
+        let second = core.accept(
+            "control",
+            SessionEventLane::Control,
+            40,
+            SessionEvent::SetPaneResizePolicy {
+                pane_id: "pane-1".to_owned(),
+                policy: protocol::ResizePolicy::Manual,
+            },
+        );
+
+        assert_eq!(first.accepted.metadata.event_index, 0);
+        assert_eq!(first.accepted.metadata.session_mono_ms, 42);
+        assert_eq!(first.accepted.metadata.source_id, "client-1");
+        assert_eq!(first.accepted.metadata.lane, SessionEventLane::Client);
+        assert!(first.effects.is_empty(), "focus was already on pane-1");
+        assert_eq!(second.accepted.metadata.event_index, 1);
+        assert_eq!(second.accepted.metadata.session_mono_ms, 40);
+        assert_eq!(
+            second.effects,
+            vec![SessionEffect::WorkspaceChanged {
+                event_index: 1,
+                version: 2
+            }]
+        );
+    }
+
+    #[test]
+    fn session_core_replays_accepted_pane_output_deterministically() {
+        let accepted = AcceptedSessionEvent {
+            metadata: AcceptedEventMetadata {
+                event_index: 7,
+                session_mono_ms: 123,
+                source_id: "pane-1-pty".to_owned(),
+                lane: SessionEventLane::Pane,
+            },
+            event: SessionEvent::PaneOutput {
+                pane_id: "pane-1".to_owned(),
+                bytes: b"hello from replay\r\n".to_vec(),
+            },
+        };
+        let mut original = SessionCore::initial();
+        let mut replayed = SessionCore::initial();
+
+        let original_effects = original.apply_accepted(&accepted);
+        let replayed_effects = replayed.apply_accepted(&accepted);
+
+        assert_eq!(original_effects, replayed_effects);
+        assert_eq!(
+            original_effects,
+            vec![SessionEffect::PaneSurfaceChanged {
+                event_index: 7,
+                pane_id: "pane-1".to_owned(),
+                surface_version: 3,
+                scrollback_version: 2,
+                patch_kind: protocol::PatchKind::ReplaceRows,
+            }]
+        );
+        assert_eq!(
+            original.session().pane_surface("pane-1"),
+            replayed.session().pane_surface("pane-1")
+        );
+        assert_eq!(
+            original.session().pane_scrollback("pane-1"),
+            replayed.session().pane_scrollback("pane-1")
+        );
+    }
+
+    #[test]
+    fn session_core_resize_event_emits_data_shaped_effects() {
+        let mut core = SessionCore::initial();
+
+        let transition = core.accept(
+            "client-1",
+            SessionEventLane::Client,
+            88,
+            SessionEvent::CommitPaneResize {
+                pane_id: "pane-1".to_owned(),
+                cols: 100,
+                rows: 30,
+            },
+        );
+
+        assert_eq!(transition.accepted.metadata.event_index, 0);
+        assert_eq!(
+            transition.effects,
+            vec![
+                SessionEffect::PaneResized {
+                    event_index: 0,
+                    pane_id: "pane-1".to_owned(),
+                    cols: 100,
+                    rows: 30,
+                },
+                SessionEffect::PaneSurfaceChanged {
+                    event_index: 0,
+                    pane_id: "pane-1".to_owned(),
+                    surface_version: 3,
+                    scrollback_version: 1,
+                    patch_kind: protocol::PatchKind::FullRefreshRequired,
+                },
+                SessionEffect::WorkspaceChanged {
+                    event_index: 0,
+                    version: 2,
+                },
+            ]
+        );
+        assert_eq!(core.session().pane_size("pane-1"), Some((100, 30)));
     }
 
     #[test]

@@ -87,7 +87,8 @@ where
         None
     };
 
-    let mut session_core = SessionCore::initial();
+    let mut session_core =
+        SessionCore::with_terminal_engine_kind(Session::initial(), args.terminal_engine_kind);
     session_core.session_mut().id.clone_from(&args.session_id);
     if let Some(command) = args.command.as_deref() {
         session_core.session_mut().tabs[0].root.host.command =
@@ -184,10 +185,10 @@ where
             inherited_origin.as_deref(),
         );
     }
-    let mut session = session_core.into_session();
     let mut pty_host = LocalPtyHost::default();
     for pane_id in &pane_ids {
-        let host_spec = session
+        let host_spec = session_core
+            .session()
             .pane_host(pane_id)
             .ok_or_else(|| format!("pane {pane_id} missing host"))?
             .clone();
@@ -196,16 +197,11 @@ where
             return Err(Box::new(err));
         }
     }
-    let mut terminal_engines = PaneTerminalEngines::new(args.terminal_engine_kind);
-    if let Err(err) = wait_for_panes_output(
-        &mut session,
-        &mut pty_host,
-        &pane_ids,
-        &mut terminal_engines,
-    ) {
+    if let Err(err) = wait_for_panes_output(&mut session_core, &mut pty_host, &pane_ids) {
         report_ready_json_error(&args, err.as_ref())?;
         return Err(err);
     }
+    let (mut session, mut terminal_engines) = session_core.into_parts();
     if let Some(ready_json) = ready_json {
         println!("{ready_json}");
         io::stdout().flush()?;
@@ -363,17 +359,15 @@ impl Drop for SocketCleanup {
 }
 
 fn wait_for_panes_output(
-    session: &mut Session,
+    session_core: &mut SessionCore,
     output: &mut LocalPtyHost,
     pane_ids: &[String],
-    engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let deadline = Instant::now() + Duration::from_millis(200);
     while Instant::now() < deadline {
         let mut changed = false;
         for pane_id in pane_ids {
-            changed |=
-                local::poll_pane_output_with_host_and_engines(session, engines, output, pane_id)?;
+            changed |= local::poll_pane_output_with_session_core(session_core, output, pane_id, 0)?;
         }
         if changed {
             return Ok(());
