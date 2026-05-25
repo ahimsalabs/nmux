@@ -2911,10 +2911,16 @@ fn live_json_reports_server_closed_detach() {
             "--interval-ms",
             "1000",
         ])
-        .output()
-        .expect("run nmux --live --json");
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux --live --json");
 
-    let server_status = server.wait().expect("wait for daemon");
+    let client = wait_for_command_output(client, "nmux --live --json", Duration::from_secs(10));
+    let server_status = wait_for_child_exit(&mut server, Duration::from_secs(10)).unwrap_or_else(|| {
+        let _ = server.kill();
+        panic!("daemon did not exit after server-closed JSON client detached");
+    });
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -8287,7 +8293,7 @@ fn live_cycles_coalesces_delayed_echo_after_input() {
             "--live-cycles",
             "1",
             "--command",
-            "printf 'ready\\n'; sleep 0.1; printf 'typed:coalesce!\\n'; sleep 0.05; printf 'echo:coalesce!\\n'",
+            "printf 'ready\\n'; sleep 0.1; printf 'typed:coalesce!\\n'; sleep 0.02; printf 'echo:coalesce!\\n'",
         ])
         .spawn()
         .expect("spawn daemon");
