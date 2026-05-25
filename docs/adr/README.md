@@ -50,3 +50,5 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0040: Ping-Pong RTT Metrics](0040-ping-pong-rtt.md) | Accepted |
 | [0041: Client Inventory Subscription](0041-client-inventory-subscription.md) | Accepted |
 | [0042: Session-Driven Daemon Lifetime](0042-session-driven-daemon-lifetime.md) | Accepted |
+| [0043: Session Actor Runtime Boundary](0043-session-actor-runtime-boundary.md) | Accepted |
+| [0044: Deterministic Replay Trace Container](0044-deterministic-replay-trace-container.md) | Pending |
