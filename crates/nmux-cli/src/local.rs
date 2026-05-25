@@ -52,6 +52,7 @@ const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
 const INPUT_MODIFIER_MASK: u32 = 0x0f;
 const LIVE_IDLE_POLL_TIMEOUT: Duration = Duration::from_millis(20);
 const LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT: Duration = Duration::from_millis(20);
+const LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(3);
 
@@ -1191,7 +1192,7 @@ fn serve_live_attached_client(
         }
         if readiness.host_output && !readiness.client_input {
             let client_readiness =
-                poll_live_client_sources(stream, None, LIVE_POST_INPUT_POLL_TIMEOUT)?;
+                poll_live_client_sources(stream, None, LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT)?;
             readiness.client_input = client_readiness.client_input;
         }
 
@@ -2117,7 +2118,12 @@ pub fn poll_pane_output_with_engines(
     let mut buffer = [0_u8; 4096];
     let mut pumped = Vec::new();
     loop {
-        let count = output.try_read_output(pane_id, &mut buffer)?;
+        let read_span = tracing::trace_span!(
+            "host.output.try_read",
+            pane_id = %pane_id,
+            buffer = buffer.len()
+        );
+        let count = read_span.in_scope(|| output.try_read_output(pane_id, &mut buffer))?;
         if count == 0 {
             break;
         }
@@ -2128,7 +2134,14 @@ pub fn poll_pane_output_with_engines(
         return Ok(false);
     }
 
-    Ok(session.apply_pane_output_with_engine(pane_id, &pumped, engines.engine_mut(pane_id)))
+    let apply_span = tracing::trace_span!(
+        "terminal.apply_output",
+        pane_id = %pane_id,
+        bytes = pumped.len()
+    );
+    Ok(apply_span.in_scope(|| {
+        session.apply_pane_output_with_engine(pane_id, &pumped, engines.engine_mut(pane_id))
+    }))
 }
 
 pub fn poll_pane_output_with_host_and_engines(

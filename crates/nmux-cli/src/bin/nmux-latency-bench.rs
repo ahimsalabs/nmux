@@ -122,7 +122,6 @@ fn run_single_client_case(
     let mut stream = local::connect_to_daemon_with_timeout(socket_path, Duration::from_secs(5))?;
     stream.set_read_timeout(Some(DEFAULT_TIMEOUT))?;
     let pane_id = attach_live_stream(&mut stream, AttachMode::ReadWrite, case.pane_id)?;
-    stream.set_nonblocking(true)?;
     let mut sequence = local::ClientFrameSequence::default();
     let mut samples = Vec::with_capacity(iterations);
 
@@ -179,7 +178,12 @@ fn measure_echo_latency(
         if Instant::now() >= deadline {
             return Err(format!("timed out waiting for {expected}").into());
         }
-        match local::read_live_surface_update_from_stream(stream)? {
+        let read_span = tracing::trace_span!(
+            "client.read_live_surface_update",
+            pane_id = %pane_id,
+            token = %token
+        );
+        match read_span.in_scope(|| local::read_live_surface_update_from_stream(stream))? {
             local::LiveSurfaceRead::Update(update) => {
                 if update.text.contains(&expected)
                     || update

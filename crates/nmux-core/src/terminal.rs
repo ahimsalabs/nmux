@@ -990,20 +990,10 @@ mod ghostty_vt {
             } else {
                 input.styles.to_vec()
             };
-            let scrollback_rows = if surface == protocol::SurfaceKind::Main {
-                self.scrollback_rows(&mut styles)?
+            let total_main_rows = if surface == protocol::SurfaceKind::Main {
+                Some(self.terminal.total_rows().ok()?)
             } else {
-                ExtractedRows {
-                    lines: input.scrollback_lines.to_vec(),
-                    row_runs: if input.scrollback_row_runs.len() == input.scrollback_lines.len() {
-                        input.scrollback_row_runs.to_vec()
-                    } else {
-                        super::plain_row_runs(input.scrollback_lines)
-                    },
-                    semantic_prompts: input.scrollback_semantic_prompts.to_vec(),
-                    dirty_rows: input.scrollback_dirty_rows.to_vec(),
-                    kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
-                }
+                None
             };
             self.terminal.scroll_viewport(ScrollViewport::Bottom);
             let snapshot = self.render_state.update(&self.terminal).ok()?;
@@ -1019,6 +1009,26 @@ mod ghostty_vt {
             let surface_dirty_rows = surface_rows.dirty_rows.clone();
             let surface_kitty_placeholders = surface_rows.kitty_placeholders.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
+            let colors = terminal_colors(&snapshot)?;
+            let scrollback_rows = if let Some(total_rows) = total_main_rows {
+                if total_rows <= surface_rows.lines.len() {
+                    surface_rows.truncated(total_rows)
+                } else {
+                    self.scrollback_rows(total_rows, &mut styles)?
+                }
+            } else {
+                ExtractedRows {
+                    lines: input.scrollback_lines.to_vec(),
+                    row_runs: if input.scrollback_row_runs.len() == input.scrollback_lines.len() {
+                        input.scrollback_row_runs.to_vec()
+                    } else {
+                        super::plain_row_runs(input.scrollback_lines)
+                    },
+                    semantic_prompts: input.scrollback_semantic_prompts.to_vec(),
+                    dirty_rows: input.scrollback_dirty_rows.to_vec(),
+                    kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
+                }
+            };
             let modes = modes(&self.terminal)?;
             let title = self.terminal.title().ok()?;
             let terminal_working_directory = self.terminal.pwd().ok()?.to_owned();
@@ -1026,7 +1036,6 @@ mod ghostty_vt {
                 .osc7
                 .working_directory()
                 .unwrap_or(&terminal_working_directory);
-            let colors = terminal_colors(&snapshot)?;
             let patch_kind = if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
@@ -1077,8 +1086,11 @@ mod ghostty_vt {
             })
         }
 
-        fn scrollback_rows(&mut self, styles: &mut Vec<PaneStyle>) -> Option<ExtractedRows> {
-            let total_rows = self.terminal.total_rows().ok()?;
+        fn scrollback_rows(
+            &mut self,
+            total_rows: usize,
+            styles: &mut Vec<PaneStyle>,
+        ) -> Option<ExtractedRows> {
             if total_rows == 0 {
                 return Some(ExtractedRows {
                     lines: Vec::new(),
@@ -1097,11 +1109,7 @@ mod ghostty_vt {
                 &mut self.cell_iterator,
                 styles,
             )?;
-            rows.lines.truncate(total_rows);
-            rows.row_runs.truncate(total_rows);
-            rows.semantic_prompts.truncate(total_rows);
-            rows.dirty_rows.truncate(total_rows);
-            rows.kitty_placeholders.truncate(total_rows);
+            rows.truncate(total_rows);
 
             while rows.lines.len() < total_rows {
                 self.terminal.scroll_viewport(ScrollViewport::Delta(1));
@@ -1144,6 +1152,21 @@ mod ghostty_vt {
         semantic_prompts: Vec<protocol::RowSemanticPrompt>,
         dirty_rows: Vec<bool>,
         kitty_placeholders: Vec<bool>,
+    }
+
+    impl ExtractedRows {
+        fn truncate(&mut self, len: usize) {
+            self.lines.truncate(len);
+            self.row_runs.truncate(len);
+            self.semantic_prompts.truncate(len);
+            self.dirty_rows.truncate(len);
+            self.kitty_placeholders.truncate(len);
+        }
+
+        fn truncated(mut self, len: usize) -> Self {
+            self.truncate(len);
+            self
+        }
     }
 
     fn extract_rows<'alloc>(
