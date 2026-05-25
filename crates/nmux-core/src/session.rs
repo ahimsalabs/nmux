@@ -185,6 +185,99 @@ pub struct Cursor {
     pub blinking: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionEvent {
+    AddTab {
+        tab_id: String,
+        title: String,
+        pane_id: String,
+        host: HostSpec,
+    },
+    SwitchTab {
+        tab_id: String,
+    },
+    CloseTab {
+        tab_id: String,
+    },
+    FocusPane {
+        pane_id: String,
+    },
+    SplitPane {
+        pane_id: String,
+        axis: protocol::SplitAxis,
+        new_pane_id: String,
+        new_host: HostSpec,
+    },
+    SetPaneResizePolicy {
+        pane_id: String,
+        policy: protocol::ResizePolicy,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionEffect {
+    WorkspaceChanged { version: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionCore {
+    session: Session,
+}
+
+impl SessionCore {
+    pub fn initial() -> Self {
+        Self::new(Session::initial())
+    }
+
+    pub fn new(session: Session) -> Self {
+        Self { session }
+    }
+
+    pub fn session(&self) -> &Session {
+        &self.session
+    }
+
+    pub fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
+    }
+
+    pub fn into_session(self) -> Session {
+        self.session
+    }
+
+    pub fn apply(&mut self, event: SessionEvent) -> Vec<SessionEffect> {
+        let changed = match event {
+            SessionEvent::AddTab {
+                tab_id,
+                title,
+                pane_id,
+                host,
+            } => self.session.add_tab(tab_id, title, pane_id, host),
+            SessionEvent::SwitchTab { tab_id } => self.session.switch_tab(&tab_id),
+            SessionEvent::CloseTab { tab_id } => self.session.close_tab(&tab_id),
+            SessionEvent::FocusPane { pane_id } => self.session.focus_pane(&pane_id),
+            SessionEvent::SplitPane {
+                pane_id,
+                axis,
+                new_pane_id,
+                new_host,
+            } => self
+                .session
+                .split_pane(&pane_id, axis, new_pane_id, new_host),
+            SessionEvent::SetPaneResizePolicy { pane_id, policy } => {
+                self.session.set_pane_resize_policy(&pane_id, policy)
+            }
+        };
+        if changed {
+            vec![SessionEffect::WorkspaceChanged {
+                version: self.session.version,
+            }]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
 impl Session {
     pub fn initial() -> Self {
         let surface_lines = vec![
@@ -2380,7 +2473,7 @@ mod tests {
 
     use super::{
         AttachMode, Cursor, FocusInputSpec, InputFrameContext, MouseInputSpec, PasteInputSpec,
-        ScrollbackFetchSpec, ScrollbackRange, Session,
+        ScrollbackFetchSpec, ScrollbackRange, Session, SessionCore, SessionEffect, SessionEvent,
     };
 
     fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -2498,6 +2591,70 @@ mod tests {
         let tabs = snapshot.tabs().expect("tabs");
         let pane = tabs.get(0).root().expect("pane");
         assert_eq!(pane.resize_policy(), protocol::ResizePolicy::Manual);
+    }
+
+    #[test]
+    fn session_core_applies_workspace_events_in_order() {
+        let mut core = SessionCore::initial();
+
+        let split_effects = core.apply(SessionEvent::SplitPane {
+            pane_id: "pane-1".to_owned(),
+            axis: protocol::SplitAxis::Vertical,
+            new_pane_id: "pane-2".to_owned(),
+            new_host: HostSpec::local("local-2", CommandSpec::new("sh")),
+        });
+        assert_eq!(
+            split_effects,
+            vec![SessionEffect::WorkspaceChanged { version: 2 }]
+        );
+        assert_eq!(core.session().active_pane_id(), Some("pane-2"));
+
+        let focus_effects = core.apply(SessionEvent::FocusPane {
+            pane_id: "pane-1".to_owned(),
+        });
+        assert_eq!(
+            focus_effects,
+            vec![SessionEffect::WorkspaceChanged { version: 3 }]
+        );
+        assert_eq!(core.session().active_pane_id(), Some("pane-1"));
+
+        assert_eq!(
+            core.session().leaf_pane_ids(),
+            vec!["pane-1".to_owned(), "pane-2".to_owned()]
+        );
+        assert_eq!(core.session().version, 3);
+    }
+
+    #[test]
+    fn session_core_noops_do_not_emit_effects_or_change_version() {
+        let mut core = SessionCore::initial();
+
+        assert!(
+            core.apply(SessionEvent::FocusPane {
+                pane_id: "pane-1".to_owned(),
+            })
+            .is_empty()
+        );
+        assert!(
+            core.apply(SessionEvent::SplitPane {
+                pane_id: "pane-1".to_owned(),
+                axis: protocol::SplitAxis::None,
+                new_pane_id: "pane-2".to_owned(),
+                new_host: HostSpec::local("local-2", CommandSpec::new("sh")),
+            })
+            .is_empty()
+        );
+        assert!(
+            core.apply(SessionEvent::SetPaneResizePolicy {
+                pane_id: "missing".to_owned(),
+                policy: protocol::ResizePolicy::Manual,
+            })
+            .is_empty()
+        );
+
+        assert_eq!(core.session().version, 1);
+        assert_eq!(core.session().active_pane_id(), Some("pane-1"));
+        assert_eq!(core.session().leaf_pane_ids(), vec!["pane-1".to_owned()]);
     }
 
     #[test]

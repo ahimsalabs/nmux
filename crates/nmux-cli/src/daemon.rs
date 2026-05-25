@@ -9,7 +9,7 @@ use crate::error::ServeError;
 use crate::local;
 use clap::{ArgAction, Parser, ValueEnum};
 use nmux_core::host::{CommandSpec, HostKind, HostSpec, LocalPtyHost, ProcessHost};
-use nmux_core::session::Session;
+use nmux_core::session::{Session, SessionCore, SessionEvent};
 use nmux_core::terminal::{PaneTerminalEngines, TerminalEngineKind};
 use nmux_proto::protocol;
 
@@ -87,68 +87,104 @@ where
         None
     };
 
-    let mut session = Session::initial();
-    session.id.clone_from(&args.session_id);
+    let mut session_core = SessionCore::initial();
+    session_core.session_mut().id.clone_from(&args.session_id);
     if let Some(command) = args.command.as_deref() {
-        session.tabs[0].root.host.command = CommandSpec::new("sh").with_args(["-lc", command]);
+        session_core.session_mut().tabs[0].root.host.command =
+            CommandSpec::new("sh").with_args(["-lc", command]);
     }
     if let Some((cols, rows)) = args.initial_size {
-        session.tabs[0].root.cols = cols;
-        session.tabs[0].root.rows = rows;
-        session.tabs[0].root.host.command.initial_size = Some((cols, rows));
+        session_core.session_mut().tabs[0].root.cols = cols;
+        session_core.session_mut().tabs[0].root.rows = rows;
+        session_core.session_mut().tabs[0]
+            .root
+            .host
+            .command
+            .initial_size = Some((cols, rows));
     }
     if let Some(working_dir) = args.working_dir.as_ref() {
-        session.tabs[0].root.host.command.working_dir = Some(working_dir.clone());
+        session_core.session_mut().tabs[0]
+            .root
+            .host
+            .command
+            .working_dir = Some(working_dir.clone());
     }
     if !args.env.is_empty() {
-        session.tabs[0]
+        session_core.session_mut().tabs[0]
             .root
             .host
             .command
             .env
             .extend(args.env.iter().cloned());
     }
-    apply_initial_host_kind(&mut session.tabs[0].root.host, &args)?;
+    apply_initial_host_kind(&mut session_core.session_mut().tabs[0].root.host, &args)?;
     for tab_number in 2..=args.initial_tabs {
         let pane_id = format!("tab-{tab_number}-pane-1");
         let tab_id = format!("tab-{tab_number}");
-        let host = session
+        let host = session_core
+            .session()
             .pane_host("pane-1")
             .ok_or("initial pane missing host")?
             .clone();
-        if !session.add_tab(tab_id.clone(), tab_id, pane_id, host) {
+        if session_core
+            .apply(SessionEvent::AddTab {
+                tab_id: tab_id.clone(),
+                title: tab_id,
+                pane_id,
+                host,
+            })
+            .is_empty()
+        {
             return Err(format!("failed to create initial tab {tab_number}").into());
         }
     }
     if let Some(tab_id) = args.active_tab_id.as_deref()
-        && !session.switch_tab(tab_id)
-        && session.active_tab_id != tab_id
+        && session_core
+            .apply(SessionEvent::SwitchTab {
+                tab_id: tab_id.to_owned(),
+            })
+            .is_empty()
+        && session_core.session().active_tab_id != tab_id
     {
         return Err(format!("failed to switch to initial tab {tab_id}").into());
     }
     if let Some(axis) = args.initial_split {
-        let active_pane_id = session
+        let active_pane_id = session_core
+            .session()
             .active_pane_id()
             .ok_or("active pane missing before initial split")?
             .to_owned();
-        let host = session
+        let host = session_core
+            .session()
             .pane_host(&active_pane_id)
             .ok_or("active pane missing host")?
             .clone();
-        if !session.split_active_pane(axis, "pane-2", host) {
+        if session_core
+            .apply(SessionEvent::SplitPane {
+                pane_id: active_pane_id,
+                axis,
+                new_pane_id: "pane-2".to_owned(),
+                new_host: host,
+            })
+            .is_empty()
+        {
             return Err("failed to create initial split pane".into());
         }
     }
-    let pane_ids = session.leaf_pane_ids();
+    let pane_ids = session_core.session().leaf_pane_ids();
     let inherited_origin = inherited_nmux_origin();
     for pane_id in &pane_ids {
-        session.set_pane_resize_policy(pane_id, args.resize_policy);
-        session.set_pane_nmux_environment(
+        session_core.apply(SessionEvent::SetPaneResizePolicy {
+            pane_id: pane_id.clone(),
+            policy: args.resize_policy,
+        });
+        session_core.session_mut().set_pane_nmux_environment(
             pane_id,
             args.transport_endpoint(),
             inherited_origin.as_deref(),
         );
     }
+    let mut session = session_core.into_session();
     let mut pty_host = LocalPtyHost::default();
     for pane_id in &pane_ids {
         let host_spec = session
