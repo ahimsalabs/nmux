@@ -1735,6 +1735,7 @@ fn socket_closed_error(err: &io::Error) -> bool {
             | io::ErrorKind::UnexpectedEof
             | io::ErrorKind::ConnectionReset
             | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::NotConnected
     ) || err.raw_os_error() == Some(22)
 }
 
@@ -5124,6 +5125,13 @@ mod tests {
             start_line,
             line_count,
         }
+    }
+
+    #[test]
+    fn socket_closed_error_accepts_not_connected() {
+        let error = io::Error::from(io::ErrorKind::NotConnected);
+
+        assert!(socket_closed_error(&error));
     }
 
     fn scrollback_fetch_spec(
