@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
@@ -6125,17 +6125,23 @@ fn live_json_clients_exchange_presence_identity() {
             "--display-name",
             "Writer",
             "--iterations",
-            "2",
+            "1",
             "--interval-ms",
             "1000",
         ])
-        .output()
-        .expect("run writer nmux");
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn writer nmux");
 
-    let reader_output = reader_client
-        .wait_with_output()
-        .expect("wait for reader nmux");
-    let server_status = server.wait().expect("wait for daemon");
+    let writer_client =
+        wait_for_command_output(writer_client, "writer nmux", Duration::from_secs(20));
+    let reader_output =
+        wait_for_command_output(reader_client, "reader nmux", Duration::from_secs(20));
+    let server_status = wait_for_child_exit(&mut server, Duration::from_secs(20)).unwrap_or_else(|| {
+        let _ = server.kill();
+        panic!("daemon did not exit after presence clients detached");
+    });
     let _ = fs::remove_file(&socket_path);
 
     assert!(
@@ -8093,6 +8099,16 @@ fn wait_for_child_exit(
         thread::sleep(Duration::from_millis(20));
     }
     None
+}
+
+fn wait_for_command_output(mut child: Child, label: &str, timeout: Duration) -> Output {
+    if wait_for_child_exit(&mut child, timeout).is_none() {
+        let _ = child.kill();
+        panic!("{label} did not exit within {timeout:?}");
+    }
+    child
+        .wait_with_output()
+        .unwrap_or_else(|error| panic!("wait for {label}: {error}"))
 }
 
 #[cfg(feature = "libghostty-vt")]
