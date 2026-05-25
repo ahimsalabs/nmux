@@ -299,6 +299,16 @@ pub struct DeterministicSessionScheduler {
     queues: BTreeMap<String, VecDeque<PendingSessionEvent>>,
 }
 
+pub struct SessionActor {
+    core: SessionCore,
+    scheduler: DeterministicSessionScheduler,
+    trace: SessionTraceRing,
+}
+
+pub struct SessionRegistry {
+    actors: BTreeMap<String, SessionActor>,
+}
+
 impl PendingSessionEvent {
     pub fn new(
         source_id: impl Into<String>,
@@ -414,6 +424,98 @@ impl SessionEventLane {
             Self::Pane => 3,
             Self::Timer => 4,
         }
+    }
+}
+
+impl SessionActor {
+    pub fn new(core: SessionCore, trace_cap: usize) -> Self {
+        Self {
+            core,
+            scheduler: DeterministicSessionScheduler::new(),
+            trace: SessionTraceRing::new(trace_cap),
+        }
+    }
+
+    pub fn initial(trace_cap: usize) -> Self {
+        Self::new(SessionCore::initial(), trace_cap)
+    }
+
+    pub fn session(&self) -> &Session {
+        self.core.session()
+    }
+
+    pub fn core_mut(&mut self) -> &mut SessionCore {
+        &mut self.core
+    }
+
+    pub fn enqueue(&mut self, pending: PendingSessionEvent) {
+        self.scheduler.push(pending);
+    }
+
+    pub fn drain_next(&mut self) -> Option<SessionTraceRecord> {
+        let pending = self.scheduler.pop_next()?;
+        let record = SessionTraceRecord::from_transition(self.core.accept_pending(pending));
+        self.trace.push(record.clone());
+        Some(record)
+    }
+
+    pub fn drain_ready(&mut self) -> Vec<SessionTraceRecord> {
+        let mut records = Vec::new();
+        while let Some(record) = self.drain_next() {
+            records.push(record);
+        }
+        records
+    }
+
+    pub fn trace(&self) -> &SessionTraceRing {
+        &self.trace
+    }
+
+    pub fn is_idle(&self) -> bool {
+        self.scheduler.is_empty()
+    }
+}
+
+impl Default for SessionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SessionRegistry {
+    pub fn new() -> Self {
+        Self {
+            actors: BTreeMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, actor: SessionActor) -> bool {
+        let session_id = actor.session().id.clone();
+        if self.actors.contains_key(&session_id) {
+            return false;
+        }
+        self.actors.insert(session_id, actor);
+        true
+    }
+
+    pub fn get(&self, session_id: &str) -> Option<&SessionActor> {
+        self.actors.get(session_id)
+    }
+
+    pub fn get_mut(&mut self, session_id: &str) -> Option<&mut SessionActor> {
+        self.actors.get_mut(session_id)
+    }
+
+    pub fn remove(&mut self, session_id: &str) -> Option<SessionActor> {
+        self.actors.remove(session_id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.actors.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.actors.is_empty()
     }
 }
 
@@ -2817,8 +2919,8 @@ mod tests {
         AcceptedEventMetadata, AcceptedSessionEvent, AttachMode, Cursor,
         DeterministicSessionScheduler, FocusInputSpec, InputFrameContext, MouseInputSpec,
         PasteInputSpec, PendingSessionEvent, ScrollbackFetchSpec, ScrollbackRange, Session,
-        SessionCore, SessionEffect, SessionEvent, SessionEventLane, SessionTraceRecord,
-        SessionTraceRing,
+        SessionActor, SessionCore, SessionEffect, SessionEvent, SessionEventLane, SessionRegistry,
+        SessionTraceRecord, SessionTraceRing,
     };
 
     fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -3239,6 +3341,67 @@ mod tests {
             replayed.session().pane_surface("pane-1"),
             core.session().pane_surface("pane-1")
         );
+    }
+
+    #[test]
+    fn session_actor_drains_scheduler_into_trace_records() {
+        let mut actor = SessionActor::initial(8);
+        actor.enqueue(PendingSessionEvent::new(
+            "pane-1",
+            SessionEventLane::Pane,
+            10,
+            SessionEvent::PaneOutput {
+                pane_id: "pane-1".to_owned(),
+                bytes: b"actor output\n".to_vec(),
+            },
+        ));
+        actor.enqueue(PendingSessionEvent::new(
+            "control",
+            SessionEventLane::Control,
+            9,
+            SessionEvent::SetPaneResizePolicy {
+                pane_id: "pane-1".to_owned(),
+                policy: protocol::ResizePolicy::Manual,
+            },
+        ));
+
+        let records = actor.drain_ready();
+
+        assert!(actor.is_idle());
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].accepted.metadata.source_id, "control");
+        assert_eq!(records[0].accepted.metadata.event_index, 0);
+        assert_eq!(records[1].accepted.metadata.source_id, "pane-1");
+        assert_eq!(records[1].accepted.metadata.event_index, 1);
+        assert_eq!(actor.trace().len(), 2);
+        assert_eq!(
+            actor
+                .session()
+                .pane_surface("pane-1")
+                .expect("pane")
+                .lines
+                .last()
+                .map(String::as_str),
+            Some("actor output")
+        );
+    }
+
+    #[test]
+    fn session_registry_enforces_one_actor_per_session_id() {
+        let mut registry = SessionRegistry::new();
+        let mut second_core = SessionCore::initial();
+        second_core.session_mut().id = "second".to_owned();
+
+        assert!(registry.insert(SessionActor::initial(4)));
+        assert!(!registry.insert(SessionActor::initial(4)));
+        assert!(registry.insert(SessionActor::new(second_core, 4)));
+        assert_eq!(registry.len(), 2);
+        assert!(registry.get("local").is_some());
+        assert!(registry.get("second").is_some());
+
+        let removed = registry.remove("local").expect("local actor");
+        assert_eq!(removed.session().id, "local");
+        assert_eq!(registry.len(), 1);
     }
 
     #[test]
