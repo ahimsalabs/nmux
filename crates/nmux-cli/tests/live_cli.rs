@@ -3051,7 +3051,7 @@ fn live_json_reports_server_closed_detach() {
             "--live-cycles",
             "1",
             "--command",
-            "printf 'closing-soon\n'; sleep 0.05",
+            "sleep 0.3; printf 'closing-soon\n'; sleep 0.05",
         ])
         .spawn()
         .expect("spawn daemon");
