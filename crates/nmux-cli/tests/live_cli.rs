@@ -8252,3 +8252,60 @@ fn read_until_line(rx: &mpsc::Receiver<String>, expected: &str) -> Vec<String> {
         lines.join("\n")
     );
 }
+
+/// Regression test: the daemon's post-input coalescing must wait long enough
+/// for the PTY echo to arrive.  With bounded `--live-cycles` the server used
+/// to exit the cycle immediately when `fast_changed` was false and no
+/// coalescing happened at all, losing the echo.  The 50ms sleep in the
+/// command makes the race deterministic — the echo always misses the old 3ms
+/// quiet window.
+#[test]
+fn live_cycles_coalesces_delayed_echo_after_input() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "printf 'ready\\n'; while IFS= read -r line; do sleep 0.05; printf 'echo:%s\\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--key",
+            "coalesce\n",
+            "--interval-ms",
+            "2000",
+        ])
+        .output()
+        .expect("run nmux --live");
+
+    let server_status = server.wait().expect("wait for daemon");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "daemon failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("echo:coalesce"),
+        "daemon exited before delayed echo arrived — post-input coalescing is broken:\n{stdout}"
+    );
+}

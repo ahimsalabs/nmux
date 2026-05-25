@@ -688,13 +688,18 @@ where
         };
         let coalesce_after_input = cycles_per_client != usize::MAX;
         let output_result =
-            if fast_changed && had_input && coalesce_after_input && host.notify_fd().is_some() {
-                poll_panes_output_with_host_until_poll_quiet_after_change(
+            if had_input && coalesce_after_input && host.notify_fd().is_some() {
+                // Use initial_changed=false: any prior fast-output changes
+                // (e.g. from a resize) were already written to clients.
+                // Start fresh so the quiet timer doesn't fire before the
+                // input echo arrives from the PTY.
+                poll_panes_output_with_host_until_poll_quiet_state(
                     session,
                     engines,
                     host,
                     &leaf_pane_ids,
                     quiet_timeout,
+                    false,
                 )
             } else if attempted_fast_output && host.notify_fd().is_some() {
                 Ok(false)
@@ -1792,8 +1797,7 @@ fn serve_live_attached_client(
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
         let coalesce_after_input = cycles != usize::MAX;
-        let output_result = if fast_changed
-            && input_pane_id.is_some()
+        let output_result = if input_pane_id.is_some()
             && host.notify_fd().is_some()
             && coalesce_after_input
         {
@@ -1802,15 +1806,20 @@ fn serve_live_attached_client(
                 reason = "post_input",
                 panes = leaf_pane_ids.len(),
                 notify_fd = true,
-                after_first = true
+                after_first = fast_changed
             );
+            // Use initial_changed=false: any prior fast-output changes
+            // (e.g. from a resize) were already written to the client.
+            // Start fresh so the quiet timer doesn't fire before the
+            // input echo arrives from the PTY.
             poll_span.in_scope(|| {
-                poll_panes_output_with_host_until_poll_quiet_after_change(
+                poll_panes_output_with_host_until_poll_quiet_state(
                     session,
                     engines,
                     host,
                     &leaf_pane_ids,
                     quiet_timeout,
+                    false,
                 )
             })
         } else if attempted_fast_output && host.notify_fd().is_some() {
