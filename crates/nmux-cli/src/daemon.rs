@@ -186,10 +186,22 @@ where
             .terminal_engine_kind(args.terminal_engine_kind);
         let serve_result = match &listener {
             DaemonListener::Unix { listener, .. } => {
-                config.serve(listener, &mut session, &mut pty_host)
+                config.serve_with_engines(
+                    listener,
+                    &mut session,
+                    &mut pty_host,
+                    &mut terminal_engines,
+                )
             }
             DaemonListener::Tcp(listener) => {
-                serve_tcp(&config, listener, &args, &mut session, &mut pty_host)
+                serve_tcp(
+                    &config,
+                    listener,
+                    &args,
+                    &mut session,
+                    &mut pty_host,
+                    &mut terminal_engines,
+                )
             }
         };
         let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
@@ -207,10 +219,22 @@ where
             .terminal_engine_kind(args.terminal_engine_kind);
         let serve_result = match &listener {
             DaemonListener::Unix { listener, .. } => {
-                config.serve(listener, &mut session, &mut pty_host)
+                config.serve_with_engines(
+                    listener,
+                    &mut session,
+                    &mut pty_host,
+                    &mut terminal_engines,
+                )
             }
             DaemonListener::Tcp(listener) => {
-                serve_tcp(&config, listener, &args, &mut session, &mut pty_host)
+                serve_tcp(
+                    &config,
+                    listener,
+                    &args,
+                    &mut session,
+                    &mut pty_host,
+                    &mut terminal_engines,
+                )
             }
         };
         let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
@@ -228,10 +252,22 @@ where
     loop {
         let serve_result = match &listener {
             DaemonListener::Unix { listener, .. } => {
-                default_config.serve(listener, &mut session, &mut pty_host)
+                default_config.serve_with_engines(
+                    listener,
+                    &mut session,
+                    &mut pty_host,
+                    &mut terminal_engines,
+                )
             }
             DaemonListener::Tcp(listener) => {
-                serve_tcp(&default_config, listener, &args, &mut session, &mut pty_host)
+                serve_tcp(
+                    &default_config,
+                    listener,
+                    &args,
+                    &mut session,
+                    &mut pty_host,
+                    &mut terminal_engines,
+                )
             }
         };
         if let Err(err) = serve_result {
@@ -250,6 +286,7 @@ fn serve_tcp(
     args: &Args,
     session: &mut Session,
     host: &mut LocalPtyHost,
+    engines: &mut PaneTerminalEngines,
 ) -> Result<(), ServeError> {
     let token = args
         .tcp_token
@@ -257,7 +294,7 @@ fn serve_tcp(
         .ok_or("--listen requires --token, --tcp-token, or NMUX_TOKEN")?;
     for _ in 0..config.clients {
         let stream = local::accept_authenticated_tcp_client(listener, token)?;
-        config.serve_stream(stream, session, host)?;
+        config.serve_stream_with_engines(stream, session, host, engines)?;
     }
     Ok(())
 }
@@ -311,7 +348,8 @@ fn wait_for_panes_output(
     while Instant::now() < deadline {
         let mut changed = false;
         for pane_id in pane_ids {
-            changed |= local::poll_pane_output_with_engines(session, engines, output, pane_id)?;
+            changed |=
+                local::poll_pane_output_with_host_and_engines(session, engines, output, pane_id)?;
         }
         if changed {
             return Ok(());

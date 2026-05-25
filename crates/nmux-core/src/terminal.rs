@@ -578,11 +578,11 @@ pub fn named_key_bytes(
     Some(bytes.to_vec())
 }
 
-fn modified_named_key_bytes(key_name: &str, modifiers: u32) -> Option<Vec<u8>> {
+pub fn modified_named_key_bytes(key_name: &str, modifiers: u32) -> Option<Vec<u8>> {
     if modifiers == 0 || modifiers > 0x0f {
         return None;
     }
-    let modifier_param = modifiers.checked_add(1)?;
+    let modifier_param = xterm_modifier_param(modifiers)?;
     let sequence = match key_name {
         "arrow-up" => format!("\x1b[1;{modifier_param}A"),
         "arrow-down" => format!("\x1b[1;{modifier_param}B"),
@@ -612,7 +612,24 @@ fn modified_named_key_bytes(key_name: &str, modifiers: u32) -> Option<Vec<u8>> {
     Some(sequence.into_bytes())
 }
 
-fn encode_sgr_mouse_input(input: MouseTerminalInput) -> Option<Vec<u8>> {
+fn xterm_modifier_param(modifiers: u32) -> Option<u32> {
+    let mut param = 1;
+    if modifiers & 1 != 0 {
+        param += 1;
+    }
+    if modifiers & 4 != 0 {
+        param += 2;
+    }
+    if modifiers & 2 != 0 {
+        param += 4;
+    }
+    if modifiers & 8 != 0 {
+        param += 8;
+    }
+    Some(param)
+}
+
+pub fn encode_sgr_mouse_input(input: MouseTerminalInput) -> Option<Vec<u8>> {
     match input.mouse_format {
         protocol::MouseFormat::Sgr | protocol::MouseFormat::SgrPixels => {}
         _ => return None,
@@ -812,6 +829,7 @@ mod ghostty_vt {
         row_iterator: RowIterator<'static>,
         cell_iterator: CellIterator<'static>,
         osc7: Osc7Tracker,
+        pending_decrqm: Vec<u8>,
         pty_writes: Rc<RefCell<Vec<Vec<u8>>>>,
     }
 
@@ -900,6 +918,55 @@ mod ghostty_vt {
         }
     }
 
+    fn vt_output_may_change_rows(output: &[u8]) -> bool {
+        enum State {
+            Ground,
+            Escape,
+            Csi,
+            Osc,
+            OscEscape,
+        }
+
+        let mut state = State::Ground;
+        for byte in output.iter().copied() {
+            match state {
+                State::Ground => match byte {
+                    0x1b => state = State::Escape,
+                    b'\n' | b'\r' | b'\t' | 0x08 => return true,
+                    0x20..=0x7e | 0x80..=0xff => return true,
+                    _ => {}
+                },
+                State::Escape => match byte {
+                    b'[' => state = State::Csi,
+                    b']' => state = State::Osc,
+                    _ => return true,
+                },
+                State::Csi => {
+                    if (0x40..=0x7e).contains(&byte) {
+                        match byte {
+                            b'm' | b'h' | b'l' | b'A' | b'B' | b'C' | b'D' | b'E' | b'F'
+                            | b'G' | b'H' | b'f' | b'd' => state = State::Ground,
+                            _ => return true,
+                        }
+                    }
+                }
+                State::Osc => match byte {
+                    0x07 => state = State::Ground,
+                    0x1b => state = State::OscEscape,
+                    _ => {}
+                },
+                State::OscEscape => {
+                    state = if byte == b'\\' {
+                        State::Ground
+                    } else {
+                        State::Osc
+                    };
+                }
+            }
+        }
+        false
+    }
+
     impl TerminalEngine for LibghosttyVtTerminalEngine {
         fn apply_output(
             &mut self,
@@ -908,8 +975,13 @@ mod ghostty_vt {
         ) -> Option<TerminalUpdate> {
             let state = self.state_mut(&input)?;
             state.osc7.ingest(output);
+            let pty_write_count = state.pty_writes.borrow().len();
+            let saw_wraparound_query = state.ingest_decrqm_query(output);
             state.terminal.vt_write(output);
-            state.extract_update(input, false)
+            if saw_wraparound_query && state.pty_writes.borrow().len() == pty_write_count {
+                state.pty_writes.borrow_mut().push(b"\x1b[?7;1$y".to_vec());
+            }
+            state.extract_update(input, false, !vt_output_may_change_rows(output))
         }
 
         fn resize(
@@ -922,7 +994,7 @@ mod ghostty_vt {
             let cols = u16::try_from(cols).ok()?;
             let rows = u16::try_from(rows).ok()?;
             state.terminal.resize(cols, rows, 8, 16).ok()?;
-            state.extract_update(input, true)
+            state.extract_update(input, true, false)
         }
 
         fn encode_mouse_input(&mut self, input: MouseTerminalInput) -> Option<Vec<u8>> {
@@ -971,6 +1043,7 @@ mod ghostty_vt {
                 row_iterator: RowIterator::new().ok()?,
                 cell_iterator: CellIterator::new().ok()?,
                 osc7: Osc7Tracker::default(),
+                pending_decrqm: Vec::new(),
                 pty_writes,
             })
         }
@@ -979,10 +1052,30 @@ mod ghostty_vt {
             self.pty_writes.borrow_mut().drain(..).collect()
         }
 
+        fn ingest_decrqm_query(&mut self, output: &[u8]) -> bool {
+            const QUERY: &[u8] = b"\x1b[?7$p";
+            self.pending_decrqm.extend_from_slice(output);
+            if self
+                .pending_decrqm
+                .windows(QUERY.len())
+                .any(|window| window == QUERY)
+            {
+                self.pending_decrqm.clear();
+                return true;
+            }
+            let keep = self.pending_decrqm.len().min(QUERY.len().saturating_sub(1));
+            if keep < self.pending_decrqm.len() {
+                self.pending_decrqm =
+                    self.pending_decrqm[self.pending_decrqm.len() - keep..].to_vec();
+            }
+            false
+        }
+
         fn extract_update(
             &mut self,
             input: TerminalInput<'_>,
             force_rows: bool,
+            preserve_input_rows: bool,
         ) -> Option<TerminalUpdate> {
             let surface = surface_kind(&self.terminal)?;
             let mut styles = if surface == protocol::SurfaceKind::Main || input.styles.is_empty() {
@@ -997,12 +1090,21 @@ mod ghostty_vt {
             };
             self.terminal.scroll_viewport(ScrollViewport::Bottom);
             let snapshot = self.render_state.update(&self.terminal).ok()?;
-            let surface_rows = extract_rows(
+            let mut surface_rows = extract_rows(
                 &snapshot,
                 &mut self.row_iterator,
                 &mut self.cell_iterator,
                 &mut styles,
             )?;
+            if preserve_input_rows && surface == input.surface {
+                surface_rows = ExtractedRows {
+                    lines: input.surface_lines.to_vec(),
+                    row_runs: input.surface_row_runs.to_vec(),
+                    semantic_prompts: input.surface_semantic_prompts.to_vec(),
+                    dirty_rows: input.surface_dirty_rows.to_vec(),
+                    kitty_placeholders: input.surface_kitty_placeholders.to_vec(),
+                };
+            }
             let surface_lines = surface_rows.lines.clone();
             let surface_row_runs = surface_rows.row_runs.clone();
             let surface_semantic_prompts = surface_rows.semantic_prompts.clone();
@@ -1010,7 +1112,15 @@ mod ghostty_vt {
             let surface_kitty_placeholders = surface_rows.kitty_placeholders.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
             let colors = terminal_colors(&snapshot)?;
-            let scrollback_rows = if let Some(total_rows) = total_main_rows {
+            let scrollback_rows = if preserve_input_rows && surface == input.surface {
+                ExtractedRows {
+                    lines: input.scrollback_lines.to_vec(),
+                    row_runs: input.scrollback_row_runs.to_vec(),
+                    semantic_prompts: input.scrollback_semantic_prompts.to_vec(),
+                    dirty_rows: input.scrollback_dirty_rows.to_vec(),
+                    kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
+                }
+            } else if let Some(total_rows) = total_main_rows {
                 if total_rows <= surface_rows.lines.len() {
                     surface_rows.truncated(total_rows)
                 } else {
@@ -1037,6 +1147,16 @@ mod ghostty_vt {
                 .working_directory()
                 .unwrap_or(&terminal_working_directory);
             let patch_kind = if !force_rows
+                && surface == input.surface
+                && surface_lines == input.surface_lines
+                && surface_row_runs == input.surface_row_runs
+                && surface_semantic_prompts == input.surface_semantic_prompts
+                && surface_dirty_rows == input.surface_dirty_rows
+                && surface_kitty_placeholders == input.surface_kitty_placeholders
+                && colors != input.colors
+            {
+                protocol::PatchKind::ColorOnly
+            } else if !force_rows
                 && surface == input.surface
                 && surface_lines == input.surface_lines
                 && surface_row_runs == input.surface_row_runs
@@ -3691,6 +3811,25 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
+    fn libghostty_vt_engine_exposes_split_terminal_query_pty_writes() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let first = engine
+            .apply_output(terminal_input(2, &empty, &empty), b"\x1b[?7")
+            .expect("partial terminal update");
+        assert!(engine.drain_pty_writes().is_empty());
+        let _ = engine
+            .apply_output(terminal_input_from_update(&first), b"$p")
+            .expect("completed terminal update");
+
+        let writes = engine.drain_pty_writes();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0], b"\x1b[?7;1$y");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
     fn libghostty_vt_paste_safety_detects_injection_sequences_without_protocol_fields() {
         use libghostty_vt::paste;
 
@@ -3929,7 +4068,7 @@ mod tests {
                 application_keypad: false,
                 application_cursor: false,
             }),
-            Some(b"\x1b[1;3A".to_vec())
+            Some(b"\x1b[1;5A".to_vec())
         );
         assert_eq!(
             engine.encode_key_input(super::KeyTerminalInput {
@@ -3938,7 +4077,7 @@ mod tests {
                 application_keypad: false,
                 application_cursor: false,
             }),
-            Some(b"\x1b[3;4~".to_vec())
+            Some(b"\x1b[3;6~".to_vec())
         );
         assert_eq!(
             engine.encode_key_input(super::KeyTerminalInput {

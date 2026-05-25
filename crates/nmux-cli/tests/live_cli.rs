@@ -5533,10 +5533,7 @@ fn live_cli_forwards_modified_named_keys() {
     assert!(server_status.success(), "daemon failed: {server_status}");
 
     let stdout = String::from_utf8_lossy(&client.stdout);
-    #[cfg(feature = "libghostty-vt")]
     let expected_sequence = "^[[1;5A";
-    #[cfg(not(feature = "libghostty-vt"))]
-    let expected_sequence = "^[[1;3A";
     assert!(
         stdout.contains(expected_sequence),
         "missing forwarded Ctrl+ArrowUp bytes:\n{stdout:?}"

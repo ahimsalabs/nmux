@@ -15,7 +15,7 @@ use nmux_core::session::{
 };
 use nmux_core::terminal::{
     KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines,
-    TerminalEngineKind, named_key_bytes,
+    TerminalEngineKind, encode_sgr_mouse_input, modified_named_key_bytes, named_key_bytes,
 };
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 use tracing::{Span, instrument};
@@ -157,6 +157,18 @@ impl ServeConfig {
         host: &mut H,
     ) -> Result<(), ServeError> {
         let mut engines = PaneTerminalEngines::new(self.terminal_engine_kind);
+        self.serve_with_engines(listener, session, host, &mut engines)
+    }
+
+    /// Serve clients accepted from `listener` using an existing terminal
+    /// engine set.
+    pub fn serve_with_engines<H: ProcessHost + ProcessOutput>(
+        &self,
+        listener: &UnixListener,
+        session: &mut Session,
+        host: &mut H,
+        engines: &mut PaneTerminalEngines,
+    ) -> Result<(), ServeError> {
         if self.live {
             if self.clients > 1 {
                 return serve_live_concurrent_n_with_host_and_engines(
@@ -165,7 +177,7 @@ impl ServeConfig {
                     host,
                     self.clients,
                     self.cycles_per_client,
-                    &mut engines,
+                    engines,
                 );
             }
             for _ in 0..self.clients {
@@ -174,14 +186,14 @@ impl ServeConfig {
                     stream,
                     session,
                     host,
-                    &mut engines,
+                    engines,
                     true,
                     self.cycles_per_client,
                 )?;
             }
         } else {
             for _ in 0..self.clients {
-                serve_next_with_host(listener, session, host, &mut engines)?;
+                serve_next_with_host(listener, session, host, engines)?;
             }
         }
         Ok(())
@@ -197,11 +209,23 @@ impl ServeConfig {
         host: &mut H,
     ) -> Result<(), ServeError> {
         let mut engines = PaneTerminalEngines::new(self.terminal_engine_kind);
+        self.serve_stream_with_engines(stream, session, host, &mut engines)
+    }
+
+    /// Serve a single pre-accepted stream using an existing terminal engine
+    /// set.
+    pub fn serve_stream_with_engines<H: ProcessHost + ProcessOutput>(
+        &self,
+        stream: UnixStream,
+        session: &mut Session,
+        host: &mut H,
+        engines: &mut PaneTerminalEngines,
+    ) -> Result<(), ServeError> {
         serve_stream_impl(
             stream,
             session,
             host,
-            &mut engines,
+            engines,
             self.live,
             self.cycles_per_client,
         )
@@ -2288,6 +2312,14 @@ pub(crate) fn poll_pane_output_with_engines(
     output: &mut dyn ProcessOutput,
     pane_id: &str,
 ) -> Result<bool, HostError> {
+    let pumped = read_available_pane_output(output, pane_id)?;
+    apply_pumped_pane_output(session, engines, pane_id, &pumped)
+}
+
+fn read_available_pane_output(
+    output: &mut dyn ProcessOutput,
+    pane_id: &str,
+) -> Result<Vec<u8>, HostError> {
     let mut buffer = [0_u8; 4096];
     let mut pumped = Vec::new();
     loop {
@@ -2302,7 +2334,15 @@ pub(crate) fn poll_pane_output_with_engines(
         }
         pumped.extend_from_slice(&buffer[..count]);
     }
+    Ok(pumped)
+}
 
+fn apply_pumped_pane_output(
+    session: &mut Session,
+    engines: &mut PaneTerminalEngines,
+    pane_id: &str,
+    pumped: &[u8],
+) -> Result<bool, HostError> {
     if pumped.is_empty() {
         return Ok(false);
     }
@@ -2323,11 +2363,19 @@ pub(crate) fn poll_pane_output_with_host_and_engines(
     host: &mut dyn ProcessHostOutput,
     pane_id: &str,
 ) -> Result<bool, HostError> {
-    let changed = poll_pane_output_with_engines(session, engines, host, pane_id)?;
+    let pumped = read_available_pane_output(host, pane_id)?;
+    let changed = apply_pumped_pane_output(session, engines, pane_id, &pumped)?;
+    let mut wrote_pty_input = false;
     for bytes in engines.engine_mut(pane_id).drain_pty_writes() {
+        tracing::trace!(
+            pane_id = %pane_id,
+            bytes = bytes.len(),
+            "terminal generated pty input"
+        );
         host.write_input(pane_id, &bytes)?;
+        wrote_pty_input = true;
     }
-    Ok(changed)
+    Ok(changed || wrote_pty_input)
 }
 
 fn poll_panes_output_with_host_once(
@@ -4797,9 +4845,9 @@ impl InputSummary {
                 return Ok(bytes);
             }
             if self.key_modifiers != 0 {
-                return Err(
-                    format!("terminal engine cannot encode modified key name: {key_name}").into(),
-                );
+                return modified_named_key_bytes(key_name, self.key_modifiers).ok_or_else(|| {
+                    format!("terminal engine cannot encode modified key name: {key_name}").into()
+                });
             }
             return named_key_bytes(key_name, application_keypad, application_cursor)
                 .ok_or_else(|| format!("unsupported key name: {key_name}").into());
@@ -4808,22 +4856,24 @@ impl InputSummary {
             let (cols, rows) = session
                 .pane_size(&self.pane_id)
                 .ok_or("mouse input pane is missing")?;
+            let input = MouseTerminalInput {
+                row: mouse.row,
+                col: mouse.col,
+                pixel_x: mouse.pixel_x,
+                pixel_y: mouse.pixel_y,
+                button: mouse.button,
+                action: mouse.action,
+                modifiers: mouse.modifiers,
+                mouse_format: session
+                    .pane_mouse_format(&self.pane_id)
+                    .ok_or("mouse input pane is missing")?,
+                cols,
+                rows,
+            };
             return engines
                 .engine_mut(&self.pane_id)
-                .encode_mouse_input(MouseTerminalInput {
-                    row: mouse.row,
-                    col: mouse.col,
-                    pixel_x: mouse.pixel_x,
-                    pixel_y: mouse.pixel_y,
-                    button: mouse.button,
-                    action: mouse.action,
-                    modifiers: mouse.modifiers,
-                    mouse_format: session
-                        .pane_mouse_format(&self.pane_id)
-                        .ok_or("mouse input pane is missing")?,
-                    cols,
-                    rows,
-                })
+                .encode_mouse_input(input)
+                .or_else(|| encode_sgr_mouse_input(input))
                 .ok_or_else(|| "terminal engine cannot encode mouse input".into());
         }
         if let Some(paste_text) = self.paste_text.as_deref() {
@@ -14265,7 +14315,7 @@ mod tests {
         let bytes = input
             .forwarded_bytes(&session, &mut PaneTerminalEngines::interim())
             .expect("modified key supported");
-        assert_eq!(bytes, b"\x1b[1;3A");
+        assert_eq!(bytes, b"\x1b[1;5A");
     }
 
     #[test]
