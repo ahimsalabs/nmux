@@ -8253,12 +8253,12 @@ fn read_until_line(rx: &mpsc::Receiver<String>, expected: &str) -> Vec<String> {
     );
 }
 
-/// Regression test: the daemon's post-input coalescing must wait long enough
-/// for the PTY echo to arrive.  With bounded `--live-cycles` the server used
-/// to exit the cycle immediately when `fast_changed` was false and no
-/// coalescing happened at all, losing the echo.  The 50ms sleep in the
-/// command makes the race deterministic — the echo always misses the old 3ms
-/// quiet window.
+/// Regression test: bounded post-input coalescing must hold the first changed
+/// frame long enough for delayed PTY output to arrive. The scheduled output
+/// avoids depending on platform-specific terminal input line discipline while
+/// still reproducing the old one-cycle attach behavior: the `typed:` frame
+/// arrived first, consumed the only iteration, and the delayed `echo:` frame
+/// was lost.
 #[test]
 fn live_cycles_coalesces_delayed_echo_after_input() {
     let socket_path = test_socket_path();
@@ -8271,7 +8271,7 @@ fn live_cycles_coalesces_delayed_echo_after_input() {
             "--live-cycles",
             "1",
             "--command",
-            "stty -icanon -echo min 9 time 20; printf 'ready\\n'; bytes=$(dd bs=9 count=1 2>/dev/null); printf 'typed:%s\\n' \"$bytes\"; sleep 0.05; printf 'echo:%s\\n' \"$bytes\"",
+            "printf 'ready\\n'; sleep 0.1; printf 'typed:coalesce!\\n'; sleep 0.05; printf 'echo:coalesce!\\n'",
         ])
         .spawn()
         .expect("spawn daemon");
@@ -8293,7 +8293,10 @@ fn live_cycles_coalesces_delayed_echo_after_input() {
         .output()
         .expect("run nmux --live");
 
-    let server_status = server.wait().expect("wait for daemon");
+    let server_status = wait_for_child_exit(&mut server, Duration::from_secs(5)).unwrap_or_else(|| {
+        let _ = server.kill();
+        panic!("daemon did not exit after bounded live cycle");
+    });
     let _ = fs::remove_file(&socket_path);
 
     assert!(
