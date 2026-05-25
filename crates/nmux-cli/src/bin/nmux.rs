@@ -669,7 +669,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
     let socket_scope = local::socket_identity(&args.socket_path).ok();
     let live_poll_timeout = Duration::from_millis(args.interval_ms);
-    let setup_read_timeout = connect_timeout_duration(args).unwrap_or(live_poll_timeout);
+    let setup_read_timeout = connect_timeout_duration(args)
+        .unwrap_or_else(|| Duration::from_millis(DEFAULT_MANAGED_STARTUP_TIMEOUT_MS));
     if let Err(err) = stream.set_read_timeout(Some(setup_read_timeout)) {
         report_live_setup_error(args, &err)?;
         return Err(err.into());

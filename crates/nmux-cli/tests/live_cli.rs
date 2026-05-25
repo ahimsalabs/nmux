@@ -11,6 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
+const STDIN_BYTES_DETACH: u8 = 0x1d;
 const DEFAULT_WORKSPACE_SUMMARY: &str =
     "session=local tab=tab-1 pane=pane-1 size=80x24 resize=fixed";
 
@@ -21,6 +22,7 @@ struct PtyCommandOutput {
 
 struct PtyCommand {
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    writer: Box<dyn Write + Send>,
     output_rx: mpsc::Receiver<Vec<u8>>,
     reader_thread: thread::JoinHandle<()>,
 }
@@ -75,6 +77,7 @@ fn spawn_nmux_client_in_pty_with_env(args: &[&str], env: &[(&str, &str)]) -> Pty
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().expect("clone pty reader");
+    let writer = pair.master.take_writer().expect("take pty writer");
     let (output_tx, output_rx) = mpsc::channel();
     let reader_thread = thread::spawn(move || {
         let mut output = Vec::new();
@@ -84,6 +87,7 @@ fn spawn_nmux_client_in_pty_with_env(args: &[&str], env: &[(&str, &str)]) -> Pty
 
     PtyCommand {
         child,
+        writer,
         output_rx,
         reader_thread,
     }
@@ -96,6 +100,11 @@ fn daemon_command() -> Command {
 }
 
 impl PtyCommand {
+    fn detach(&mut self) {
+        let _ = self.writer.write_all(&[STDIN_BYTES_DETACH]);
+        let _ = self.writer.flush();
+    }
+
     fn kill(&mut self) {
         self.child.kill().expect("kill nmux in pty");
     }
@@ -2028,6 +2037,72 @@ fn bare_tty_nmux_starts_shared_default_session_and_can_reattach() {
         String::from_utf8_lossy(&kill.stderr),
         String::from_utf8_lossy(&kill.stdout)
     );
+}
+
+#[test]
+fn bare_tty_nmux_allows_two_shared_default_attachers() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let socket = socket_path.to_str().expect("socket path");
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live-forever",
+            "--command",
+            "printf 'two-client-ready\n'; while :; do sleep 1; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(200));
+
+    let mut first = spawn_nmux_client_in_pty_with_env(&[], &[("NMUX_SOCKET", socket)]);
+    thread::sleep(Duration::from_millis(200));
+
+    let mut second = spawn_nmux_client_in_pty_with_env(&[], &[("NMUX_SOCKET", socket)]);
+    thread::sleep(Duration::from_millis(500));
+
+    first.detach();
+    second.detach();
+    let first_output = first.wait();
+    let second_output = second.wait();
+
+    let _ = server.kill();
+    let server_status = server.wait().expect("wait for daemon");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        first_output.success,
+        "first client failed:\n{}",
+        first_output.output
+    );
+    assert!(
+        second_output.success,
+        "second client failed:\n{}",
+        second_output.output
+    );
+    assert!(
+        first_output.output.contains("two-client-ready"),
+        "first client did not render shared shell output:\n{}",
+        first_output.output
+    );
+    assert!(
+        second_output.output.contains("two-client-ready"),
+        "second client did not render shared shell output:\n{}",
+        second_output.output
+    );
+    assert!(
+        !first_output.output.contains("wire I/O failed"),
+        "first client hit wire error:\n{}",
+        first_output.output
+    );
+    assert!(
+        !second_output.output.contains("wire I/O failed"),
+        "second client hit wire error:\n{}",
+        second_output.output
+    );
+    assert!(!server_status.success(), "daemon should be killed by test");
 }
 
 #[test]

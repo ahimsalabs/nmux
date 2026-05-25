@@ -167,7 +167,7 @@ pub fn serve_live_n_with_host_and_engines<H>(
 where
     H: ProcessHost + ProcessOutput,
 {
-    if clients > 1 && clients != usize::MAX {
+    if clients > 1 {
         return serve_live_concurrent_n_with_host_and_engines(
             listener,
             session,
