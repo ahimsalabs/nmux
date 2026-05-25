@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, VecDeque};
 use std::hash::{Hash, Hasher};
 
 use flatbuffers::FlatBufferBuilder;
@@ -273,6 +274,149 @@ pub struct SessionTransition {
     pub effects: Vec<SessionEffect>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingSessionEvent {
+    pub source_id: String,
+    pub lane: SessionEventLane,
+    pub session_mono_ms: u64,
+    pub event: SessionEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionTraceRecord {
+    pub accepted: AcceptedSessionEvent,
+    pub effects: Vec<SessionEffect>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionTraceRing {
+    cap: usize,
+    records: VecDeque<SessionTraceRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeterministicSessionScheduler {
+    queues: BTreeMap<String, VecDeque<PendingSessionEvent>>,
+}
+
+impl PendingSessionEvent {
+    pub fn new(
+        source_id: impl Into<String>,
+        lane: SessionEventLane,
+        session_mono_ms: u64,
+        event: SessionEvent,
+    ) -> Self {
+        Self {
+            source_id: source_id.into(),
+            lane,
+            session_mono_ms,
+            event,
+        }
+    }
+}
+
+impl SessionTraceRecord {
+    pub fn from_transition(transition: SessionTransition) -> Self {
+        Self {
+            accepted: transition.accepted,
+            effects: transition.effects,
+        }
+    }
+}
+
+impl SessionTraceRing {
+    pub fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            records: VecDeque::with_capacity(cap),
+        }
+    }
+
+    pub fn push(&mut self, record: SessionTraceRecord) {
+        if self.cap == 0 {
+            return;
+        }
+        while self.records.len() >= self.cap {
+            self.records.pop_front();
+        }
+        self.records.push_back(record);
+    }
+
+    pub fn records(&self) -> impl Iterator<Item = &SessionTraceRecord> {
+        self.records.iter()
+    }
+
+    pub fn accepted_events(&self) -> Vec<AcceptedSessionEvent> {
+        self.records
+            .iter()
+            .map(|record| record.accepted.clone())
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+}
+
+impl Default for DeterministicSessionScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DeterministicSessionScheduler {
+    pub fn new() -> Self {
+        Self {
+            queues: BTreeMap::new(),
+        }
+    }
+
+    pub fn push(&mut self, pending: PendingSessionEvent) {
+        self.queues
+            .entry(pending.source_id.clone())
+            .or_default()
+            .push_back(pending);
+    }
+
+    pub fn pop_next(&mut self) -> Option<PendingSessionEvent> {
+        let next_source_id = self
+            .queues
+            .iter()
+            .filter_map(|(source_id, queue)| queue.front().map(|event| (source_id, event.lane)))
+            .min_by_key(|(source_id, lane)| (lane.priority(), source_id.as_str()))
+            .map(|(source_id, _)| source_id.clone())?;
+        let queue = self
+            .queues
+            .get_mut(&next_source_id)
+            .expect("source id selected from queues");
+        let pending = queue.pop_front();
+        if queue.is_empty() {
+            self.queues.remove(&next_source_id);
+        }
+        pending
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.queues.values().all(VecDeque::is_empty)
+    }
+}
+
+impl SessionEventLane {
+    fn priority(self) -> u8 {
+        match self {
+            Self::Lifecycle => 0,
+            Self::Control => 1,
+            Self::Client => 2,
+            Self::Pane => 3,
+            Self::Timer => 4,
+        }
+    }
+}
+
 pub struct SessionCore {
     session: Session,
     terminal_engines: PaneTerminalEngines,
@@ -328,18 +472,44 @@ impl SessionCore {
         session_mono_ms: u64,
         event: SessionEvent,
     ) -> SessionTransition {
+        self.accept_pending(PendingSessionEvent::new(
+            source_id,
+            lane,
+            session_mono_ms,
+            event,
+        ))
+    }
+
+    pub fn accept_pending(&mut self, pending: PendingSessionEvent) -> SessionTransition {
         let accepted = AcceptedSessionEvent {
             metadata: AcceptedEventMetadata {
                 event_index: self.next_event_index,
-                session_mono_ms,
-                source_id: source_id.into(),
-                lane,
+                session_mono_ms: pending.session_mono_ms,
+                source_id: pending.source_id,
+                lane: pending.lane,
             },
-            event,
+            event: pending.event,
         };
         self.next_event_index = self.next_event_index.saturating_add(1);
         let effects = self.apply_accepted(&accepted);
         SessionTransition { accepted, effects }
+    }
+
+    pub fn replay_accepted_events(
+        session: Session,
+        kind: TerminalEngineKind,
+        events: impl IntoIterator<Item = AcceptedSessionEvent>,
+    ) -> (Self, Vec<SessionTraceRecord>) {
+        let mut core = Self::with_terminal_engine_kind(session, kind);
+        let mut records = Vec::new();
+        for accepted in events {
+            core.next_event_index = core
+                .next_event_index
+                .max(accepted.metadata.event_index.saturating_add(1));
+            let effects = core.apply_accepted(&accepted);
+            records.push(SessionTraceRecord { accepted, effects });
+        }
+        (core, records)
     }
 
     pub fn apply_accepted(&mut self, accepted: &AcceptedSessionEvent) -> Vec<SessionEffect> {
@@ -2637,16 +2807,18 @@ fn build_cell_run<'a>(
 mod tests {
     use crate::host::{CommandSpec, HostKind, HostSpec};
     use crate::terminal::{
-        CellRun, PaneStyle, TerminalColors, TerminalCursor, TerminalEngine, TerminalInput,
-        TerminalModes, TerminalUpdate,
+        CellRun, PaneStyle, TerminalColors, TerminalCursor, TerminalEngine, TerminalEngineKind,
+        TerminalInput, TerminalModes, TerminalUpdate,
     };
 
     use nmux_proto::{PROTOCOL_VERSION, protocol};
 
     use super::{
-        AcceptedEventMetadata, AcceptedSessionEvent, AttachMode, Cursor, FocusInputSpec,
-        InputFrameContext, MouseInputSpec, PasteInputSpec, ScrollbackFetchSpec, ScrollbackRange,
-        Session, SessionCore, SessionEffect, SessionEvent, SessionEventLane,
+        AcceptedEventMetadata, AcceptedSessionEvent, AttachMode, Cursor,
+        DeterministicSessionScheduler, FocusInputSpec, InputFrameContext, MouseInputSpec,
+        PasteInputSpec, PendingSessionEvent, ScrollbackFetchSpec, ScrollbackRange, Session,
+        SessionCore, SessionEffect, SessionEvent, SessionEventLane, SessionTraceRecord,
+        SessionTraceRing,
     };
 
     fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -2954,6 +3126,119 @@ mod tests {
             ]
         );
         assert_eq!(core.session().pane_size("pane-1"), Some((100, 30)));
+    }
+
+    #[test]
+    fn deterministic_scheduler_preserves_source_fifo_and_lane_priority() {
+        let mut scheduler = DeterministicSessionScheduler::new();
+        scheduler.push(PendingSessionEvent::new(
+            "pane-1",
+            SessionEventLane::Pane,
+            30,
+            SessionEvent::PaneOutput {
+                pane_id: "pane-1".to_owned(),
+                bytes: b"pane-first".to_vec(),
+            },
+        ));
+        scheduler.push(PendingSessionEvent::new(
+            "control",
+            SessionEventLane::Control,
+            20,
+            SessionEvent::SetPaneResizePolicy {
+                pane_id: "pane-1".to_owned(),
+                policy: protocol::ResizePolicy::Manual,
+            },
+        ));
+        scheduler.push(PendingSessionEvent::new(
+            "pane-1",
+            SessionEventLane::Pane,
+            10,
+            SessionEvent::PaneOutput {
+                pane_id: "pane-1".to_owned(),
+                bytes: b"pane-second".to_vec(),
+            },
+        ));
+        scheduler.push(PendingSessionEvent::new(
+            "lifecycle",
+            SessionEventLane::Lifecycle,
+            99,
+            SessionEvent::FocusPane {
+                pane_id: "pane-1".to_owned(),
+            },
+        ));
+
+        let mut accepted = Vec::new();
+        let mut core = SessionCore::initial();
+        while let Some(pending) = scheduler.pop_next() {
+            accepted.push(core.accept_pending(pending).accepted);
+        }
+
+        assert!(scheduler.is_empty());
+        assert_eq!(accepted[0].metadata.source_id, "lifecycle");
+        assert_eq!(accepted[0].metadata.event_index, 0);
+        assert_eq!(accepted[1].metadata.source_id, "control");
+        assert_eq!(accepted[1].metadata.event_index, 1);
+        assert_eq!(accepted[2].metadata.source_id, "pane-1");
+        assert_eq!(accepted[2].metadata.session_mono_ms, 30);
+        assert_eq!(accepted[3].metadata.source_id, "pane-1");
+        assert_eq!(accepted[3].metadata.session_mono_ms, 10);
+    }
+
+    #[test]
+    fn trace_ring_retains_recent_records_and_replays_events() {
+        let mut core = SessionCore::initial();
+        let mut ring = SessionTraceRing::new(2);
+
+        let ignored = core.accept(
+            "control",
+            SessionEventLane::Control,
+            1,
+            SessionEvent::FocusPane {
+                pane_id: "pane-1".to_owned(),
+            },
+        );
+        ring.push(SessionTraceRecord::from_transition(ignored));
+        let resize = core.accept(
+            "client",
+            SessionEventLane::Client,
+            2,
+            SessionEvent::CommitPaneResize {
+                pane_id: "pane-1".to_owned(),
+                cols: 100,
+                rows: 30,
+            },
+        );
+        ring.push(SessionTraceRecord::from_transition(resize));
+        let output = core.accept(
+            "pane-1",
+            SessionEventLane::Pane,
+            3,
+            SessionEvent::PaneOutput {
+                pane_id: "pane-1".to_owned(),
+                bytes: b"trace output\r\n".to_vec(),
+            },
+        );
+        ring.push(SessionTraceRecord::from_transition(output));
+
+        assert_eq!(ring.len(), 2);
+        assert_eq!(
+            ring.records()
+                .map(|record| record.accepted.metadata.event_index)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+
+        let (replayed, replay_records) = SessionCore::replay_accepted_events(
+            Session::initial(),
+            TerminalEngineKind::InterimText,
+            ring.accepted_events(),
+        );
+        assert_eq!(replay_records.len(), 2);
+        assert_eq!(replayed.session().pane_size("pane-1"), Some((100, 30)));
+        assert_eq!(
+            replayed.session().pane_surface("pane-1"),
+            core.session().pane_surface("pane-1")
+        );
     }
 
     #[test]
