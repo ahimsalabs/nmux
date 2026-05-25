@@ -213,10 +213,7 @@ fn run_default(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
     if !stdin_is_tty() {
         return run_attach_loop(&args);
     }
-    args.live = true;
-    args.stdin_bytes = true;
-    args.redraw = true;
-    args.interval_ms = 16;
+    configure_default_live_args(&mut args);
     if args.socket_path.exists() && default_daemon_needs_restart(&args) {
         replace_default_daemon_socket(&args);
     }
@@ -237,6 +234,16 @@ fn run_default(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     run_live(&args)
+}
+
+fn configure_default_live_args(args: &mut Args) {
+    args.live = true;
+    args.stdin_bytes = true;
+    args.redraw = true;
+    args.interval_ms = 16;
+    if args.connect_timeout_ms.is_none() {
+        args.connect_timeout_ms = Some(args.startup_timeout_ms);
+    }
 }
 
 fn default_daemon_needs_restart(args: &Args) -> bool {
@@ -5226,7 +5233,7 @@ mod tests {
         LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
         PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
         STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags,
-        SigwinchResizeContext, StateInfoSocketSummary, args_from_iter,
+        SigwinchResizeContext, StateInfoSocketSummary, args_from_iter, configure_default_live_args,
         default_attach_error_needs_restart, format_cli_error_json, format_context_json,
         format_input_choices_json, format_key_names_json, format_live_attach_json,
         format_live_cli_error_json, format_live_detach_json, format_live_error_json,
@@ -5317,6 +5324,20 @@ mod tests {
         assert!(!args.print_socket_json);
         assert!(!args.state_info);
         assert!(!args.state_info_json);
+    }
+
+    #[test]
+    fn default_live_args_keep_fast_poll_but_use_startup_setup_timeout() {
+        let mut args = args_from_iter(std::iter::empty::<&str>()).expect("args");
+        args.startup_timeout_ms = 1234;
+
+        configure_default_live_args(&mut args);
+
+        assert!(args.live);
+        assert!(args.stdin_bytes);
+        assert!(args.redraw);
+        assert_eq!(args.interval_ms, 16);
+        assert_eq!(args.connect_timeout_ms, Some(1234));
     }
 
     #[test]
