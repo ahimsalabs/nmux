@@ -268,6 +268,7 @@ fn start_default_daemon(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         &args.socket_path,
         args.target_session_id.as_deref(),
         &command,
+        terminal_size()?,
         Duration::from_millis(args.startup_timeout_ms),
     )
     .map(|_| ())
@@ -1421,6 +1422,7 @@ fn run_managed(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
         &command,
         args.start_working_dir.as_deref(),
         &args.start_env,
+        terminal_size()?,
         Duration::from_millis(args.startup_timeout_ms),
     ) {
         Ok(daemon) => daemon,
@@ -1502,6 +1504,7 @@ impl ManagedDaemon {
         command: &str,
         working_dir: Option<&str>,
         env: &[(String, String)],
+        initial_size: Option<(u32, u32)>,
         startup_timeout: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
@@ -1512,6 +1515,7 @@ impl ManagedDaemon {
                 command,
                 working_dir,
                 env,
+                initial_size,
                 startup_timeout,
             )?,
         })
@@ -1523,6 +1527,7 @@ impl PersistentDaemon {
         socket_path: &Path,
         session_id: Option<&str>,
         command: &str,
+        initial_size: Option<(u32, u32)>,
         startup_timeout: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let nmux = nmux_binary_path()?;
@@ -1530,20 +1535,26 @@ impl PersistentDaemon {
             .to_str()
             .ok_or("daemon socket path is not UTF-8")?;
         let mut command_args = vec![
-            "daemon",
-            "--socket",
-            socket_arg,
-            "--live-forever",
-            "--command",
-            command,
+            "daemon".to_owned(),
+            "--socket".to_owned(),
+            socket_arg.to_owned(),
+            "--live-forever".to_owned(),
+            "--command".to_owned(),
+            command.to_owned(),
         ];
         if let Some(session_id) = session_id {
-            command_args.push("--session");
-            command_args.push(session_id);
+            command_args.push("--session".to_owned());
+            command_args.push(session_id.to_owned());
+        }
+        if let Some((cols, rows)) = initial_size {
+            command_args.push("--cols".to_owned());
+            command_args.push(cols.to_string());
+            command_args.push("--rows".to_owned());
+            command_args.push(rows.to_string());
         }
         let args = command_args
             .into_iter()
-            .map(shell_quote_for_sh)
+            .map(|arg| shell_quote_for_sh(&arg))
             .collect::<Vec<_>>()
             .join(" ");
         let script = format!(
@@ -1654,6 +1665,7 @@ fn start_daemon_for_attach(
     command: &str,
     working_dir: Option<&str>,
     env: &[(String, String)],
+    initial_size: Option<(u32, u32)>,
     startup_timeout: Duration,
 ) -> Result<Child, Box<dyn std::error::Error>> {
     let nmux = nmux_binary_path()?;
@@ -1680,6 +1692,12 @@ fn start_daemon_for_attach(
     for (key, value) in env {
         command_args.push("--env".to_owned());
         command_args.push(format!("{key}={value}"));
+    }
+    if let Some((cols, rows)) = initial_size {
+        command_args.push("--cols".to_owned());
+        command_args.push(cols.to_string());
+        command_args.push("--rows".to_owned());
+        command_args.push(rows.to_string());
     }
     let mut child = Command::new(nmux)
         .args(command_args)
