@@ -2292,21 +2292,42 @@ fn sigwinch_resize_needed(context: SigwinchResizeContext) -> bool {
 }
 
 fn terminal_size() -> io::Result<Option<(u32, u32)>> {
-    for fd in [
-        io::stdout().as_raw_fd(),
-        io::stdin().as_raw_fd(),
-        io::stderr().as_raw_fd(),
-    ] {
+    terminal_size_from_fds(
+        &[
+            io::stdout().as_raw_fd(),
+            io::stdin().as_raw_fd(),
+            io::stderr().as_raw_fd(),
+        ],
+        terminal::size,
+    )
+}
+
+fn terminal_size_from_fds<F>(fds: &[i32], fallback: F) -> io::Result<Option<(u32, u32)>>
+where
+    F: FnOnce() -> io::Result<(u16, u16)>,
+{
+    for &fd in fds {
         if let Some(size) = terminal_size_from_fd(fd)? {
             return Ok(Some(size));
         }
     }
 
-    let (cols, rows) = terminal::size()?;
+    let (cols, rows) = match fallback() {
+        Ok(size) => size,
+        Err(err) if terminal_size_unavailable(&err) => return Ok(None),
+        Err(err) => return Err(err),
+    };
     if cols == 0 || rows == 0 {
         return Ok(None);
     }
     Ok(Some((u32::from(cols), u32::from(rows))))
+}
+
+fn terminal_size_unavailable(err: &io::Error) -> bool {
+    matches!(
+        err.raw_os_error(),
+        Some(libc::ENOTTY | libc::EBADF | libc::EINVAL | libc::EAGAIN | libc::ENODEV)
+    )
 }
 
 fn terminal_size_from_fd(fd: i32) -> io::Result<Option<(u32, u32)>> {
@@ -2320,10 +2341,7 @@ fn terminal_size_from_fd(fd: i32) -> io::Result<Option<(u32, u32)>> {
     let result = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut size) };
     if result < 0 {
         let err = io::Error::last_os_error();
-        if matches!(
-            err.raw_os_error(),
-            Some(libc::ENOTTY | libc::EBADF | libc::EINVAL)
-        ) {
+        if terminal_size_unavailable(&err) {
             return Ok(None);
         }
         return Err(err);
@@ -5676,7 +5694,7 @@ mod tests {
         parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
         preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
         redraw_terminal_guard_needed, redraw_workspace_surface_text, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, usage,
+        split_stdin_bytes_for_detach, terminal_size_from_fds, terminal_size_unavailable, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -5684,6 +5702,7 @@ mod tests {
     use nmux_cli::local;
     use nmux_proto::protocol;
     use std::collections::BTreeMap;
+    use std::io;
     use std::path::Path;
 
     fn zero_termios() -> libc::termios {
@@ -6019,6 +6038,18 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn terminal_size_treats_ci_tty_unavailable_errors_as_absent_size() {
+        for code in [libc::EAGAIN, libc::ENODEV] {
+            let size = terminal_size_from_fds(&[], || Err(io::Error::from_raw_os_error(code)))
+                .expect("transient or absent tty should not fail managed startup");
+            assert_eq!(size, None);
+
+            let err = io::Error::from_raw_os_error(code);
+            assert!(terminal_size_unavailable(&err));
+        }
     }
 
     #[test]

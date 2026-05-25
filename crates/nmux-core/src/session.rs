@@ -2105,6 +2105,7 @@ fn apply_terminal_update(
     if surface_changed {
         pane.surface_version = pane.surface_version.saturating_add(1);
         let patch_kind = terminal_patch_kind(TerminalPatchChanges {
+            force_full_refresh: force_surface_version,
             requested: update.patch_kind,
             row_count_changed,
             rows_changed,
@@ -2158,6 +2159,7 @@ fn palette_diff(old: &[u32], new: &[u32]) -> Option<PaletteDiff> {
 
 #[derive(Debug, Clone, Copy)]
 struct TerminalPatchChanges {
+    force_full_refresh: bool,
     requested: protocol::PatchKind,
     row_count_changed: bool,
     rows_changed: bool,
@@ -2180,7 +2182,8 @@ fn terminal_patch_kind(changes: TerminalPatchChanges) -> protocol::PatchKind {
         || changes.semantic_prompts_changed
         || changes.dirty_rows_changed
         || changes.kitty_placeholders_changed;
-    if changes.row_count_changed
+    if changes.force_full_refresh
+        || changes.row_count_changed
         || changes.surface_kind_changed
         || changes.styles_changed
         || (changes.colors_changed && rows_or_row_metadata_changed)
@@ -4025,7 +4028,7 @@ mod tests {
     }
 
     #[test]
-    fn resize_replace_rows_patch_clears_rows_past_surface_tail() {
+    fn resize_requires_full_refresh_because_patch_lacks_new_surface_extent() {
         struct ResizeEngine;
 
         impl TerminalEngine for ResizeEngine {
@@ -4067,21 +4070,28 @@ mod tests {
         assert!(session.commit_pane_resize_with_engine("pane-1", 100, 10, &mut engine));
         assert_eq!(
             session.surface_patch_kind("pane-1"),
-            Some(protocol::PatchKind::ReplaceRows)
+            Some(protocol::PatchKind::FullRefreshRequired)
         );
 
         let frame = session.pane_surface_patch_frame("conn-1", 11, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        assert_eq!(patch.kind(), protocol::PatchKind::FullRefreshRequired);
         let rows = patch.row_updates().expect("row updates");
-        assert_eq!(rows.len(), 10);
+        assert_eq!(rows.len(), 0);
+
+        let snapshot = session
+            .pane_surface_frame_for_pane("conn-1", 12, "pane-1")
+            .expect("surface snapshot");
+        let envelope = protocol::size_prefixed_root_as_envelope(&snapshot).expect("valid envelope");
+        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        assert_eq!(snapshot.cols(), 100);
+        assert_eq!(snapshot.rows(), 10);
+        let rows = snapshot.rows_data().expect("snapshot rows");
+        assert_eq!(rows.len(), 1);
         assert_eq!(
             rows.get(0).runs().expect("runs").get(0).text_utf8(),
             Some("resized surface")
-        );
-        assert_eq!(
-            rows.get(1).runs().expect("runs").get(0).text_utf8(),
-            Some("")
         );
     }
 
