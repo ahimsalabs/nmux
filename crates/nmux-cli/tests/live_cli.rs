@@ -2461,6 +2461,63 @@ fn live_tty_client_resize_updates_daemon_pane_size() {
 }
 
 #[test]
+fn live_tty_attach_reflows_existing_wrapped_output_to_client_width() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+    let socket = socket_path.to_str().expect("socket path");
+    let long_line = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let command = format!("printf '{long_line}\\n'; while :; do sleep 1; done");
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live-forever",
+            "--cols",
+            "20",
+            "--rows",
+            "8",
+            "--command",
+            &command,
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(500));
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &[
+            "--live",
+            "--stdin-bytes",
+            "--redraw",
+            "--connect-timeout-ms",
+            "5000",
+        ],
+        &[("NMUX_SOCKET", socket)],
+    );
+    thread::sleep(Duration::from_millis(700));
+    client.detach();
+    let client_output = client.wait();
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client_output.success,
+        "wide attach client failed:\n{}",
+        client_output.output
+    );
+    assert!(
+        client_output
+            .output
+            .lines()
+            .any(|line| line.contains(long_line)),
+        "wide attach did not reflow existing wrapped output:\n{}",
+        client_output.output
+    );
+}
+
+#[test]
 fn live_tty_client_records_resize_without_followup_input() {
     let socket_path = test_socket_path();
     let record_path = socket_path.with_extension("record.jsonl");

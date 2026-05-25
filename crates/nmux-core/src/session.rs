@@ -932,11 +932,13 @@ impl Session {
             row_offsets.reserve(row_update_indices.len());
             for row in row_update_indices {
                 let row = *row as usize;
-                let Some(line) = surface.lines.get(row) else {
-                    continue;
-                };
-                let Some(line_runs) = surface.row_runs.get(row) else {
-                    continue;
+                let line = surface.lines.get(row).map_or("", String::as_str);
+                let fallback_runs;
+                let line_runs = if let Some(line_runs) = surface.row_runs.get(row) {
+                    line_runs.as_slice()
+                } else {
+                    fallback_runs = vec![CellRun::plain(line)];
+                    fallback_runs.as_slice()
                 };
                 let runs = build_cell_runs(&mut builder, line_runs);
                 let row_metadata = RowStateMetadata {
@@ -2206,7 +2208,10 @@ fn surface_row_update_indices(
     kitty_placeholders: &[bool],
     force_all: bool,
 ) -> Vec<u32> {
-    if force_all || pane.surface_lines.len() != lines.len() {
+    if force_all {
+        return all_row_indices(pane.rows as usize);
+    }
+    if pane.surface_lines.len() != lines.len() {
         return all_row_indices(lines.len());
     }
 
@@ -4017,6 +4022,67 @@ mod tests {
         );
         assert_eq!(surface.lines, vec!["resized surface".to_owned()]);
         assert_eq!(scrollback.lines, vec!["resized scrollback".to_owned()]);
+    }
+
+    #[test]
+    fn resize_replace_rows_patch_clears_rows_past_surface_tail() {
+        struct ResizeEngine;
+
+        impl TerminalEngine for ResizeEngine {
+            fn apply_output(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                panic!("apply_output is not used by this test")
+            }
+
+            fn resize(
+                &mut self,
+                input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                Some(TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    vec!["resized surface".to_owned()],
+                    input.scrollback_lines.to_vec(),
+                ))
+            }
+        }
+
+        let mut session = Session::initial();
+        let pane = &mut session.tabs[0].root;
+        pane.rows = 10;
+        pane.surface_lines = vec!["old surface".to_owned()];
+        pane.surface_row_runs = vec![vec![CellRun::plain("old surface")]];
+        pane.surface_semantic_prompts = vec![protocol::RowSemanticPrompt::None];
+        pane.surface_dirty_rows = vec![false];
+        pane.surface_kitty_placeholders = vec![false];
+        pane.surface_version = 2;
+
+        let mut engine = ResizeEngine;
+        assert!(session.commit_pane_resize_with_engine("pane-1", 100, 10, &mut engine));
+        assert_eq!(
+            session.surface_patch_kind("pane-1"),
+            Some(protocol::PatchKind::ReplaceRows)
+        );
+
+        let frame = session.pane_surface_patch_frame("conn-1", 11, 2);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let rows = patch.row_updates().expect("row updates");
+        assert_eq!(rows.len(), 10);
+        assert_eq!(
+            rows.get(0).runs().expect("runs").get(0).text_utf8(),
+            Some("resized surface")
+        );
+        assert_eq!(
+            rows.get(1).runs().expect("runs").get(0).text_utf8(),
+            Some("")
+        );
     }
 
     #[test]
