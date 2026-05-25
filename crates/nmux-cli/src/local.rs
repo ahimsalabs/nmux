@@ -110,112 +110,180 @@ impl Drop for NonblockingGuard<'_> {
     }
 }
 
-pub(crate) fn serve_one(
-    listener: &UnixListener,
-    session: &mut Session,
-) -> Result<(), Box<dyn std::error::Error>> {
-    serve_n(listener, session, 1)
+/// Configuration for serving clients on a Unix socket.
+///
+/// Replaces the former family of `serve_one`, `serve_n_with_host`,
+/// `serve_live_n_with_host_and_engines`, etc. convenience functions with a
+/// single builder that collects optional parameters.
+pub(crate) struct ServeConfig {
+    pub clients: usize,
+    pub live: bool,
+    pub cycles_per_client: usize,
+    pub terminal_engine_kind: TerminalEngineKind,
 }
 
-pub(crate) fn serve_one_with_output<O: ProcessOutput>(
-    listener: &UnixListener,
-    session: &mut Session,
-    output: &mut O,
-) -> Result<(), Box<dyn std::error::Error>> {
-    serve_n_with_output(listener, session, output, 1)
-}
+impl ServeConfig {
+    /// One snapshot-mode client with default terminal engine.
+    pub fn one() -> Self {
+        Self {
+            clients: 1,
+            live: false,
+            cycles_per_client: usize::MAX,
+            terminal_engine_kind: TerminalEngineKind::InterimText,
+        }
+    }
 
-pub(crate) fn serve_one_with_host<H>(
-    listener: &UnixListener,
-    session: &mut Session,
-    host: &mut H,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    serve_n_with_host(listener, session, host, 1)
-}
+    /// Live-mode serve with the given client count and cycles per client.
+    pub fn live(clients: usize, cycles_per_client: usize) -> Self {
+        Self {
+            clients,
+            live: true,
+            cycles_per_client,
+            terminal_engine_kind: TerminalEngineKind::InterimText,
+        }
+    }
 
-pub(crate) fn serve_live_one_with_host<H>(
-    listener: &UnixListener,
-    session: &mut Session,
-    host: &mut H,
-    cycles: usize,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    let mut engines = PaneTerminalEngines::new(TerminalEngineKind::InterimText);
-    serve_live_one_with_host_and_engines(listener, session, host, &mut engines, cycles)
-}
+    /// Override the number of clients to serve.
+    pub fn clients(mut self, n: usize) -> Self {
+        self.clients = n;
+        self
+    }
 
-pub(crate) fn serve_live_n_with_host<H>(
-    listener: &UnixListener,
-    session: &mut Session,
-    host: &mut H,
-    clients: usize,
-    cycles_per_client: usize,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    serve_live_n_with_host_and_terminal_engine_kind(
-        listener,
-        session,
-        host,
-        clients,
-        cycles_per_client,
-        TerminalEngineKind::InterimText,
-    )
-}
+    /// Override the terminal engine kind.
+    pub fn terminal_engine_kind(mut self, kind: TerminalEngineKind) -> Self {
+        self.terminal_engine_kind = kind;
+        self
+    }
 
-pub(crate) fn serve_live_n_with_host_and_terminal_engine_kind<H>(
-    listener: &UnixListener,
-    session: &mut Session,
-    host: &mut H,
-    clients: usize,
-    cycles_per_client: usize,
-    terminal_engine_kind: TerminalEngineKind,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    let mut engines = PaneTerminalEngines::new(terminal_engine_kind);
-    serve_live_n_with_host_and_engines(
-        listener,
-        session,
-        host,
-        clients,
-        cycles_per_client,
-        &mut engines,
-    )
-}
+    /// Serve clients accepted from `listener` using the given host.
+    ///
+    /// In snapshot mode, serves `self.clients` sequentially via accept/handle.
+    /// In live mode with >1 client, uses the concurrent accept loop.
+    pub fn serve<H: ProcessHost + ProcessOutput>(
+        &self,
+        listener: &UnixListener,
+        session: &mut Session,
+        host: &mut H,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut engines = PaneTerminalEngines::new(self.terminal_engine_kind);
+        if self.live {
+            if self.clients > 1 {
+                return serve_live_concurrent_n_with_host_and_engines(
+                    listener,
+                    session,
+                    host,
+                    self.clients,
+                    self.cycles_per_client,
+                    &mut engines,
+                );
+            }
+            for _ in 0..self.clients {
+                let (stream, _) = listener.accept()?;
+                serve_stream_impl(
+                    stream,
+                    session,
+                    host,
+                    &mut engines,
+                    true,
+                    self.cycles_per_client,
+                )?;
+            }
+        } else {
+            for _ in 0..self.clients {
+                serve_next_with_host(listener, session, host, &mut engines)?;
+            }
+        }
+        Ok(())
+    }
 
-pub(crate) fn serve_live_n_with_host_and_engines<H>(
-    listener: &UnixListener,
-    session: &mut Session,
-    host: &mut H,
-    clients: usize,
-    cycles_per_client: usize,
-    engines: &mut PaneTerminalEngines,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    if clients > 1 {
-        return serve_live_concurrent_n_with_host_and_engines(
-            listener,
+    /// Serve a single pre-accepted stream using the given host.
+    ///
+    /// Dispatches to live or snapshot mode based on `self.live`.
+    pub fn serve_stream<H: ProcessHost + ProcessOutput>(
+        &self,
+        stream: UnixStream,
+        session: &mut Session,
+        host: &mut H,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut engines = PaneTerminalEngines::new(self.terminal_engine_kind);
+        serve_stream_impl(
+            stream,
             session,
             host,
-            clients,
-            cycles_per_client,
-            engines,
-        );
+            &mut engines,
+            self.live,
+            self.cycles_per_client,
+        )
     }
-    for _ in 0..clients {
-        serve_live_one_with_host_and_engines(listener, session, host, engines, cycles_per_client)?;
+
+    /// Serve clients without a host (snapshot mode only, no input forwarding).
+    ///
+    /// Used by tests that don't need a process host.
+    pub fn serve_without_host(
+        &self,
+        listener: &UnixListener,
+        session: &mut Session,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut engines = PaneTerminalEngines::new(self.terminal_engine_kind);
+        for _ in 0..self.clients {
+            serve_next(listener, session, &mut engines)?;
+        }
+        Ok(())
     }
-    Ok(())
+
+    /// Serve clients with an output source but no full host (snapshot mode
+    /// only, polls output before responding but doesn't forward input).
+    pub fn serve_with_output<O: ProcessOutput>(
+        &self,
+        listener: &UnixListener,
+        session: &mut Session,
+        output: &mut O,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut engines = PaneTerminalEngines::new(self.terminal_engine_kind);
+        for _ in 0..self.clients {
+            serve_next_with_output(listener, session, Some(output), &mut engines)?;
+        }
+        Ok(())
+    }
+}
+
+/// Shared implementation for serving a single pre-accepted stream in either
+/// snapshot or live mode.
+fn serve_stream_impl<H: ProcessHost + ProcessOutput>(
+    mut stream: UnixStream,
+    session: &mut Session,
+    host: &mut H,
+    engines: &mut PaneTerminalEngines,
+    live: bool,
+    cycles: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let request = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach(request) => request,
+        ClientInitialFrame::Control(command) => {
+            return match serve_control_command(&mut stream, command, session, Some(host))? {
+                ControlCommandOutcome::Continue => Ok(()),
+                ControlCommandOutcome::Shutdown => Err(SessionShutdown.into()),
+            };
+        }
+    };
+    let Some(pane_id) = attach_target_pane_id(session, &request) else {
+        let mut seq = 1;
+        write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
+        return Ok(());
+    };
+    if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
+        let mut seq = 1;
+        write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
+        return Ok(());
+    }
+    if live {
+        if let Some(notify_fd) = host.notify_fd() {
+            drain_notify_fd(notify_fd)?;
+        }
+        serve_live_attached_client(&mut stream, request, session, host, engines, cycles)
+    } else {
+        serve_attached_client(&mut stream, request, session, Some(host), engines)
+    }
 }
 
 fn serve_live_concurrent_n_with_host_and_engines<H>(
@@ -1045,110 +1113,6 @@ fn boxed_socket_closed_error(err: &(dyn std::error::Error + 'static)) -> bool {
             .is_some_and(socket_closed_error_from_wire)
 }
 
-pub(crate) fn serve_n(
-    listener: &UnixListener,
-    session: &mut Session,
-    clients: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut engines = PaneTerminalEngines::new(TerminalEngineKind::InterimText);
-    for _ in 0..clients {
-        serve_next(listener, session, &mut engines)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn serve_n_with_output<O: ProcessOutput>(
-    listener: &UnixListener,
-    session: &mut Session,
-    output: &mut O,
-    clients: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut engines = PaneTerminalEngines::new(TerminalEngineKind::InterimText);
-    for _ in 0..clients {
-        serve_next_with_output(listener, session, Some(output), &mut engines)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn serve_n_with_host<H>(
-    listener: &UnixListener,
-    session: &mut Session,
-    host: &mut H,
-    clients: usize,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    serve_n_with_host_and_terminal_engine_kind(
-        listener,
-        session,
-        host,
-        clients,
-        TerminalEngineKind::InterimText,
-    )
-}
-
-pub(crate) fn serve_n_with_host_and_terminal_engine_kind<H>(
-    listener: &UnixListener,
-    session: &mut Session,
-    host: &mut H,
-    clients: usize,
-    terminal_engine_kind: TerminalEngineKind,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    let mut engines = PaneTerminalEngines::new(terminal_engine_kind);
-    serve_n_with_host_and_engines(listener, session, host, clients, &mut engines)
-}
-
-pub(crate) fn serve_n_with_host_and_engines<H>(
-    listener: &UnixListener,
-    session: &mut Session,
-    host: &mut H,
-    clients: usize,
-    engines: &mut PaneTerminalEngines,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    for _ in 0..clients {
-        serve_next_with_host(listener, session, host, engines)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn serve_stream_with_host_and_engines<H>(
-    mut stream: UnixStream,
-    session: &mut Session,
-    host: &mut H,
-    engines: &mut PaneTerminalEngines,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    let request = match read_client_initial_frame(&mut stream)? {
-        ClientInitialFrame::Attach(request) => request,
-        ClientInitialFrame::Control(command) => {
-            return match serve_control_command(&mut stream, command, session, Some(host))? {
-                ControlCommandOutcome::Continue => Ok(()),
-                ControlCommandOutcome::Shutdown => Err(SessionShutdown.into()),
-            };
-        }
-    };
-    let Some(pane_id) = attach_target_pane_id(session, &request) else {
-        let mut seq = 1;
-        write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
-        return Ok(());
-    };
-    if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
-        let mut seq = 1;
-        write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
-        return Ok(());
-    }
-    serve_attached_client(&mut stream, request, session, Some(host), engines)
-}
-
 fn serve_next(
     listener: &UnixListener,
     session: &mut Session,
@@ -1209,56 +1173,7 @@ where
     H: ProcessHost + ProcessOutput,
 {
     let (stream, _) = listener.accept()?;
-    serve_stream_with_host_and_engines(stream, session, host, engines)
-}
-
-fn serve_live_one_with_host_and_engines<H>(
-    listener: &UnixListener,
-    session: &mut Session,
-    host: &mut H,
-    engines: &mut PaneTerminalEngines,
-    cycles: usize,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    let (stream, _) = listener.accept()?;
-    serve_live_stream_with_host_and_engines(stream, session, host, engines, cycles)
-}
-
-pub(crate) fn serve_live_stream_with_host_and_engines<H>(
-    mut stream: UnixStream,
-    session: &mut Session,
-    host: &mut H,
-    engines: &mut PaneTerminalEngines,
-    cycles: usize,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    H: ProcessHost + ProcessOutput,
-{
-    let request = match read_client_initial_frame(&mut stream)? {
-        ClientInitialFrame::Attach(request) => request,
-        ClientInitialFrame::Control(command) => {
-            return match serve_control_command(&mut stream, command, session, Some(host))? {
-                ControlCommandOutcome::Continue => Ok(()),
-                ControlCommandOutcome::Shutdown => Err(SessionShutdown.into()),
-            };
-        }
-    };
-    let Some(pane_id) = attach_target_pane_id(session, &request) else {
-        let mut seq = 1;
-        write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
-        return Ok(());
-    };
-    if let Err(err) = poll_pane_output_with_host_and_engines(session, engines, host, &pane_id) {
-        let mut seq = 1;
-        write_host_output_error(&mut stream, session, &mut seq, &pane_id, err)?;
-        return Ok(());
-    }
-    if let Some(notify_fd) = host.notify_fd() {
-        drain_notify_fd(notify_fd)?;
-    }
-    serve_live_attached_client(&mut stream, request, session, host, engines, cycles)
+    serve_stream_impl(stream, session, host, engines, false, usize::MAX)
 }
 
 /// Write the attach handshake frames shared by live and one-shot attach paths.
@@ -6294,7 +6209,7 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let snapshot = attach(&socket_path).expect("attach snapshot");
         server.join().expect("server thread");
 
@@ -8771,7 +8686,7 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::from_pane_output(b"real process output\n");
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let snapshot = attach(&socket_path).expect("attach snapshot");
         server.join().expect("server thread");
 
@@ -8806,7 +8721,7 @@ mod tests {
         output.push_output("pane-1", b"real output\n");
 
         let server = thread::spawn(move || {
-            serve_one_with_output(&listener, &mut session, &mut output).expect("serve one")
+            ServeConfig::one().serve_with_output(&listener, &mut session, &mut output).expect("serve one")
         });
         let snapshot = attach(&socket_path).expect("attach snapshot");
         server.join().expect("server thread");
@@ -8830,7 +8745,7 @@ mod tests {
         output.push_output("pane-1", b"new output\n");
 
         let server = thread::spawn(move || {
-            serve_one_with_output(&listener, &mut session, &mut output).expect("serve one")
+            ServeConfig::one().serve_with_output(&listener, &mut session, &mut output).expect("serve one")
         });
         let snapshot = attach_with_known_surfaces(
             &socket_path,
@@ -8867,7 +8782,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let snapshot = attach(&socket_path).expect("attach snapshot");
@@ -8893,7 +8808,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -9206,7 +9121,7 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_live_n_with_host(&listener, &mut session, &mut host, 1, 1).expect("serve live");
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -9257,7 +9172,7 @@ mod tests {
             .expect("start echo pane");
 
         let server = thread::spawn(move || {
-            serve_live_n_with_host(&listener, &mut session, &mut host, 2, usize::MAX)
+            ServeConfig::live(2, usize::MAX).serve(&listener, &mut session, &mut host)
                 .expect("serve concurrent live");
         });
 
@@ -9330,7 +9245,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_n_with_host(&listener, &mut session, &mut host, 2, usize::MAX)
+            ServeConfig::live(2, usize::MAX).serve(&listener, &mut session, &mut host)
                 .expect("serve concurrent live");
             host
         });
@@ -9423,7 +9338,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_n_with_host(&listener, &mut session, &mut host, 2, usize::MAX)
+            ServeConfig::live(2, usize::MAX).serve(&listener, &mut session, &mut host)
                 .expect("serve concurrent live");
             host
         });
@@ -9517,7 +9432,7 @@ mod tests {
         let mut session = Session::initial();
         session.tabs[0].active_pane_id = "missing-pane".to_owned();
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         let mut request = AttachOptions::default().request;
         request.focused_pane_id = None;
@@ -9545,7 +9460,7 @@ mod tests {
         let mut session = Session::initial();
         session.active_tab_id = "missing-tab".to_owned();
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         let mut request = AttachOptions::default().request;
         request.focused_pane_id = None;
@@ -9576,7 +9491,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let snapshot = attach_with_options(
@@ -9614,7 +9529,7 @@ mod tests {
             .expect("start echo pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(
@@ -9671,7 +9586,7 @@ mod tests {
             .expect("start echo pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
         });
         let snapshot = attach_with_client_options(
             &socket_path,
@@ -9712,7 +9627,7 @@ mod tests {
             .expect("start echo pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
         });
         let snapshot = attach_with_client_options(
             &socket_path,
@@ -9754,7 +9669,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -9790,7 +9705,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -9825,7 +9740,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -9865,7 +9780,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -9914,7 +9829,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -9962,7 +9877,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -10001,7 +9916,7 @@ mod tests {
             .expect("start failing write pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
         });
         let err = attach_with_client_options(
             &socket_path,
@@ -10033,7 +9948,7 @@ mod tests {
             .expect("start failing read pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host)
+            ServeConfig::one().serve(&listener, &mut session, &mut host)
                 .expect("serve one with read failure");
         });
         let err = attach_with_client_options(
@@ -10067,7 +9982,7 @@ mod tests {
         host.fail_reads = false;
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host)
+            ServeConfig::one().serve(&listener, &mut session, &mut host)
                 .expect("serve one with post-input read failure");
         });
         let err = attach_with_client_options(
@@ -10096,7 +10011,7 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(
             &mut stream,
@@ -10145,7 +10060,7 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(
             &mut stream,
@@ -10218,7 +10133,7 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(
             &mut stream,
@@ -10270,7 +10185,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -10311,7 +10226,7 @@ mod tests {
             .expect("start echo pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 2).expect("serve live");
+            ServeConfig::live(1, 2).serve(&listener, &mut session, &mut host).expect("serve live");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(&mut stream, &AttachOptions::default().request)
@@ -10354,7 +10269,7 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve read-write live");
             host
         });
@@ -10396,7 +10311,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live")
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live")
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(&mut stream, &AttachOptions::default().request)
@@ -10462,7 +10377,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live")
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live")
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(
@@ -10510,7 +10425,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live");
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -10587,7 +10502,7 @@ mod tests {
             .expect("start failing resize pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve live with resize failure");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -10624,7 +10539,7 @@ mod tests {
         host.fail_reads = false;
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve live with read failure");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -10660,7 +10575,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live");
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(&mut stream, &AttachOptions::default().request)
@@ -10696,7 +10611,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live");
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
         write_attach_request(&mut stream, &AttachOptions::default().request)
@@ -10753,7 +10668,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve live with missing resize pane");
             host
         });
@@ -10798,7 +10713,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve live with missing input pane");
             host
         });
@@ -10840,7 +10755,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1).expect("serve live");
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host).expect("serve live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -10887,7 +10802,7 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve read-only live");
             host
         });
@@ -10939,7 +10854,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve read-only live");
             host
         });
@@ -10994,7 +10909,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve read-only live");
             host
         });
@@ -11051,7 +10966,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve focus-disabled live");
             host
         });
@@ -11106,7 +11021,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 2)
+            ServeConfig::live(1, 2).serve(&listener, &mut session, &mut host)
                 .expect("serve current focus-disabled live");
             host
         });
@@ -11166,7 +11081,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve current focus live");
             host
         });
@@ -11211,7 +11126,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve current key live");
             host
         });
@@ -11257,7 +11172,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve current paste live");
             host
         });
@@ -11302,7 +11217,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve current named-key live");
             host
         });
@@ -11347,7 +11262,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 2)
+            ServeConfig::live(1, 2).serve(&listener, &mut session, &mut host)
                 .expect("serve current mouse-disabled live");
             host
         });
@@ -11420,15 +11335,10 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_live_n_with_host_and_terminal_engine_kind(
-                &listener,
-                &mut session,
-                &mut host,
-                1,
-                1,
-                TerminalEngineKind::LibghosttyVt,
-            )
-            .expect("serve current mouse live");
+            ServeConfig::live(1, 1)
+                .terminal_engine_kind(TerminalEngineKind::LibghosttyVt)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve current mouse live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -11490,15 +11400,10 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_live_n_with_host_and_terminal_engine_kind(
-                &listener,
-                &mut session,
-                &mut host,
-                1,
-                1,
-                TerminalEngineKind::LibghosttyVt,
-            )
-            .expect("serve mode-only live");
+            ServeConfig::live(1, 1)
+                .terminal_engine_kind(TerminalEngineKind::LibghosttyVt)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve mode-only live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -11568,15 +11473,10 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_live_n_with_host_and_terminal_engine_kind(
-                &listener,
-                &mut session,
-                &mut host,
-                1,
-                1,
-                TerminalEngineKind::LibghosttyVt,
-            )
-            .expect("serve color-only live");
+            ServeConfig::live(1, 1)
+                .terminal_engine_kind(TerminalEngineKind::LibghosttyVt)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve color-only live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -11657,15 +11557,10 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_live_n_with_host_and_terminal_engine_kind(
-                &listener,
-                &mut session,
-                &mut host,
-                1,
-                1,
-                TerminalEngineKind::LibghosttyVt,
-            )
-            .expect("serve cursor-only live");
+            ServeConfig::live(1, 1)
+                .terminal_engine_kind(TerminalEngineKind::LibghosttyVt)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve cursor-only live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -11734,15 +11629,10 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_live_n_with_host_and_terminal_engine_kind(
-                &listener,
-                &mut session,
-                &mut host,
-                1,
-                1,
-                TerminalEngineKind::LibghosttyVt,
-            )
-            .expect("serve replace-rows live");
+            ServeConfig::live(1, 1)
+                .terminal_engine_kind(TerminalEngineKind::LibghosttyVt)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve replace-rows live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -11858,15 +11748,10 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_live_n_with_host_and_terminal_engine_kind(
-                &listener,
-                &mut session,
-                &mut host,
-                1,
-                1,
-                TerminalEngineKind::LibghosttyVt,
-            )
-            .expect("serve hyperlink live");
+            ServeConfig::live(1, 1)
+                .terminal_engine_kind(TerminalEngineKind::LibghosttyVt)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve hyperlink live");
             host
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -11988,7 +11873,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve mouse-bounds live");
             host
         });
@@ -12056,7 +11941,7 @@ mod tests {
             .expect("start failing write pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve live with write failure");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -12103,7 +11988,7 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_live_one_with_host(&listener, &mut session, &mut host, 1)
+            ServeConfig::live(1, 1).serve(&listener, &mut session, &mut host)
                 .expect("serve live scrollback");
         });
         let mut stream = UnixStream::connect(&socket_path).expect("connect client");
@@ -12154,7 +12039,7 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let snapshot = attach_with_known_surfaces(
             &socket_path,
             vec![KnownSurfaceVersion {
@@ -12366,7 +12251,7 @@ mod tests {
             })
             .expect("seed cached state");
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let rendered = attach_render_once(&socket_path, read_only_attach_options(), &mut state)
             .expect("attach render");
         server.join().expect("server thread");
@@ -12399,7 +12284,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -12456,7 +12341,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -12512,7 +12397,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -12568,7 +12453,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -12630,7 +12515,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -12686,7 +12571,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -12753,7 +12638,7 @@ mod tests {
             .expect("start planning pane");
 
         let server = thread::spawn(move || {
-            serve_one_with_host(&listener, &mut session, &mut host).expect("serve one");
+            ServeConfig::one().serve(&listener, &mut session, &mut host).expect("serve one");
             host
         });
         let err = attach_with_client_options(
@@ -12823,14 +12708,10 @@ mod tests {
             .expect("start scripted pane");
 
         let server = thread::spawn(move || {
-            serve_n_with_host_and_terminal_engine_kind(
-                &listener,
-                &mut session,
-                &mut host,
-                1,
-                TerminalEngineKind::LibghosttyVt,
-            )
-            .expect("serve one");
+            ServeConfig::one()
+                .terminal_engine_kind(TerminalEngineKind::LibghosttyVt)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve one");
             host
         });
         let snapshot = attach_with_client_options(
@@ -13050,7 +12931,7 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let snapshot = attach_with_options(
             &socket_path,
             AttachRequest {
@@ -13079,7 +12960,7 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_n(&listener, &mut session, 2).expect("serve two"));
+        let server = thread::spawn(move || ServeConfig::one().clients(2).serve_without_host(&listener, &mut session).expect("serve two"));
         let first = attach(&socket_path).expect("first attach");
         let second = attach_with_options(
             &socket_path,
@@ -13117,7 +12998,7 @@ mod tests {
         };
 
         let server = thread::spawn(move || {
-            serve_n_with_output(&listener, &mut session, &mut server_output, 3)
+            ServeConfig::one().clients(3).serve_with_output(&listener, &mut session, &mut server_output)
                 .expect("serve three")
         });
         let mut state = ClientAttachState::default();
@@ -13536,7 +13417,7 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let snapshot = attach_with_known_surfaces(
             &socket_path,
             vec![KnownSurfaceVersion {
@@ -13564,7 +13445,7 @@ mod tests {
         let listener = bind_listener(&socket_path).expect("bind listener");
         let mut session = Session::initial();
 
-        let server = thread::spawn(move || serve_one(&listener, &mut session).expect("serve one"));
+        let server = thread::spawn(move || ServeConfig::one().serve_without_host(&listener, &mut session).expect("serve one"));
         let snapshot = attach_with_known_surfaces(
             &socket_path,
             vec![KnownSurfaceVersion {

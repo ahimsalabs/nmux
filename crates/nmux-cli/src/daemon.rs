@@ -181,24 +181,15 @@ where
         } else {
             args.live_clients.unwrap_or(1)
         };
+        let config = local::ServeConfig::live(clients, cycles)
+            .terminal_engine_kind(args.terminal_engine_kind);
         let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => local::serve_live_n_with_host_and_engines(
-                listener,
-                &mut session,
-                &mut pty_host,
-                clients,
-                cycles,
-                &mut terminal_engines,
-            ),
-            DaemonListener::Tcp(listener) => serve_tcp_n(
-                listener,
-                &args,
-                &mut session,
-                &mut pty_host,
-                clients,
-                Some(cycles),
-                &mut terminal_engines,
-            ),
+            DaemonListener::Unix { listener, .. } => {
+                config.serve(listener, &mut session, &mut pty_host)
+            }
+            DaemonListener::Tcp(listener) => {
+                serve_tcp(&config, listener, &args, &mut session, &mut pty_host)
+            }
         };
         let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
         if let Err(err) = serve_result
@@ -211,23 +202,15 @@ where
     }
 
     if args.one_shot {
+        let config = local::ServeConfig::one()
+            .terminal_engine_kind(args.terminal_engine_kind);
         let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => local::serve_n_with_host_and_engines(
-                listener,
-                &mut session,
-                &mut pty_host,
-                1,
-                &mut terminal_engines,
-            ),
-            DaemonListener::Tcp(listener) => serve_tcp_n(
-                listener,
-                &args,
-                &mut session,
-                &mut pty_host,
-                1,
-                None,
-                &mut terminal_engines,
-            ),
+            DaemonListener::Unix { listener, .. } => {
+                config.serve(listener, &mut session, &mut pty_host)
+            }
+            DaemonListener::Tcp(listener) => {
+                serve_tcp(&config, listener, &args, &mut session, &mut pty_host)
+            }
         };
         let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
         if let Err(err) = serve_result
@@ -239,24 +222,16 @@ where
         return Ok(());
     }
 
+    let default_config = local::ServeConfig::one()
+        .terminal_engine_kind(args.terminal_engine_kind);
     loop {
         let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => local::serve_n_with_host_and_engines(
-                listener,
-                &mut session,
-                &mut pty_host,
-                1,
-                &mut terminal_engines,
-            ),
-            DaemonListener::Tcp(listener) => serve_tcp_n(
-                listener,
-                &args,
-                &mut session,
-                &mut pty_host,
-                1,
-                None,
-                &mut terminal_engines,
-            ),
+            DaemonListener::Unix { listener, .. } => {
+                default_config.serve(listener, &mut session, &mut pty_host)
+            }
+            DaemonListener::Tcp(listener) => {
+                serve_tcp(&default_config, listener, &args, &mut session, &mut pty_host)
+            }
         };
         if let Err(err) = serve_result {
             if local::is_session_shutdown(err.as_ref()) {
@@ -268,26 +243,20 @@ where
     }
 }
 
-fn serve_tcp_n(
+fn serve_tcp(
+    config: &local::ServeConfig,
     listener: &std::net::TcpListener,
     args: &Args,
     session: &mut Session,
     host: &mut LocalPtyHost,
-    clients: usize,
-    live_cycles: Option<usize>,
-    engines: &mut PaneTerminalEngines,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let token = args
         .tcp_token
         .as_deref()
         .ok_or("--listen requires --token, --tcp-token, or NMUX_TOKEN")?;
-    for _ in 0..clients {
+    for _ in 0..config.clients {
         let stream = local::accept_authenticated_tcp_client(listener, token)?;
-        if let Some(cycles) = live_cycles {
-            local::serve_live_stream_with_host_and_engines(stream, session, host, engines, cycles)?;
-        } else {
-            local::serve_stream_with_host_and_engines(stream, session, host, engines)?;
-        }
+        config.serve_stream(stream, session, host)?;
     }
     Ok(())
 }
