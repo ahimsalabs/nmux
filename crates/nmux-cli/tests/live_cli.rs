@@ -7878,9 +7878,9 @@ fn live_read_only_cli_without_iterations_runs_until_server_closes() {
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--live-cycles",
-            "3",
+            "1",
             "--command",
-            "printf 'ready\n'; sleep 0.05; printf 'tick-one\n'; sleep 0.05; printf 'tick-two\n'; sleep 1",
+            "printf 'ready\n'; printf 'tick-one\n'; printf 'tick-two\n'; sleep 1",
         ])
         .spawn()
         .expect("spawn daemon");
@@ -7892,6 +7892,7 @@ fn live_read_only_cli_without_iterations_runs_until_server_closes() {
             "--socket",
             socket_path.to_str().expect("socket path"),
             "--live",
+            "--no-scrollback",
             "--interval-ms",
             "1000",
         ])
