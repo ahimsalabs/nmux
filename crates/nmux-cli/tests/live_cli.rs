@@ -2133,6 +2133,11 @@ fn bare_tty_nmux_detach_keeps_shared_default_daemon_running() {
         output.output
     );
     assert!(
+        !output.output.contains("scrollback "),
+        "bare redraw should not duplicate the active surface with an initial scrollback block:\n{}",
+        output.output
+    );
+    assert!(
         socket_path.exists(),
         "detach removed shared daemon socket: {}",
         socket_path.display()

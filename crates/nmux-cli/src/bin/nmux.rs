@@ -252,6 +252,7 @@ fn configure_default_live_args(args: &mut Args) {
     args.live = true;
     args.stdin_bytes = true;
     args.redraw = true;
+    args.no_scrollback = true;
     args.interval_ms = 16;
     if args.connect_timeout_ms.is_none() {
         args.connect_timeout_ms = Some(args.startup_timeout_ms);
@@ -5765,6 +5766,7 @@ mod tests {
         assert!(args.live);
         assert!(args.stdin_bytes);
         assert!(args.redraw);
+        assert!(args.no_scrollback);
         assert_eq!(args.interval_ms, 16);
         assert_eq!(args.connect_timeout_ms, Some(1234));
     }
