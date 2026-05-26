@@ -2567,18 +2567,23 @@ fn apply_terminal_update(
         row_dirty_flags_for_lines(&update.surface_lines, &update.surface_dirty_rows);
     let surface_kitty_placeholders =
         row_kitty_placeholders_for_lines(&update.surface_lines, &update.surface_kitty_placeholders);
-    let scrollback_row_runs =
-        row_runs_for_lines(&update.scrollback_lines, &update.scrollback_row_runs);
-    let scrollback_semantic_prompts = row_semantic_prompts_for_lines(
-        &update.scrollback_lines,
-        &update.scrollback_semantic_prompts,
-    );
-    let scrollback_dirty_rows =
-        row_dirty_flags_for_lines(&update.scrollback_lines, &update.scrollback_dirty_rows);
-    let scrollback_kitty_placeholders = row_kitty_placeholders_for_lines(
-        &update.scrollback_lines,
-        &update.scrollback_kitty_placeholders,
-    );
+    let scrollback_row_runs = (!update.preserve_scrollback)
+        .then(|| row_runs_for_lines(&update.scrollback_lines, &update.scrollback_row_runs));
+    let scrollback_semantic_prompts = (!update.preserve_scrollback).then(|| {
+        row_semantic_prompts_for_lines(
+            &update.scrollback_lines,
+            &update.scrollback_semantic_prompts,
+        )
+    });
+    let scrollback_dirty_rows = (!update.preserve_scrollback).then(|| {
+        row_dirty_flags_for_lines(&update.scrollback_lines, &update.scrollback_dirty_rows)
+    });
+    let scrollback_kitty_placeholders = (!update.preserve_scrollback).then(|| {
+        row_kitty_placeholders_for_lines(
+            &update.scrollback_lines,
+            &update.scrollback_kitty_placeholders,
+        )
+    });
     let modes_changed = pane.modes != update.modes;
     let title_changed = pane.terminal_title != update.title;
     let working_directory_changed = pane.terminal_working_directory != update.working_directory;
@@ -2617,17 +2622,25 @@ fn apply_terminal_update(
         || title_changed
         || working_directory_changed
         || colors_changed;
-    let scrollback_changed = pane.scrollback_lines != update.scrollback_lines
-        || pane.scrollback_row_runs != scrollback_row_runs
-        || pane.scrollback_semantic_prompts != scrollback_semantic_prompts
-        || pane.scrollback_dirty_rows != scrollback_dirty_rows
-        || pane.scrollback_kitty_placeholders != scrollback_kitty_placeholders;
+    let scrollback_changed = if update.preserve_scrollback {
+        false
+    } else {
+        pane.scrollback_lines != update.scrollback_lines
+            || pane.scrollback_row_runs != scrollback_row_runs.as_deref().unwrap_or_default()
+            || pane.scrollback_semantic_prompts
+                != scrollback_semantic_prompts.as_deref().unwrap_or_default()
+            || pane.scrollback_dirty_rows != scrollback_dirty_rows.as_deref().unwrap_or_default()
+            || pane.scrollback_kitty_placeholders
+                != scrollback_kitty_placeholders.as_deref().unwrap_or_default()
+    };
 
-    pane.scrollback_lines = update.scrollback_lines;
-    pane.scrollback_row_runs = scrollback_row_runs;
-    pane.scrollback_semantic_prompts = scrollback_semantic_prompts;
-    pane.scrollback_dirty_rows = scrollback_dirty_rows;
-    pane.scrollback_kitty_placeholders = scrollback_kitty_placeholders;
+    if !update.preserve_scrollback {
+        pane.scrollback_lines = update.scrollback_lines;
+        pane.scrollback_row_runs = scrollback_row_runs.unwrap_or_default();
+        pane.scrollback_semantic_prompts = scrollback_semantic_prompts.unwrap_or_default();
+        pane.scrollback_dirty_rows = scrollback_dirty_rows.unwrap_or_default();
+        pane.scrollback_kitty_placeholders = scrollback_kitty_placeholders.unwrap_or_default();
+    }
     pane.surface = update.surface;
     pane.modes = update.modes;
     pane.terminal_title = update.title;
@@ -5295,6 +5308,7 @@ mod tests {
                 Some(TerminalUpdate {
                     patch_kind: protocol::PatchKind::ReplaceRows,
                     surface: input.surface,
+                    preserve_scrollback: false,
                     cursor: input.cursor,
                     modes: input.modes,
                     title: input.title.to_owned(),
@@ -5411,6 +5425,7 @@ mod tests {
                 Some(TerminalUpdate {
                     patch_kind: protocol::PatchKind::ReplaceRows,
                     surface: input.surface,
+                    preserve_scrollback: false,
                     cursor: input.cursor,
                     modes: input.modes,
                     title: input.title.to_owned(),
@@ -6211,6 +6226,52 @@ mod tests {
                 "history only".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn preserving_scrollback_update_only_changes_surface() {
+        struct PreserveScrollbackEngine;
+
+        impl TerminalEngine for PreserveScrollbackEngine {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"visible first");
+                let mut update = TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    vec!["visible first".to_owned()],
+                    vec!["deferred history must not apply".to_owned()],
+                );
+                update.preserve_scrollback = true;
+                Some(update)
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let initial_scrollback = session.initial_scrollback();
+        let mut engine = PreserveScrollbackEngine;
+
+        assert!(session.apply_pane_output_with_engine("pane-1", b"visible first", &mut engine));
+
+        let surface = session.initial_pane_surface();
+        let scrollback = session.initial_scrollback();
+        assert_eq!(surface.version, 3);
+        assert_eq!(surface.lines, vec!["visible first".to_owned()]);
+        assert_eq!(scrollback.version, initial_scrollback.version);
+        assert_eq!(scrollback.lines, initial_scrollback.lines);
     }
 
     #[test]
