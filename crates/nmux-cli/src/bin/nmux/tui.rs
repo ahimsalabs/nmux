@@ -553,8 +553,55 @@ fn fill_rect(buffer: &mut Buffer, area: Rect, symbol: &str, style: Style) {
 }
 
 fn write_text(buffer: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: Style) {
+    let text = terminal_visible_text(text);
     for (offset, ch) in text.chars().take(usize::from(width)).enumerate() {
         set_cell(buffer, x + offset as u16, y, &ch.to_string(), style);
+    }
+}
+
+fn terminal_visible_text(text: &str) -> String {
+    let mut visible = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\x1b' => skip_escape_sequence(&mut chars),
+            '\t' => visible.push(' '),
+            ch if ch.is_control() => {}
+            ch => visible.push(ch),
+        }
+    }
+    visible
+}
+
+fn skip_escape_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    let Some(kind) = chars.next() else {
+        return;
+    };
+    match kind {
+        '[' => {
+            for ch in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&ch) {
+                    break;
+                }
+            }
+        }
+        ']' | 'P' | '_' | '^' | 'X' | 'G' => {
+            let mut escape_pending = false;
+            for ch in chars.by_ref() {
+                if escape_pending {
+                    if ch == '\\' {
+                        break;
+                    }
+                    escape_pending = ch == '\x1b';
+                    continue;
+                }
+                if ch == '\u{7}' {
+                    break;
+                }
+                escape_pending = ch == '\x1b';
+            }
+        }
+        _ => {}
     }
 }
 
@@ -708,6 +755,25 @@ mod tests {
             hit_test(&frame.hits, 50, 3),
             Some(HitTarget::PaneContent(_))
         ));
+    }
+
+    #[test]
+    fn pane_content_strips_terminal_escape_sequences_before_cell_rendering() {
+        let workspace = split_workspace();
+        let frame = render_workspace_frame(
+            WorkspaceFrameInput {
+                workspace: &workspace,
+                active_surface_text: "\x1b[31mred\x1b[0m \x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\ \x1b_Gignored\x1b\\done",
+                pane_surfaces: None,
+                overlay: None,
+            },
+            100,
+            20,
+        );
+
+        assert!(frame.text.contains("red link done"));
+        assert!(!frame.text.contains('\x1b'));
+        assert!(!frame.text.contains("ignored"));
     }
 
     #[test]
