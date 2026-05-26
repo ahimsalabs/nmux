@@ -433,8 +433,7 @@ fn serve_stream_impl_with_session_actor<H: ProcessHost + ProcessOutput>(
             };
         }
         ClientInitialFrame::HealthProbe(probe) => {
-            let (session, engines) = actor.session_and_engines_mut();
-            return serve_health_probe(&mut stream, probe, session, Some(host), Some(engines));
+            return serve_health_probe_with_session_actor(&mut stream, probe, actor, host);
         }
     };
     let pane_id = {
@@ -2065,8 +2064,7 @@ fn accept_live_client_with_session_actor(
             };
         }
         ClientInitialFrame::HealthProbe(probe) => {
-            let (session, engines) = actor.session_and_engines_mut();
-            serve_health_probe(&mut stream, probe, session, Some(host), Some(engines))?;
+            serve_health_probe_with_session_actor(&mut stream, probe, actor, host)?;
             return Ok(Some(LiveClientAccept::Command));
         }
     };
@@ -4079,6 +4077,64 @@ fn serve_health_probe(
         focused_pane_id: Some(pane_id),
     };
     write_presence_summary_frame(stream, session, &mut seq, &heartbeat)
+}
+
+fn serve_health_probe_with_session_actor(
+    stream: &mut UnixStream,
+    probe: PresenceSummary,
+    actor: &mut SessionActor,
+    host: &mut dyn ProcessHostOutput,
+) -> Result<(), ServeError> {
+    let mut seq = 1;
+    let Some(pane_id) = presence_target_pane_id(actor.session(), &probe) else {
+        write_presence_target_not_found_error(stream, actor.session(), &mut seq, &probe)?;
+        return Ok(());
+    };
+
+    let leaf_pane_ids = actor.session().leaf_pane_ids();
+    if let Some(notify_fd) = host.notify_fd() {
+        drain_notify_fd(notify_fd)?;
+    }
+    if let Err(err) =
+        poll_panes_output_with_session_actor_until_quiet(actor, host, &leaf_pane_ids, 0)
+    {
+        let error_pane_id = host_error_pane_id(&err).to_owned();
+        write_protocol_error_with_retryability(
+            stream,
+            actor.session(),
+            &mut seq,
+            protocol::ErrorCode::Unknown,
+            &err.to_string(),
+            ErrorRetryability::Retryable,
+            Some(&error_pane_id),
+            0,
+        )?;
+        return Ok(());
+    }
+
+    if let Err(err) = host.check_pane(&pane_id) {
+        write_protocol_error_with_retryability(
+            stream,
+            actor.session(),
+            &mut seq,
+            protocol::ErrorCode::Unknown,
+            &err.to_string(),
+            ErrorRetryability::Retryable,
+            Some(&pane_id),
+            0,
+        )?;
+        return Ok(());
+    }
+
+    let heartbeat = PresenceSummary {
+        actor_id: "nmuxd".to_owned(),
+        user_id: actor.session().id.clone(),
+        display_name: "nmuxd".to_owned(),
+        mode: AttachMode::ReadOnly,
+        kind: protocol::PresenceKind::Heartbeat,
+        focused_pane_id: Some(pane_id),
+    };
+    write_presence_summary_frame(stream, actor.session(), &mut seq, &heartbeat)
 }
 
 fn presence_target_pane_id(session: &Session, presence: &PresenceSummary) -> Option<String> {
@@ -17295,6 +17351,31 @@ mod tests {
                 .contains("pane process is not running: pane-1")
         );
         let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn actor_health_probe_routes_output_through_actor() {
+        let mut actor = SessionActor::initial(8);
+        let mut host = ScriptedOutputHost::new(vec![b"health output\n".to_vec()]);
+        host.start_pane("pane-1", &actor.session().tabs[0].root.host)
+            .expect("start scripted pane");
+        let (mut client, server) = UnixStream::pair().expect("socket pair");
+
+        write_health_probe(&mut client, &health_probe_summary()).expect("write health probe");
+        serve_stream_impl_with_session_actor(server, &mut actor, &mut host, true, usize::MAX)
+            .expect("serve actor health probe");
+        let heartbeat = read_health_probe_response(&mut client).expect("health response");
+
+        assert_eq!(heartbeat.kind, protocol::PresenceKind::Heartbeat);
+        assert_eq!(heartbeat.focused_pane_id.as_deref(), Some("pane-1"));
+        assert!(actor.trace().accepted_events().iter().any(|accepted| {
+            matches!(
+                &accepted.event,
+                SessionEvent::PaneOutput { pane_id, bytes }
+                    if pane_id == "pane-1" && bytes == b"health output\n"
+            ) && accepted.metadata.lane == SessionEventLane::Pane
+                && accepted.metadata.source_id == "pane-1:pty"
+        }));
     }
 
     #[test]
