@@ -15,7 +15,7 @@ const PACKAGING_ARCHIVE_DEFAULT: &str =
     "target/packaging-libghostty-vt/archive/nmux-libghostty-vt-package.tar.gz";
 const PROMOTION_COLD_DEPS_DIR_DEFAULT: &str = "target/promotion-cold-deps";
 const PROMOTION_EVIDENCE_DIR_DEFAULT: &str = "target/promotion-evidence";
-const LIBGHOSTTY_VT_SOURCE: &str = r#"source = "git+https://github.com/uzaaft/libghostty-rs.git?rev=31d1f70004ff80727e36437cd540984f927333ce#31d1f70004ff80727e36437cd540984f927333ce""#;
+const LIBGHOSTTY_VT_SOURCE: &str = r#"source = "git+https://github.com/uzaaft/libghostty-rs.git?rev=6a135cae68104ea8927f818cf8a1f5a13bcc8d9b#6a135cae68104ea8927f818cf8a1f5a13bcc8d9b""#;
 const RUNTIME_LIBRARY_STRATEGY: &str = "runtime_library_strategy=staged libghostty-vt native library artifacts for packaging evidence; nmux must not dynamically depend on libghostty-vt";
 
 fn main() {

@@ -99,14 +99,14 @@
         pkgs.fetchFromGitHub {
           owner = "ghostty-org";
           repo = "ghostty";
-          rev = "6590196661f769dd8f2b3e85d6c98262c4ec5b3b";
-          hash = "sha256-HHHgWuBssEBMfV5hOFdFxp0WUXiwfl20NfkjU/ZNuC8=";
+          rev = "b869a6e5ab0a50ce01e8eb5aa408a02b3cbe4f3a";
+          hash = "sha256-6K6ejMEDCsc6ful5y1aTggAGHvN48flDONwEYwK6KX4=";
         };
 
       ghosttyZigDeps =
         pkgs:
         pkgs.callPackage (ghosttySource pkgs + "/build.zig.zon.nix") {
-          name = "ghostty-zig-deps-6590196";
+          name = "ghostty-zig-deps-b869a6e";
           zig_0_15 = pkgs.zig_0_15;
         };
 
