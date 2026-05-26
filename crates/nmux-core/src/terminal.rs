@@ -112,6 +112,7 @@ impl CellRun {
 pub struct TerminalUpdate {
     pub patch_kind: protocol::PatchKind,
     pub surface: protocol::SurfaceKind,
+    pub preserve_scrollback: bool,
     pub cursor: TerminalCursor,
     pub modes: TerminalModes,
     pub title: String,
@@ -141,6 +142,7 @@ impl TerminalUpdate {
         Self {
             patch_kind,
             surface,
+            preserve_scrollback: false,
             cursor,
             modes: TerminalModes::default(),
             title: String::new(),
@@ -1116,6 +1118,7 @@ mod ghostty_vt {
             let surface_kitty_placeholders = surface_rows.kitty_placeholders.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
             let colors = terminal_colors(&snapshot)?;
+            let mut preserve_scrollback = false;
             let scrollback_rows = if preserve_input_rows && surface == input.surface {
                 ExtractedRows {
                     lines: input.scrollback_lines.to_vec(),
@@ -1137,7 +1140,7 @@ mod ghostty_vt {
                         input_scrollback_rows = input.scrollback_lines.len()
                     );
                     cached_span.in_scope(|| scrollback_rows)
-                } else {
+                } else if input.scrollback_lines.is_empty() {
                     let full_span = tracing::trace_span!(
                         "terminal.libghostty.extract_full_scrollback_rows",
                         total_rows,
@@ -1145,6 +1148,39 @@ mod ghostty_vt {
                         input_scrollback_rows = input.scrollback_lines.len()
                     );
                     full_span.in_scope(|| self.scrollback_rows(total_rows, &mut styles))?
+                } else {
+                    let full_span = tracing::trace_span!(
+                        "terminal.libghostty.defer_full_scrollback_rows",
+                        total_rows,
+                        surface_rows = surface_rows.lines.len(),
+                        input_scrollback_rows = input.scrollback_lines.len()
+                    );
+                    full_span.in_scope(|| {
+                        preserve_scrollback = true;
+                        ExtractedRows {
+                            lines: input.scrollback_lines.to_vec(),
+                            row_runs: row_runs_prefix_or_plain(
+                                input.scrollback_lines,
+                                input.scrollback_row_runs,
+                                input.scrollback_lines.len(),
+                            ),
+                            semantic_prompts: row_values_prefix_or_default(
+                                input.scrollback_semantic_prompts,
+                                input.scrollback_lines.len(),
+                                protocol::RowSemanticPrompt::None,
+                            ),
+                            dirty_rows: row_values_prefix_or_default(
+                                input.scrollback_dirty_rows,
+                                input.scrollback_lines.len(),
+                                false,
+                            ),
+                            kitty_placeholders: row_values_prefix_or_default(
+                                input.scrollback_kitty_placeholders,
+                                input.scrollback_lines.len(),
+                                false,
+                            ),
+                        }
+                    })
                 }
             } else {
                 ExtractedRows {
@@ -1207,6 +1243,7 @@ mod ghostty_vt {
             Some(TerminalUpdate {
                 patch_kind,
                 surface,
+                preserve_scrollback,
                 cursor,
                 modes,
                 title: title.to_owned(),
