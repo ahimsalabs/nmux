@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
@@ -124,6 +124,7 @@ const DEFAULT_MANAGED_STARTUP_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_REMOTE_PORT: u16 = 7007;
 const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
 const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
+const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
 
 fn main() {
     if let Err(err) = run() {
@@ -4386,8 +4387,6 @@ fn redraw_terminal(surface_text: &str) {
 /// Frame statistics for the status bar.
 #[derive(Debug, Clone, Default)]
 struct FrameStats {
-    /// Time since the previous frame was rendered.
-    frame_interval: Duration,
     /// Time spent decoding the protocol update and applying it to client state.
     decode_time: Duration,
     /// Time spent diffing rows and writing ANSI output.
@@ -4400,6 +4399,45 @@ struct FrameStats {
     rtt: Option<Duration>,
     /// Most recently observed subscribed live client count.
     client_count: Option<usize>,
+    /// Rolling FPS for frames that changed visible content.
+    rendered_fps: Option<u32>,
+    /// Whether the latest frame had no visible content changes.
+    idle: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedFps {
+    window: Duration,
+    rendered_at: VecDeque<Instant>,
+}
+
+impl Default for RenderedFps {
+    fn default() -> Self {
+        Self {
+            window: STATUS_FPS_WINDOW,
+            rendered_at: VecDeque::new(),
+        }
+    }
+}
+
+impl RenderedFps {
+    fn record(&mut self, now: Instant, rendered: bool) -> Option<u32> {
+        if rendered {
+            self.rendered_at.push_back(now);
+        }
+        while self
+            .rendered_at
+            .front()
+            .is_some_and(|rendered_at| now.duration_since(*rendered_at) > self.window)
+        {
+            self.rendered_at.pop_front();
+        }
+        if self.rendered_at.is_empty() {
+            return None;
+        }
+        let fps = (self.rendered_at.len() as u128 * 1000) / self.window.as_millis().max(1);
+        Some(fps.max(1).min(u128::from(u32::MAX)) as u32)
+    }
 }
 
 #[derive(Debug)]
@@ -4516,8 +4554,8 @@ struct RedrawState {
     last_rtt: Option<Duration>,
     /// Most recently observed subscribed live client count.
     last_client_count: Option<usize>,
-    /// Local hostname, resolved once at startup.
-    hostname: String,
+    /// Rolling rate for frames that changed visible content.
+    rendered_fps: RenderedFps,
 }
 
 impl RedrawState {
@@ -4532,7 +4570,7 @@ impl RedrawState {
             pending_decode_time: Duration::ZERO,
             last_rtt: None,
             last_client_count: None,
-            hostname: resolve_short_hostname(),
+            rendered_fps: RenderedFps::default(),
         }
     }
 
@@ -4584,11 +4622,49 @@ impl RedrawState {
         overlay: Option<&tui::TuiOverlay>,
     ) -> bool {
         let render_start = Instant::now();
-        let frame_interval = render_start.duration_since(self.last_frame_time);
-        let status_text = self.format_status_text(workspace);
         let area = redraw_terminal_area();
         let resized = self.terminal_cols != u32::from(area.width)
             || self.terminal_rows != u32::from(area.height);
+        let workspace_height = area.height.saturating_sub(1).max(1);
+        let workspace_text = tui::render_workspace_frame(
+            tui::WorkspaceFrameInput {
+                workspace,
+                active_surface_text: surface_text,
+                pane_surfaces,
+                pane_surface_summaries,
+                overlay,
+            },
+            area.width.max(1),
+            workspace_height,
+        )
+        .text;
+        let content_rows: Vec<String> = workspace_text.lines().map(String::from).collect();
+        let previous_content_rows = self.previous_rows.len().saturating_sub(1);
+        let mut rows_changed = 0;
+        for index in 0..content_rows.len().max(previous_content_rows) {
+            let new_row = content_rows.get(index).map(String::as_str).unwrap_or("");
+            let old_row = self
+                .previous_rows
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or("");
+            if new_row != old_row {
+                rows_changed += 1;
+            }
+        }
+        let rendered_fps = self.rendered_fps.record(render_start, rows_changed > 0);
+        let render_time = render_start.elapsed();
+        self.last_stats = FrameStats {
+            decode_time: self.pending_decode_time,
+            render_time,
+            rows_changed,
+            rows_total: content_rows.len(),
+            rtt: self.last_rtt,
+            client_count: self.last_client_count,
+            rendered_fps,
+            idle: rows_changed == 0,
+        };
+        let status_text = self.format_status_text(workspace);
         let Some(terminal) = self.terminal.as_mut() else {
             return false;
         };
@@ -4603,7 +4679,6 @@ impl RedrawState {
             if area.width == 0 || area.height == 0 {
                 return;
             }
-            let workspace_height = area.height.saturating_sub(1).max(1);
             let workspace_area = Rect::new(area.x, area.y, area.width, workspace_height);
             tui::render_workspace_to_buffer(
                 frame.buffer_mut(),
@@ -4626,20 +4701,13 @@ impl RedrawState {
             return false;
         };
 
-        let render_time = render_start.elapsed();
         self.terminal_cols = u32::from(completed.area.width);
         self.terminal_rows = u32::from(completed.area.height);
-        self.last_stats = FrameStats {
-            frame_interval,
-            decode_time: self.pending_decode_time,
-            render_time,
-            rows_changed: 0,
-            rows_total: surface_text.lines().count(),
-            rtt: self.last_rtt,
-            client_count: self.last_client_count,
-        };
         self.pending_decode_time = Duration::ZERO;
         self.last_frame_time = Instant::now();
+        let mut all_rows = content_rows;
+        all_rows.push(status_text);
+        self.previous_rows = all_rows;
         true
     }
 
@@ -4650,10 +4718,9 @@ impl RedrawState {
         // ratatui menu off the top of the viewport.
         let width = self.terminal_cols.saturating_sub(1).max(1) as usize;
 
-        let left = format!(
-            " nmux  {}  {}x{}  {}",
-            workspace.pane_id, workspace.cols, workspace.rows, self.hostname
-        );
+        let identity = fixed_status_field(&workspace.pane_id, 6);
+        let size = fixed_status_field(&format!("{}x{}", workspace.cols, workspace.rows), 5);
+        let left = format!(" nmux {identity} {size}");
 
         let right = format_stats_right(&self.last_stats);
 
@@ -4693,7 +4760,6 @@ impl RedrawState {
         surface_text: &str,
     ) -> String {
         let render_start = Instant::now();
-        let frame_interval = render_start.duration_since(self.last_frame_time);
         if self.update_terminal_size() && !self.previous_rows.is_empty() {
             return self.render_initial_text(workspace, surface_text);
         }
@@ -4724,15 +4790,17 @@ impl RedrawState {
         }
 
         let render_time = render_start.elapsed();
+        let rendered_fps = self.rendered_fps.record(render_start, rows_changed > 0);
 
         self.last_stats = FrameStats {
-            frame_interval,
             decode_time: self.pending_decode_time,
             render_time,
             rows_changed,
             rows_total: content_rows.len(),
             rtt: self.last_rtt,
             client_count: self.last_client_count,
+            rendered_fps,
+            idle: rows_changed == 0,
         };
         self.pending_decode_time = Duration::ZERO;
         self.last_frame_time = Instant::now();
@@ -4818,6 +4886,8 @@ impl RedrawState {
         self.last_stats.rows_total = content_rows.len();
         self.last_stats.rtt = self.last_rtt;
         self.last_stats.client_count = self.last_client_count;
+        self.last_stats.rendered_fps = self.rendered_fps.record(self.last_frame_time, true);
+        self.last_stats.idle = false;
 
         let status_bar = self.format_status_bar(workspace);
 
@@ -4855,6 +4925,11 @@ fn terminal_row(row_1_based: usize) -> u16 {
 
 fn truncate_chars(value: &str, width: usize) -> String {
     value.chars().take(width).collect()
+}
+
+fn fixed_status_field(value: &str, width: usize) -> String {
+    let truncated = truncate_chars(value, width);
+    format!("{truncated:<width$}")
 }
 
 fn redraw_terminal_area() -> Rect {
@@ -4911,33 +4986,29 @@ fn resolve_short_hostname() -> String {
 }
 
 fn format_stats_right(stats: &FrameStats) -> String {
-    let interval_ms = stats.frame_interval.as_millis();
-    let decode_us = stats.decode_time.as_micros();
-    let render_us = stats.render_time.as_micros();
-    let fps = if interval_ms > 0 {
-        1000 / interval_ms
+    let decode = fixed_status_field(&format_duration_short(stats.decode_time.as_micros()), 6);
+    let render = fixed_status_field(&format_duration_short(stats.render_time.as_micros()), 6);
+    let rows = fixed_status_field(&format!("{}/{}", stats.rows_changed, stats.rows_total), 5);
+    let fps = if stats.idle {
+        "idle".to_owned()
     } else {
-        0
+        stats
+            .rendered_fps
+            .map(|fps| format!("{fps:>3}fps"))
+            .unwrap_or_else(|| "  0fps".to_owned())
     };
+    let fps = fixed_status_field(&fps, 6);
     let rtt = stats
         .rtt
-        .map(|rtt| format!("rtt:{}  ", format_duration_short(rtt.as_micros())))
-        .unwrap_or_default();
+        .map(|rtt| format_duration_short(rtt.as_micros()))
+        .unwrap_or_else(|| "-".to_owned());
+    let rtt = fixed_status_field(&rtt, 4);
     let clients = stats
         .client_count
-        .map(|count| format!("clients:{count}  "))
-        .unwrap_or_default();
-    format!(
-        "{rows}/{total} rows  {clients}{rtt}decode:{decode}  render:{render}  {interval}ms ({fps}fps) ",
-        rows = stats.rows_changed,
-        total = stats.rows_total,
-        clients = clients,
-        rtt = rtt,
-        decode = format_duration_short(decode_us),
-        render = format_duration_short(render_us),
-        interval = interval_ms,
-        fps = fps,
-    )
+        .map(|count| count.to_string())
+        .unwrap_or_else(|| "-".to_owned());
+    let clients = fixed_status_field(&clients, 1);
+    format!("rows:{rows} clients:{clients} rtt:{rtt} fps:{fps} decode:{decode} render:{render} ")
 }
 
 fn format_duration_short(micros: u128) -> String {
@@ -7759,18 +7830,18 @@ mod tests {
         format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
         format_live_error_json, format_live_presence_json, format_live_surface_update_json,
         format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        format_state_info_json, format_state_info_text, frontend_resize_pane_size,
-        host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
-        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
-        live_mouse_dispatch_for_workspace_size, live_session_new_should_fallback,
-        live_update_print_kind, managed_ready_error_message, menu_overlay_for_action,
-        menu_overlay_for_action_with_session_inventory, parse_detach_key, parse_env_assignment,
-        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
-        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, preprocess_args,
-        raw_terminal_fixup_termios, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        redraw_text_with_context, redraw_workspace_surface_text, render_scrollback_view_summary,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
-        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
+        format_state_info_json, format_state_info_text, format_stats_right,
+        frontend_resize_pane_size, host_mouse_mode_disable_sequence,
+        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
+        interim_surface_fidelity_warning_needed, live_mouse_dispatch_for_workspace_size,
+        live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
+        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory, parse_detach_key,
+        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
+        render_scrollback_view_summary, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -8917,13 +8988,14 @@ mod tests {
         let mut state = RedrawState::new();
         state.terminal_cols = 32;
         state.last_stats = FrameStats {
-            frame_interval: std::time::Duration::from_millis(1000),
             decode_time: std::time::Duration::from_micros(123),
             render_time: std::time::Duration::from_micros(456),
             rows_changed: 12,
             rows_total: 34,
             rtt: Some(std::time::Duration::from_millis(9)),
             client_count: Some(2),
+            rendered_fps: Some(8),
+            idle: false,
         };
 
         let ws = local::WorkspaceSummary {
@@ -8943,6 +9015,39 @@ mod tests {
             visible.chars().count() <= 31,
             "bottom-row status must not reach the final terminal column: {status:?}"
         );
+    }
+
+    #[test]
+    fn status_stats_use_fixed_fields_and_idle_fps() {
+        let active = FrameStats {
+            decode_time: std::time::Duration::from_micros(123),
+            render_time: std::time::Duration::from_micros(456),
+            rows_changed: 1,
+            rows_total: 2,
+            rtt: Some(std::time::Duration::from_millis(3)),
+            client_count: Some(5),
+            rendered_fps: Some(12),
+            idle: false,
+        };
+        let idle = FrameStats {
+            decode_time: std::time::Duration::from_micros(9),
+            render_time: std::time::Duration::from_micros(10),
+            rows_changed: 0,
+            rows_total: 2,
+            rtt: None,
+            client_count: None,
+            rendered_fps: Some(12),
+            idle: true,
+        };
+
+        let active_text = format_stats_right(&active);
+        let idle_text = format_stats_right(&idle);
+
+        assert_eq!(active_text.chars().count(), idle_text.chars().count());
+        assert!(active_text.contains("rtt:3ms"));
+        assert!(active_text.contains("clients:5"));
+        assert!(active_text.contains("fps: 12fps"));
+        assert!(idle_text.contains("fps:idle"));
     }
 
     #[test]
