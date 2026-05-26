@@ -22,6 +22,7 @@ const AGED_HISTORY_SETUP_TIMEOUT: Duration = Duration::from_secs(20);
 const AGED_HISTORY_CYCLES: usize = 4;
 const AGED_HISTORY_LINES_PER_CYCLE: usize = 700;
 const AGED_HISTORY_ALT_FRAMES_PER_CYCLE: usize = 20;
+const REPEATED_OUTPUT_LINES_PER_SAMPLE: usize = 240;
 
 fn main() {
     if let Err(err) = run() {
@@ -112,6 +113,15 @@ fn run_latency_suite(
     reports.push(run_interactive_aged_history_case(
         nmux,
         &aged_socket_path,
+        trace_path,
+        iterations,
+        warmup,
+    )?);
+    let repeated_socket_path =
+        case_socket_path(socket_path, "interactive-redraw-after-repeated-output");
+    reports.push(run_interactive_repeated_output_case(
+        nmux,
+        &repeated_socket_path,
         trace_path,
         iterations,
         warmup,
@@ -292,6 +302,70 @@ fn run_interactive_aged_history_client(
     let _ = client.wait();
     Ok(LatencyCaseReport::from_samples(
         "interactive-redraw-aged-history",
+        samples,
+    ))
+}
+
+fn run_interactive_repeated_output_case(
+    nmux: &Path,
+    socket_path: &Path,
+    trace_path: Option<&Path>,
+    iterations: usize,
+    warmup: usize,
+) -> Result<LatencyCaseReport, Box<dyn std::error::Error>> {
+    let _ = fs::remove_file(socket_path);
+    let mut daemon = start_daemon(nmux, socket_path, trace_path, None)?;
+    let result =
+        run_interactive_repeated_output_client(nmux, socket_path, trace_path, iterations, warmup);
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    let _ = fs::remove_file(socket_path);
+    result
+}
+
+fn run_interactive_repeated_output_client(
+    nmux: &Path,
+    socket_path: &Path,
+    trace_path: Option<&Path>,
+    iterations: usize,
+    warmup: usize,
+) -> Result<LatencyCaseReport, Box<dyn std::error::Error>> {
+    let mut client = spawn_interactive_nmux_client(nmux, socket_path, trace_path)?;
+    client.wait_for_output("pane-1", DEFAULT_TIMEOUT)?;
+    let mut samples = Vec::with_capacity(iterations);
+
+    for index in 0..(warmup + iterations) {
+        let token = format!(
+            "interactive-redraw-after-repeated-output-{}-{index}",
+            std::process::id()
+        );
+        let burst_marker = format!(
+            "interactive-redraw-repeated-output-burst-{}-{index}",
+            std::process::id()
+        );
+        let burst = format!(
+            "__nmux_bench_repeated_output:{burst_marker}:{REPEATED_OUTPUT_LINES_PER_SAMPLE}\n"
+        );
+        let input = format!("{token}\n");
+        let sample_span =
+            tracing::trace_span!("interactive_repeated_output_sample", token = %token, index);
+        let elapsed = sample_span.in_scope(|| {
+            let start = Instant::now();
+            client.write_input(burst.as_bytes())?;
+            client.write_input(input.as_bytes())?;
+            client.wait_for_output(&token, DEFAULT_TIMEOUT)?;
+            Ok::<Duration, Box<dyn std::error::Error>>(start.elapsed())
+        })?;
+        if index >= warmup {
+            samples.push(elapsed);
+        }
+        std::thread::sleep(SAMPLE_COOLDOWN);
+    }
+
+    client.detach();
+    let _ = client.wait();
+    Ok(LatencyCaseReport::from_samples(
+        "interactive-redraw-after-repeated-output",
         samples,
     ))
 }
@@ -580,6 +654,14 @@ fn write_echo_helper_line<W: Write>(writer: &mut W, line: &[u8]) -> io::Result<(
             )?;
         }
         write!(writer, "\x1b[?1049l{marker}\r\n")?;
+    } else if let Some(rest) = text.strip_prefix("__nmux_bench_repeated_output:") {
+        let Some((marker, count)) = rest.rsplit_once(':') else {
+            return Ok(());
+        };
+        let count = count.parse::<usize>().unwrap_or(0);
+        for index in 0..count {
+            writeln!(writer, "repeated output line {index:04} {marker}")?;
+        }
     } else {
         writer.write_all(b"\r")?;
         writer.write_all(line)?;
