@@ -18,6 +18,10 @@ const DEFAULT_WARMUP: usize = 5;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 const SAMPLE_COOLDOWN: Duration = Duration::from_millis(10);
 const STDIN_BYTES_DETACH: u8 = 0x1d;
+const AGED_HISTORY_SETUP_TIMEOUT: Duration = Duration::from_secs(20);
+const AGED_HISTORY_CYCLES: usize = 4;
+const AGED_HISTORY_LINES_PER_CYCLE: usize = 700;
+const AGED_HISTORY_ALT_FRAMES_PER_CYCLE: usize = 20;
 
 fn main() {
     if let Err(err) = run() {
@@ -100,6 +104,14 @@ fn run_latency_suite(
     reports.push(run_interactive_redraw_case(
         nmux,
         &interactive_socket_path,
+        trace_path,
+        iterations,
+        warmup,
+    )?);
+    let aged_socket_path = case_socket_path(socket_path, "interactive-redraw-aged-history");
+    reports.push(run_interactive_aged_history_case(
+        nmux,
+        &aged_socket_path,
         trace_path,
         iterations,
         warmup,
@@ -209,6 +221,81 @@ fn run_interactive_redraw_client(
     ))
 }
 
+fn run_interactive_aged_history_case(
+    nmux: &Path,
+    socket_path: &Path,
+    trace_path: Option<&Path>,
+    iterations: usize,
+    warmup: usize,
+) -> Result<LatencyCaseReport, Box<dyn std::error::Error>> {
+    let _ = fs::remove_file(socket_path);
+    let mut daemon = start_daemon(nmux, socket_path, trace_path, None)?;
+    let result =
+        run_interactive_aged_history_client(nmux, socket_path, trace_path, iterations, warmup);
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    let _ = fs::remove_file(socket_path);
+    result
+}
+
+fn run_interactive_aged_history_client(
+    nmux: &Path,
+    socket_path: &Path,
+    trace_path: Option<&Path>,
+    iterations: usize,
+    warmup: usize,
+) -> Result<LatencyCaseReport, Box<dyn std::error::Error>> {
+    let mut client = spawn_interactive_nmux_client(nmux, socket_path, trace_path)?;
+    client.wait_for_output("pane-1", DEFAULT_TIMEOUT)?;
+
+    for cycle in 0..AGED_HISTORY_CYCLES {
+        let fill_marker = format!("aged-history-fill-{}-{cycle}", std::process::id());
+        client.write_input(
+            format!("__nmux_bench_fill:{fill_marker}:{AGED_HISTORY_LINES_PER_CYCLE}\n").as_bytes(),
+        )?;
+        client.wait_for_output(&fill_marker, AGED_HISTORY_SETUP_TIMEOUT)?;
+
+        let clear_marker = format!("aged-history-clear-{}-{cycle}", std::process::id());
+        client.write_input(format!("__nmux_bench_clear:{clear_marker}\n").as_bytes())?;
+        client.wait_for_output(&clear_marker, AGED_HISTORY_SETUP_TIMEOUT)?;
+
+        let alt_marker = format!("aged-history-alt-{}-{cycle}", std::process::id());
+        client.write_input(
+            format!("__nmux_bench_alt:{alt_marker}:{AGED_HISTORY_ALT_FRAMES_PER_CYCLE}\n")
+                .as_bytes(),
+        )?;
+        client.wait_for_output(&alt_marker, AGED_HISTORY_SETUP_TIMEOUT)?;
+    }
+
+    let mut samples = Vec::with_capacity(iterations);
+    for index in 0..(warmup + iterations) {
+        let token = format!(
+            "interactive-redraw-aged-history-{}-{index}",
+            std::process::id()
+        );
+        let input = format!("{token}\n");
+        let sample_span =
+            tracing::trace_span!("interactive_aged_history_sample", token = %token, index);
+        let elapsed = sample_span.in_scope(|| {
+            let start = Instant::now();
+            client.write_input(input.as_bytes())?;
+            client.wait_for_output(&token, DEFAULT_TIMEOUT)?;
+            Ok::<Duration, Box<dyn std::error::Error>>(start.elapsed())
+        })?;
+        if index >= warmup {
+            samples.push(elapsed);
+        }
+        std::thread::sleep(SAMPLE_COOLDOWN);
+    }
+
+    client.detach();
+    let _ = client.wait();
+    Ok(LatencyCaseReport::from_samples(
+        "interactive-redraw-aged-history",
+        samples,
+    ))
+}
+
 struct InteractiveNmuxClient {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
@@ -247,7 +334,10 @@ fn spawn_interactive_nmux_client(
     command.env("TERM", "xterm-256color");
     if let Some(trace_path) = trace_path {
         command.env("NMUX_TRACE_FILE", trace_path);
-        command.env("NMUX_TRACE", "info,nmux_cli=trace,nmux=trace");
+        command.env(
+            "NMUX_TRACE",
+            "info,nmux_cli=trace,nmux_core=trace,nmux=trace",
+        );
     }
     let child = pair.slave.spawn_command(command)?;
     drop(pair.slave);
@@ -422,6 +512,12 @@ fn start_daemon(
     let mut child = Command::new(nmux)
         .args(args)
         .envs(trace_path.map(|path| ("NMUX_TRACE_FILE", path.as_os_str())))
+        .envs(trace_path.map(|_| {
+            (
+                "NMUX_TRACE",
+                "info,nmux_cli=trace,nmux_core=trace,nmux=trace",
+            )
+        }))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -447,8 +543,7 @@ fn run_echo_helper() -> Result<(), Box<dyn std::error::Error>> {
                 while line.last() == Some(&b'\r') {
                     line.pop();
                 }
-                stdout.write_all(b"\r")?;
-                stdout.write_all(&line)?;
+                write_echo_helper_line(&mut stdout, &line)?;
                 stdout.flush()?;
                 line.clear();
             } else {
@@ -456,6 +551,40 @@ fn run_echo_helper() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+}
+
+fn write_echo_helper_line<W: Write>(writer: &mut W, line: &[u8]) -> io::Result<()> {
+    let text = String::from_utf8_lossy(line);
+    if let Some(rest) = text.strip_prefix("__nmux_bench_fill:") {
+        let Some((marker, count)) = rest.rsplit_once(':') else {
+            return Ok(());
+        };
+        let count = count.parse::<usize>().unwrap_or(0);
+        for index in 0..count {
+            writeln!(writer, "aged history line {index:04} {marker}")?;
+        }
+        writeln!(writer, "{marker}")?;
+    } else if let Some(marker) = text.strip_prefix("__nmux_bench_clear:") {
+        write!(writer, "\x1b[2J\x1b[H{marker}\r\n")?;
+    } else if let Some(rest) = text.strip_prefix("__nmux_bench_alt:") {
+        let Some((marker, frames)) = rest.rsplit_once(':') else {
+            return Ok(());
+        };
+        let frames = frames.parse::<usize>().unwrap_or(0);
+        write!(writer, "\x1b[?1049h")?;
+        for frame in 0..frames {
+            write!(
+                writer,
+                "\x1b[Halternate frame {frame:03} {marker}\r\n{}",
+                "x".repeat(80)
+            )?;
+        }
+        write!(writer, "\x1b[?1049l{marker}\r\n")?;
+    } else {
+        writer.write_all(b"\r")?;
+        writer.write_all(line)?;
+    }
+    Ok(())
 }
 
 fn configure_raw_echo_stdin() -> io::Result<()> {

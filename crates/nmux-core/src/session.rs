@@ -866,11 +866,13 @@ impl Session {
             scrollback_dirty_rows: &pane.scrollback_dirty_rows,
             scrollback_kitty_placeholders: &pane.scrollback_kitty_placeholders,
         };
-        let Some(update) = engine.apply_output(input, output) else {
+        let apply_span = tracing::trace_span!("terminal.engine.apply_output", bytes = output.len());
+        let Some(update) = apply_span.in_scope(|| engine.apply_output(input, output)) else {
             return false;
         };
 
-        apply_terminal_update(pane, update, false)
+        let update_span = tracing::trace_span!("terminal.session.apply_update");
+        update_span.in_scope(|| apply_terminal_update(pane, update, false))
     }
 
     pub fn commit_pane_resize(&mut self, pane_id: &str, cols: u32, rows: u32) -> bool {
