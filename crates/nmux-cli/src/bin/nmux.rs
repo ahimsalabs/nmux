@@ -208,6 +208,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some(
             ScriptCommand::PaneSplit
             | ScriptCommand::TabNew
+            | ScriptCommand::TabSwitch
             | ScriptCommand::TabClose
             | ScriptCommand::SessionKill,
         ) => return run_control_command(&args),
@@ -414,15 +415,55 @@ fn run_session_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_tab_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let rendered = attach_for_listing(args)?;
+    let tabs = workspace_tabs(&rendered.workspace);
     if args.output_json {
-        println!(
-            "{{\"tabs\":[{{\"tab_id\":{},\"active\":true}}]}}",
-            local::json_string(&rendered.workspace.tab_id)
-        );
+        let tabs_json = tabs
+            .iter()
+            .map(|tab| {
+                format!(
+                    "{{\"tab_id\":{},\"title\":{},\"active\":{}}}",
+                    local::json_string(&tab.tab_id),
+                    local::json_string(&tab.title),
+                    tab.tab_id == rendered.workspace.tab_id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("{{\"tabs\":[{tabs_json}]}}");
     } else {
-        println!("{} active", rendered.workspace.tab_id);
+        for tab in tabs {
+            let active = if tab.tab_id == rendered.workspace.tab_id {
+                " active"
+            } else {
+                ""
+            };
+            println!("{}{} {}", tab.tab_id, active, tab.title);
+        }
     }
     Ok(())
+}
+
+fn workspace_tabs(workspace: &local::WorkspaceSummary) -> Vec<local::WorkspaceTabSummary> {
+    if !workspace.tabs.is_empty() {
+        return workspace.tabs.clone();
+    }
+    let root = workspace
+        .pane_tree
+        .clone()
+        .unwrap_or_else(|| local::WorkspacePaneSummary {
+            pane_id: workspace.pane_id.clone(),
+            cols: workspace.cols,
+            rows: workspace.rows,
+            resize_policy: workspace.resize_policy,
+            split_axis: protocol::SplitAxis::None,
+            children: Vec::new(),
+        });
+    vec![local::WorkspaceTabSummary {
+        tab_id: workspace.tab_id.clone(),
+        title: workspace.tab_id.clone(),
+        active_pane_id: workspace.pane_id.clone(),
+        root,
+    }]
 }
 
 fn run_pane_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -536,6 +577,7 @@ fn run_control_command(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let command_kind = match args.script_command {
         Some(ScriptCommand::PaneSplit) => protocol::ControlCommandKind::PaneSplit,
         Some(ScriptCommand::TabNew) => protocol::ControlCommandKind::TabNew,
+        Some(ScriptCommand::TabSwitch) => protocol::ControlCommandKind::TabSwitch,
         Some(ScriptCommand::TabClose) => protocol::ControlCommandKind::TabClose,
         Some(ScriptCommand::SessionKill) => protocol::ControlCommandKind::SessionKill,
         _ => return Err("missing control command".into()),
@@ -1157,6 +1199,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                             Some(&surface_state.current_pane_surfaces),
                                             Some(&surface_state.current_pane_modes),
                                             surface_state.current_modes,
+                                            active_overlay.as_ref(),
                                         ) {
                                             Some(LiveMouseDispatch::FocusPane(pane_id)) => {
                                                 active_overlay = None;
@@ -1259,6 +1302,42 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                             active_overlay.as_ref(),
                                                         );
                                                         flush_stdout()?;
+                                                    }
+                                                }
+                                            }
+                                            Some(LiveMouseDispatch::Overlay(action)) => {
+                                                match action {
+                                                    tui::OverlayAction::SwitchTab(tab_id) => {
+                                                        active_overlay = None;
+                                                        let workspace =
+                                                            run_live_tab_switch_menu_command(
+                                                                args, &tab_id,
+                                                            )?;
+                                                        current_workspace = workspace;
+                                                        attached_pane_id =
+                                                            current_workspace.pane_id.clone();
+                                                        switch_live_surface_to_workspace_pane(
+                                                            &current_workspace,
+                                                            &mut surface_state,
+                                                            &client_state,
+                                                            host_mouse_modes.as_mut(),
+                                                            use_styled,
+                                                        )?;
+                                                        if args.redraw && !args.output_json {
+                                                            print_live_surface(
+                                                                &current_workspace,
+                                                                &surface_state
+                                                                    .current_surface_metadata,
+                                                                &surface_state.current_surface_text,
+                                                                args.redraw,
+                                                                redraw_state.as_mut(),
+                                                                Some(
+                                                                    &surface_state
+                                                                        .current_pane_surfaces,
+                                                                ),
+                                                            );
+                                                            flush_stdout()?;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -2628,6 +2707,7 @@ fn parse_sgr_mouse_sequence(input: &[u8]) -> Option<(SgrMouseInput, usize)> {
 enum LiveMouseDispatch {
     FocusPane(String),
     Menu(tui::MenuAction),
+    Overlay(tui::OverlayAction),
     PaneMouse(String, local::AttachMouseInput),
     PaneScroll {
         pane_id: String,
@@ -2650,6 +2730,7 @@ fn live_mouse_dispatch_for_workspace(
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_modes: Option<&BTreeMap<String, local::TerminalModeSummary>>,
     active_modes: local::TerminalModeSummary,
+    overlay: Option<&tui::TuiOverlay>,
 ) -> Option<LiveMouseDispatch> {
     let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
     live_mouse_dispatch_for_workspace_size(
@@ -2659,6 +2740,7 @@ fn live_mouse_dispatch_for_workspace(
         pane_surfaces,
         pane_modes,
         active_modes,
+        overlay,
         cols.max(1).min(u16::MAX as u32) as u16,
         rows.max(1).min(u16::MAX as u32) as u16,
     )
@@ -2672,6 +2754,7 @@ fn live_mouse_dispatch_for_workspace_size(
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_modes: Option<&BTreeMap<String, local::TerminalModeSummary>>,
     active_modes: local::TerminalModeSummary,
+    overlay: Option<&tui::TuiOverlay>,
     cols: u16,
     rows: u16,
 ) -> Option<LiveMouseDispatch> {
@@ -2681,7 +2764,7 @@ fn live_mouse_dispatch_for_workspace_size(
             workspace,
             active_surface_text,
             pane_surfaces,
-            overlay: None,
+            overlay,
         },
         cols.max(1),
         frame_rows,
@@ -2736,6 +2819,9 @@ fn live_mouse_dispatch_for_workspace_size(
         tui::HitTarget::Menu(action) if sgr_mouse_is_primary_press(mouse) => {
             Some(LiveMouseDispatch::Menu(*action))
         }
+        tui::HitTarget::Overlay(action) if sgr_mouse_is_primary_press(mouse) => {
+            Some(LiveMouseDispatch::Overlay(action.clone()))
+        }
         tui::HitTarget::Background if sgr_mouse_is_primary_press(mouse) => {
             Some(LiveMouseDispatch::ClearOverlay)
         }
@@ -2764,29 +2850,23 @@ fn menu_overlay_for_action(
     surface_state: &LiveSurfaceState,
 ) -> tui::TuiOverlay {
     let (title, lines) = match action {
-        tui::MenuAction::Sessions => (
-            "sessions".to_owned(),
-            vec![
-                format!("* {}", workspace.session_id),
-                "session switching needs session-control protocol".to_owned(),
-            ],
-        ),
+        tui::MenuAction::Sessions => ("sessions".to_owned(), session_overlay_lines(workspace)),
         tui::MenuAction::NewSession => (
             "new session".to_owned(),
-            vec!["creates a new tab in this session".to_owned()],
+            vec![overlay_text("creates a new tab in this session")],
         ),
         tui::MenuAction::Windows => {
-            let mut lines = vec![format!("tab {}", workspace.tab_id)];
+            let mut lines = vec![overlay_text(format!("tab {}", workspace.tab_id))];
             for pane in workspace_panes(workspace) {
                 let marker = if pane.pane_id == workspace.pane_id {
                     "*"
                 } else {
                     " "
                 };
-                lines.push(format!(
+                lines.push(overlay_text(format!(
                     "{marker} {} {}x{}",
                     pane.pane_id, pane.cols, pane.rows
-                ));
+                )));
             }
             ("windows".to_owned(), lines)
         }
@@ -2796,10 +2876,33 @@ fn menu_overlay_for_action(
             } else {
                 "nmux paste forwarding enabled"
             };
-            ("clipboard".to_owned(), vec![paste_mode.to_owned()])
+            ("clipboard".to_owned(), vec![overlay_text(paste_mode)])
         }
     };
     tui::TuiOverlay { title, lines }
+}
+
+fn overlay_text(text: impl Into<String>) -> tui::TuiOverlayLine {
+    tui::TuiOverlayLine {
+        text: text.into(),
+        action: None,
+    }
+}
+
+fn session_overlay_lines(workspace: &local::WorkspaceSummary) -> Vec<tui::TuiOverlayLine> {
+    let mut lines = vec![overlay_text(format!("session {}", workspace.session_id))];
+    for tab in workspace_tabs(workspace) {
+        let marker = if tab.tab_id == workspace.tab_id {
+            "*"
+        } else {
+            " "
+        };
+        lines.push(tui::TuiOverlayLine {
+            text: format!("{marker} {} {}", tab.tab_id, tab.title),
+            action: Some(tui::OverlayAction::SwitchTab(tab.tab_id)),
+        });
+    }
+    lines
 }
 
 fn run_live_new_session_menu_command(
@@ -2813,6 +2916,24 @@ fn run_live_new_session_menu_command(
         tab_id: None,
         split_axis: protocol::SplitAxis::None,
         title: Some("new session".to_owned()),
+        session_id: None,
+    };
+    let stream = connect_to_daemon(args)?;
+    local::run_control_command_on_stream(stream, command)
+}
+
+fn run_live_tab_switch_menu_command(
+    args: &Args,
+    tab_id: &str,
+) -> Result<local::WorkspaceSummary, Box<dyn std::error::Error>> {
+    let command = local::ControlCommandSummary {
+        actor_id: args.actor_id.clone(),
+        command_seq: 1,
+        kind: protocol::ControlCommandKind::TabSwitch,
+        pane_id: None,
+        tab_id: Some(tab_id.to_owned()),
+        split_axis: protocol::SplitAxis::None,
+        title: None,
         session_id: None,
     };
     let stream = connect_to_daemon(args)?;
@@ -4699,6 +4820,7 @@ enum ScriptCommand {
     PaneSplit,
     TabList,
     TabNew,
+    TabSwitch,
     TabClose,
     SessionKill,
     Replay,
@@ -4781,6 +4903,10 @@ enum RawTabCommand {
     Close {
         #[arg(value_name = "TAB_ID", allow_hyphen_values = true)]
         tab_id: Option<String>,
+    },
+    Switch {
+        #[arg(value_name = "TAB_ID", allow_hyphen_values = true)]
+        tab_id: String,
     },
 }
 
@@ -5362,6 +5488,20 @@ fn normalize_script_command(
                     raw.no_scrollback = true;
                     Ok(NormalizedScriptCommand {
                         command: Some(ScriptCommand::TabClose),
+                        split_axis: protocol::SplitAxis::None,
+                        title: None,
+                        replay_path: None,
+                    })
+                }
+                RawTabCommand::Switch { tab_id } => {
+                    if tab_id.is_empty() {
+                        return Err("tab switch requires a non-empty tab ID".into());
+                    }
+                    raw.target_tab_id = Some(tab_id);
+                    raw.no_input = true;
+                    raw.no_scrollback = true;
+                    Ok(NormalizedScriptCommand {
+                        command: Some(ScriptCommand::TabSwitch),
                         split_axis: protocol::SplitAxis::None,
                         title: None,
                         replay_path: None,
@@ -6531,6 +6671,7 @@ Usage:
   nmux [OPTIONS] pane split horizontal|vertical [PANE_ID]
   nmux [OPTIONS] tab ls [--json]
   nmux [OPTIONS] tab new [TAB_ID] [--title TITLE]
+  nmux [OPTIONS] tab switch TAB_ID
   nmux [OPTIONS] tab close [TAB_ID]
   nmux send-keys [-t PANE_ID] KEYS...
   nmux replay PATH
@@ -6607,6 +6748,7 @@ Subcommands:
   pane split AXIS [PANE_ID]       Split a pane horizontally or vertically
   tab ls [--json]                 List tabs visible to the current protocol
   tab new [TAB_ID]                Create and switch to a new tab
+  tab switch TAB_ID               Switch to an existing tab
   tab close [TAB_ID]              Close a tab, defaulting to the active tab
   send-keys [-t PANE_ID] KEYS...  Send text keys to a pane
   replay PATH                     Print surface frames from a recorded live session
@@ -7061,6 +7203,12 @@ mod tests {
         assert_eq!(tab_close.script_command, Some(ScriptCommand::TabClose));
         assert_eq!(tab_close.target_tab_id.as_deref(), Some("tab-work"));
 
+        let tab_switch = args_from_iter(["tab", "switch", "tab-work"]).expect("tab switch args");
+        assert_eq!(tab_switch.script_command, Some(ScriptCommand::TabSwitch));
+        assert_eq!(tab_switch.target_tab_id.as_deref(), Some("tab-work"));
+        assert!(tab_switch.no_input);
+        assert!(tab_switch.no_scrollback);
+
         let pane_ls = args_from_iter(["pane", "ls", "--json"]).expect("pane ls args");
         assert_eq!(pane_ls.script_command, Some(ScriptCommand::PaneList));
         assert!(pane_ls.no_input);
@@ -7303,6 +7451,7 @@ mod tests {
                 rows: 24,
                 resize_policy: protocol::ResizePolicy::ActiveClient,
                 pane_tree: None,
+                tabs: Vec::new(),
             },
             status: local::AttachStatusSummary {
                 pane_id: "pane-1".to_owned(),
@@ -7458,6 +7607,7 @@ mod tests {
             rows: 24,
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
+            tabs: Vec::new(),
         };
         let rendered = local::RenderedAttach {
             workspace: workspace.clone(),
@@ -7914,6 +8064,7 @@ mod tests {
             rows: 24,
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
+            tabs: Vec::new(),
         };
 
         let initial = state.render_initial_text(&ws, "pane output\nsecond line");
@@ -7981,6 +8132,7 @@ mod tests {
             rows: 24,
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
+            tabs: Vec::new(),
         };
 
         let _ = state.render_initial_text(&ws, "ready");
@@ -8014,6 +8166,7 @@ mod tests {
             rows: 24,
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
+            tabs: Vec::new(),
         };
         let metadata = local::TerminalMetadataSummary {
             title: "shell title".to_owned(),
@@ -8071,6 +8224,7 @@ mod tests {
                     },
                 ],
             }),
+            tabs: Vec::new(),
         };
         let mut surfaces = BTreeMap::new();
         surfaces.insert("pane-1".to_owned(), "left cached".to_owned());
@@ -9085,6 +9239,7 @@ mod tests {
         assert!(usage.contains("pane split AXIS [PANE_ID]"));
         assert!(usage.contains("tab new [TAB_ID]"));
         assert!(usage.contains("tab ls [--json]"));
+        assert!(usage.contains("tab switch TAB_ID"));
         assert!(usage.contains("tab close [TAB_ID]"));
         assert!(usage.contains("send-keys [-t PANE_ID] KEYS..."));
         assert!(usage.contains("version [--json]"));
@@ -9204,6 +9359,7 @@ mod tests {
             rows: 8,
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
+            tabs: Vec::new(),
         };
         let modes = local::TerminalModeSummary {
             mouse_tracking: true,
@@ -9225,6 +9381,7 @@ mod tests {
                 None,
                 None,
                 modes,
+                None,
                 80,
                 24,
             )
@@ -9251,6 +9408,7 @@ mod tests {
                 None,
                 None,
                 local::TerminalModeSummary::default(),
+                None,
                 80,
                 24,
             ),
@@ -9276,6 +9434,7 @@ mod tests {
                 None,
                 None,
                 modes,
+                None,
                 80,
                 24,
             ),
@@ -9318,6 +9477,7 @@ mod tests {
                     },
                 ],
             }),
+            tabs: Vec::new(),
         };
 
         assert_eq!(
@@ -9334,6 +9494,7 @@ mod tests {
                 None,
                 None,
                 local::TerminalModeSummary::default(),
+                None,
                 100,
                 20,
             ),
@@ -9354,6 +9515,7 @@ mod tests {
                 None,
                 None,
                 local::TerminalModeSummary::default(),
+                None,
                 100,
                 20,
             ),
@@ -9372,6 +9534,7 @@ mod tests {
             rows: 8,
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
+            tabs: Vec::new(),
         };
 
         assert_eq!(
@@ -9388,6 +9551,7 @@ mod tests {
                 None,
                 None,
                 local::TerminalModeSummary::default(),
+                None,
                 80,
                 24,
             ),
@@ -9407,7 +9571,96 @@ mod tests {
             },
         );
         assert_eq!(overlay.title, "windows");
-        assert!(overlay.lines.iter().any(|line| line.contains("* pane-1")));
+        assert!(
+            overlay
+                .lines
+                .iter()
+                .any(|line| line.text.contains("* pane-1"))
+        );
+    }
+
+    #[test]
+    fn live_mouse_sessions_overlay_click_switches_tab() {
+        let root = local::WorkspacePaneSummary {
+            pane_id: "pane-1".to_owned(),
+            cols: 20,
+            rows: 8,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            split_axis: protocol::SplitAxis::None,
+            children: Vec::new(),
+        };
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 20,
+            rows: 8,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: Some(root.clone()),
+            tabs: vec![
+                local::WorkspaceTabSummary {
+                    tab_id: "tab-1".to_owned(),
+                    title: "main".to_owned(),
+                    active_pane_id: "pane-1".to_owned(),
+                    root: root.clone(),
+                },
+                local::WorkspaceTabSummary {
+                    tab_id: "tab-2".to_owned(),
+                    title: "work".to_owned(),
+                    active_pane_id: "tab-2-pane-1".to_owned(),
+                    root: local::WorkspacePaneSummary {
+                        pane_id: "tab-2-pane-1".to_owned(),
+                        cols: 20,
+                        rows: 8,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                },
+            ],
+        };
+        let overlay = menu_overlay_for_action(
+            tui::MenuAction::Sessions,
+            &workspace,
+            &LiveSurfaceState {
+                current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_modes: local::TerminalModeSummary::default(),
+                current_surface_text: String::new(),
+                current_pane_surfaces: BTreeMap::new(),
+                current_pane_modes: BTreeMap::new(),
+                scrollback_views: BTreeMap::new(),
+            },
+        );
+        assert!(
+            overlay
+                .lines
+                .iter()
+                .any(|line| line.text.contains("tab-2 work")
+                    && line.action == Some(tui::OverlayAction::SwitchTab("tab-2".to_owned())))
+        );
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 11,
+                    col: 39,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                local::TerminalModeSummary::default(),
+                Some(&overlay),
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::Overlay(tui::OverlayAction::SwitchTab(
+                "tab-2".to_owned()
+            )))
+        );
     }
 
     fn scrollback_summary(

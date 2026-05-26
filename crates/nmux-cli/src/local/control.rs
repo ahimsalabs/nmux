@@ -101,6 +101,10 @@ fn apply_control_command(
             apply_tab_close_command(session, host, command)?;
             Ok(ControlCommandOutcome::Continue)
         }
+        protocol::ControlCommandKind::TabSwitch => {
+            apply_tab_switch_command(session, command)?;
+            Ok(ControlCommandOutcome::Continue)
+        }
         protocol::ControlCommandKind::SessionKill => {
             apply_session_kill_command(session, command)?;
             Ok(ControlCommandOutcome::Shutdown)
@@ -140,6 +144,10 @@ fn apply_control_command_with_session_actor(
         }
         protocol::ControlCommandKind::TabClose => {
             apply_tab_close_command_with_session_actor(actor, host, command)?;
+            Ok(ControlCommandOutcome::Continue)
+        }
+        protocol::ControlCommandKind::TabSwitch => {
+            apply_tab_switch_command_with_session_actor(actor, command)?;
             Ok(ControlCommandOutcome::Continue)
         }
         protocol::ControlCommandKind::SessionKill => {
@@ -461,6 +469,61 @@ fn apply_tab_close_command_with_session_actor(
         }
     }
     Ok(())
+}
+
+fn apply_tab_switch_command(
+    session: &mut Session,
+    command: &ControlCommandSummary,
+) -> Result<(), ControlCommandError> {
+    let tab_id = required_control_tab_id(command)?;
+    if !session.tabs.iter().any(|tab| tab.id == tab_id) {
+        return Err(ControlCommandError::unknown(
+            format!("tab not found: {tab_id}"),
+            None,
+        ));
+    }
+    if !session.switch_tab(&tab_id) && session.active_tab_id != tab_id {
+        return Err(ControlCommandError::unknown(
+            format!("failed to switch tab: {tab_id}"),
+            None,
+        ));
+    }
+    Ok(())
+}
+
+fn apply_tab_switch_command_with_session_actor(
+    actor: &mut SessionActor,
+    command: &ControlCommandSummary,
+) -> Result<(), ControlCommandError> {
+    let tab_id = required_control_tab_id(command)?;
+    if !actor.session().tabs.iter().any(|tab| tab.id == tab_id) {
+        return Err(ControlCommandError::unknown(
+            format!("tab not found: {tab_id}"),
+            None,
+        ));
+    }
+    if !enqueue_control_session_event(
+        actor,
+        command,
+        SessionEvent::SwitchTab {
+            tab_id: tab_id.clone(),
+        },
+    ) && actor.session().active_tab_id != tab_id
+    {
+        return Err(ControlCommandError::unknown(
+            format!("failed to switch tab: {tab_id}"),
+            None,
+        ));
+    }
+    Ok(())
+}
+
+fn required_control_tab_id(command: &ControlCommandSummary) -> Result<String, ControlCommandError> {
+    command
+        .tab_id
+        .clone()
+        .filter(|tab_id| !tab_id.is_empty())
+        .ok_or_else(|| ControlCommandError::unknown("tab switch requires a tab ID", None))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

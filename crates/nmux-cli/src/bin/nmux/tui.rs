@@ -19,7 +19,18 @@ pub struct TuiFrame {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TuiOverlay {
     pub title: String,
-    pub lines: Vec<String>,
+    pub lines: Vec<TuiOverlayLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuiOverlayLine {
+    pub text: String,
+    pub action: Option<OverlayAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OverlayAction {
+    SwitchTab(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +45,7 @@ pub enum HitTarget {
     Pane(String),
     PaneContent(String),
     WindowTreePane(String),
+    Overlay(OverlayAction),
     Background,
 }
 
@@ -132,7 +144,7 @@ pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u
     }
 
     if let Some(overlay) = input.overlay {
-        render_overlay(&mut buffer, area, overlay);
+        render_overlay(&mut buffer, area, overlay, &mut hits);
     }
 
     TuiFrame {
@@ -427,14 +439,19 @@ fn paint_background(buffer: &mut Buffer, area: Rect) {
     }
 }
 
-fn render_overlay(buffer: &mut Buffer, area: Rect, overlay: &TuiOverlay) {
+fn render_overlay(
+    buffer: &mut Buffer,
+    area: Rect,
+    overlay: &TuiOverlay,
+    hits: &mut Vec<HitRegion>,
+) {
     if area.width < 12 || area.height < 5 {
         return;
     }
     let max_line_width = overlay
         .lines
         .iter()
-        .map(|line| line.chars().count() as u16)
+        .map(|line| line.text.chars().count() as u16)
         .max()
         .unwrap_or(0)
         .max(overlay.title.chars().count() as u16);
@@ -466,14 +483,21 @@ fn render_overlay(buffer: &mut Buffer, area: Rect, overlay: &TuiOverlay) {
         .take(usize::from(inner.height))
         .enumerate()
     {
+        let row = inner.y + offset as u16;
         write_text(
             buffer,
             inner.x,
-            inner.y + offset as u16,
+            row,
             inner.width,
-            line,
+            &line.text,
             Style::default().fg(Color::White).bg(Color::Black),
         );
+        if let Some(action) = line.action.clone() {
+            hits.push(HitRegion {
+                rect: Rect::new(inner.x, row, inner.width, 1),
+                target: HitTarget::Overlay(action),
+            });
+        }
     }
 }
 
@@ -620,6 +644,7 @@ mod tests {
                     },
                 ],
             }),
+            tabs: Vec::new(),
         }
     }
 
@@ -690,7 +715,16 @@ mod tests {
                 pane_surfaces: None,
                 overlay: Some(&TuiOverlay {
                     title: "sessions".to_owned(),
-                    lines: vec!["* local".to_owned(), "click a menu item".to_owned()],
+                    lines: vec![
+                        TuiOverlayLine {
+                            text: "* local".to_owned(),
+                            action: None,
+                        },
+                        TuiOverlayLine {
+                            text: "click a menu item".to_owned(),
+                            action: None,
+                        },
+                    ],
                 }),
             },
             100,

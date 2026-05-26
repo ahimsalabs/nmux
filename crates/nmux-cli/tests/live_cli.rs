@@ -998,6 +998,29 @@ fn scriptable_cli_splits_panes_and_manages_tabs() {
         "tab new should focus the new tab pane:\n{tab_new_stdout}"
     );
 
+    let tab_switch = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "tab",
+            "switch",
+            "tab-1",
+        ])
+        .output()
+        .expect("run nmux tab switch");
+    assert!(
+        tab_switch.status.success(),
+        "nmux tab switch failed: {}",
+        String::from_utf8_lossy(&tab_switch.stderr)
+    );
+    let tab_switch_stdout = String::from_utf8_lossy(&tab_switch.stdout);
+    assert!(
+        tab_switch_stdout.contains("\"tab_id\":\"tab-1\"")
+            && tab_switch_stdout.contains("\"pane_id\":\"pane-2\""),
+        "tab switch should focus tab-1 pane:\n{tab_switch_stdout}"
+    );
+
     let tab_close = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
             "--socket",

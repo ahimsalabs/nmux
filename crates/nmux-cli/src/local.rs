@@ -5733,12 +5733,20 @@ pub(crate) fn workspace_summary_from_frame(frame: &[u8]) -> Result<WorkspaceSumm
     let tabs = snapshot.tabs().ok_or("workspace tree has no tabs")?;
     required_string(snapshot.session_id(), "workspace session_id")?;
     required_string(snapshot.active_tab_id(), "workspace active_tab_id")?;
+    let mut tab_summaries = Vec::with_capacity(tabs.len());
     for index in 0..tabs.len() {
         let tab = tabs.get(index);
         required_string(tab.tab_id(), "workspace tab_id")?;
+        required_string(tab.title(), "workspace tab title")?;
         required_string(tab.active_pane_id(), "workspace active_pane_id")?;
         let root = tab.root().ok_or("workspace tab has no root pane")?;
         validate_pane_node(root)?;
+        tab_summaries.push(WorkspaceTabSummary {
+            tab_id: required_string(tab.tab_id(), "workspace tab_id")?,
+            title: required_string(tab.title(), "workspace tab title")?,
+            active_pane_id: required_string(tab.active_pane_id(), "workspace active_pane_id")?,
+            root: workspace_pane_summary_from_node(root)?,
+        });
     }
     let active_tab_id = required_string(snapshot.active_tab_id(), "workspace active_tab_id")?;
     let tab = (0..tabs.len())
@@ -5759,6 +5767,7 @@ pub(crate) fn workspace_summary_from_frame(frame: &[u8]) -> Result<WorkspaceSumm
         rows: pane.rows(),
         resize_policy: validate_resize_policy(pane.resize_policy())?,
         pane_tree: Some(pane_tree),
+        tabs: tab_summaries,
     })
 }
 
@@ -7921,6 +7930,7 @@ pub struct WorkspaceSummary {
     pub rows: u32,
     pub resize_policy: protocol::ResizePolicy,
     pub pane_tree: Option<WorkspacePaneSummary>,
+    pub tabs: Vec<WorkspaceTabSummary>,
 }
 
 impl WorkspaceSummary {
@@ -7935,6 +7945,14 @@ impl WorkspaceSummary {
             resize_policy_label(self.resize_policy)
         )
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceTabSummary {
+    pub tab_id: String,
+    pub title: String,
+    pub active_pane_id: String,
+    pub root: WorkspacePaneSummary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9506,6 +9524,19 @@ mod tests {
                     split_axis: protocol::SplitAxis::None,
                     children: Vec::new(),
                 }),
+                tabs: vec![WorkspaceTabSummary {
+                    tab_id: "tab-1".to_owned(),
+                    title: "local".to_owned(),
+                    active_pane_id: "pane-1".to_owned(),
+                    root: WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 80,
+                        rows: 24,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                }],
             }
         );
         assert_eq!(
@@ -11218,6 +11249,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 2),
@@ -11290,6 +11322,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -11312,6 +11345,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -11342,6 +11376,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -11380,6 +11415,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -11402,6 +11438,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -11435,6 +11472,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 7),
@@ -11470,6 +11508,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary_with_state(
@@ -11509,6 +11548,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 8),
@@ -11609,6 +11649,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 7),
@@ -11900,6 +11941,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 2),
@@ -13157,6 +13199,61 @@ mod tests {
         assert!(accepted_events.iter().any(|accepted| matches!(
             &accepted.event,
             SessionEvent::CloseTab { tab_id } if tab_id == "tab-1"
+        ) && accepted.metadata.source_id
+            == "controller"
+            && accepted.metadata.lane == SessionEventLane::Control));
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn actor_live_control_tab_switch_routes_commit_through_actor() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let second_host = session.tabs[0].root.host.clone();
+        assert!(session.add_tab("tab-2", "Second", "tab-2-pane-1", second_host.clone()));
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start first pane");
+        host.start_pane("tab-2-pane-1", &second_host)
+            .expect("start second pane");
+
+        let (trace_tx, trace_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(1, usize::MAX)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor live control");
+            trace_tx
+                .send(actor.trace().accepted_events())
+                .expect("send actor trace")
+        });
+
+        let stream = UnixStream::connect(&socket_path).expect("connect control client");
+        let workspace = run_control_command_on_stream(
+            stream,
+            ControlCommandSummary {
+                actor_id: "controller".to_owned(),
+                command_seq: 8,
+                kind: protocol::ControlCommandKind::TabSwitch,
+                pane_id: None,
+                tab_id: Some("tab-2".to_owned()),
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                session_id: None,
+            },
+        )
+        .expect("run tab switch");
+
+        assert_eq!(workspace.tab_id, "tab-2");
+        assert_eq!(workspace.pane_id, "tab-2-pane-1");
+        assert_eq!(workspace.tabs.len(), 2);
+        server.join().expect("server thread");
+        let accepted_events = trace_rx.recv().expect("actor trace");
+        assert!(accepted_events.iter().any(|accepted| matches!(
+            &accepted.event,
+            SessionEvent::SwitchTab { tab_id } if tab_id == "tab-2"
         ) && accepted.metadata.source_id
             == "controller"
             && accepted.metadata.lane == SessionEventLane::Control));
@@ -14571,6 +14668,19 @@ mod tests {
                     split_axis: protocol::SplitAxis::None,
                     children: Vec::new(),
                 }),
+                tabs: vec![WorkspaceTabSummary {
+                    tab_id: "tab-1".to_owned(),
+                    title: "local".to_owned(),
+                    active_pane_id: "pane-1".to_owned(),
+                    root: WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 100,
+                        rows: 30,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                }],
             })
         );
         let update =
@@ -14655,6 +14765,19 @@ mod tests {
                     split_axis: protocol::SplitAxis::None,
                     children: Vec::new(),
                 }),
+                tabs: vec![WorkspaceTabSummary {
+                    tab_id: "tab-1".to_owned(),
+                    title: "local".to_owned(),
+                    active_pane_id: "pane-1".to_owned(),
+                    root: WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 100,
+                        rows: 30,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                }],
             })
         );
 
@@ -16525,6 +16648,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-2", 2),
@@ -16655,6 +16779,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 2),
