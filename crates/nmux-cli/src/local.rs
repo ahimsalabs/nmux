@@ -11,8 +11,8 @@ use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{
     Actor, AttachMode, ErrorRetryability, FocusInputSpec, InputFrameContext, MouseInputSpec,
-    PasteInputSpec, ScrollbackFetchSpec, ScrollbackRange, Session, SessionCore, SessionEvent,
-    SessionEventLane,
+    PasteInputSpec, PendingSessionEvent, ScrollbackFetchSpec, ScrollbackRange, Session,
+    SessionActor, SessionEvent, SessionEventLane,
 };
 use nmux_core::terminal::{
     KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines,
@@ -3067,8 +3067,8 @@ pub(crate) fn poll_pane_output_with_host_and_engines(
     Ok(changed || wrote_pty_input)
 }
 
-pub(crate) fn poll_pane_output_with_session_core(
-    session_core: &mut SessionCore,
+pub(crate) fn poll_pane_output_with_session_actor(
+    actor: &mut SessionActor,
     host: &mut dyn ProcessHostOutput,
     pane_id: &str,
     session_mono_ms: u64,
@@ -3076,7 +3076,7 @@ pub(crate) fn poll_pane_output_with_session_core(
     let pumped = read_available_pane_output(host, pane_id)?;
     let mut changed = false;
     if !pumped.is_empty() {
-        let transition = session_core.accept(
+        actor.enqueue(PendingSessionEvent::new(
             format!("{pane_id}:pty"),
             SessionEventLane::Pane,
             session_mono_ms,
@@ -3084,11 +3084,14 @@ pub(crate) fn poll_pane_output_with_session_core(
                 pane_id: pane_id.to_owned(),
                 bytes: pumped,
             },
-        );
-        changed = !transition.effects.is_empty();
+        ));
+        changed = actor
+            .drain_ready()
+            .iter()
+            .any(|record| !record.effects.is_empty());
     }
     let mut wrote_pty_input = false;
-    for bytes in session_core.drain_pane_pty_writes(pane_id) {
+    for bytes in actor.core_mut().drain_pane_pty_writes(pane_id) {
         tracing::trace!(
             pane_id = %pane_id,
             bytes = bytes.len(),
@@ -13634,6 +13637,47 @@ mod tests {
                 .expect("poll output")
         );
 
+        let replies = host
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                HostEvent::Input { bytes, .. } => Some(bytes.as_slice()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(replies, vec![b"\x1b[?7;1$y".as_slice()]);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn session_actor_poll_routes_output_and_query_reply() {
+        let core = nmux_core::session::SessionCore::with_terminal_engine_kind(
+            Session::initial(),
+            TerminalEngineKind::LibghosttyVt,
+        );
+        let mut actor = SessionActor::new(core, 8);
+        let mut host = ScriptedOutputHost::new(vec![b"\x1b[?7$pactor output\n".to_vec()]);
+        host.start_pane("pane-1", &actor.session().tabs[0].root.host)
+            .expect("start scripted pane");
+
+        assert!(
+            poll_pane_output_with_session_actor(&mut actor, &mut host, "pane-1", 42)
+                .expect("poll output through actor")
+        );
+
+        let trace = actor.trace().accepted_events();
+        assert_eq!(trace.len(), 1);
+        assert_eq!(trace[0].metadata.lane, SessionEventLane::Pane);
+        assert_eq!(trace[0].metadata.session_mono_ms, 42);
+        assert!(
+            actor
+                .session()
+                .pane_surface("pane-1")
+                .expect("pane")
+                .lines
+                .iter()
+                .any(|line| line == "actor output")
+        );
         let replies = host
             .events
             .iter()
