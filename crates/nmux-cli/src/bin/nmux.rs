@@ -4324,7 +4324,11 @@ impl RedrawState {
 
     /// Build the full-width inverse-video status bar line.
     fn format_status_bar(&self, workspace: &local::WorkspaceSummary) -> String {
-        let cols = self.terminal_cols as usize;
+        // Leave the final terminal column untouched. Printing a full-width
+        // line on the bottom row can set the terminal's autowrap state and
+        // scroll the alternate screen on the next write, which pushes the
+        // ratatui menu off the top of the viewport.
+        let width = self.terminal_cols.saturating_sub(1).max(1) as usize;
 
         let left = format!(
             " nmux  {}  {}x{}  {}",
@@ -4333,18 +4337,20 @@ impl RedrawState {
 
         let right = format_stats_right(&self.last_stats);
 
-        // Pad between left and right so the bar fills the terminal width.
         let content_len = left.len() + right.len();
-        let padding = if cols > content_len {
-            cols - content_len
+        let content = if width > content_len {
+            format!(
+                "{left}{:padding$}{right}",
+                "",
+                padding = width - content_len
+            )
         } else {
-            1
+            truncate_chars(&format!("{left} {right}"), width)
         };
 
         format!(
-            "{}{left}{:padding$}{right}{}",
+            "{}{content}{}",
             SetAttribute(Attribute::Reverse),
-            "",
             SetAttribute(Attribute::NoReverse)
         )
     }
@@ -4519,6 +4525,10 @@ impl RedrawState {
 
 fn terminal_row(row_1_based: usize) -> u16 {
     row_1_based.saturating_sub(1).min(u16::MAX as usize) as u16
+}
+
+fn truncate_chars(value: &str, width: usize) -> String {
+    value.chars().take(width).collect()
 }
 
 fn resolve_short_hostname() -> String {
@@ -7343,29 +7353,29 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 mod tests {
     use super::{
         AttachMode, BRACKETED_PASTE_END, BRACKETED_PASTE_START, ClientModeArgs,
-        DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs, FocusEvent, HostMouseModeContext,
-        InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
-        LiveMouseDispatch, LiveScrollDirection, LiveSurfaceState, LiveUpdatePrintKind, LocalEcho,
-        MouseEvent, NoInputResizeArgs, PositiveNumericArgs, RawTerminalModeContext, RedrawState,
-        RedrawTerminalContext, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand,
-        ScrollbackSelectionArgFlags, SgrMouseInput, SigwinchResizeContext, StateInfoSocketSummary,
-        StdinByteForward, args_from_iter, configure_default_live_args,
-        default_attach_error_needs_restart, format_cli_error_json, format_context_json,
-        format_input_choices_json, format_key_names_json, format_live_attach_json,
-        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
-        format_live_presence_json, format_live_surface_update_json, format_live_workspace_json,
-        format_rendered_attach_json, format_scrollback, format_state_info_json,
-        format_state_info_text, host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
-        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
-        live_mouse_dispatch_for_workspace_size, live_session_new_should_fallback,
-        live_update_print_kind, managed_ready_error_message, menu_overlay_for_action,
-        menu_overlay_for_action_with_session_inventory, parse_detach_key, parse_env_assignment,
-        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
-        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, preprocess_args,
-        raw_terminal_fixup_termios, raw_terminal_mode_needed, redraw_terminal_guard_needed,
-        redraw_text_with_context, redraw_workspace_surface_text, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, stdin_byte_forwards, terminal_size_from_fds,
-        terminal_size_unavailable, tui, usage,
+        DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs, FocusEvent, FrameStats,
+        HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
+        LiveDetachReason, LiveMouseDispatch, LiveScrollDirection, LiveSurfaceState,
+        LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
+        RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
+        SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags, SgrMouseInput,
+        SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward, args_from_iter,
+        configure_default_live_args, default_attach_error_needs_restart, format_cli_error_json,
+        format_context_json, format_input_choices_json, format_key_names_json,
+        format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
+        format_live_error_json, format_live_presence_json, format_live_surface_update_json,
+        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
+        format_state_info_json, format_state_info_text, host_mouse_mode_disable_sequence,
+        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
+        interim_surface_fidelity_warning_needed, live_mouse_dispatch_for_workspace_size,
+        live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
+        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory, parse_detach_key,
+        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
+        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -7380,6 +7390,25 @@ mod tests {
         // SAFETY: tests assign the termios fields read by raw_terminal_fixup_termios
         // before asserting against the returned value.
         unsafe { std::mem::zeroed() }
+    }
+
+    fn strip_csi_for_test(value: &str) -> String {
+        let mut stripped = String::new();
+        let mut chars = value.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\x1b' {
+                if chars.next() == Some('[') {
+                    for next in chars.by_ref() {
+                        if next.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+            } else {
+                stripped.push(ch);
+            }
+        }
+        stripped
     }
 
     fn test_surface_update(
@@ -8485,6 +8514,39 @@ mod tests {
         assert!(
             clients_update.contains("clients:5"),
             "status bar should contain live client count: {clients_update:?}"
+        );
+    }
+
+    #[test]
+    fn redraw_status_bar_avoids_bottom_row_autowrap() {
+        let mut state = RedrawState::new();
+        state.terminal_cols = 32;
+        state.last_stats = FrameStats {
+            frame_interval: std::time::Duration::from_millis(1000),
+            decode_time: std::time::Duration::from_micros(123),
+            render_time: std::time::Duration::from_micros(456),
+            rows_changed: 12,
+            rows_total: 34,
+            rtt: Some(std::time::Duration::from_millis(9)),
+            client_count: Some(2),
+        };
+
+        let ws = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-with-a-long-name".to_owned(),
+            cols: 155,
+            rows: 50,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+
+        let status = state.format_status_bar(&ws);
+        let visible = strip_csi_for_test(&status);
+        assert!(
+            visible.chars().count() <= 31,
+            "bottom-row status must not reach the final terminal column: {status:?}"
         );
     }
 
