@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
@@ -75,6 +75,8 @@ const LIVE_HOST_OUTPUT_POLL_DEADLINE: Duration = Duration::from_millis(120);
 const LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(100);
 const LIVE_POST_INPUT_COALESCE_DEADLINE: Duration = Duration::from_millis(250);
+const PANE_OUTPUT_HANDOFF_CHUNK_BYTES: usize = 4096;
+const PANE_OUTPUT_HANDOFF_MAX_CHUNKS: usize = 16;
 const ASYNC_LIVE_INPUT_EVENT_CAP: usize = 1024;
 const ASYNC_LIVE_RELIABLE_FRAME_CAP: usize = 256;
 const ASYNC_LIVE_RELIABLE_BYTE_CAP: usize = 8 * 1024 * 1024;
@@ -4543,6 +4545,77 @@ fn apply_pumped_pane_output(
     }))
 }
 
+struct PaneOutputHandoff {
+    pane_id: String,
+    source_id: String,
+    chunks: VecDeque<Vec<u8>>,
+    queued_bytes: usize,
+}
+
+impl PaneOutputHandoff {
+    fn new(pane_id: &str) -> Self {
+        Self {
+            pane_id: pane_id.to_owned(),
+            source_id: format!("{pane_id}:pty"),
+            chunks: VecDeque::new(),
+            queued_bytes: 0,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+
+    fn is_full(&self) -> bool {
+        self.chunks.len() >= PANE_OUTPUT_HANDOFF_MAX_CHUNKS
+    }
+
+    fn push_chunk(&mut self, bytes: &[u8]) {
+        debug_assert!(!self.is_full());
+        self.queued_bytes += bytes.len();
+        self.chunks.push_back(bytes.to_vec());
+    }
+
+    fn pop_chunk(&mut self) -> Option<Vec<u8>> {
+        let chunk = self.chunks.pop_front()?;
+        self.queued_bytes -= chunk.len();
+        Some(chunk)
+    }
+}
+
+fn flush_pane_output_handoff_to_session_actor(
+    actor: &mut SessionActor,
+    handoff: &mut PaneOutputHandoff,
+    session_mono_ms: u64,
+) -> bool {
+    if handoff.is_empty() {
+        return false;
+    }
+    tracing::trace!(
+        pane_id = %handoff.pane_id,
+        chunks = handoff.chunks.len(),
+        bytes = handoff.queued_bytes,
+        "flush bounded pane output handoff"
+    );
+    let mut output = Vec::with_capacity(handoff.queued_bytes);
+    while let Some(bytes) = handoff.pop_chunk() {
+        output.extend_from_slice(&bytes);
+    }
+    actor.enqueue(PendingSessionEvent::new(
+        handoff.source_id.clone(),
+        SessionEventLane::Pane,
+        session_mono_ms,
+        SessionEvent::PaneOutput {
+            pane_id: handoff.pane_id.clone(),
+            bytes: output,
+        },
+    ));
+    actor
+        .drain_ready()
+        .iter()
+        .any(|record| !record.effects.is_empty())
+}
+
 pub(crate) fn poll_pane_output_with_host_and_engines(
     session: &mut Session,
     engines: &mut PaneTerminalEngines,
@@ -4570,23 +4643,26 @@ pub(crate) fn poll_pane_output_with_session_actor(
     pane_id: &str,
     session_mono_ms: u64,
 ) -> Result<bool, HostError> {
-    let pumped = read_available_pane_output(host, pane_id)?;
+    let mut buffer = [0_u8; PANE_OUTPUT_HANDOFF_CHUNK_BYTES];
+    let mut handoff = PaneOutputHandoff::new(pane_id);
     let mut changed = false;
-    if !pumped.is_empty() {
-        actor.enqueue(PendingSessionEvent::new(
-            format!("{pane_id}:pty"),
-            SessionEventLane::Pane,
-            session_mono_ms,
-            SessionEvent::PaneOutput {
-                pane_id: pane_id.to_owned(),
-                bytes: pumped,
-            },
-        ));
-        changed = actor
-            .drain_ready()
-            .iter()
-            .any(|record| !record.effects.is_empty());
+    loop {
+        let read_span = tracing::trace_span!(
+            "host.output.try_read",
+            pane_id = %pane_id,
+            buffer = buffer.len()
+        );
+        let count = read_span.in_scope(|| host.try_read_output(pane_id, &mut buffer))?;
+        if count == 0 {
+            break;
+        }
+        handoff.push_chunk(&buffer[..count]);
+        if handoff.is_full() {
+            changed |=
+                flush_pane_output_handoff_to_session_actor(actor, &mut handoff, session_mono_ms);
+        }
     }
+    changed |= flush_pane_output_handoff_to_session_actor(actor, &mut handoff, session_mono_ms);
     let mut wrote_pty_input = false;
     for bytes in actor.core_mut().drain_pane_pty_writes(pane_id) {
         tracing::trace!(
@@ -15723,6 +15799,123 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(replies, vec![b"\x1b[?7;1$y".as_slice()]);
+    }
+
+    #[test]
+    fn actor_pane_output_handoff_flushes_large_output_in_ordered_chunks() {
+        let mut actor = SessionActor::initial(64);
+        let mut output = Vec::new();
+        for chunk in 0..=PANE_OUTPUT_HANDOFF_MAX_CHUNKS {
+            output.extend(
+                std::iter::repeat(b'a' + (chunk % 26) as u8).take(PANE_OUTPUT_HANDOFF_CHUNK_BYTES),
+            );
+        }
+        output.extend(b"tail");
+        let expected_output = output.clone();
+        let expected_chunks = expected_output
+            .len()
+            .div_ceil(PANE_OUTPUT_HANDOFF_CHUNK_BYTES);
+        let expected_flushes = expected_chunks.div_ceil(PANE_OUTPUT_HANDOFF_MAX_CHUNKS);
+
+        let mut host = ScriptedOutputHost::new(vec![output]);
+        host.start_pane("pane-1", &actor.session().tabs[0].root.host)
+            .expect("start scripted pane");
+
+        assert!(
+            poll_pane_output_with_session_actor(&mut actor, &mut host, "pane-1", 77)
+                .expect("poll output through actor")
+        );
+
+        let trace = actor.trace().accepted_events();
+        let mut concatenated = Vec::new();
+        let pane_outputs = trace
+            .iter()
+            .filter_map(|accepted| match &accepted.event {
+                SessionEvent::PaneOutput { pane_id, bytes } => {
+                    assert_eq!(accepted.metadata.source_id, "pane-1:pty");
+                    assert_eq!(accepted.metadata.lane, SessionEventLane::Pane);
+                    assert_eq!(accepted.metadata.session_mono_ms, 77);
+                    assert_eq!(pane_id, "pane-1");
+                    assert!(
+                        bytes.len()
+                            <= PANE_OUTPUT_HANDOFF_CHUNK_BYTES * PANE_OUTPUT_HANDOFF_MAX_CHUNKS
+                    );
+                    concatenated.extend_from_slice(bytes);
+                    Some(())
+                }
+                _ => None,
+            })
+            .count();
+
+        assert_eq!(pane_outputs, expected_flushes);
+        assert_eq!(concatenated, expected_output);
+    }
+
+    fn anonymized_large_listing_output() -> Vec<u8> {
+        let mut output = Vec::new();
+        for row in 0..130 {
+            output.extend_from_slice(
+                format!(
+                    "project-{row:04}  archive-{row:04}.log  fixture-{row:04}.json  notes-{row:04}.txt\r\n"
+                )
+                .as_bytes(),
+            );
+        }
+        output
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_actor_poll_coalesces_anonymized_large_listing_case() {
+        let core = nmux_core::session::SessionCore::with_terminal_engine_kind(
+            Session::initial(),
+            TerminalEngineKind::LibghosttyVt,
+        );
+        let mut actor = SessionActor::new(core, 8);
+        let output = anonymized_large_listing_output();
+        assert!(output.len() > PANE_OUTPUT_HANDOFF_CHUNK_BYTES * 2);
+        assert!(output.len() <= PANE_OUTPUT_HANDOFF_CHUNK_BYTES * 3);
+
+        let mut host = ScriptedOutputHost::new(vec![output.clone()]);
+        host.start_pane("pane-1", &actor.session().tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let started_at = Instant::now();
+        assert!(
+            poll_pane_output_with_session_actor(&mut actor, &mut host, "pane-1", 123)
+                .expect("poll output through actor")
+        );
+        assert!(
+            started_at.elapsed() < Duration::from_secs(2),
+            "large listing replay should not stall for seconds"
+        );
+
+        let trace = actor.trace().accepted_events();
+        let pane_outputs = trace
+            .iter()
+            .filter_map(|accepted| match &accepted.event {
+                SessionEvent::PaneOutput { pane_id, bytes } => {
+                    assert_eq!(accepted.metadata.source_id, "pane-1:pty");
+                    assert_eq!(accepted.metadata.lane, SessionEventLane::Pane);
+                    assert_eq!(accepted.metadata.session_mono_ms, 123);
+                    assert_eq!(pane_id, "pane-1");
+                    assert_eq!(bytes, &output);
+                    Some(())
+                }
+                _ => None,
+            })
+            .count();
+        assert_eq!(pane_outputs, 1);
+
+        let surface = actor.session().pane_surface("pane-1").expect("pane");
+        let scrollback = actor.session().pane_scrollback("pane-1").expect("pane");
+        assert!(
+            surface
+                .lines
+                .iter()
+                .chain(scrollback.lines.iter())
+                .any(|line| line.contains("project-0129") && line.contains("notes-0129.txt"))
+        );
     }
 
     #[cfg(feature = "libghostty-vt")]
