@@ -969,7 +969,7 @@ where
                         let base_version = inventory_version;
                         inventory_version += 1;
                         {
-                            let (session, _) = actor.session_and_engines_mut();
+                            let session = actor.session();
                             for existing in &mut clients {
                                 let _ =
                                     write_presence_to_live_client(existing, session, &client.actor);
@@ -1117,7 +1117,7 @@ where
         if !left_connection_ids.is_empty() {
             let base_version = inventory_version;
             inventory_version += 1;
-            let (session, _) = actor.session_and_engines_mut();
+            let session = actor.session();
             write_client_inventory_patch_to_subscribers(
                 &mut clients,
                 session,
@@ -1147,7 +1147,7 @@ where
         if !inventory_updates.is_empty() {
             let base_version = inventory_version;
             inventory_version += 1;
-            let (session, _) = actor.session_and_engines_mut();
+            let session = actor.session();
             write_client_inventory_patch_to_subscribers(
                 &mut clients,
                 session,
@@ -1206,7 +1206,7 @@ where
                 Ok(changed) => changed,
                 Err(err) => {
                     let error_pane_id = host_error_pane_id(&err).to_owned();
-                    let (session, _) = actor.session_and_engines_mut();
+                    let session = actor.session();
                     for client in &mut clients {
                         let _ = queue_host_output_error_to_live_client(
                             client,
@@ -1232,7 +1232,7 @@ where
                         panes = leaf_pane_ids.len()
                     );
                     let write_result = surface_span.in_scope(|| {
-                        let (session, _) = actor.session_and_engines_mut();
+                        let session = actor.session();
                         for (index, client) in clients.iter_mut().enumerate() {
                             if changed_workspace {
                                 let workspace_frame =
@@ -1299,7 +1299,7 @@ where
             Ok(changed) => fast_changed || changed,
             Err(err) => {
                 let error_pane_id = host_error_pane_id(&err).to_owned();
-                let (session, _) = actor.session_and_engines_mut();
+                let session = actor.session();
                 for client in &mut clients {
                     let _ = queue_host_output_error_to_live_client(
                         client,
@@ -1313,7 +1313,7 @@ where
         };
 
         {
-            let (session, _) = actor.session_and_engines_mut();
+            let session = actor.session();
             for (index, client) in clients.iter_mut().enumerate() {
                 if changed_workspace {
                     let workspace_frame = session.workspace_tree_frame("local-client", client.seq);
@@ -1362,24 +1362,28 @@ where
                 clients.remove(index);
             }
         }
-        {
-            let (session, engines) = actor.session_and_engines_mut();
-            for pane_id in closing_frontend_resize_pane_ids {
-                apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
-            }
-            if !left_connection_ids.is_empty() {
-                let base_version = inventory_version;
-                inventory_version += 1;
-                write_client_inventory_patch_to_subscribers(
-                    &mut clients,
-                    session,
-                    base_version,
-                    inventory_version,
-                    Vec::new(),
-                    Vec::new(),
-                    left_connection_ids,
-                )?;
-            }
+        for pane_id in closing_frontend_resize_pane_ids {
+            apply_concurrent_frontend_resize_with_session_actor(
+                actor,
+                host,
+                &clients,
+                &pane_id,
+                inventory_elapsed_ms(inventory_started_at),
+            )?;
+        }
+        if !left_connection_ids.is_empty() {
+            let base_version = inventory_version;
+            inventory_version += 1;
+            let session = actor.session();
+            write_client_inventory_patch_to_subscribers(
+                &mut clients,
+                session,
+                base_version,
+                inventory_version,
+                Vec::new(),
+                Vec::new(),
+                left_connection_ids,
+            )?;
         }
     }
 
@@ -2083,7 +2087,7 @@ fn accept_live_client_with_session_actor(
         ) {
             let mut seq = 1;
             let error_pane_id = host_error_pane_id(&err).to_owned();
-            let (session, _) = actor.session_and_engines_mut();
+            let session = actor.session();
             write_host_output_error(&mut stream, session, &mut seq, &error_pane_id, err)?;
             return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
                 transport: LiveClientTransport::Legacy { stream },
@@ -2107,7 +2111,7 @@ fn accept_live_client_with_session_actor(
         let mut seq = 1;
         let mut known_surface_versions = known_surface_versions_from_request(&request);
         {
-            let (session, _) = actor.session_and_engines_mut();
+            let session = actor.session();
             write_live_attach_initial(&mut stream, session, &request, &pane_id, &mut seq)?;
             if let Some(current) = session.surface_version(&pane_id) {
                 known_surface_versions.insert(pane_id, current);
@@ -2157,7 +2161,7 @@ fn accept_live_client_with_session_actor(
 
 fn write_live_attach_initial(
     stream: &mut UnixStream,
-    session: &mut Session,
+    session: &Session,
     request: &AttachRequest,
     pane_id: &str,
     seq: &mut u64,
@@ -2413,7 +2417,7 @@ fn drain_live_client_frames_with_session_actor(
         match read_live_client_frame(client)? {
             LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
                 client.last_seen_mono_ms = now_mono_ms;
-                let (session, _) = actor.session_and_engines_mut();
+                let session = actor.session();
                 if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
                     queue_scrollback_fetch_error_to_live_client(client, session, &fetch, error)?;
                     if error == protocol::ErrorCode::StaleVersion {
@@ -2436,7 +2440,7 @@ fn drain_live_client_frames_with_session_actor(
             LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                 client.last_seen_mono_ms = now_mono_ms;
                 {
-                    let (session, _) = actor.session_and_engines_mut();
+                    let session = actor.session();
                     if !Session::input_allowed(&client.actor) {
                         queue_protocol_error_to_live_client(
                             client,
@@ -2472,7 +2476,7 @@ fn drain_live_client_frames_with_session_actor(
                     continue;
                 }
                 if let Err(err) = host.resize_pane(&resize.pane_id, resize.cols, resize.rows) {
-                    let (session, _) = actor.session_and_engines_mut();
+                    let session = actor.session();
                     queue_protocol_error_to_live_client(
                         client,
                         session,
@@ -2498,7 +2502,7 @@ fn drain_live_client_frames_with_session_actor(
                 client.last_input_mono_ms = Some(now_mono_ms);
                 let input_pane_id = input.pane_id.clone();
                 if !Session::input_allowed(&client.actor) {
-                    let (session, _) = actor.session_and_engines_mut();
+                    let session = actor.session();
                     queue_protocol_error_to_live_client(
                         client,
                         session,
@@ -2521,7 +2525,7 @@ fn drain_live_client_frames_with_session_actor(
             }
             LiveClientRead::Frame(LiveClientFrame::Ping(ping)) => {
                 client.last_seen_mono_ms = now_mono_ms;
-                let (session, _) = actor.session_and_engines_mut();
+                let session = actor.session();
                 queue_pong_frame_to_live_client(client, session, &ping)?;
             }
             LiveClientRead::NoFrame => break,
@@ -2755,7 +2759,7 @@ fn forward_live_input_to_live_client_with_session_actor(
         if input_write_target_exited(&err, &input.pane_id) {
             return Ok(());
         }
-        let (session, _) = actor.session_and_engines_mut();
+        let session = actor.session();
         queue_protocol_error_to_live_client(
             client,
             session,
@@ -3381,7 +3385,7 @@ fn serve_live_attached_client_with_session_actor(
                 match read_live_client_frame_from_stream(stream)? {
                     LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
                         count_cycle = false;
-                        let (session, _) = actor.session_and_engines_mut();
+                        let session = actor.session();
                         if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
                             write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
                             if error == protocol::ErrorCode::StaleVersion {
@@ -3405,7 +3409,7 @@ fn serve_live_attached_client_with_session_actor(
                     LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                         count_cycle = false;
                         {
-                            let (session, _) = actor.session_and_engines_mut();
+                            let session = actor.session();
                             if !Session::input_allowed(&client_actor) {
                                 write_protocol_error(
                                     stream,
@@ -3437,7 +3441,7 @@ fn serve_live_attached_client_with_session_actor(
                         if let Err(err) =
                             host.resize_pane(&resize.pane_id, resize.cols, resize.rows)
                         {
-                            let (session, _) = actor.session_and_engines_mut();
+                            let session = actor.session();
                             write_protocol_error(
                                 stream,
                                 session,
@@ -3458,7 +3462,7 @@ fn serve_live_attached_client_with_session_actor(
                             resize.rows,
                             inventory_elapsed_ms(started_at),
                         )? {
-                            let (session, _) = actor.session_and_engines_mut();
+                            let session = actor.session();
                             let workspace_frame = session.workspace_tree_frame("local-client", seq);
                             wire::write_default_frame(stream, &workspace_frame)?;
                             seq += 1;
@@ -3469,7 +3473,7 @@ fn serve_live_attached_client_with_session_actor(
                         if Session::input_allowed(&client_actor) {
                             inputs.push(input);
                         } else {
-                            let (session, _) = actor.session_and_engines_mut();
+                            let session = actor.session();
                             write_protocol_error(
                                 stream,
                                 session,
@@ -3484,7 +3488,7 @@ fn serve_live_attached_client_with_session_actor(
                     }
                     LiveClientRead::Frame(LiveClientFrame::Ping(ping)) => {
                         count_cycle = false;
-                        let (session, _) = actor.session_and_engines_mut();
+                        let session = actor.session();
                         write_pong_frame(stream, session, &mut seq, &ping)?;
                     }
                     LiveClientRead::NoFrame => break,
@@ -3558,7 +3562,7 @@ fn serve_live_attached_client_with_session_actor(
                 if input_write_target_exited(&err, &input.pane_id) {
                     return Ok(());
                 }
-                let (session, _) = actor.session_and_engines_mut();
+                let session = actor.session();
                 write_protocol_error(
                     stream,
                     session,
@@ -3625,7 +3629,7 @@ fn serve_live_attached_client_with_session_actor(
                             panes = leaf_pane_ids.len()
                         );
                         surface_span.in_scope(|| {
-                            let (session, _) = actor.session_and_engines_mut();
+                            let session = actor.session();
                             write_changed_surface_frames(
                                 stream,
                                 session,
@@ -3639,7 +3643,7 @@ fn serve_live_attached_client_with_session_actor(
                 Ok(false) => {}
                 Err(err) => {
                     let error_pane_id = host_error_pane_id(&err).to_owned();
-                    let (session, _) = actor.session_and_engines_mut();
+                    let session = actor.session();
                     write_host_output_error(stream, session, &mut seq, &error_pane_id, err)?;
                     return Ok(());
                 }
@@ -3698,7 +3702,7 @@ fn serve_live_attached_client_with_session_actor(
             Ok(changed) => fast_changed || changed,
             Err(err) => {
                 let error_pane_id = host_error_pane_id(&err).to_owned();
-                let (session, _) = actor.session_and_engines_mut();
+                let session = actor.session();
                 write_host_output_error(stream, session, &mut seq, &error_pane_id, err)?;
                 return Ok(());
             }
@@ -3714,7 +3718,7 @@ fn serve_live_attached_client_with_session_actor(
             panes = leaf_pane_ids.len()
         );
         surface_span.in_scope(|| {
-            let (session, _) = actor.session_and_engines_mut();
+            let session = actor.session();
             write_changed_surface_frames(
                 stream,
                 session,
@@ -12491,6 +12495,100 @@ mod tests {
     }
 
     #[test]
+    fn actor_concurrent_live_replies_to_ping_without_host_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![Vec::new()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(1, 1)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        let mut request = AttachOptions::default().request;
+        request.actor_id = "actor-1".to_owned();
+        request.mode = AttachMode::ReadOnly;
+        write_attach_request(&mut stream, &request).expect("write attach request");
+        attach_from_stream(&mut stream).expect("initial attach");
+
+        let mut sequence = ClientFrameSequence::default();
+        send_ping_with_sequence(&mut stream, &mut sequence, "actor-1").expect("send ping");
+
+        assert_eq!(
+            read_live_surface_update_from_stream(&mut stream).expect("read pong"),
+            LiveSurfaceRead::Pong(PingSummary {
+                actor_id: "actor-1".to_owned(),
+                ping_seq: 1,
+            })
+        );
+
+        drop(stream);
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn actor_live_attach_replies_to_ping_without_host_input() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+        let mut host = ScriptedOutputHost::new(vec![Vec::new()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(1, 1)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor live");
+            host
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        let mut request = AttachOptions::default().request;
+        request.actor_id = "actor-1".to_owned();
+        request.mode = AttachMode::ReadOnly;
+        write_attach_request(&mut stream, &request).expect("write attach request");
+        attach_from_stream(&mut stream).expect("initial attach");
+
+        let mut sequence = ClientFrameSequence::default();
+        send_ping_with_sequence(&mut stream, &mut sequence, "actor-1").expect("send ping");
+
+        assert_eq!(
+            read_live_surface_update_from_stream(&mut stream).expect("read pong"),
+            LiveSurfaceRead::Pong(PingSummary {
+                actor_id: "actor-1".to_owned(),
+                ping_seq: 1,
+            })
+        );
+
+        drop(stream);
+        let host = server.join().expect("server thread");
+        assert!(
+            !host
+                .events
+                .iter()
+                .any(|event| matches!(event, HostEvent::Input { .. }))
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn live_daemon_streams_client_inventory_snapshot_and_patches() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -12503,6 +12601,89 @@ mod tests {
             ServeConfig::live(2, usize::MAX)
                 .serve(&listener, &mut session, &mut host)
                 .expect("serve concurrent live");
+        });
+
+        let mut reader = UnixStream::connect(&socket_path).expect("connect reader");
+        write_attach_request(
+            &mut reader,
+            &AttachRequest {
+                actor_id: "reader".to_owned(),
+                user_id: "cbro".to_owned(),
+                display_name: "Reader".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+                hostname: "machine-a".to_owned(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: true,
+            },
+        )
+        .expect("write reader attach");
+        attach_from_stream(&mut reader).expect("reader attach");
+        let snapshot = read_inventory_snapshot(&mut reader);
+        assert_eq!(snapshot.version, 1);
+        assert_eq!(snapshot.clients.len(), 1);
+        assert_eq!(snapshot.clients[0].user_id, "cbro");
+        assert_eq!(snapshot.clients[0].hostname, "machine-a");
+        assert_eq!(snapshot.clients[0].mode, AttachMode::ReadOnly);
+
+        let mut writer = UnixStream::connect(&socket_path).expect("connect writer");
+        write_attach_request(
+            &mut writer,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "agent-x".to_owned(),
+                display_name: "Agent X".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+                hostname: "machine-b".to_owned(),
+                client_kind: "agent".to_owned(),
+                subscribe_client_inventory: true,
+            },
+        )
+        .expect("write writer attach");
+        attach_from_stream(&mut writer).expect("writer attach");
+
+        let join = read_inventory_patch_with_join(&mut reader);
+        assert_eq!(join.base_version, 1);
+        assert_eq!(join.version, 2);
+        assert_eq!(join.joined.len(), 1);
+        assert_eq!(join.joined[0].actor_id, "writer");
+        assert_eq!(join.joined[0].user_id, "agent-x");
+        assert_eq!(join.joined[0].hostname, "machine-b");
+        assert_eq!(join.joined[0].client_kind, "agent");
+        assert_eq!(join.joined[0].mode, AttachMode::ReadWrite);
+        assert_eq!(join.joined[0].last_input_mono_ms, None);
+
+        send_key_input(&mut writer, "pane-1", "x").expect("send writer input");
+        let update = read_inventory_patch_with_update(&mut reader);
+        assert_eq!(update.updated.len(), 1);
+        assert_eq!(update.updated[0].actor_id, "writer");
+        assert!(update.updated[0].last_input_mono_ms.is_some());
+
+        drop(reader);
+        drop(writer);
+        server.join().expect("server thread");
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn actor_live_streams_client_inventory_snapshot_and_patches() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+        let mut host = EchoHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start echo pane");
+
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(2, usize::MAX)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor concurrent live");
         });
 
         let mut reader = UnixStream::connect(&socket_path).expect("connect reader");
