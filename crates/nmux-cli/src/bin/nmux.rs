@@ -112,6 +112,7 @@ const LOCAL_ECHO_NAMES: &[&str] = &["off", "tty"];
 const DETACH_KEY_NAMES: &[&str] = &["ctrl-]", "none"];
 const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
 const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
+const SGR_MOUSE_START: &[u8] = b"\x1b[<";
 const DEFAULT_MANAGED_STARTUP_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_REMOTE_PORT: u16 = 7007;
 const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
@@ -1135,6 +1136,23 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 &text,
                                             )
                                         })?;
+                                    }
+                                    StdinByteForward::Mouse(mouse) => {
+                                        if let Some((pane_id, mouse)) =
+                                            live_mouse_input_for_workspace(
+                                                mouse,
+                                                &current_workspace,
+                                                &surface_state.current_surface_text,
+                                                Some(&surface_state.current_pane_surfaces),
+                                            )
+                                        {
+                                            local::send_mouse_input_with_sequence(
+                                                &mut stream,
+                                                &mut client_sequence,
+                                                &pane_id,
+                                                mouse,
+                                            )?;
+                                        }
                                     }
                                 }
                             }
@@ -2294,6 +2312,16 @@ enum StdinByteRead {
 enum StdinByteForward {
     Raw(Vec<u8>),
     Paste(String),
+    Mouse(SgrMouseInput),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SgrMouseInput {
+    row: u32,
+    col: u32,
+    button: protocol::MouseButton,
+    action: protocol::MouseAction,
+    modifiers: u32,
 }
 
 fn split_stdin_bytes_for_detach(input: &[u8], detach_byte: Option<u8>) -> (Option<Vec<u8>>, bool) {
@@ -2316,13 +2344,24 @@ fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
     let mut forwards = Vec::new();
     let mut offset = 0;
     while offset < input.len() {
-        let Some(start_rel) = find_bytes(&input[offset..], BRACKETED_PASTE_START) else {
+        let paste = find_bytes(&input[offset..], BRACKETED_PASTE_START);
+        let mouse = find_sgr_mouse_sequence(&input[offset..])
+            .map(|(start, mouse, end)| (start, StdinByteForward::Mouse(mouse), end));
+        let Some((start_rel, forward, end_rel)) = next_structured_stdin_forward(
+            paste.map(|start| (start, StdinByteForward::Raw(Vec::new()), 0)),
+            mouse,
+        ) else {
             forwards.push(StdinByteForward::Raw(input[offset..].to_vec()));
             break;
         };
         let start = offset + start_rel;
         if start > offset {
             forwards.push(StdinByteForward::Raw(input[offset..start].to_vec()));
+        }
+        if matches!(forward, StdinByteForward::Mouse(_)) {
+            forwards.push(forward);
+            offset += end_rel;
+            continue;
         }
         let paste_start = start + BRACKETED_PASTE_START.len();
         let Some(end_rel) = find_bytes(&input[paste_start..], BRACKETED_PASTE_END) else {
@@ -2341,8 +2380,162 @@ fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
     forwards.retain(|forward| match forward {
         StdinByteForward::Raw(bytes) => !bytes.is_empty(),
         StdinByteForward::Paste(_) => true,
+        StdinByteForward::Mouse(_) => true,
     });
     forwards
+}
+
+fn next_structured_stdin_forward(
+    paste: Option<(usize, StdinByteForward, usize)>,
+    mouse: Option<(usize, StdinByteForward, usize)>,
+) -> Option<(usize, StdinByteForward, usize)> {
+    match (paste, mouse) {
+        (Some(paste), Some(mouse)) => {
+            if paste.0 <= mouse.0 {
+                Some(paste)
+            } else {
+                Some(mouse)
+            }
+        }
+        (Some(paste), None) => Some(paste),
+        (None, Some(mouse)) => Some(mouse),
+        (None, None) => None,
+    }
+}
+
+fn find_sgr_mouse_sequence(input: &[u8]) -> Option<(usize, SgrMouseInput, usize)> {
+    let mut search_offset = 0;
+    while search_offset < input.len() {
+        let start_rel = find_bytes(&input[search_offset..], SGR_MOUSE_START)?;
+        let start = search_offset + start_rel;
+        match parse_sgr_mouse_sequence(&input[start..]) {
+            Some((mouse, len)) => return Some((start, mouse, start + len)),
+            None => search_offset = start.saturating_add(1),
+        }
+    }
+    None
+}
+
+fn parse_sgr_mouse_sequence(input: &[u8]) -> Option<(SgrMouseInput, usize)> {
+    if !input.starts_with(SGR_MOUSE_START) {
+        return None;
+    }
+    let mut end = SGR_MOUSE_START.len();
+    while end < input.len() && input[end] != b'M' && input[end] != b'm' {
+        end += 1;
+    }
+    if end >= input.len() {
+        return None;
+    }
+    let final_byte = input[end];
+    let params = std::str::from_utf8(&input[SGR_MOUSE_START.len()..end]).ok()?;
+    let mut parts = params.split(';');
+    let code = parts.next()?.parse::<u32>().ok()?;
+    let x = parts.next()?.parse::<u32>().ok()?;
+    let y = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() || x == 0 || y == 0 {
+        return None;
+    }
+    let action = if final_byte == b'm' {
+        protocol::MouseAction::Release
+    } else if code & 32 != 0 {
+        protocol::MouseAction::Motion
+    } else {
+        protocol::MouseAction::Press
+    };
+    let button = if code & 64 != 0 {
+        if code & 1 != 0 {
+            protocol::MouseButton::WheelDown
+        } else {
+            protocol::MouseButton::WheelUp
+        }
+    } else {
+        match code & 3 {
+            0 => protocol::MouseButton::Left,
+            1 => protocol::MouseButton::Middle,
+            2 => protocol::MouseButton::Right,
+            _ => protocol::MouseButton::None,
+        }
+    };
+    let mut modifiers = 0;
+    if code & 4 != 0 {
+        modifiers |= 1;
+    }
+    if code & 16 != 0 {
+        modifiers |= 2;
+    }
+    if code & 8 != 0 {
+        modifiers |= 4;
+    }
+    Some((
+        SgrMouseInput {
+            row: y - 1,
+            col: x - 1,
+            button,
+            action,
+            modifiers,
+        },
+        end + 1,
+    ))
+}
+
+fn live_mouse_input_for_workspace(
+    mouse: SgrMouseInput,
+    workspace: &local::WorkspaceSummary,
+    active_surface_text: &str,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
+) -> Option<(String, local::AttachMouseInput)> {
+    let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
+    live_mouse_input_for_workspace_size(
+        mouse,
+        workspace,
+        active_surface_text,
+        pane_surfaces,
+        cols.max(1).min(u16::MAX as u32) as u16,
+        rows.max(1).min(u16::MAX as u32) as u16,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn live_mouse_input_for_workspace_size(
+    mouse: SgrMouseInput,
+    workspace: &local::WorkspaceSummary,
+    active_surface_text: &str,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
+    cols: u16,
+    rows: u16,
+) -> Option<(String, local::AttachMouseInput)> {
+    let frame_rows = rows.saturating_sub(1).max(1);
+    let frame = tui::render_workspace_frame(
+        tui::WorkspaceFrameInput {
+            workspace,
+            active_surface_text,
+            pane_surfaces,
+        },
+        cols.max(1),
+        frame_rows,
+    );
+    let x = u16::try_from(mouse.col).ok()?;
+    let y = u16::try_from(mouse.row).ok()?;
+    let hit = tui::hit_test_region(&frame.hits, x, y)?;
+    let tui::HitTarget::PaneContent(pane_id) = &hit.target else {
+        return None;
+    };
+    if pane_id != &workspace.pane_id {
+        return None;
+    }
+    Some((
+        pane_id.clone(),
+        local::AttachMouseInput {
+            row: u32::from(y.saturating_sub(hit.rect.y)),
+            col: u32::from(x.saturating_sub(hit.rect.x)),
+            pixel_x: None,
+            pixel_y: None,
+            button: mouse.button,
+            action: mouse.action,
+            modifiers: mouse.modifiers,
+        },
+    ))
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -2460,7 +2653,7 @@ fn host_mouse_mode_disable_sequence() -> &'static str {
 
 fn host_mouse_mode_enable_sequence(modes: local::TerminalModeSummary) -> &'static str {
     if !modes.mouse_tracking {
-        return "";
+        return "\x1b[?1000h\x1b[?1006h";
     }
     match (modes.mouse_tracking_mode, modes.mouse_format) {
         (protocol::MouseTrackingMode::X10, protocol::MouseFormat::Sgr) => "\x1b[?1000h\x1b[?1006h",
@@ -6038,15 +6231,16 @@ mod tests {
         InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
         LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
         RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
-        SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags, SigwinchResizeContext,
-        StateInfoSocketSummary, StdinByteForward, args_from_iter, configure_default_live_args,
-        default_attach_error_needs_restart, format_cli_error_json, format_context_json,
-        format_input_choices_json, format_key_names_json, format_live_attach_json,
-        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
-        format_live_presence_json, format_live_surface_update_json, format_live_workspace_json,
-        format_rendered_attach_json, format_scrollback, format_state_info_json,
-        format_state_info_text, host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
-        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
+        SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags, SgrMouseInput,
+        SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward, args_from_iter,
+        configure_default_live_args, default_attach_error_needs_restart, format_cli_error_json,
+        format_context_json, format_input_choices_json, format_key_names_json,
+        format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
+        format_live_error_json, format_live_presence_json, format_live_surface_update_json,
+        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
+        format_state_info_json, format_state_info_text, host_mouse_mode_disable_sequence,
+        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
+        interim_surface_fidelity_warning_needed, live_mouse_input_for_workspace_size,
         live_update_print_kind, managed_ready_error_message, parse_detach_key,
         parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
         parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
@@ -7325,7 +7519,7 @@ mod tests {
                 mouse_format: protocol::MouseFormat::X10,
                 ..local::TerminalModeSummary::default()
             }),
-            ""
+            "\x1b[?1000h\x1b[?1006h"
         );
         assert_eq!(
             host_mouse_mode_enable_sequence(local::TerminalModeSummary {
@@ -8344,6 +8538,87 @@ mod tests {
         assert_eq!(
             stdin_byte_forwards(&input),
             vec![StdinByteForward::Raw(b"\x1b[200~\xffa\x1b[201~".to_vec())]
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_decode_sgr_mouse_for_forwarding() {
+        assert_eq!(
+            stdin_byte_forwards(b"before\x1b[<64;12;5Mafter"),
+            vec![
+                StdinByteForward::Raw(b"before".to_vec()),
+                StdinByteForward::Mouse(SgrMouseInput {
+                    row: 4,
+                    col: 11,
+                    button: protocol::MouseButton::WheelUp,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                }),
+                StdinByteForward::Raw(b"after".to_vec()),
+            ]
+        );
+
+        assert_eq!(
+            stdin_byte_forwards(b"\x1b[<21;3;2m"),
+            vec![StdinByteForward::Mouse(SgrMouseInput {
+                row: 1,
+                col: 2,
+                button: protocol::MouseButton::Middle,
+                action: protocol::MouseAction::Release,
+                modifiers: 3,
+            })]
+        );
+    }
+
+    #[test]
+    fn live_mouse_routing_targets_active_pane_content() {
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 20,
+            rows: 8,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+        };
+        let (pane_id, mouse) = live_mouse_input_for_workspace_size(
+            SgrMouseInput {
+                row: 2,
+                col: 2,
+                button: protocol::MouseButton::WheelDown,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            },
+            &workspace,
+            "ready",
+            None,
+            80,
+            24,
+        )
+        .expect("pane content should receive wheel input");
+
+        assert_eq!(pane_id, "pane-1");
+        assert_eq!(mouse.row, 0);
+        assert_eq!(mouse.col, 1);
+        assert_eq!(mouse.button, protocol::MouseButton::WheelDown);
+
+        assert_eq!(
+            live_mouse_input_for_workspace_size(
+                SgrMouseInput {
+                    row: 1,
+                    col: 0,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                80,
+                24,
+            ),
+            None,
+            "pane chrome clicks are consumed by nmux chrome"
         );
     }
 

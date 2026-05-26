@@ -26,6 +26,7 @@ pub struct HitRegion {
 pub enum HitTarget {
     Menu(MenuAction),
     Pane(String),
+    PaneContent(String),
     WindowTreePane(String),
     Background,
 }
@@ -131,10 +132,12 @@ pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u
 
 #[allow(dead_code)]
 pub fn hit_test(hits: &[HitRegion], x: u16, y: u16) -> Option<&HitTarget> {
-    hits.iter()
-        .rev()
-        .find(|hit| rect_contains(hit.rect, x, y))
-        .map(|hit| &hit.target)
+    hit_test_region(hits, x, y).map(|hit| &hit.target)
+}
+
+#[allow(dead_code)]
+pub fn hit_test_region(hits: &[HitRegion], x: u16, y: u16) -> Option<&HitRegion> {
+    hits.iter().rev().find(|hit| rect_contains(hit.rect, x, y))
 }
 
 fn tree_width_for(width: u16, root: Option<&local::WorkspacePaneSummary>) -> u16 {
@@ -379,6 +382,10 @@ fn render_leaf_pane(
     let Some(inner) = inset(chrome, 1) else {
         return;
     };
+    hits.push(HitRegion {
+        rect: inner,
+        target: HitTarget::PaneContent(pane_id.to_owned()),
+    });
     for (offset, line) in surface_text
         .lines()
         .take(usize::from(inner.height))
@@ -606,7 +613,7 @@ mod tests {
         );
         assert!(matches!(
             hit_test(&frame.hits, 50, 3),
-            Some(HitTarget::Pane(_))
+            Some(HitTarget::PaneContent(_))
         ));
     }
 }
