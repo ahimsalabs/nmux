@@ -243,6 +243,17 @@ impl ServeConfig {
         Ok(())
     }
 
+    /// Serve clients using the terminal state owned by a session actor.
+    pub fn serve_with_session_core<H: ProcessHost + ProcessOutput>(
+        &self,
+        listener: &UnixListener,
+        actor: &mut nmux_core::session::SessionActor,
+        host: &mut H,
+    ) -> Result<(), ServeError> {
+        let (session, engines) = actor.session_and_engines_mut();
+        self.serve_with_engines(listener, session, host, engines)
+    }
+
     /// Serve a single pre-accepted stream using the given host.
     ///
     /// Dispatches to live or snapshot mode based on `self.live`.
@@ -273,6 +284,18 @@ impl ServeConfig {
             self.live,
             self.cycles_per_client,
         )
+    }
+
+    /// Serve a single pre-accepted stream using the terminal state owned by a
+    /// session actor.
+    pub fn serve_stream_with_session_core<H: ProcessHost + ProcessOutput>(
+        &self,
+        stream: UnixStream,
+        actor: &mut nmux_core::session::SessionActor,
+        host: &mut H,
+    ) -> Result<(), ServeError> {
+        let (session, engines) = actor.session_and_engines_mut();
+        self.serve_stream_with_engines(stream, session, host, engines)
     }
 
     /// Serve clients without a host (snapshot mode only, no input forwarding).
