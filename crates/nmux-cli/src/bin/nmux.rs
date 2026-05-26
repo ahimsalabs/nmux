@@ -813,7 +813,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let initial_presence = snapshot.presence.clone();
-    let attached_pane_id = snapshot.status.pane_id.clone();
+    let mut attached_pane_id = snapshot.status.pane_id.clone();
     client_state.apply_scope(local::socket_identity(&args.socket_path).ok());
     let mut rendered = match client_state.render_attach(snapshot) {
         Ok(rendered) => rendered,
@@ -922,6 +922,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             match local::read_live_surface_update_from_stream(&mut stream)? {
                 local::LiveSurfaceRead::Workspace(workspace) => {
                     current_workspace = workspace;
+                    preserve_live_client_focus(&mut current_workspace, &attached_pane_id);
                     recorder.record(&format_live_workspace_json(&current_workspace))?;
                 }
                 local::LiveSurfaceRead::Update(update) => {
@@ -1138,20 +1139,37 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                         })?;
                                     }
                                     StdinByteForward::Mouse(mouse) => {
-                                        if let Some((pane_id, mouse)) =
-                                            live_mouse_input_for_workspace(
-                                                mouse,
-                                                &current_workspace,
-                                                &surface_state.current_surface_text,
-                                                Some(&surface_state.current_pane_surfaces),
-                                            )
-                                        {
-                                            local::send_mouse_input_with_sequence(
-                                                &mut stream,
-                                                &mut client_sequence,
-                                                &pane_id,
-                                                mouse,
-                                            )?;
+                                        match live_mouse_dispatch_for_workspace(
+                                            mouse,
+                                            &current_workspace,
+                                            &surface_state.current_surface_text,
+                                            Some(&surface_state.current_pane_surfaces),
+                                            surface_state.current_modes,
+                                        ) {
+                                            Some(LiveMouseDispatch::FocusPane(pane_id)) => {
+                                                if focus_live_client_pane(
+                                                    &pane_id,
+                                                    &mut attached_pane_id,
+                                                    &mut current_workspace,
+                                                    &mut surface_state,
+                                                    &client_state,
+                                                    host_mouse_modes.as_mut(),
+                                                    redraw_state.as_mut(),
+                                                    args,
+                                                    use_styled,
+                                                )? {
+                                                    flush_stdout()?;
+                                                }
+                                            }
+                                            Some(LiveMouseDispatch::PaneMouse(pane_id, mouse)) => {
+                                                local::send_mouse_input_with_sequence(
+                                                    &mut stream,
+                                                    &mut client_sequence,
+                                                    &pane_id,
+                                                    mouse,
+                                                )?;
+                                            }
+                                            None => {}
                                         }
                                     }
                                 }
@@ -1294,6 +1312,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             match read {
                 local::LiveSurfaceRead::Workspace(workspace) => {
                     current_workspace = workspace;
+                    preserve_live_client_focus(&mut current_workspace, &attached_pane_id);
                     let event = format_live_workspace_json(&current_workspace);
                     recorder.record(&event)?;
                     if args.output_json {
@@ -2479,32 +2498,41 @@ fn parse_sgr_mouse_sequence(input: &[u8]) -> Option<(SgrMouseInput, usize)> {
     ))
 }
 
-fn live_mouse_input_for_workspace(
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LiveMouseDispatch {
+    FocusPane(String),
+    PaneMouse(String, local::AttachMouseInput),
+}
+
+fn live_mouse_dispatch_for_workspace(
     mouse: SgrMouseInput,
     workspace: &local::WorkspaceSummary,
     active_surface_text: &str,
     pane_surfaces: Option<&BTreeMap<String, String>>,
-) -> Option<(String, local::AttachMouseInput)> {
+    active_modes: local::TerminalModeSummary,
+) -> Option<LiveMouseDispatch> {
     let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
-    live_mouse_input_for_workspace_size(
+    live_mouse_dispatch_for_workspace_size(
         mouse,
         workspace,
         active_surface_text,
         pane_surfaces,
+        active_modes,
         cols.max(1).min(u16::MAX as u32) as u16,
         rows.max(1).min(u16::MAX as u32) as u16,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn live_mouse_input_for_workspace_size(
+fn live_mouse_dispatch_for_workspace_size(
     mouse: SgrMouseInput,
     workspace: &local::WorkspaceSummary,
     active_surface_text: &str,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    active_modes: local::TerminalModeSummary,
     cols: u16,
     rows: u16,
-) -> Option<(String, local::AttachMouseInput)> {
+) -> Option<LiveMouseDispatch> {
     let frame_rows = rows.saturating_sub(1).max(1);
     let frame = tui::render_workspace_frame(
         tui::WorkspaceFrameInput {
@@ -2518,24 +2546,110 @@ fn live_mouse_input_for_workspace_size(
     let x = u16::try_from(mouse.col).ok()?;
     let y = u16::try_from(mouse.row).ok()?;
     let hit = tui::hit_test_region(&frame.hits, x, y)?;
-    let tui::HitTarget::PaneContent(pane_id) = &hit.target else {
-        return None;
-    };
-    if pane_id != &workspace.pane_id {
-        return None;
+
+    match &hit.target {
+        tui::HitTarget::PaneContent(pane_id) if pane_id == &workspace.pane_id => {
+            if !active_modes.mouse_tracking {
+                return None;
+            }
+            Some(LiveMouseDispatch::PaneMouse(
+                pane_id.clone(),
+                local::AttachMouseInput {
+                    row: u32::from(y.saturating_sub(hit.rect.y)),
+                    col: u32::from(x.saturating_sub(hit.rect.x)),
+                    pixel_x: None,
+                    pixel_y: None,
+                    button: mouse.button,
+                    action: mouse.action,
+                    modifiers: mouse.modifiers,
+                },
+            ))
+        }
+        tui::HitTarget::PaneContent(pane_id)
+        | tui::HitTarget::Pane(pane_id)
+        | tui::HitTarget::WindowTreePane(pane_id)
+            if sgr_mouse_is_primary_press(mouse) =>
+        {
+            Some(LiveMouseDispatch::FocusPane(pane_id.clone()))
+        }
+        _ => None,
     }
-    Some((
-        pane_id.clone(),
-        local::AttachMouseInput {
-            row: u32::from(y.saturating_sub(hit.rect.y)),
-            col: u32::from(x.saturating_sub(hit.rect.x)),
-            pixel_x: None,
-            pixel_y: None,
-            button: mouse.button,
-            action: mouse.action,
-            modifiers: mouse.modifiers,
-        },
-    ))
+}
+
+fn sgr_mouse_is_primary_press(mouse: SgrMouseInput) -> bool {
+    mouse.action == protocol::MouseAction::Press && mouse.button == protocol::MouseButton::Left
+}
+
+fn focus_live_client_pane(
+    pane_id: &str,
+    attached_pane_id: &mut String,
+    workspace: &mut local::WorkspaceSummary,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &local::ClientAttachState,
+    host_mouse_modes: Option<&mut HostMouseModeMirror>,
+    redraw_state: Option<&mut RedrawState>,
+    args: &Args,
+    use_styled: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if pane_id == attached_pane_id {
+        return Ok(false);
+    }
+    if !workspace_panes(workspace)
+        .iter()
+        .any(|pane| pane.pane_id == pane_id)
+    {
+        return Ok(false);
+    }
+
+    *attached_pane_id = pane_id.to_owned();
+    workspace.pane_id = pane_id.to_owned();
+    let surface_text = surface_state
+        .current_pane_surfaces
+        .get(pane_id)
+        .cloned()
+        .or_else(|| client_state.cached_surface_text_styled(pane_id, use_styled))
+        .unwrap_or_else(|| "(surface not cached)".to_owned());
+    surface_state
+        .current_pane_surfaces
+        .insert(pane_id.to_owned(), surface_text.clone());
+    surface_state.current_surface_text = surface_text;
+    surface_state.current_surface_metadata = client_state
+        .cached_surface_metadata(pane_id)
+        .unwrap_or_default();
+    if let Some(surface) = client_state.cached_surface_summary(pane_id) {
+        surface_state.current_modes = surface.modes;
+    } else {
+        surface_state.current_modes = local::TerminalModeSummary::default();
+    }
+    if let Some(mouse_modes) = host_mouse_modes {
+        mouse_modes.sync(surface_state.current_modes)?;
+    }
+
+    if args.output_json {
+        return Ok(false);
+    }
+    if args.redraw {
+        print_live_surface(
+            workspace,
+            &surface_state.current_surface_metadata,
+            &surface_state.current_surface_text,
+            args.redraw,
+            redraw_state,
+            Some(&surface_state.current_pane_surfaces),
+        );
+    } else {
+        println!("{}", workspace.display_line());
+    }
+    Ok(true)
+}
+
+fn preserve_live_client_focus(workspace: &mut local::WorkspaceSummary, pane_id: &str) {
+    if workspace_panes(workspace)
+        .iter()
+        .any(|pane| pane.pane_id == pane_id)
+    {
+        workspace.pane_id = pane_id.to_owned();
+    }
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -6229,25 +6343,25 @@ mod tests {
         AttachMode, BRACKETED_PASTE_END, BRACKETED_PASTE_START, ClientModeArgs,
         DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs, FocusEvent, HostMouseModeContext,
         InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
-        LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
-        RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
-        SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags, SgrMouseInput,
-        SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward, args_from_iter,
-        configure_default_live_args, default_attach_error_needs_restart, format_cli_error_json,
-        format_context_json, format_input_choices_json, format_key_names_json,
-        format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
-        format_live_error_json, format_live_presence_json, format_live_surface_update_json,
-        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        format_state_info_json, format_state_info_text, host_mouse_mode_disable_sequence,
-        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
-        interim_surface_fidelity_warning_needed, live_mouse_input_for_workspace_size,
-        live_update_print_kind, managed_ready_error_message, parse_detach_key,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
-        terminal_size_from_fds, terminal_size_unavailable, usage,
+        LiveMouseDispatch, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
+        PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
+        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags,
+        SgrMouseInput, SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward,
+        args_from_iter, configure_default_live_args, default_attach_error_needs_restart,
+        format_cli_error_json, format_context_json, format_input_choices_json,
+        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
+        format_live_detach_json, format_live_error_json, format_live_presence_json,
+        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
+        format_scrollback, format_state_info_json, format_state_info_text,
+        host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
+        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
+        live_mouse_dispatch_for_workspace_size, live_update_print_kind,
+        managed_ready_error_message, parse_detach_key, parse_env_assignment, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
+        raw_terminal_mode_needed, redraw_terminal_guard_needed, redraw_text_with_context,
+        redraw_workspace_surface_text, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -8581,21 +8695,31 @@ mod tests {
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
         };
-        let (pane_id, mouse) = live_mouse_input_for_workspace_size(
-            SgrMouseInput {
-                row: 2,
-                col: 2,
-                button: protocol::MouseButton::WheelDown,
-                action: protocol::MouseAction::Press,
-                modifiers: 0,
-            },
-            &workspace,
-            "ready",
-            None,
-            80,
-            24,
-        )
-        .expect("pane content should receive wheel input");
+        let modes = local::TerminalModeSummary {
+            mouse_tracking: true,
+            mouse_tracking_mode: protocol::MouseTrackingMode::Normal,
+            mouse_format: protocol::MouseFormat::Sgr,
+            ..local::TerminalModeSummary::default()
+        };
+        let Some(LiveMouseDispatch::PaneMouse(pane_id, mouse)) =
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 2,
+                    col: 2,
+                    button: protocol::MouseButton::WheelDown,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                modes,
+                80,
+                24,
+            )
+        else {
+            panic!("pane content should receive wheel input");
+        };
 
         assert_eq!(pane_id, "pane-1");
         assert_eq!(mouse.row, 0);
@@ -8603,7 +8727,27 @@ mod tests {
         assert_eq!(mouse.button, protocol::MouseButton::WheelDown);
 
         assert_eq!(
-            live_mouse_input_for_workspace_size(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 2,
+                    col: 2,
+                    button: protocol::MouseButton::WheelDown,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                local::TerminalModeSummary::default(),
+                80,
+                24,
+            ),
+            None,
+            "pane content events are consumed when the pane app has not enabled mouse tracking"
+        );
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
                 SgrMouseInput {
                     row: 1,
                     col: 0,
@@ -8614,11 +8758,88 @@ mod tests {
                 &workspace,
                 "ready",
                 None,
+                modes,
                 80,
                 24,
             ),
+            Some(LiveMouseDispatch::FocusPane("pane-1".to_owned())),
+            "pane chrome clicks select the pane"
+        );
+    }
+
+    #[test]
+    fn live_mouse_routing_focuses_inactive_tree_pane() {
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-2".to_owned(),
+            cols: 40,
+            rows: 10,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: Some(local::WorkspacePaneSummary {
+                pane_id: "pane-root".to_owned(),
+                cols: 80,
+                rows: 10,
+                resize_policy: protocol::ResizePolicy::Fixed,
+                split_axis: protocol::SplitAxis::Vertical,
+                children: vec![
+                    local::WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 40,
+                        rows: 10,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                    local::WorkspacePaneSummary {
+                        pane_id: "pane-2".to_owned(),
+                        cols: 40,
+                        rows: 10,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                ],
+            }),
+        };
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 4,
+                    col: 2,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "right active",
+                None,
+                local::TerminalModeSummary::default(),
+                100,
+                20,
+            ),
+            Some(LiveMouseDispatch::FocusPane("pane-1".to_owned()))
+        );
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 4,
+                    col: 2,
+                    button: protocol::MouseButton::WheelDown,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "right active",
+                None,
+                local::TerminalModeSummary::default(),
+                100,
+                20,
+            ),
             None,
-            "pane chrome clicks are consumed by nmux chrome"
+            "wheel over the tree is consumed until nmux-owned scrolling exists"
         );
     }
 
