@@ -5521,7 +5521,9 @@ fn format_stats_right(stats: &FrameStats) -> String {
         .map(|count| count.to_string())
         .unwrap_or_else(|| "-".to_owned());
     let clients = fixed_status_field(&clients, 1);
-    format!("rows:{rows} clients:{clients} rtt:{rtt} fps:{fps} decode:{decode} render:{render} ")
+    format!(
+        "rows:{rows} rows clients:{clients} rtt:{rtt} fps:{fps} decode:{decode} render:{render} "
+    )
 }
 
 fn format_duration_short(micros: u128) -> String {

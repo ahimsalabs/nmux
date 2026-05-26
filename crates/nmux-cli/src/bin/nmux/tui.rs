@@ -1013,6 +1013,18 @@ mod tests {
         }
     }
 
+    fn horizontal_split_workspace() -> local::WorkspaceSummary {
+        let mut workspace = split_workspace();
+        if let Some(root) = workspace.pane_tree.as_mut() {
+            root.split_axis = protocol::SplitAxis::Horizontal;
+            root.children[0].cols = 80;
+            root.children[0].rows = 12;
+            root.children[1].cols = 80;
+            root.children[1].rows = 12;
+        }
+        workspace
+    }
+
     #[test]
     fn renders_menu_tree_pane_chrome_and_background() {
         let workspace = split_workspace();
@@ -1051,6 +1063,69 @@ mod tests {
             frame.text.contains("╭") || frame.text.contains("╰"),
             "pane chrome should use rounded ratatui borders"
         );
+    }
+
+    #[test]
+    fn frame_text_snapshots_cover_narrow_normal_and_split_layouts() {
+        let workspace = split_workspace();
+        let narrow = render_workspace_frame(
+            WorkspaceFrameInput {
+                workspace: &workspace,
+                active_surface_text: "right active",
+                pane_surfaces: None,
+                pane_surface_summaries: None,
+                pane_chrome: None,
+                overlay: None,
+            },
+            40,
+            10,
+        );
+        let narrow_lines: Vec<&str> = narrow.text.lines().collect();
+        assert_eq!(narrow_lines.len(), 10);
+        assert!(narrow_lines[0].contains("Sessions"));
+        assert!(!narrow.text.contains("windows"));
+        assert!(narrow.text.contains("pane-2 active"));
+        assert!(narrow_lines.iter().all(|line| line.chars().count() <= 40));
+
+        let mut surfaces = BTreeMap::new();
+        surfaces.insert("pane-1".to_owned(), "left cached".to_owned());
+        let normal = render_workspace_frame(
+            WorkspaceFrameInput {
+                workspace: &workspace,
+                active_surface_text: "right active",
+                pane_surfaces: Some(&surfaces),
+                pane_surface_summaries: None,
+                pane_chrome: None,
+                overlay: None,
+            },
+            100,
+            14,
+        );
+        let normal_lines: Vec<&str> = normal.text.lines().collect();
+        assert_eq!(normal_lines.len(), 14);
+        assert!(normal.text.contains("windows"));
+        assert!(normal.text.contains("left cached"));
+        assert!(normal.text.contains("right active"));
+        assert!(normal_lines.iter().all(|line| line.chars().count() <= 100));
+
+        let horizontal = horizontal_split_workspace();
+        let split = render_workspace_frame(
+            WorkspaceFrameInput {
+                workspace: &horizontal,
+                active_surface_text: "bottom active",
+                pane_surfaces: Some(&surfaces),
+                pane_surface_summaries: None,
+                pane_chrome: None,
+                overlay: None,
+            },
+            100,
+            16,
+        );
+        let split_lines: Vec<&str> = split.text.lines().collect();
+        assert_eq!(split_lines.len(), 16);
+        assert!(split.text.contains("left cached"));
+        assert!(split.text.contains("bottom active"));
+        assert!(split_lines.iter().all(|line| line.chars().count() <= 100));
     }
 
     #[test]
