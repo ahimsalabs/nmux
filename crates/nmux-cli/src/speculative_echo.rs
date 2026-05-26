@@ -170,7 +170,7 @@ impl SpeculativeEchoOverlay {
             .cursor
             .is_some_and(|cursor| cursor.row != prediction.row || cursor.col < prediction.col)
         {
-            return self.clear_mismatched();
+            return self.clear_displaced();
         }
         let Some(row) = update
             .row_updates
@@ -179,15 +179,10 @@ impl SpeculativeEchoOverlay {
         else {
             return self.rebase_pending_prediction(update);
         };
-        let confirmed = row
-            .text
-            .chars()
-            .nth(prediction.col as usize)
-            .is_some_and(|ch| ch.to_string() == prediction.text);
-        if confirmed {
-            self.clear_confirmed()
-        } else {
-            self.clear_mismatched()
+        match row.text.chars().nth(prediction.col as usize) {
+            Some(ch) if ch.to_string() == prediction.text => self.clear_confirmed(),
+            Some(_) => self.clear_mismatched(),
+            None => self.clear_displaced(),
         }
     }
 
@@ -195,9 +190,19 @@ impl SpeculativeEchoOverlay {
         !self.prediction_suppressed()
     }
 
+    pub fn prediction(&self) -> Option<&SpeculativeEchoPrediction> {
+        self.prediction.as_ref()
+    }
+
     fn clear_mismatched(&mut self) -> SpeculativeEchoReconcile {
         self.prediction = None;
         self.consecutive_misses = self.consecutive_misses.saturating_add(1);
+        self.suppressed_predictable_keys = 0;
+        SpeculativeEchoReconcile::Mismatched
+    }
+
+    fn clear_displaced(&mut self) -> SpeculativeEchoReconcile {
+        self.prediction = None;
         self.suppressed_predictable_keys = 0;
         SpeculativeEchoReconcile::Mismatched
     }

@@ -721,7 +721,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let socket_scope = local::socket_identity(&args.socket_path).ok();
     let live_poll_timeout = Duration::from_millis(args.interval_ms);
     let live_socket_read_timeout = live_poll_timeout;
-    let post_input_stream_grace = live_poll_timeout.min(Duration::from_millis(2));
+    let stdout_tty = stdout_is_tty();
+    let post_input_stream_grace = if stdout_tty && stdin_bytes_speculative_echo_enabled(args) {
+        Duration::ZERO
+    } else {
+        live_poll_timeout.min(Duration::from_millis(2))
+    };
     let setup_read_timeout = connect_timeout_duration(args)
         .unwrap_or_else(|| Duration::from_millis(DEFAULT_MANAGED_STARTUP_TIMEOUT_MS));
     if let Err(err) = stream.set_read_timeout(Some(setup_read_timeout)) {
@@ -954,7 +959,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     // Differential rendering with latency overlay is only useful on real
     // terminals. When stdout is captured (tests, pipes), fall back to the
     // legacy full-screen-clear path so output is plain text.
-    let mut redraw_state = if args.redraw && stdout_is_tty() {
+    let mut redraw_state = if args.redraw && stdout_tty {
         Some(RedrawState::new())
     } else {
         None
@@ -1082,7 +1087,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                 bytes = input.len(),
                                 pane_id = %attached_pane_id
                             );
-                            input_span.in_scope(|| {
+                            let input_seq = input_span.in_scope(|| {
                                 local::send_raw_input_with_sequence(
                                     &mut stream,
                                     &mut client_sequence,
@@ -1090,6 +1095,21 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                     &input,
                                 )
                             })?;
+                            if let Ok(text) = std::str::from_utf8(&input) {
+                                repaint_speculative_echo(
+                                    stdin_bytes_speculative_echo_enabled(args),
+                                    &client_state,
+                                    &mut speculative_echo,
+                                    &attached_pane_id,
+                                    input_seq,
+                                    text,
+                                    &current_workspace,
+                                    &surface_state.current_surface_metadata,
+                                    &mut surface_state.current_surface_text,
+                                    redraw_state.as_mut(),
+                                    use_styled,
+                                )?;
+                            }
                             sent_stdin_bytes_this_cycle = true;
                         }
                         detach_requested = detach;
@@ -1175,7 +1195,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     input_text,
                 )?;
                 repaint_speculative_echo(
-                    args,
+                    args.speculative_echo,
                     &client_state,
                     &mut speculative_echo,
                     &attached_pane_id,
@@ -1914,7 +1934,7 @@ impl LiveRecorder {
 
 #[allow(clippy::too_many_arguments)]
 fn repaint_speculative_echo(
-    args: &Args,
+    enabled: bool,
     client_state: &local::ClientAttachState,
     overlay: &mut local::SpeculativeEchoOverlay,
     pane_id: &str,
@@ -1926,7 +1946,7 @@ fn repaint_speculative_echo(
     redraw_state: Option<&mut RedrawState>,
     use_styled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !args.speculative_echo {
+    if !enabled {
         return Ok(());
     }
     let Some(predicted) =
@@ -1934,17 +1954,39 @@ fn repaint_speculative_echo(
     else {
         return Ok(());
     };
+    let prediction = overlay.prediction().cloned();
     *current_surface_text = predicted;
-    print_live_surface(
-        workspace,
-        metadata,
-        current_surface_text,
-        true,
-        redraw_state,
-        None,
-    );
+    match redraw_state {
+        Some(state) => {
+            if let Some(prediction) = prediction.as_ref()
+                && let Some(text) = state.render_speculative_append_text(
+                    workspace,
+                    current_surface_text,
+                    prediction,
+                )
+            {
+                print!("{text}");
+            } else {
+                print_live_surface(
+                    workspace,
+                    metadata,
+                    current_surface_text,
+                    true,
+                    Some(state),
+                    None,
+                );
+            }
+        }
+        None => {
+            print_live_surface(workspace, metadata, current_surface_text, true, None, None);
+        }
+    }
     flush_stdout()?;
     Ok(())
+}
+
+fn stdin_bytes_speculative_echo_enabled(args: &Args) -> bool {
+    args.redraw && args.stdin_bytes && args.local_echo == LocalEcho::Off && !args.output_json
 }
 
 fn report_live_setup_error(
@@ -3110,6 +3152,48 @@ impl RedrawState {
         self.previous_rows = all_rows;
 
         output
+    }
+
+    fn render_speculative_append_text(
+        &mut self,
+        workspace: &local::WorkspaceSummary,
+        surface_text: &str,
+        prediction: &local::SpeculativeEchoPrediction,
+    ) -> Option<String> {
+        if workspace.pane_id != prediction.pane_id {
+            return None;
+        }
+        if workspace
+            .pane_tree
+            .as_ref()
+            .is_some_and(|root| !root.children.is_empty())
+        {
+            return None;
+        }
+        let row_index = usize::try_from(prediction.row).ok()?;
+        let content_row_index = row_index + 1;
+        if self.previous_rows.len() <= content_row_index {
+            return None;
+        }
+        let row_text = surface_text.lines().nth(row_index)?;
+        self.previous_rows[content_row_index] = row_text.to_owned();
+        self.last_frame_time = Instant::now();
+        self.last_stats.rows_changed = 1;
+        self.last_stats.rows_total = surface_text.lines().count();
+
+        let terminal_row_index = terminal_row(row_index + 2);
+        let terminal_col = prediction.col.min(u16::MAX as u32) as u16;
+        let park_row = surface_text.lines().count() + 2;
+        let mut output = String::new();
+        output.push_str(&format!(
+            "{}{}{}{}",
+            cursor::MoveTo(terminal_col, terminal_row_index),
+            SetAttribute(Attribute::Underlined),
+            prediction.text,
+            SetAttribute(Attribute::NoUnderline)
+        ));
+        output.push_str(&format!("{}", cursor::MoveTo(0, terminal_row(park_row))));
+        Some(output)
     }
 
     /// Full repaint for initial frame (no previous state to diff against).
@@ -6971,6 +7055,42 @@ mod tests {
             clients_update.contains("clients:5"),
             "status bar should contain live client count: {clients_update:?}"
         );
+    }
+
+    #[test]
+    fn redraw_state_fast_paints_speculative_append_for_single_pane() {
+        let mut state = RedrawState::new();
+        state.terminal_cols = 120;
+
+        let ws = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+        };
+
+        let _ = state.render_initial_text(&ws, "ready");
+        let prediction = local::SpeculativeEchoPrediction {
+            pane_id: "pane-1".to_owned(),
+            base_version: 1,
+            input_seq: 1,
+            row: 0,
+            col: 5,
+            text: "x".to_owned(),
+        };
+
+        let update = state
+            .render_speculative_append_text(&ws, "ready\x1b[4mx\x1b[24m", &prediction)
+            .expect("fast speculative render");
+
+        assert!(
+            update.contains("\x1b[2;6H\x1b[4mx\x1b[24m"),
+            "fast path should only paint predicted cell at cursor: {update:?}"
+        );
+        assert_eq!(state.previous_rows[1], "ready\x1b[4mx\x1b[24m");
     }
 
     #[test]

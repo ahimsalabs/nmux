@@ -10653,6 +10653,63 @@ mod tests {
         );
         assert_eq!(overlay.prediction, None);
         assert!(overlay.render(&surface).is_none());
+        assert!(overlay.prediction_allowed());
+
+        assert_eq!(
+            overlay.predict_printable_key(&surface, 2, "c").as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            overlay.reconcile_update(&cursor_only),
+            SpeculativeEchoReconcile::Mismatched
+        );
+        assert!(
+            overlay.prediction_allowed(),
+            "cursor displacement should not trigger mismatch backoff"
+        );
+    }
+
+    #[test]
+    fn speculative_echo_clears_displaced_row_without_backoff() {
+        let mut snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            1,
+            None,
+            vec![surface_row(0, "ab")],
+        );
+        snapshot.cursor = Some(CursorSummary {
+            row: 0,
+            col: 2,
+            visible: true,
+            shape: protocol::CursorShape::Block,
+            blinking: false,
+        });
+        let surface = ClientPaneSurface::from_snapshot(&snapshot).expect("client surface");
+        let mut overlay = SpeculativeEchoOverlay::default();
+
+        for input_seq in 1..=2 {
+            assert_eq!(
+                overlay
+                    .predict_printable_key(&surface, input_seq, "c")
+                    .as_deref(),
+                Some("abc")
+            );
+            let displaced = surface_update(
+                SurfaceUpdateKind::Patch,
+                input_seq + 1,
+                Some(1),
+                vec![surface_row(0, "a")],
+            );
+            assert_eq!(
+                overlay.reconcile_update(&displaced),
+                SpeculativeEchoReconcile::Mismatched
+            );
+        }
+
+        assert!(
+            overlay.prediction_allowed(),
+            "row displacement should not trigger mismatch backoff"
+        );
     }
 
     #[test]

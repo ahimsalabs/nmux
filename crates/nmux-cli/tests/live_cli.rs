@@ -6056,6 +6056,67 @@ fn live_cli_speculative_echo_repaints_before_server_confirmation() {
 }
 
 #[test]
+fn live_cli_stdin_bytes_speculative_echo_repaints_before_server_confirmation() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live-cycles",
+            "1",
+            "--command",
+            "stty -echo; printf 'ready'; sleep 1",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+
+    wait_for_socket(&socket_path);
+
+    let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--redraw",
+            "--stdin-bytes",
+            "--iterations",
+            "1",
+            "--interval-ms",
+            "100",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run nmux");
+    client
+        .stdin
+        .as_mut()
+        .expect("client stdin")
+        .write_all(b"x")
+        .expect("write stdin byte");
+
+    let client = client.wait_with_output().expect("wait nmux");
+    let server_status = server.wait().expect("wait for daemon");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "daemon failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("ready\x1b[4mx\x1b[24m"),
+        "missing stdin-byte speculative echo repaint before server confirmation:\n{stdout:?}"
+    );
+}
+
+#[test]
 fn live_clients_can_reattach_to_persisted_workspace_state() {
     let socket_path = test_socket_path();
     let state_path = socket_path.with_extension("state");
