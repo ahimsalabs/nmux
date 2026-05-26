@@ -103,7 +103,14 @@ pub struct WorkspaceFrameInput<'a> {
     pub active_surface_text: &'a str,
     pub pane_surfaces: Option<&'a BTreeMap<String, String>>,
     pub pane_surface_summaries: Option<&'a BTreeMap<String, local::RenderedSurfaceSummary>>,
+    pub pane_chrome: Option<&'a BTreeMap<String, PaneChromeState>>,
     pub overlay: Option<&'a TuiOverlay>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PaneChromeState {
+    pub read_only: bool,
+    pub scrollback: bool,
 }
 
 pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u16) -> TuiFrame {
@@ -178,6 +185,7 @@ pub fn render_workspace_to_buffer(
             input.active_surface_text,
             input.pane_surfaces,
             input.pane_surface_summaries,
+            input.pane_chrome,
             &mut hits,
         );
     } else {
@@ -192,6 +200,11 @@ pub fn render_workspace_to_buffer(
             input
                 .pane_surface_summaries
                 .and_then(|surfaces| surfaces.get(&input.workspace.pane_id)),
+            input
+                .pane_chrome
+                .and_then(|chrome| chrome.get(&input.workspace.pane_id))
+                .copied()
+                .unwrap_or_default(),
             &mut hits,
         );
     }
@@ -357,7 +370,7 @@ fn render_window_tree(
     workspace: &local::WorkspaceSummary,
     hits: &mut Vec<HitRegion>,
 ) {
-    draw_box(buffer, area, "windows", false);
+    draw_box(buffer, area, "windows", false, PaneChromeState::default());
     let Some(inner) = inset(area, 1) else {
         return;
     };
@@ -391,14 +404,23 @@ fn render_tree_node(
     }
     let active = pane.pane_id == workspace.pane_id;
     let prefix = if pane.children.is_empty() { "-" } else { "+" };
-    let label = format!(
-        "{:indent$}{prefix} {} {}x{}",
-        "",
-        pane.pane_id,
-        pane.cols,
-        pane.rows,
-        indent = usize::from(depth.saturating_mul(2))
-    );
+    let label = if active {
+        format!(
+            "{:indent$}{prefix} {}",
+            "",
+            pane.pane_id,
+            indent = usize::from(depth.saturating_mul(2))
+        )
+    } else {
+        format!(
+            "{:indent$}{prefix} {} {}x{}",
+            "",
+            pane.pane_id,
+            pane.cols,
+            pane.rows,
+            indent = usize::from(depth.saturating_mul(2))
+        )
+    };
     let style = if active {
         Style::default().fg(Color::Black).bg(Color::Cyan)
     } else {
@@ -423,6 +445,7 @@ fn render_pane_node(
     active_surface_text: &str,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+    pane_chrome: Option<&BTreeMap<String, PaneChromeState>>,
     hits: &mut Vec<HitRegion>,
 ) {
     if area.width == 0 || area.height == 0 {
@@ -446,6 +469,10 @@ fn render_pane_node(
             active,
             body,
             pane_surface_summaries.and_then(|surfaces| surfaces.get(&pane.pane_id)),
+            pane_chrome
+                .and_then(|chrome| chrome.get(&pane.pane_id))
+                .copied()
+                .unwrap_or_default(),
             hits,
         );
         return;
@@ -472,6 +499,7 @@ fn render_pane_node(
                     active_surface_text,
                     pane_surfaces,
                     pane_surface_summaries,
+                    pane_chrome,
                     hits,
                 );
                 x = x.saturating_add(width);
@@ -497,6 +525,7 @@ fn render_pane_node(
                     active_surface_text,
                     pane_surfaces,
                     pane_surface_summaries,
+                    pane_chrome,
                     hits,
                 );
                 y = y.saturating_add(height);
@@ -513,6 +542,7 @@ fn render_pane_node(
                     active_surface_text,
                     pane_surfaces,
                     pane_surface_summaries,
+                    pane_chrome,
                     hits,
                 );
             }
@@ -530,10 +560,11 @@ fn render_leaf_pane(
     active: bool,
     surface_text: &str,
     surface_summary: Option<&local::RenderedSurfaceSummary>,
+    chrome_state: PaneChromeState,
     hits: &mut Vec<HitRegion>,
 ) {
     let chrome = area;
-    draw_box(buffer, chrome, pane_id, active);
+    draw_box(buffer, chrome, pane_id, active, chrome_state);
     hits.push(HitRegion {
         rect: chrome,
         target: HitTarget::Pane(pane_id.to_owned()),
@@ -725,7 +756,13 @@ fn render_overlay(
         " ",
         Style::default().fg(Color::White).bg(Color::Black),
     );
-    draw_box(buffer, overlay_area, &overlay.title, true);
+    draw_box(
+        buffer,
+        overlay_area,
+        &overlay.title,
+        true,
+        PaneChromeState::default(),
+    );
     let Some(inner) = inset(overlay_area, 1) else {
         return;
     };
@@ -752,7 +789,13 @@ fn render_overlay(
     }
 }
 
-fn draw_box(buffer: &mut Buffer, area: Rect, title: &str, active: bool) {
+fn draw_box(
+    buffer: &mut Buffer,
+    area: Rect,
+    title: &str,
+    active: bool,
+    chrome_state: PaneChromeState,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -767,11 +810,22 @@ fn draw_box(buffer: &mut Buffer, area: Rect, title: &str, active: bool) {
     };
 
     if area.width > 4 {
-        let title = if active {
-            format!(" {} active ", title)
+        let mut badges = Vec::new();
+        if active {
+            badges.push("active");
+        }
+        if chrome_state.scrollback {
+            badges.push("scroll");
+        }
+        if chrome_state.read_only {
+            badges.push("ro");
+        }
+        let label = if badges.is_empty() {
+            title.to_owned()
         } else {
-            format!(" {} ", title)
+            format!("{title} {}", badges.join(" "))
         };
+        let title = clipped_box_title(&label, area.width);
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
@@ -786,6 +840,12 @@ fn draw_box(buffer: &mut Buffer, area: Rect, title: &str, active: bool) {
             .border_style(border_style)
             .render(area, buffer);
     }
+}
+
+fn clipped_box_title(title: &str, width: u16) -> String {
+    let max = width.saturating_sub(4) as usize;
+    let label = truncate_chars(title, max);
+    format!(" {label} ")
 }
 
 fn draw_vertical_rule(buffer: &mut Buffer, x: u16, y: u16, height: u16) {
@@ -815,6 +875,10 @@ fn write_text(buffer: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style
     for (offset, ch) in text.chars().take(usize::from(width)).enumerate() {
         set_cell(buffer, x + offset as u16, y, &ch.to_string(), style);
     }
+}
+
+fn truncate_chars(value: &str, width: usize) -> String {
+    value.chars().take(width).collect()
 }
 
 fn terminal_visible_text(text: &str) -> String {
@@ -960,6 +1024,7 @@ mod tests {
                 active_surface_text: "right active",
                 pane_surfaces: Some(&surfaces),
                 pane_surface_summaries: None,
+                pane_chrome: None,
                 overlay: None,
             },
             100,
@@ -997,6 +1062,7 @@ mod tests {
                 active_surface_text: "right active",
                 pane_surfaces: None,
                 pane_surface_summaries: None,
+                pane_chrome: None,
                 overlay: None,
             },
             100,
@@ -1035,6 +1101,7 @@ mod tests {
                 active_surface_text: "\x1b[31mred\x1b[0m \x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\ \x1b_Gignored\x1b\\done",
                 pane_surfaces: None,
                 pane_surface_summaries: None,
+                pane_chrome: None,
                 overlay: None,
             },
             100,
@@ -1090,6 +1157,7 @@ mod tests {
                 active_surface_text: "\x1b[31mfallback text\x1b[0m",
                 pane_surfaces: None,
                 pane_surface_summaries: Some(&surfaces),
+                pane_chrome: None,
                 overlay: None,
             },
             100,
@@ -1110,6 +1178,7 @@ mod tests {
                 active_surface_text: "right active",
                 pane_surfaces: None,
                 pane_surface_summaries: None,
+                pane_chrome: None,
                 overlay: Some(&TuiOverlay {
                     title: "sessions".to_owned(),
                     selected: None,
@@ -1131,5 +1200,40 @@ mod tests {
 
         assert!(frame.text.contains("sessions active"), "{:?}", frame.text);
         assert!(frame.text.contains("* local"), "{:?}", frame.text);
+    }
+
+    #[test]
+    fn pane_chrome_labels_modes_and_clips_small_titles() {
+        let workspace = split_workspace();
+        let mut chrome = BTreeMap::new();
+        chrome.insert(
+            workspace.pane_id.clone(),
+            PaneChromeState {
+                read_only: true,
+                scrollback: true,
+            },
+        );
+
+        let frame = render_workspace_frame(
+            WorkspaceFrameInput {
+                workspace: &workspace,
+                active_surface_text: "active",
+                pane_surfaces: None,
+                pane_surface_summaries: None,
+                pane_chrome: Some(&chrome),
+                overlay: None,
+            },
+            72,
+            12,
+        );
+
+        assert!(frame.text.contains("scroll"), "{:?}", frame.text);
+        assert!(frame.text.contains("ro"), "{:?}", frame.text);
+        for line in frame.text.lines() {
+            assert!(
+                line.chars().count() <= 72,
+                "pane labels must stay within the frame: {line:?}"
+            );
+        }
     }
 }
