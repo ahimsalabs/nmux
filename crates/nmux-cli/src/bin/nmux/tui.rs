@@ -31,6 +31,7 @@ pub struct TuiOverlayLine {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverlayAction {
     SwitchTab(String),
+    SwitchSession(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1203,7 +1203,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 &current_workspace,
                                                 &surface_state.current_surface_metadata,
                                                 &mut surface_state.current_surface_text,
-                                                redraw_state.as_mut(),
+                                                &mut redraw_state,
                                                 use_styled,
                                             )?;
                                         }
@@ -1315,11 +1315,29 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                         flush_stdout()?;
                                                     }
                                                 } else {
+                                                    let session_inventory =
+                                                        if action == tui::MenuAction::Sessions {
+                                                            Some(fetch_session_inventory(args)?)
+                                                        } else {
+                                                            None
+                                                        };
                                                     active_overlay = Some(menu_overlay_for_action(
                                                         action,
                                                         &current_workspace,
                                                         &surface_state,
                                                     ));
+                                                    if let Some(inventory) =
+                                                        session_inventory.as_ref()
+                                                    {
+                                                        active_overlay = Some(
+                                                            menu_overlay_for_action_with_session_inventory(
+                                                                action,
+                                                                &current_workspace,
+                                                                &surface_state,
+                                                                Some(inventory),
+                                                            ),
+                                                        );
+                                                    }
                                                     if args.redraw && !args.output_json {
                                                         print_live_surface_with_overlay(
                                                             &current_workspace,
@@ -1368,6 +1386,40 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                         .current_pane_surfaces,
                                                                 ),
                                                             );
+                                                            flush_stdout()?;
+                                                        }
+                                                    }
+                                                    tui::OverlayAction::SwitchSession(
+                                                        session_id,
+                                                    ) => {
+                                                        active_overlay = None;
+                                                        if session_id
+                                                            != current_workspace.session_id
+                                                        {
+                                                            let switched = switch_live_session(
+                                                                args,
+                                                                &options,
+                                                                &mut client_state,
+                                                                &mut speculative_echo,
+                                                                &mut host_mouse_modes,
+                                                                &mut client_inventory,
+                                                                &mut recorder,
+                                                                socket_scope,
+                                                                &session_id,
+                                                                setup_read_timeout,
+                                                                live_socket_read_timeout,
+                                                                &mut redraw_state,
+                                                                use_styled,
+                                                            )?;
+                                                            stream = switched.stream;
+                                                            client_sequence =
+                                                                switched.client_sequence;
+                                                            attached_pane_id =
+                                                                switched.attached_pane_id;
+                                                            current_workspace =
+                                                                switched.workspace;
+                                                            surface_state =
+                                                                switched.surface_state;
                                                             flush_stdout()?;
                                                         }
                                                     }
@@ -1488,7 +1540,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     &current_workspace,
                     &surface_state.current_surface_metadata,
                     &mut surface_state.current_surface_text,
-                    redraw_state.as_mut(),
+                    &mut redraw_state,
                     use_styled,
                 )?;
             }
@@ -1676,6 +1728,14 @@ struct LiveSurfaceState {
     current_pane_surfaces: BTreeMap<String, String>,
     current_pane_modes: BTreeMap<String, local::TerminalModeSummary>,
     scrollback_views: BTreeMap<String, LiveScrollbackView>,
+}
+
+struct LiveSessionSwitch {
+    stream: UnixStream,
+    client_sequence: local::ClientFrameSequence,
+    attached_pane_id: String,
+    workspace: local::WorkspaceSummary,
+    surface_state: LiveSurfaceState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2245,7 +2305,7 @@ fn repaint_speculative_echo(
     workspace: &local::WorkspaceSummary,
     metadata: &local::TerminalMetadataSummary,
     current_surface_text: &mut String,
-    redraw_state: Option<&mut RedrawState>,
+    redraw_state: &mut Option<RedrawState>,
     use_styled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !enabled {
@@ -2881,14 +2941,38 @@ fn menu_overlay_for_action(
     workspace: &local::WorkspaceSummary,
     surface_state: &LiveSurfaceState,
 ) -> tui::TuiOverlay {
+    menu_overlay_for_action_with_session_inventory(action, workspace, surface_state, None)
+}
+
+fn menu_overlay_for_action_with_session_inventory(
+    action: tui::MenuAction,
+    workspace: &local::WorkspaceSummary,
+    surface_state: &LiveSurfaceState,
+    session_inventory: Option<&local::SessionInventorySummary>,
+) -> tui::TuiOverlay {
     let (title, lines) = match action {
-        tui::MenuAction::Sessions => ("sessions".to_owned(), session_overlay_lines(workspace)),
+        tui::MenuAction::Sessions => (
+            "sessions".to_owned(),
+            session_overlay_lines(workspace, session_inventory),
+        ),
         tui::MenuAction::NewSession => (
             "new session".to_owned(),
             vec![overlay_text("new named session")],
         ),
         tui::MenuAction::Windows => {
             let mut lines = vec![overlay_text(format!("tab {}", workspace.tab_id))];
+            for tab in workspace_tabs(workspace) {
+                let marker = if tab.tab_id == workspace.tab_id {
+                    "*"
+                } else {
+                    " "
+                };
+                lines.push(tui::TuiOverlayLine {
+                    text: format!("{marker} {} {}", tab.tab_id, tab.title),
+                    action: (tab.tab_id != workspace.tab_id)
+                        .then(|| tui::OverlayAction::SwitchTab(tab.tab_id)),
+                });
+            }
             for pane in workspace_panes(workspace) {
                 let marker = if pane.pane_id == workspace.pane_id {
                     "*"
@@ -2921,17 +3005,24 @@ fn overlay_text(text: impl Into<String>) -> tui::TuiOverlayLine {
     }
 }
 
-fn session_overlay_lines(workspace: &local::WorkspaceSummary) -> Vec<tui::TuiOverlayLine> {
-    let mut lines = vec![overlay_text(format!("session {}", workspace.session_id))];
-    for tab in workspace_tabs(workspace) {
-        let marker = if tab.tab_id == workspace.tab_id {
+fn session_overlay_lines(
+    workspace: &local::WorkspaceSummary,
+    session_inventory: Option<&local::SessionInventorySummary>,
+) -> Vec<tui::TuiOverlayLine> {
+    let Some(inventory) = session_inventory else {
+        return vec![overlay_text(format!("session {}", workspace.session_id))];
+    };
+    let mut lines = Vec::new();
+    for session in &inventory.sessions {
+        let marker = if session.session_id == workspace.session_id {
             "*"
         } else {
             " "
         };
         lines.push(tui::TuiOverlayLine {
-            text: format!("{marker} {} {}", tab.tab_id, tab.title),
-            action: Some(tui::OverlayAction::SwitchTab(tab.tab_id)),
+            text: format!("{marker} {} {}", session.session_id, session.title),
+            action: (session.session_id != workspace.session_id)
+                .then(|| tui::OverlayAction::SwitchSession(session.session_id.clone())),
         });
     }
     lines
@@ -3013,6 +3104,140 @@ fn run_live_tab_switch_menu_command(
     };
     let stream = connect_to_daemon(args)?;
     local::run_control_command_on_stream(stream, command)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn switch_live_session(
+    args: &Args,
+    options: &local::AttachOptions,
+    client_state: &mut local::ClientAttachState,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    session_id: &str,
+    setup_read_timeout: Duration,
+    live_socket_read_timeout: Duration,
+    redraw_state: &mut Option<RedrawState>,
+    use_styled: bool,
+) -> Result<LiveSessionSwitch, Box<dyn std::error::Error>> {
+    let mut stream = connect_to_daemon(args)?;
+    stream.set_read_timeout(Some(setup_read_timeout))?;
+    let mut switch_options = options.clone();
+    switch_options.target_session_id = Some(session_id.to_owned());
+    switch_options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
+    switch_options.known_scrollback_versions =
+        client_state.known_scrollback_versions_for_scope(socket_scope);
+    local::write_attach_request_for_session(
+        &mut stream,
+        &switch_options.request,
+        Some(session_id),
+    )?;
+    let snapshot = local::attach_from_stream(&mut stream)?;
+    let attached_pane_id = snapshot.status.pane_id.clone();
+    client_state.apply_scope(socket_scope);
+    let mut rendered = client_state.render_attach(snapshot)?;
+    if use_styled && rendered.surface_text.is_some() {
+        rendered.surface_text = client_state.cached_surface_text_styled(&attached_pane_id, true);
+    }
+    if rendered.surface_text.is_none() {
+        rendered.surface_text =
+            client_state.cached_surface_text_styled(&attached_pane_id, use_styled);
+        if let Some(surface) = client_state.cached_surface_summary(&attached_pane_id) {
+            rendered.surface_kind = surface.surface_kind;
+            rendered.cursor = surface.cursor;
+            rendered.modes = surface.modes;
+        }
+        rendered.surface_metadata = client_state
+            .cached_surface_metadata(&attached_pane_id)
+            .unwrap_or_default();
+    }
+
+    let workspace = rendered.workspace.clone();
+    let initial_surface_text = rendered
+        .surface_text
+        .clone()
+        .unwrap_or_else(|| workspace.display_line());
+    let mut pane_surfaces = BTreeMap::new();
+    pane_surfaces.insert(attached_pane_id.clone(), initial_surface_text.clone());
+    seed_cached_pane_surfaces(&mut pane_surfaces, &workspace, client_state, use_styled);
+    let mut pane_modes = BTreeMap::new();
+    pane_modes.insert(attached_pane_id.clone(), rendered.modes);
+    seed_cached_pane_modes(&mut pane_modes, &workspace, client_state);
+    let mut surface_state = LiveSurfaceState {
+        current_surface_metadata: rendered.surface_metadata.clone(),
+        current_modes: rendered.modes,
+        current_surface_text: initial_surface_text,
+        current_pane_surfaces: pane_surfaces,
+        current_pane_modes: pane_modes,
+        scrollback_views: BTreeMap::new(),
+    };
+
+    let mut client_sequence = local::ClientFrameSequence::default();
+    let (scrollback, pending_surface_updates, pending_live_reads) = initial_live_scrollback(
+        args,
+        &mut stream,
+        &mut client_sequence,
+        &attached_pane_id,
+        client_state,
+        socket_scope,
+    )?;
+    for pending in pending_live_reads {
+        match pending {
+            local::LiveSurfaceRead::ClientInventorySnapshot(snapshot) => {
+                client_inventory.apply_snapshot(snapshot);
+            }
+            local::LiveSurfaceRead::ClientInventoryPatch(patch) => {
+                let _ = client_inventory.apply_patch(patch);
+            }
+            _ => {}
+        }
+    }
+    if let Some(scrollback) = scrollback.as_ref() {
+        client_state.cache_scrollback_chunk(scrollback);
+    }
+    if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+        mouse_modes.sync(surface_state.current_modes)?;
+    }
+    if args.output_json {
+        let mut rendered = rendered;
+        rendered.scrollback = scrollback;
+        let event = format_live_attach_json(&rendered);
+        recorder.record(&event)?;
+        println!("{event}");
+    } else {
+        print_live_rendered(
+            rendered,
+            args.redraw,
+            scrollback,
+            redraw_state.as_mut(),
+            Some(&surface_state.current_pane_surfaces),
+        );
+    }
+    recorder.record(&format_live_workspace_json(&workspace))?;
+    for update in pending_surface_updates {
+        process_surface_update(
+            &update,
+            &mut surface_state,
+            speculative_echo,
+            client_state,
+            host_mouse_modes,
+            redraw_state,
+            recorder,
+            &workspace,
+            args,
+            use_styled,
+        )?;
+    }
+    stream.set_read_timeout(Some(live_socket_read_timeout))?;
+    Ok(LiveSessionSwitch {
+        stream,
+        client_sequence,
+        attached_pane_id,
+        workspace,
+        surface_state,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7141,12 +7366,13 @@ mod tests {
         host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
         live_mouse_dispatch_for_workspace_size, live_session_new_should_fallback,
         live_update_print_kind,
-        managed_ready_error_message, menu_overlay_for_action, parse_detach_key,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
+        managed_ready_error_message, menu_overlay_for_action,
+        menu_overlay_for_action_with_session_inventory, parse_detach_key, parse_env_assignment,
+        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
+        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, preprocess_args,
+        raw_terminal_fixup_termios, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        redraw_text_with_context, redraw_workspace_surface_text, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, stdin_byte_forwards,
         terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
@@ -9779,7 +10005,7 @@ mod tests {
     }
 
     #[test]
-    fn live_mouse_sessions_overlay_click_switches_tab() {
+    fn live_mouse_sessions_overlay_click_switches_session() {
         let root = local::WorkspacePaneSummary {
             pane_id: "pane-1".to_owned(),
             cols: 20,
@@ -9834,14 +10060,48 @@ mod tests {
             overlay
                 .lines
                 .iter()
-                .any(|line| line.text.contains("tab-2 work")
-                    && line.action == Some(tui::OverlayAction::SwitchTab("tab-2".to_owned())))
+                .any(|line| line.text.contains("session local"))
+        );
+
+        let inventory = local::SessionInventorySummary {
+            active_session_id: "local".to_owned(),
+            sessions: vec![
+                local::SessionInventoryItemSummary {
+                    session_id: "local".to_owned(),
+                    title: "main".to_owned(),
+                },
+                local::SessionInventoryItemSummary {
+                    session_id: "work".to_owned(),
+                    title: "Work".to_owned(),
+                },
+            ],
+        };
+        let overlay = menu_overlay_for_action_with_session_inventory(
+            tui::MenuAction::Sessions,
+            &workspace,
+            &LiveSurfaceState {
+                current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_modes: local::TerminalModeSummary::default(),
+                current_surface_text: String::new(),
+                current_pane_surfaces: BTreeMap::new(),
+                current_pane_modes: BTreeMap::new(),
+                scrollback_views: BTreeMap::new(),
+            },
+            Some(&inventory),
+        );
+        assert!(
+            overlay
+                .lines
+                .iter()
+                .any(|line| line.text.contains("work Work")
+                    && line.action
+                        == Some(tui::OverlayAction::SwitchSession("work".to_owned())))
         );
 
         assert_eq!(
             live_mouse_dispatch_for_workspace_size(
                 SgrMouseInput {
-                    row: 11,
+                    row: 10,
                     col: 39,
                     button: protocol::MouseButton::Left,
                     action: protocol::MouseAction::Press,
@@ -9856,8 +10116,8 @@ mod tests {
                 80,
                 24,
             ),
-            Some(LiveMouseDispatch::Overlay(tui::OverlayAction::SwitchTab(
-                "tab-2".to_owned()
+            Some(LiveMouseDispatch::Overlay(tui::OverlayAction::SwitchSession(
+                "work".to_owned()
             )))
         );
     }
