@@ -1072,6 +1072,94 @@ fn scriptable_cli_splits_panes_and_manages_tabs() {
 }
 
 #[test]
+fn scriptable_named_session_panes_inherit_session_environment() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--command",
+            "printf 'ready:%s:%s\\n' \"$NMUX_SESSION_ID\" \"$NMUX_PANE_ID\"; cat >/dev/null",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+
+    wait_for_socket(&socket_path);
+
+    let split = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--json",
+            "pane",
+            "split",
+            "vertical",
+            "pane-1",
+        ])
+        .output()
+        .expect("run nmux pane split");
+    assert!(
+        split.status.success(),
+        "nmux pane split failed: {}",
+        String::from_utf8_lossy(&split.stderr)
+    );
+
+    let tab_new = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--json",
+            "tab",
+            "new",
+            "tab-script",
+        ])
+        .output()
+        .expect("run nmux tab new");
+    assert!(
+        tab_new.status.success(),
+        "nmux tab new failed: {}",
+        String::from_utf8_lossy(&tab_new.stderr)
+    );
+    thread::sleep(Duration::from_millis(100));
+
+    let attach = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--json",
+        ])
+        .output()
+        .expect("run nmux attach");
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        attach.status.success(),
+        "nmux attach failed: {}",
+        String::from_utf8_lossy(&attach.stderr)
+    );
+    let attach_stdout = String::from_utf8_lossy(&attach.stdout);
+    assert!(
+        attach_stdout.contains("\"session_id\":\"work\"")
+            && attach_stdout.contains("\"pane_id\":\"tab-script-pane-1\"")
+            && attach_stdout.contains("ready:work:tab-script-pane-1"),
+        "runtime-created panes should inherit the named session:\n{attach_stdout}"
+    );
+}
+
+#[test]
 fn tcp_transport_can_attach_with_positional_remote_and_token_env() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
     let addr = listener.local_addr().expect("tcp addr").to_string();

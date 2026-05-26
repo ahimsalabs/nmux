@@ -241,7 +241,7 @@ fn apply_pane_split_command(
         .ok_or_else(|| ControlCommandError::pane_not_found(&target_pane_id))?
         .clone();
     let new_pane_id = next_pane_id(session);
-    let new_host = host_with_pane_environment(template, &new_pane_id);
+    let new_host = host_with_pane_environment(template, &session.id, &new_pane_id);
     host.start_pane(&new_pane_id, &new_host)
         .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(new_pane_id.clone())))?;
     if !session.split_pane(
@@ -286,7 +286,7 @@ fn apply_pane_split_command_with_session_actor(
         .ok_or_else(|| ControlCommandError::pane_not_found(&target_pane_id))?
         .clone();
     let new_pane_id = next_pane_id(session);
-    let new_host = host_with_pane_environment(template, &new_pane_id);
+    let new_host = host_with_pane_environment(template, &session.id, &new_pane_id);
     host.start_pane(&new_pane_id, &new_host)
         .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(new_pane_id.clone())))?;
     if !enqueue_control_session_event(
@@ -333,7 +333,7 @@ fn apply_tab_new_command(
     }
     let pane_id = format!("{tab_id}-pane-1");
     let title = command.title.clone().unwrap_or_else(|| tab_id.clone());
-    let new_host = host_with_pane_environment(template, &pane_id);
+    let new_host = host_with_pane_environment(template, &session.id, &pane_id);
     host.start_pane(&pane_id, &new_host)
         .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(pane_id.clone())))?;
     if !session.add_tab(tab_id.clone(), title, pane_id.clone(), new_host)
@@ -374,7 +374,7 @@ fn apply_tab_new_command_with_session_actor(
     }
     let pane_id = format!("{tab_id}-pane-1");
     let title = command.title.clone().unwrap_or_else(|| tab_id.clone());
-    let new_host = host_with_pane_environment(template, &pane_id);
+    let new_host = host_with_pane_environment(template, &session.id, &pane_id);
     host.start_pane(&pane_id, &new_host)
         .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(pane_id.clone())))?;
     let added = enqueue_control_session_event(
@@ -573,7 +573,7 @@ fn next_tab_id(session: &Session) -> String {
     }
 }
 
-fn host_with_pane_environment(mut host: HostSpec, pane_id: &str) -> HostSpec {
+fn host_with_pane_environment(mut host: HostSpec, session_id: &str, pane_id: &str) -> HostSpec {
     let socket = host
         .command
         .env
@@ -596,7 +596,7 @@ fn host_with_pane_environment(mut host: HostSpec, pane_id: &str) -> HostSpec {
     });
     host.command.env.extend([
         ("NMUX".to_owned(), "1".to_owned()),
-        ("NMUX_SESSION_ID".to_owned(), "local".to_owned()),
+        ("NMUX_SESSION_ID".to_owned(), session_id.to_owned()),
         ("NMUX_PANE_ID".to_owned(), pane_id.to_owned()),
         ("NMUX_SOCKET".to_owned(), socket),
         ("NMUX_ORIGIN".to_owned(), previous_origin),
