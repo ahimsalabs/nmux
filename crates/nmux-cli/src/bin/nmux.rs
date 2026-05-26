@@ -720,6 +720,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
     let socket_scope = local::socket_identity(&args.socket_path).ok();
     let live_poll_timeout = Duration::from_millis(args.interval_ms);
+    let live_socket_read_timeout = live_poll_timeout;
+    let post_input_stream_grace = live_poll_timeout.min(Duration::from_millis(2));
     let setup_read_timeout = connect_timeout_duration(args)
         .unwrap_or_else(|| Duration::from_millis(DEFAULT_MANAGED_STARTUP_TIMEOUT_MS));
     if let Err(err) = stream.set_read_timeout(Some(setup_read_timeout)) {
@@ -732,7 +734,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     let stdin_bytes = if args.stdin_bytes {
-        Some(spawn_stdin_byte_reader())
+        Some(spawn_stdin_byte_reader()?)
     } else {
         None
     };
@@ -891,8 +893,19 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         )?;
         apply_frontend_workspace_size(&mut current_workspace, cols, rows);
         recorder.record(&format_live_workspace_json(&current_workspace))?;
-        let _ = stream.set_read_timeout(Some(live_poll_timeout));
+        let _ = stream.set_read_timeout(Some(live_socket_read_timeout));
         loop {
+            if let Some(reader) = stdin_bytes.as_ref() {
+                match poll_live_stream_or_stdin(
+                    &stream,
+                    reader.wake_reader(),
+                    live_poll_timeout,
+                    false,
+                )? {
+                    LiveLoopReadiness::Stdin | LiveLoopReadiness::Timeout => break,
+                    LiveLoopReadiness::Stream => {}
+                }
+            }
             match local::read_live_surface_update_from_stream(&mut stream)? {
                 local::LiveSurfaceRead::Workspace(workspace) => {
                     current_workspace = workspace;
@@ -995,7 +1008,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             use_styled,
         )?;
     }
-    if let Err(err) = stream.set_read_timeout(Some(live_poll_timeout)) {
+    if let Err(err) = stream.set_read_timeout(Some(live_socket_read_timeout)) {
         report_live_setup_error(args, &err)?;
         return Err(err.into());
     }
@@ -1015,6 +1028,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             tracker.maybe_send_ping(&mut stream, &mut client_sequence)?;
         }
 
+        let mut sent_stdin_bytes_this_cycle = false;
+        let mut read_after_stdin_bytes_this_cycle = false;
         if options.request.mode == AttachMode::ReadWrite {
             if let Some((cols, rows)) = args.live_resize {
                 if !sent_explicit_live_resize {
@@ -1062,12 +1077,20 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
-                            local::send_raw_input_with_sequence(
-                                &mut stream,
-                                &mut client_sequence,
-                                &attached_pane_id,
-                                &input,
-                            )?;
+                            let input_span = tracing::trace_span!(
+                                "live.stdin_bytes.forward_input",
+                                bytes = input.len(),
+                                pane_id = %attached_pane_id
+                            );
+                            input_span.in_scope(|| {
+                                local::send_raw_input_with_sequence(
+                                    &mut stream,
+                                    &mut client_sequence,
+                                    &attached_pane_id,
+                                    &input,
+                                )
+                            })?;
+                            sent_stdin_bytes_this_cycle = true;
                         }
                         detach_requested = detach;
                         None
@@ -1168,7 +1191,41 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         loop {
-            match local::read_live_surface_update_from_stream(&mut stream)? {
+            if let Some(reader) = stdin_bytes.as_ref()
+                && (!sent_stdin_bytes_this_cycle || read_after_stdin_bytes_this_cycle)
+            {
+                let timeout = if sent_stdin_bytes_this_cycle {
+                    post_input_stream_grace
+                } else {
+                    live_poll_timeout
+                };
+                let readiness = {
+                    let poll_span = tracing::trace_span!(
+                        "live.client.poll_stream_or_stdin",
+                        timeout_ms = timeout.as_millis() as u64
+                    );
+                    poll_span.in_scope(|| {
+                        poll_live_stream_or_stdin(
+                            &stream,
+                            reader.wake_reader(),
+                            timeout,
+                            sent_stdin_bytes_this_cycle,
+                        )
+                    })?
+                };
+                match readiness {
+                    LiveLoopReadiness::Stdin | LiveLoopReadiness::Timeout => break,
+                    LiveLoopReadiness::Stream => {}
+                }
+            }
+            let read = {
+                let read_span = tracing::trace_span!("live.client.read_surface_update");
+                read_span.in_scope(|| local::read_live_surface_update_from_stream(&mut stream))?
+            };
+            if sent_stdin_bytes_this_cycle && !matches!(read, local::LiveSurfaceRead::NoFrame) {
+                read_after_stdin_bytes_this_cycle = true;
+            }
+            match read {
                 local::LiveSurfaceRead::Workspace(workspace) => {
                     current_workspace = workspace;
                     let event = format_live_workspace_json(&current_workspace);
@@ -2003,8 +2060,30 @@ fn spawn_stdin_line_reader() -> mpsc::Receiver<StdinLineRead> {
     rx
 }
 
-fn spawn_stdin_byte_reader() -> mpsc::Receiver<StdinByteRead> {
+struct StdinByteReader {
+    rx: mpsc::Receiver<StdinByteRead>,
+    wake_reader: UnixStream,
+}
+
+impl StdinByteReader {
+    fn try_recv(&self) -> Result<StdinByteRead, TryRecvError> {
+        let result = self.rx.try_recv();
+        if !matches!(result, Err(TryRecvError::Empty)) {
+            let _ = drain_stdin_wake_reader(&self.wake_reader);
+        }
+        result
+    }
+
+    fn wake_reader(&self) -> &UnixStream {
+        &self.wake_reader
+    }
+}
+
+fn spawn_stdin_byte_reader() -> io::Result<StdinByteReader> {
     let (tx, rx) = mpsc::channel();
+    let (wake_reader, mut wake_writer) = UnixStream::pair()?;
+    wake_reader.set_nonblocking(true)?;
+    wake_writer.set_nonblocking(true)?;
     thread::spawn(move || {
         let mut stdin = io::stdin().lock();
         let mut buffer = [0_u8; 1024];
@@ -2012,6 +2091,7 @@ fn spawn_stdin_byte_reader() -> mpsc::Receiver<StdinByteRead> {
             match stdin.read(&mut buffer) {
                 Ok(0) => {
                     let _ = tx.send(StdinByteRead::Closed);
+                    notify_stdin_wake_reader(&mut wake_writer);
                     break;
                 }
                 Ok(count) => {
@@ -2019,15 +2099,113 @@ fn spawn_stdin_byte_reader() -> mpsc::Receiver<StdinByteRead> {
                     if tx.send(StdinByteRead::Input(input)).is_err() {
                         break;
                     }
+                    notify_stdin_wake_reader(&mut wake_writer);
                 }
                 Err(err) => {
                     let _ = tx.send(StdinByteRead::Error(err.to_string()));
+                    notify_stdin_wake_reader(&mut wake_writer);
                     break;
                 }
             }
         }
     });
-    rx
+    Ok(StdinByteReader { rx, wake_reader })
+}
+
+fn notify_stdin_wake_reader(wake_writer: &mut UnixStream) {
+    match wake_writer.write(&[1]) {
+        Ok(_) => {}
+        Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
+        Err(_) => {}
+    }
+}
+
+fn drain_stdin_wake_reader(wake_reader: &UnixStream) -> io::Result<()> {
+    let mut reader = wake_reader.try_clone()?;
+    let mut buffer = [0_u8; 64];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(_) => {}
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveLoopReadiness {
+    Stream,
+    Stdin,
+    Timeout,
+}
+
+fn poll_live_stream_or_stdin(
+    stream: &UnixStream,
+    stdin_wake_reader: &UnixStream,
+    timeout: Duration,
+    wait_for_stream_on_stdin: bool,
+) -> io::Result<LiveLoopReadiness> {
+    let mut fds = [
+        libc::pollfd {
+            fd: stream.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: stdin_wake_reader.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    loop {
+        let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
+        if ready > 0 {
+            if fds[0].revents != 0 {
+                return Ok(LiveLoopReadiness::Stream);
+            }
+            if fds[1].revents != 0 {
+                if wait_for_stream_on_stdin
+                    && poll_live_stream(stream, timeout)? == LiveLoopReadiness::Stream
+                {
+                    return Ok(LiveLoopReadiness::Stream);
+                }
+                return Ok(LiveLoopReadiness::Stdin);
+            }
+            return Ok(LiveLoopReadiness::Timeout);
+        }
+        if ready == 0 {
+            return Ok(LiveLoopReadiness::Timeout);
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
+            return Err(err);
+        }
+    }
+}
+
+fn poll_live_stream(stream: &UnixStream, timeout: Duration) -> io::Result<LiveLoopReadiness> {
+    let mut fd = libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    loop {
+        let ready = unsafe { libc::poll(&mut fd, 1, timeout_ms) };
+        if ready > 0 {
+            return Ok(LiveLoopReadiness::Stream);
+        }
+        if ready == 0 {
+            return Ok(LiveLoopReadiness::Timeout);
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
+            return Err(err);
+        }
+    }
 }
 
 enum StdinLineRead {
@@ -6814,8 +6992,7 @@ mod tests {
         let status_bar_text =
             redraw_text_with_context(&ws, &metadata, "pane output", None, true, None);
         assert!(
-            !status_bar_text.contains("title=")
-                && !status_bar_text.contains("working-directory="),
+            !status_bar_text.contains("title=") && !status_bar_text.contains("working-directory="),
             "status-bar redraw should not inject metadata rows: {status_bar_text:?}"
         );
         assert!(status_bar_text.contains("pane output"));
