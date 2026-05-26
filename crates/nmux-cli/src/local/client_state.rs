@@ -296,6 +296,13 @@ impl ClientAttachState {
             })
     }
 
+    pub fn cached_rendered_surface_summary(&self, pane_id: &str) -> Option<RenderedSurfaceSummary> {
+        self.surfaces
+            .iter()
+            .find(|surface| surface.pane_id == pane_id)
+            .map(ClientPaneSurface::summary)
+    }
+
     fn cached_current_surface(
         &self,
         pane_id: &str,

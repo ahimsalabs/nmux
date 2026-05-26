@@ -63,6 +63,7 @@ pub struct WorkspaceFrameInput<'a> {
     pub workspace: &'a local::WorkspaceSummary,
     pub active_surface_text: &'a str,
     pub pane_surfaces: Option<&'a BTreeMap<String, String>>,
+    pub pane_surface_summaries: Option<&'a BTreeMap<String, local::RenderedSurfaceSummary>>,
     pub overlay: Option<&'a TuiOverlay>,
 }
 
@@ -137,6 +138,7 @@ pub fn render_workspace_to_buffer(
             input.workspace,
             input.active_surface_text,
             input.pane_surfaces,
+            input.pane_surface_summaries,
             &mut hits,
         );
     } else {
@@ -148,6 +150,9 @@ pub fn render_workspace_to_buffer(
             input.workspace.rows,
             input.workspace.pane_id == input.workspace.pane_id,
             input.active_surface_text,
+            input
+                .pane_surface_summaries
+                .and_then(|surfaces| surfaces.get(&input.workspace.pane_id)),
             &mut hits,
         );
     }
@@ -282,6 +287,7 @@ fn render_pane_node(
     workspace: &local::WorkspaceSummary,
     active_surface_text: &str,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
     hits: &mut Vec<HitRegion>,
 ) {
     if area.width == 0 || area.height == 0 {
@@ -304,6 +310,7 @@ fn render_pane_node(
             pane.rows,
             active,
             body,
+            pane_surface_summaries.and_then(|surfaces| surfaces.get(&pane.pane_id)),
             hits,
         );
         return;
@@ -329,6 +336,7 @@ fn render_pane_node(
                     workspace,
                     active_surface_text,
                     pane_surfaces,
+                    pane_surface_summaries,
                     hits,
                 );
                 x = x.saturating_add(width);
@@ -353,6 +361,7 @@ fn render_pane_node(
                     workspace,
                     active_surface_text,
                     pane_surfaces,
+                    pane_surface_summaries,
                     hits,
                 );
                 y = y.saturating_add(height);
@@ -368,6 +377,7 @@ fn render_pane_node(
                     workspace,
                     active_surface_text,
                     pane_surfaces,
+                    pane_surface_summaries,
                     hits,
                 );
             }
@@ -384,6 +394,7 @@ fn render_leaf_pane(
     _pane_rows: u32,
     active: bool,
     surface_text: &str,
+    surface_summary: Option<&local::RenderedSurfaceSummary>,
     hits: &mut Vec<HitRegion>,
 ) {
     let chrome = area;
@@ -399,6 +410,10 @@ fn render_leaf_pane(
         rect: inner,
         target: HitTarget::PaneContent(pane_id.to_owned()),
     });
+    if let Some(surface) = surface_summary {
+        render_structured_surface(buffer, inner, surface);
+        return;
+    }
     for (offset, line) in surface_text
         .lines()
         .take(usize::from(inner.height))
@@ -414,6 +429,115 @@ fn render_leaf_pane(
             Style::default().fg(Color::White),
         );
     }
+}
+
+fn render_structured_surface(
+    buffer: &mut Buffer,
+    area: Rect,
+    surface: &local::RenderedSurfaceSummary,
+) {
+    for row in &surface.row_updates {
+        let row_offset = row.row.min(u32::from(u16::MAX)) as u16;
+        if row_offset >= area.height {
+            continue;
+        }
+        let y = area.y + row_offset;
+        let mut x = area.x;
+        let runs = if row.runs.is_empty() {
+            None
+        } else {
+            Some(row.runs.as_slice())
+        };
+        if let Some(runs) = runs {
+            for run in runs {
+                x = render_cell_run(buffer, x, y, area, run, &surface.styles);
+                if x >= area.x.saturating_add(area.width) {
+                    break;
+                }
+            }
+        } else {
+            write_text(
+                buffer,
+                area.x,
+                y,
+                area.width,
+                &row.text,
+                Style::default().fg(Color::White),
+            );
+        }
+    }
+}
+
+fn render_cell_run(
+    buffer: &mut Buffer,
+    mut x: u16,
+    y: u16,
+    area: Rect,
+    run: &local::CellRunSummary,
+    styles: &[local::StyleSummary],
+) -> u16 {
+    let max_x = area.x.saturating_add(area.width);
+    let style = run_style(run, styles);
+    for (index, ch) in run.text.chars().enumerate() {
+        if x >= max_x {
+            break;
+        }
+        let width = run.cell_widths.get(index).copied().unwrap_or(1);
+        if width == 0 {
+            continue;
+        }
+        if !ch.is_control() {
+            set_cell(buffer, x, y, &ch.to_string(), style);
+        }
+        x = x.saturating_add(u16::from(width));
+    }
+    x
+}
+
+fn run_style(run: &local::CellRunSummary, styles: &[local::StyleSummary]) -> Style {
+    let Some(style) = styles.get(run.style_id as usize) else {
+        return Style::default().fg(Color::White);
+    };
+    let mut rendered = Style::default();
+    if style.fg_rgba != 0 {
+        rendered = rendered.fg(rgba_color(style.fg_rgba));
+    } else {
+        rendered = rendered.fg(Color::White);
+    }
+    if style.bg_rgba != 0 {
+        rendered = rendered.bg(rgba_color(style.bg_rgba));
+    }
+    let flags = style.flags;
+    if flags & (1 << 0) != 0 {
+        rendered = rendered.add_modifier(Modifier::BOLD);
+    }
+    if flags & (1 << 1) != 0 {
+        rendered = rendered.add_modifier(Modifier::ITALIC);
+    }
+    if flags & (1 << 2) != 0 {
+        rendered = rendered.add_modifier(Modifier::DIM);
+    }
+    if flags & (1 << 3) != 0 {
+        rendered = rendered.add_modifier(Modifier::SLOW_BLINK);
+    }
+    if flags & (1 << 4) != 0 {
+        rendered = rendered.add_modifier(Modifier::REVERSED);
+    }
+    if flags & (1 << 5) != 0 {
+        rendered = rendered.add_modifier(Modifier::HIDDEN);
+    }
+    if flags & (1 << 6) != 0 {
+        rendered = rendered.add_modifier(Modifier::CROSSED_OUT);
+    }
+    if flags & (0x1f << 8) != 0 {
+        rendered = rendered.add_modifier(Modifier::UNDERLINED);
+    }
+    rendered
+}
+
+fn rgba_color(rgba: u32) -> Color {
+    let [red, green, blue, _alpha] = rgba.to_be_bytes();
+    Color::Rgb(red, green, blue)
 }
 
 fn paint_background(buffer: &mut Buffer, area: Rect) {
@@ -701,6 +825,7 @@ mod tests {
                 workspace: &workspace,
                 active_surface_text: "right active",
                 pane_surfaces: Some(&surfaces),
+                pane_surface_summaries: None,
                 overlay: None,
             },
             100,
@@ -737,6 +862,7 @@ mod tests {
                 workspace: &workspace,
                 active_surface_text: "right active",
                 pane_surfaces: None,
+                pane_surface_summaries: None,
                 overlay: None,
             },
             100,
@@ -765,6 +891,7 @@ mod tests {
                 workspace: &workspace,
                 active_surface_text: "\x1b[31mred\x1b[0m \x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\ \x1b_Gignored\x1b\\done",
                 pane_surfaces: None,
+                pane_surface_summaries: None,
                 overlay: None,
             },
             100,
@@ -777,6 +904,61 @@ mod tests {
     }
 
     #[test]
+    fn pane_content_uses_structured_surface_runs_when_available() {
+        let workspace = split_workspace();
+        let mut surfaces = BTreeMap::new();
+        surfaces.insert(
+            "pane-2".to_owned(),
+            local::RenderedSurfaceSummary {
+                pane_id: "pane-2".to_owned(),
+                version: 1,
+                cols: 40,
+                rows: 24,
+                colors: local::TerminalColorSummary::default(),
+                styles: vec![local::StyleSummary {
+                    fg_rgba: 0xff0000ff,
+                    bg_rgba: 0,
+                    underline_rgba: 0,
+                    flags: 1,
+                }],
+                hyperlinks: Vec::new(),
+                row_updates: vec![local::SurfaceRowUpdate {
+                    row: 0,
+                    text: "structured row".to_owned(),
+                    runs: vec![local::CellRunSummary {
+                        text: "structured row".to_owned(),
+                        cell_widths: "structured row".chars().map(|_| 1).collect(),
+                        style_id: 0,
+                        flags: 0,
+                        hyperlink_id: 0,
+                        semantic_content: protocol::CellSemanticContent::Output,
+                    }],
+                    dirty_hash: 0,
+                    row_state_hash: 0,
+                    semantic_prompt: protocol::RowSemanticPrompt::None,
+                    dirty: true,
+                    kitty_virtual_placeholder: false,
+                }],
+            },
+        );
+        let frame = render_workspace_frame(
+            WorkspaceFrameInput {
+                workspace: &workspace,
+                active_surface_text: "\x1b[31mfallback text\x1b[0m",
+                pane_surfaces: None,
+                pane_surface_summaries: Some(&surfaces),
+                overlay: None,
+            },
+            100,
+            20,
+        );
+
+        assert!(frame.text.contains("structured row"), "{:?}", frame.text);
+        assert!(!frame.text.contains("fallback text"));
+        assert!(!frame.text.contains('\x1b'));
+    }
+
+    #[test]
     fn renders_menu_overlay() {
         let workspace = split_workspace();
         let frame = render_workspace_frame(
@@ -784,6 +966,7 @@ mod tests {
                 workspace: &workspace,
                 active_surface_text: "right active",
                 pane_surfaces: None,
+                pane_surface_summaries: None,
                 overlay: Some(&TuiOverlay {
                     title: "sessions".to_owned(),
                     lines: vec![

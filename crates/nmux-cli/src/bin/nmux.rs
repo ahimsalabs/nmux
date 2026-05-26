@@ -940,6 +940,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         &client_state,
         use_styled,
     );
+    let mut initial_pane_surface_summaries = BTreeMap::new();
+    initial_pane_surface_summaries.insert(attached_pane_id.clone(), rendered.surface.clone());
+    seed_cached_pane_surface_summaries(
+        &mut initial_pane_surface_summaries,
+        &current_workspace,
+        &client_state,
+    );
     let mut initial_pane_modes = BTreeMap::new();
     initial_pane_modes.insert(attached_pane_id.clone(), rendered.modes);
     seed_cached_pane_modes(&mut initial_pane_modes, &current_workspace, &client_state);
@@ -948,6 +955,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         current_modes: rendered.modes,
         current_surface_text: initial_surface_text,
         current_pane_surfaces: initial_pane_surfaces,
+        current_pane_surface_summaries: initial_pane_surface_summaries,
         current_pane_modes: initial_pane_modes,
         scrollback_views: BTreeMap::new(),
     };
@@ -1022,6 +1030,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     surface_state
                         .current_pane_surfaces
                         .insert(update.pane_id.clone(), update_surface_text.clone());
+                    if let Some(summary) =
+                        client_state.cached_rendered_surface_summary(&update.pane_id)
+                    {
+                        surface_state
+                            .current_pane_surface_summaries
+                            .insert(update.pane_id.clone(), summary);
+                    }
                     surface_state
                         .current_pane_modes
                         .insert(update.pane_id.clone(), update.modes);
@@ -1094,6 +1109,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             scrollback,
             redraw_state.as_mut(),
             Some(&surface_state.current_pane_surfaces),
+            Some(&surface_state.current_pane_surface_summaries),
         );
     }
     flush_stdout()?;
@@ -1170,6 +1186,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         args.redraw,
                         redraw_state.as_mut(),
                         Some(&surface_state.current_pane_surfaces),
+                        Some(&surface_state.current_pane_surface_summaries),
                         active_overlay.as_ref(),
                     );
                 } else {
@@ -1318,6 +1335,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                 &surface_state
                                                                     .current_pane_surfaces,
                                                             ),
+                                                            Some(
+                                                                &surface_state
+                                                                    .current_pane_surface_summaries,
+                                                            ),
                                                         );
                                                         flush_stdout()?;
                                                     }
@@ -1356,6 +1377,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                 &surface_state
                                                                     .current_pane_surfaces,
                                                             ),
+                                                            Some(
+                                                                &surface_state
+                                                                    .current_pane_surface_summaries,
+                                                            ),
                                                             active_overlay.as_ref(),
                                                         );
                                                         flush_stdout()?;
@@ -1391,6 +1416,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                 Some(
                                                                     &surface_state
                                                                         .current_pane_surfaces,
+                                                                ),
+                                                                Some(
+                                                                    &surface_state
+                                                                        .current_pane_surface_summaries,
                                                                 ),
                                                             );
                                                             flush_stdout()?;
@@ -1442,6 +1471,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                         args.redraw,
                                                         redraw_state.as_mut(),
                                                         Some(&surface_state.current_pane_surfaces),
+                                                        Some(
+                                                            &surface_state
+                                                                .current_pane_surface_summaries,
+                                                        ),
                                                     );
                                                     flush_stdout()?;
                                                 }
@@ -1602,6 +1635,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             args.redraw,
                             redraw_state.as_mut(),
                             Some(&surface_state.current_pane_surfaces),
+                            Some(&surface_state.current_pane_surface_summaries),
                             active_overlay.as_ref(),
                         );
                     } else {
@@ -1628,6 +1662,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             args.redraw,
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
+                            Some(&surface_state.current_pane_surface_summaries),
                             active_overlay.as_ref(),
                         );
                         flush_stdout()?;
@@ -1645,6 +1680,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             args.redraw,
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
+                            Some(&surface_state.current_pane_surface_summaries),
                             active_overlay.as_ref(),
                         );
                         flush_stdout()?;
@@ -1663,6 +1699,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                 args.redraw,
                                 Some(state),
                                 Some(&surface_state.current_pane_surfaces),
+                                Some(&surface_state.current_pane_surface_summaries),
                                 active_overlay.as_ref(),
                             );
                             flush_stdout()?;
@@ -1731,6 +1768,7 @@ struct LiveSurfaceState {
     current_modes: local::TerminalModeSummary,
     current_surface_text: String,
     current_pane_surfaces: BTreeMap<String, String>,
+    current_pane_surface_summaries: BTreeMap<String, local::RenderedSurfaceSummary>,
     current_pane_modes: BTreeMap<String, local::TerminalModeSummary>,
     scrollback_views: BTreeMap<String, LiveScrollbackView>,
 }
@@ -1778,6 +1816,11 @@ fn process_surface_update(
     state
         .current_pane_surfaces
         .insert(update.pane_id.clone(), update_surface_text.clone());
+    if let Some(summary) = client_state.cached_rendered_surface_summary(&update.pane_id) {
+        state
+            .current_pane_surface_summaries
+            .insert(update.pane_id.clone(), summary);
+    }
     state
         .current_pane_modes
         .insert(update.pane_id.clone(), update.modes);
@@ -1820,6 +1863,7 @@ fn process_surface_update(
             args.redraw,
             redraw_state.as_mut(),
             Some(&state.current_pane_surfaces),
+            Some(&state.current_pane_surface_summaries),
         );
     }
     flush_stdout()?;
@@ -2333,6 +2377,7 @@ fn repaint_speculative_echo(
                     true,
                     Some(state),
                     None,
+                    None,
                 );
             } else if let Some(prediction) = prediction.as_ref()
                 && let Some(text) = state.render_speculative_append_text(
@@ -2350,11 +2395,20 @@ fn repaint_speculative_echo(
                     true,
                     Some(state),
                     None,
+                    None,
                 );
             }
         }
         None => {
-            print_live_surface(workspace, metadata, current_surface_text, true, None, None);
+            print_live_surface(
+                workspace,
+                metadata,
+                current_surface_text,
+                true,
+                None,
+                None,
+                None,
+            );
         }
     }
     flush_stdout()?;
@@ -2870,6 +2924,7 @@ fn live_mouse_dispatch_for_workspace_size(
             workspace,
             active_surface_text,
             pane_surfaces,
+            pane_surface_summaries: None,
             overlay,
         },
         cols.max(1),
@@ -3176,6 +3231,9 @@ fn switch_live_session(
     let mut pane_surfaces = BTreeMap::new();
     pane_surfaces.insert(attached_pane_id.clone(), initial_surface_text.clone());
     seed_cached_pane_surfaces(&mut pane_surfaces, &workspace, client_state, use_styled);
+    let mut pane_surface_summaries = BTreeMap::new();
+    pane_surface_summaries.insert(attached_pane_id.clone(), rendered.surface.clone());
+    seed_cached_pane_surface_summaries(&mut pane_surface_summaries, &workspace, client_state);
     let mut pane_modes = BTreeMap::new();
     pane_modes.insert(attached_pane_id.clone(), rendered.modes);
     seed_cached_pane_modes(&mut pane_modes, &workspace, client_state);
@@ -3184,6 +3242,7 @@ fn switch_live_session(
         current_modes: rendered.modes,
         current_surface_text: initial_surface_text,
         current_pane_surfaces: pane_surfaces,
+        current_pane_surface_summaries: pane_surface_summaries,
         current_pane_modes: pane_modes,
         scrollback_views: BTreeMap::new(),
     };
@@ -3227,6 +3286,7 @@ fn switch_live_session(
             scrollback,
             redraw_state.as_mut(),
             Some(&surface_state.current_pane_surfaces),
+            Some(&surface_state.current_pane_surface_summaries),
         );
     }
     recorder.record(&format_live_workspace_json(&workspace))?;
@@ -3300,6 +3360,7 @@ fn scroll_live_pane_view(
                     args.redraw,
                     redraw_state.as_deref_mut(),
                     Some(&surface_state.current_pane_surfaces),
+                    Some(&surface_state.current_pane_surface_summaries),
                 );
                 return Ok(true);
             }
@@ -3353,6 +3414,11 @@ fn scroll_live_pane_view(
         surface_state
             .current_pane_surfaces
             .insert(update.pane_id.clone(), update_surface_text.clone());
+        if let Some(summary) = client_state.cached_rendered_surface_summary(&update.pane_id) {
+            surface_state
+                .current_pane_surface_summaries
+                .insert(update.pane_id.clone(), summary);
+        }
         surface_state
             .current_pane_modes
             .insert(update.pane_id.clone(), update.modes);
@@ -3384,6 +3450,7 @@ fn scroll_live_pane_view(
     surface_state
         .current_pane_surfaces
         .insert(pane_id.to_owned(), rendered.clone());
+    surface_state.current_pane_surface_summaries.remove(pane_id);
     if pane_id == workspace.pane_id {
         surface_state.current_surface_text = rendered;
     }
@@ -3402,6 +3469,7 @@ fn scroll_live_pane_view(
         args.redraw,
         redraw_state.as_deref_mut(),
         Some(&surface_state.current_pane_surfaces),
+        Some(&surface_state.current_pane_surface_summaries),
     );
     Ok(true)
 }
@@ -3429,6 +3497,11 @@ fn restore_live_pane_surface(
     surface_state
         .current_pane_surfaces
         .insert(pane_id.to_owned(), surface_text.clone());
+    if let Some(summary) = client_state.cached_rendered_surface_summary(pane_id) {
+        surface_state
+            .current_pane_surface_summaries
+            .insert(pane_id.to_owned(), summary);
+    }
     if pane_id == workspace.pane_id {
         surface_state.current_surface_text = surface_text;
     }
@@ -3457,6 +3530,11 @@ fn switch_live_surface_to_workspace_pane(
     surface_state
         .current_pane_surfaces
         .insert(pane_id.clone(), surface_text.clone());
+    if let Some(summary) = client_state.cached_rendered_surface_summary(pane_id) {
+        surface_state
+            .current_pane_surface_summaries
+            .insert(pane_id.clone(), summary);
+    }
     surface_state.scrollback_views.remove(pane_id);
     surface_state.current_surface_text = surface_text;
     surface_state.current_surface_metadata = client_state
@@ -3521,6 +3599,7 @@ fn focus_live_client_pane(
             args.redraw,
             redraw_state,
             Some(&surface_state.current_pane_surfaces),
+            Some(&surface_state.current_pane_surface_summaries),
         );
     } else {
         println!("{}", workspace.display_line());
@@ -4005,13 +4084,20 @@ fn print_live_rendered(
     initial_scrollback: Option<local::ScrollbackChunkSummary>,
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
 ) {
     if redraw {
         let surface_text = rendered
             .surface_text
             .unwrap_or_else(|| rendered.workspace.display_line());
         if let Some(state) = redraw_state {
-            if state.render_workspace(&rendered.workspace, &surface_text, pane_surfaces, None) {
+            if state.render_workspace(
+                &rendered.workspace,
+                &surface_text,
+                pane_surfaces,
+                pane_surface_summaries,
+                None,
+            ) {
                 return;
             }
             let redraw_text = redraw_text_with_context(
@@ -4052,6 +4138,7 @@ fn print_live_surface(
     redraw: bool,
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
 ) {
     print_live_surface_with_overlay(
         workspace,
@@ -4060,6 +4147,7 @@ fn print_live_surface(
         redraw,
         redraw_state,
         pane_surfaces,
+        pane_surface_summaries,
         None,
     )
 }
@@ -4072,11 +4160,18 @@ fn print_live_surface_with_overlay(
     redraw: bool,
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
     overlay: Option<&tui::TuiOverlay>,
 ) {
     if redraw {
         if let Some(state) = redraw_state {
-            if state.render_workspace(workspace, surface_text, pane_surfaces, overlay) {
+            if state.render_workspace(
+                workspace,
+                surface_text,
+                pane_surfaces,
+                pane_surface_summaries,
+                overlay,
+            ) {
                 return;
             }
             let text = redraw_text_with_context(
@@ -4117,6 +4212,7 @@ fn print_live_update(
     redraw: bool,
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
 ) {
     match live_update_print_kind(previous_metadata, metadata, update, redraw) {
         LiveUpdatePrintKind::Surface => print_live_surface(
@@ -4126,11 +4222,18 @@ fn print_live_update(
             redraw,
             redraw_state,
             pane_surfaces,
+            pane_surface_summaries,
         ),
         LiveUpdatePrintKind::Metadata => {
             if redraw {
                 if let Some(state) = redraw_state {
-                    let _ = state.render_workspace(workspace, surface_text, pane_surfaces, None);
+                    let _ = state.render_workspace(
+                        workspace,
+                        surface_text,
+                        pane_surfaces,
+                        pane_surface_summaries,
+                        None,
+                    );
                 }
             } else {
                 print_terminal_metadata(metadata);
@@ -4373,6 +4476,7 @@ impl RedrawState {
         workspace: &local::WorkspaceSummary,
         surface_text: &str,
         pane_surfaces: Option<&BTreeMap<String, String>>,
+        pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
         overlay: Option<&tui::TuiOverlay>,
     ) -> bool {
         let render_start = Instant::now();
@@ -4404,6 +4508,7 @@ impl RedrawState {
                     workspace,
                     active_surface_text: surface_text,
                     pane_surfaces,
+                    pane_surface_summaries,
                     overlay,
                 },
             );
@@ -4761,6 +4866,7 @@ fn redraw_text_with_context(
                 workspace,
                 active_surface_text: surface_text,
                 pane_surfaces,
+                pane_surface_summaries: None,
                 overlay,
             },
             cols,
@@ -4931,6 +5037,39 @@ fn seed_cached_pane_surfaces_from_node(
 
     for child in &pane.children {
         seed_cached_pane_surfaces_from_node(surfaces, child, client_state, styled);
+    }
+}
+
+fn seed_cached_pane_surface_summaries(
+    surfaces: &mut BTreeMap<String, local::RenderedSurfaceSummary>,
+    workspace: &local::WorkspaceSummary,
+    client_state: &local::ClientAttachState,
+) {
+    if let Some(root) = workspace.pane_tree.as_ref() {
+        seed_cached_pane_surface_summaries_from_node(surfaces, root, client_state);
+    } else if !surfaces.contains_key(&workspace.pane_id)
+        && let Some(summary) = client_state.cached_rendered_surface_summary(&workspace.pane_id)
+    {
+        surfaces.insert(workspace.pane_id.clone(), summary);
+    }
+}
+
+fn seed_cached_pane_surface_summaries_from_node(
+    surfaces: &mut BTreeMap<String, local::RenderedSurfaceSummary>,
+    pane: &local::WorkspacePaneSummary,
+    client_state: &local::ClientAttachState,
+) {
+    if pane.children.is_empty() {
+        if !surfaces.contains_key(&pane.pane_id)
+            && let Some(summary) = client_state.cached_rendered_surface_summary(&pane.pane_id)
+        {
+            surfaces.insert(pane.pane_id.clone(), summary);
+        }
+        return;
+    }
+
+    for child in &pane.children {
+        seed_cached_pane_surface_summaries_from_node(surfaces, child, client_state);
     }
 }
 
@@ -10155,6 +10294,7 @@ mod tests {
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
+                current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
@@ -10175,6 +10315,7 @@ mod tests {
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
+                current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
@@ -10264,6 +10405,7 @@ mod tests {
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
+                current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
@@ -10296,6 +10438,7 @@ mod tests {
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
+                current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
