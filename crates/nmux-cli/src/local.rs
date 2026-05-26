@@ -1089,13 +1089,15 @@ where
             .collect::<Vec<_>>();
         frontend_resize_pane_ids.sort();
         frontend_resize_pane_ids.dedup();
-        {
-            let (session, engines) = actor.session_and_engines_mut();
-            for pane_id in frontend_resize_pane_ids {
-                let changed =
-                    apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
-                changed_workspace |= changed;
-            }
+        for pane_id in frontend_resize_pane_ids {
+            let changed = apply_concurrent_frontend_resize_with_session_actor(
+                actor,
+                host,
+                &clients,
+                &pane_id,
+                inventory_elapsed_ms(inventory_started_at),
+            )?;
+            changed_workspace |= changed;
         }
         let closing_frontend_resize_pane_ids = closed_clients
             .iter()
@@ -1122,12 +1124,14 @@ where
             )?;
         }
         closed_clients.clear();
-        {
-            let (session, engines) = actor.session_and_engines_mut();
-            for pane_id in closing_frontend_resize_pane_ids {
-                changed_workspace |=
-                    apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
-            }
+        for pane_id in closing_frontend_resize_pane_ids {
+            changed_workspace |= apply_concurrent_frontend_resize_with_session_actor(
+                actor,
+                host,
+                &clients,
+                &pane_id,
+                inventory_elapsed_ms(inventory_started_at),
+            )?;
         }
 
         inventory_updates.retain(|updated| {
@@ -1630,6 +1634,65 @@ fn apply_concurrent_frontend_resize(
     }
     host.resize_pane(pane_id, cols, rows)?;
     Ok(session.commit_pane_resize_with_engine(pane_id, cols, rows, engines.engine_mut(pane_id)))
+}
+
+fn apply_concurrent_frontend_resize_with_session_actor(
+    actor: &mut SessionActor,
+    host: &mut dyn ProcessHostOutput,
+    clients: &[LiveAttachedClient],
+    pane_id: &str,
+    session_mono_ms: u64,
+) -> Result<bool, ServeError> {
+    let Some((cols, rows)) = smallest_read_write_frontend_resize(clients, pane_id) else {
+        return Ok(false);
+    };
+    if actor.session().pane_size(pane_id) == Some((cols, rows)) {
+        return Ok(false);
+    }
+    host.resize_pane(pane_id, cols, rows)?;
+    commit_pane_resize_with_session_actor(
+        actor,
+        host,
+        format!("{pane_id}:frontend-resize"),
+        pane_id,
+        cols,
+        rows,
+        session_mono_ms,
+    )
+}
+
+fn commit_pane_resize_with_session_actor(
+    actor: &mut SessionActor,
+    host: &mut dyn ProcessHostOutput,
+    source_id: impl Into<String>,
+    pane_id: &str,
+    cols: u32,
+    rows: u32,
+    session_mono_ms: u64,
+) -> Result<bool, ServeError> {
+    actor.enqueue(PendingSessionEvent::new(
+        source_id,
+        SessionEventLane::Client,
+        session_mono_ms,
+        SessionEvent::CommitPaneResize {
+            pane_id: pane_id.to_owned(),
+            cols,
+            rows,
+        },
+    ));
+    let changed = actor
+        .drain_ready()
+        .iter()
+        .any(|record| !record.effects.is_empty());
+    for bytes in actor.core_mut().drain_pane_pty_writes(pane_id) {
+        tracing::trace!(
+            pane_id = %pane_id,
+            bytes = bytes.len(),
+            "terminal generated pty input"
+        );
+        host.write_input(pane_id, &bytes)?;
+    }
+    Ok(changed)
 }
 
 fn smallest_read_write_frontend_resize(
@@ -2935,43 +2998,37 @@ fn serve_live_attached_client_with_session_actor(
         }
 
         let mut input_pane_id = None;
-        {
-            let (session, engines) = actor.session_and_engines_mut();
-            let mut inputs = Vec::new();
-            if readiness.client_input {
-                loop {
-                    match read_live_client_frame_from_stream(stream)? {
-                        LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
-                            count_cycle = false;
-                            if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
-                                write_scrollback_fetch_error(
-                                    stream, session, &mut seq, &fetch, error,
-                                )?;
-                                if error == protocol::ErrorCode::StaleVersion {
-                                    continue;
-                                }
-                                return Ok(());
+        let mut inputs = Vec::new();
+        if readiness.client_input {
+            loop {
+                match read_live_client_frame_from_stream(stream)? {
+                    LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
+                        count_cycle = false;
+                        let (session, _) = actor.session_and_engines_mut();
+                        if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
+                            write_scrollback_fetch_error(stream, session, &mut seq, &fetch, error)?;
+                            if error == protocol::ErrorCode::StaleVersion {
+                                continue;
                             }
-                            let Some(chunk) = session.scrollback_chunk_frame_for_pane(
-                                "local-client",
-                                seq,
-                                &fetch.pane_id,
-                                fetch.start_line,
-                                fetch.line_count,
-                            ) else {
-                                write_pane_not_found_error(
-                                    stream,
-                                    session,
-                                    &mut seq,
-                                    &fetch.pane_id,
-                                )?;
-                                return Ok(());
-                            };
-                            wire::write_default_frame(stream, &chunk)?;
-                            seq += 1;
+                            return Ok(());
                         }
-                        LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
-                            count_cycle = false;
+                        let Some(chunk) = session.scrollback_chunk_frame_for_pane(
+                            "local-client",
+                            seq,
+                            &fetch.pane_id,
+                            fetch.start_line,
+                            fetch.line_count,
+                        ) else {
+                            write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
+                            return Ok(());
+                        };
+                        wire::write_default_frame(stream, &chunk)?;
+                        seq += 1;
+                    }
+                    LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
+                        count_cycle = false;
+                        {
+                            let (session, _) = actor.session_and_engines_mut();
                             if !Session::input_allowed(&client_actor) {
                                 write_protocol_error(
                                     stream,
@@ -2999,65 +3056,74 @@ fn serve_live_attached_client_with_session_actor(
                             if !Session::resize_intent_allowed(policy, resize.reason) {
                                 continue;
                             }
-                            if let Err(err) =
-                                host.resize_pane(&resize.pane_id, resize.cols, resize.rows)
-                            {
-                                write_protocol_error(
-                                    stream,
-                                    session,
-                                    &mut seq,
-                                    protocol::ErrorCode::Unknown,
-                                    &format!("resize failed: {err}"),
-                                    Some(&resize.pane_id),
-                                    0,
-                                )?;
-                                return Ok(());
-                            }
-                            if session.commit_pane_resize_with_engine(
-                                &resize.pane_id,
-                                resize.cols,
-                                resize.rows,
-                                engines.engine_mut(&resize.pane_id),
-                            ) {
-                                let workspace_frame =
-                                    session.workspace_tree_frame("local-client", seq);
-                                wire::write_default_frame(stream, &workspace_frame)?;
-                                seq += 1;
-                            }
                         }
-                        LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
-                            count_cycle = true;
-                            if Session::input_allowed(&client_actor) {
-                                inputs.push(input);
-                            } else {
-                                write_protocol_error(
-                                    stream,
-                                    session,
-                                    &mut seq,
-                                    protocol::ErrorCode::PermissionDenied,
-                                    "input rejected: actor is read-only",
-                                    Some(&input.pane_id),
-                                    input.input_seq,
-                                )?;
-                                return Ok(());
-                            }
+                        if let Err(err) =
+                            host.resize_pane(&resize.pane_id, resize.cols, resize.rows)
+                        {
+                            let (session, _) = actor.session_and_engines_mut();
+                            write_protocol_error(
+                                stream,
+                                session,
+                                &mut seq,
+                                protocol::ErrorCode::Unknown,
+                                &format!("resize failed: {err}"),
+                                Some(&resize.pane_id),
+                                0,
+                            )?;
+                            return Ok(());
                         }
-                        LiveClientRead::Frame(LiveClientFrame::Ping(ping)) => {
-                            count_cycle = false;
-                            write_pong_frame(stream, session, &mut seq, &ping)?;
+                        if commit_pane_resize_with_session_actor(
+                            actor,
+                            host,
+                            client_actor.id.clone(),
+                            &resize.pane_id,
+                            resize.cols,
+                            resize.rows,
+                            inventory_elapsed_ms(started_at),
+                        )? {
+                            let (session, _) = actor.session_and_engines_mut();
+                            let workspace_frame = session.workspace_tree_frame("local-client", seq);
+                            wire::write_default_frame(stream, &workspace_frame)?;
+                            seq += 1;
                         }
-                        LiveClientRead::NoFrame => break,
-                        LiveClientRead::Closed => return Ok(()),
                     }
+                    LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
+                        count_cycle = true;
+                        if Session::input_allowed(&client_actor) {
+                            inputs.push(input);
+                        } else {
+                            let (session, _) = actor.session_and_engines_mut();
+                            write_protocol_error(
+                                stream,
+                                session,
+                                &mut seq,
+                                protocol::ErrorCode::PermissionDenied,
+                                "input rejected: actor is read-only",
+                                Some(&input.pane_id),
+                                input.input_seq,
+                            )?;
+                            return Ok(());
+                        }
+                    }
+                    LiveClientRead::Frame(LiveClientFrame::Ping(ping)) => {
+                        count_cycle = false;
+                        let (session, _) = actor.session_and_engines_mut();
+                        write_pong_frame(stream, session, &mut seq, &ping)?;
+                    }
+                    LiveClientRead::NoFrame => break,
+                    LiveClientRead::Closed => return Ok(()),
+                }
 
-                    if !stream_readable_within(stream, Duration::ZERO)? {
-                        break;
-                    }
+                if !stream_readable_within(stream, Duration::ZERO)? {
+                    break;
                 }
             }
+        }
 
-            for input in inputs {
-                input_pane_id = Some(input.pane_id.clone());
+        for input in inputs {
+            input_pane_id = Some(input.pane_id.clone());
+            let bytes = {
+                let (session, engines) = actor.session_and_engines_mut();
                 if session.surface_version(&input.pane_id).is_none() {
                     write_pane_not_found_error_with_input_seq(
                         stream,
@@ -3080,7 +3146,7 @@ fn serve_live_attached_client_with_session_actor(
                     )?;
                     return Ok(());
                 }
-                let bytes = match input.forwarded_bytes(session, engines) {
+                match input.forwarded_bytes(session, engines) {
                     Ok(bytes) => bytes,
                     Err(err) => {
                         write_protocol_error(
@@ -3094,29 +3160,30 @@ fn serve_live_attached_client_with_session_actor(
                         )?;
                         return Ok(());
                     }
-                };
-                let write_span = tracing::trace_span!(
-                    "host.write_input",
-                    pane_id = %input.pane_id,
-                    input_seq = input.input_seq,
-                    bytes = bytes.len()
-                );
-                let write_result = write_span.in_scope(|| host.write_input(&input.pane_id, &bytes));
-                if let Err(err) = write_result {
-                    if input_write_target_exited(&err, &input.pane_id) {
-                        return Ok(());
-                    }
-                    write_protocol_error(
-                        stream,
-                        session,
-                        &mut seq,
-                        protocol::ErrorCode::Unknown,
-                        &format!("input forwarding failed: {err}"),
-                        Some(&input.pane_id),
-                        input.input_seq,
-                    )?;
+                }
+            };
+            let write_span = tracing::trace_span!(
+                "host.write_input",
+                pane_id = %input.pane_id,
+                input_seq = input.input_seq,
+                bytes = bytes.len()
+            );
+            let write_result = write_span.in_scope(|| host.write_input(&input.pane_id, &bytes));
+            if let Err(err) = write_result {
+                if input_write_target_exited(&err, &input.pane_id) {
                     return Ok(());
                 }
+                let (session, _) = actor.session_and_engines_mut();
+                write_protocol_error(
+                    stream,
+                    session,
+                    &mut seq,
+                    protocol::ErrorCode::Unknown,
+                    &format!("input forwarding failed: {err}"),
+                    Some(&input.pane_id),
+                    input.input_seq,
+                )?;
+                return Ok(());
             }
         }
 
@@ -12134,6 +12201,112 @@ mod tests {
     }
 
     #[test]
+    fn actor_concurrent_live_frontend_resize_routes_commit_through_actor() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let (trace_tx, trace_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(2, usize::MAX)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor concurrent live");
+            trace_tx
+                .send((host.events().to_vec(), actor.trace().accepted_events()))
+                .expect("send actor trace")
+        });
+
+        let mut first = UnixStream::connect(&socket_path).expect("connect first");
+        write_attach_request(
+            &mut first,
+            &AttachRequest {
+                actor_id: "first".to_owned(),
+                user_id: "first-user".to_owned(),
+                display_name: "First".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
+            },
+        )
+        .expect("write first attach");
+        attach_from_stream(&mut first).expect("first attach");
+
+        let mut second = UnixStream::connect(&socket_path).expect("connect second");
+        write_attach_request(
+            &mut second,
+            &AttachRequest {
+                actor_id: "second".to_owned(),
+                user_id: "second-user".to_owned(),
+                display_name: "Second".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
+            },
+        )
+        .expect("write second attach");
+        attach_from_stream(&mut second).expect("second attach");
+
+        send_resize_intent_with_reason_and_sequence(
+            &mut first,
+            &mut ClientFrameSequence::default(),
+            "pane-1",
+            100,
+            40,
+            protocol::ResizeReason::FrontendViewport,
+        )
+        .expect("send first resize");
+        send_resize_intent_with_reason_and_sequence(
+            &mut second,
+            &mut ClientFrameSequence::default(),
+            "pane-1",
+            80,
+            50,
+            protocol::ResizeReason::FrontendViewport,
+        )
+        .expect("send second resize");
+
+        thread::sleep(Duration::from_millis(200));
+        drop(first);
+        drop(second);
+        server.join().expect("server thread");
+        let (host_events, accepted_events) = trace_rx.recv().expect("actor trace");
+        let resize_events = host_events
+            .iter()
+            .filter_map(|event| match event {
+                HostEvent::Resized {
+                    pane_id,
+                    cols,
+                    rows,
+                } if pane_id == "pane-1" => Some((*cols, *rows)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(resize_events, vec![(80, 40)]);
+        assert!(accepted_events.iter().any(|accepted| matches!(
+            &accepted.event,
+            SessionEvent::CommitPaneResize {
+                pane_id,
+                cols: 80,
+                rows: 40,
+            } if pane_id == "pane-1"
+        ) && accepted.metadata.lane
+            == SessionEventLane::Client));
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn concurrent_live_clients_use_smallest_read_write_frontend_resize() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -13473,6 +13646,77 @@ mod tests {
             pane_id: "pane-1".to_owned(),
             bytes: b"after-resize".to_vec(),
         }));
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn actor_live_attach_routes_resize_intent_through_actor() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let (trace_tx, trace_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(1, 1)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor live");
+            trace_tx
+                .send((host.events().to_vec(), actor.trace().accepted_events()))
+                .expect("send actor trace")
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(&mut stream, &AttachOptions::default().request)
+            .expect("write attach request");
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert!(initial.surface.is_some());
+
+        send_resize_intent(&mut stream, "pane-1", 100, 30).expect("send resize intent");
+        send_key_input(&mut stream, "pane-1", "after-resize").expect("send input");
+        let workspace =
+            read_live_surface_update_from_stream(&mut stream).expect("live workspace update");
+        assert_eq!(
+            workspace,
+            LiveSurfaceRead::Workspace(WorkspaceSummary {
+                session_id: "local".to_owned(),
+                tab_id: "tab-1".to_owned(),
+                pane_id: "pane-1".to_owned(),
+                cols: 100,
+                rows: 30,
+                resize_policy: protocol::ResizePolicy::Fixed,
+                pane_tree: Some(WorkspacePaneSummary {
+                    pane_id: "pane-1".to_owned(),
+                    cols: 100,
+                    rows: 30,
+                    resize_policy: protocol::ResizePolicy::Fixed,
+                    split_axis: protocol::SplitAxis::None,
+                    children: Vec::new(),
+                }),
+            })
+        );
+
+        server.join().expect("server thread");
+        let (host_events, accepted_events) = trace_rx.recv().expect("actor trace");
+        assert!(host_events.contains(&HostEvent::Resized {
+            pane_id: "pane-1".to_owned(),
+            cols: 100,
+            rows: 30,
+        }));
+        assert!(accepted_events.iter().any(|accepted| matches!(
+            &accepted.event,
+            SessionEvent::CommitPaneResize {
+                pane_id,
+                cols: 100,
+                rows: 30,
+            } if pane_id == "pane-1"
+        ) && accepted.metadata.source_id
+            == "local-actor"
+            && accepted.metadata.lane == SessionEventLane::Client));
 
         let _ = fs::remove_file(socket_path);
     }
