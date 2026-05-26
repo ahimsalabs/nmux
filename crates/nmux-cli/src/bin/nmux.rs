@@ -1416,10 +1416,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                 switched.client_sequence;
                                                             attached_pane_id =
                                                                 switched.attached_pane_id;
-                                                            current_workspace =
-                                                                switched.workspace;
-                                                            surface_state =
-                                                                switched.surface_state;
+                                                            current_workspace = switched.workspace;
+                                                            surface_state = switched.surface_state;
                                                             flush_stdout()?;
                                                         }
                                                     }
@@ -4265,7 +4263,7 @@ impl ClientInventoryCache {
 
 /// Tracks displayed rows for differential rendering with a status bar.
 struct RedrawState {
-    /// Previously displayed rows (row 0 = status bar, then content rows).
+    /// Previously displayed rows (content rows, then the bottom status bar).
     previous_rows: Vec<String>,
     /// Terminal width for status bar formatting.
     terminal_cols: u32,
@@ -4352,7 +4350,7 @@ impl RedrawState {
     }
 
     /// Render the full surface text differentially: only write rows that changed.
-    /// Row 1 is always the status bar; content starts at row 2.
+    /// The status bar occupies the final terminal row; content starts at row 1.
     fn render_diff(&mut self, workspace: &local::WorkspaceSummary, surface_text: &str) {
         print!("{}", self.render_diff_text(workspace, surface_text));
     }
@@ -4375,23 +4373,17 @@ impl RedrawState {
         // Hide cursor during update to avoid flicker.
         output.push_str(&format!("{}", cursor::Hide));
 
-        // Diff content rows (starting at terminal row 2).
-        let max_content = content_rows.len().max(
-            self.previous_rows.len().saturating_sub(1), // previous_rows[0] was status bar
-        );
+        // Diff content rows (starting at terminal row 1).
+        let max_content = content_rows
+            .len()
+            .max(self.previous_rows.len().saturating_sub(1));
         for i in 0..max_content {
             let new_row = content_rows.get(i).map(String::as_str).unwrap_or("");
-            // previous_rows[0] is the status bar, so content is at [i+1].
-            let old_row = self
-                .previous_rows
-                .get(i + 1)
-                .map(String::as_str)
-                .unwrap_or("");
+            let old_row = self.previous_rows.get(i).map(String::as_str).unwrap_or("");
             if new_row != old_row {
-                // Terminal row i+2 (1-based: row 1=status bar, row 2=first content).
                 output.push_str(&format!(
                     "{}{}{}",
-                    cursor::MoveTo(0, terminal_row(i + 2)),
+                    cursor::MoveTo(0, terminal_row(i + 1)),
                     Clear(ClearType::CurrentLine),
                     new_row
                 ));
@@ -4413,23 +4405,22 @@ impl RedrawState {
         self.pending_decode_time = Duration::ZERO;
         self.last_frame_time = Instant::now();
 
-        // Always redraw the status bar (row 1) since stats change every frame.
+        // Always redraw the status bar since stats change every frame.
         let status_bar = self.format_status_bar(workspace);
+        let status_row = self.status_row();
         output.push_str(&format!(
             "{}{}{}",
-            cursor::MoveTo(0, 0),
+            cursor::MoveTo(0, status_row),
             Clear(ClearType::CurrentLine),
             status_bar
         ));
 
-        // Park cursor below content to avoid visual artifacts.
-        let park_row = content_rows.len() + 2; // +1 for status bar, +1 for park
-        output.push_str(&format!("{}", cursor::MoveTo(0, terminal_row(park_row))));
+        output.push_str(&format!("{}", cursor::MoveTo(0, status_row)));
 
-        // Store status bar + content rows for next diff.
+        // Store content rows + status bar for next diff.
         let mut all_rows = Vec::with_capacity(content_rows.len() + 1);
-        all_rows.push(status_bar);
         all_rows.extend(content_rows);
+        all_rows.push(status_bar);
         self.previous_rows = all_rows;
 
         output
@@ -4452,19 +4443,18 @@ impl RedrawState {
             return None;
         }
         let row_index = usize::try_from(prediction.row).ok()?;
-        let content_row_index = row_index + 1;
-        if self.previous_rows.len() <= content_row_index {
+        if self.previous_rows.len() <= row_index {
             return None;
         }
         let row_text = surface_text.lines().nth(row_index)?;
-        self.previous_rows[content_row_index] = row_text.to_owned();
+        self.previous_rows[row_index] = row_text.to_owned();
         self.last_frame_time = Instant::now();
         self.last_stats.rows_changed = 1;
         self.last_stats.rows_total = surface_text.lines().count();
 
-        let terminal_row_index = terminal_row(row_index + 2);
+        let terminal_row_index = terminal_row(row_index + 1);
         let terminal_col = prediction.col.min(u16::MAX as u32) as u16;
-        let park_row = surface_text.lines().count() + 2;
+        let status_row = self.status_row();
         let mut output = String::new();
         output.push_str(&format!(
             "{}{}{}{}",
@@ -4473,7 +4463,7 @@ impl RedrawState {
             prediction.text,
             SetAttribute(Attribute::NoUnderline)
         ));
-        output.push_str(&format!("{}", cursor::MoveTo(0, terminal_row(park_row))));
+        output.push_str(&format!("{}", cursor::MoveTo(0, status_row)));
         Some(output)
     }
 
@@ -4499,28 +4489,31 @@ impl RedrawState {
 
         let status_bar = self.format_status_bar(workspace);
 
-        // Clear screen, draw status bar on row 1, then content starting row 2.
-        // The status bar is full-width; moving explicitly avoids terminal
-        // autowrap shifting the first content byte to the right edge.
+        // Clear screen, draw content from row 1, then keep the status bar on
+        // the final row so row 1 remains available for ratatui menus.
         let mut output = String::new();
+        let status_row = self.status_row();
         output.push_str(&format!(
-            "{}{}{}{}{}",
+            "{}{}{}{}{}{}{}",
             Clear(ClearType::All),
             cursor::MoveTo(0, 0),
+            surface_text,
+            cursor::MoveTo(0, status_row),
+            Clear(ClearType::CurrentLine),
             status_bar,
-            cursor::MoveTo(0, 1),
-            surface_text
+            cursor::MoveTo(0, status_row)
         ));
 
-        let park_row = content_rows.len() + 2;
-        output.push_str(&format!("{}", cursor::MoveTo(0, terminal_row(park_row))));
-
         let mut all_rows = Vec::with_capacity(content_rows.len() + 1);
-        all_rows.push(status_bar);
         all_rows.extend(content_rows);
+        all_rows.push(status_bar);
         self.previous_rows = all_rows;
 
         output
+    }
+
+    fn status_row(&self) -> u16 {
+        self.terminal_rows.saturating_sub(1).min(u16::MAX as u32) as u16
     }
 }
 
@@ -7365,15 +7358,14 @@ mod tests {
         format_state_info_text, host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
         host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
         live_mouse_dispatch_for_workspace_size, live_session_new_should_fallback,
-        live_update_print_kind,
-        managed_ready_error_message, menu_overlay_for_action,
+        live_update_print_kind, managed_ready_error_message, menu_overlay_for_action,
         menu_overlay_for_action_with_session_inventory, parse_detach_key, parse_env_assignment,
         parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
         parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, preprocess_args,
         raw_terminal_fixup_termios, raw_terminal_mode_needed, redraw_terminal_guard_needed,
         redraw_text_with_context, redraw_workspace_surface_text, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, stdin_byte_forwards,
-        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
+        split_stdin_bytes_for_detach, stdin_byte_forwards, terminal_size_from_fds,
+        terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -8445,7 +8437,7 @@ mod tests {
         };
 
         let initial = state.render_initial_text(&ws, "pane output\nsecond line");
-        // Status bar is in inverse video on the first terminal row.
+        // Status bar is in inverse video on the final terminal row.
         assert!(
             initial.contains("\x1b[7m") && initial.contains("nmux"),
             "initial frame should contain status bar: {initial:?}"
@@ -8454,26 +8446,26 @@ mod tests {
             initial.contains("pane-1") && initial.contains("80x24"),
             "status bar should show pane id and size: {initial:?}"
         );
-        // Content follows the status bar.
+        // Content starts on the first terminal row so ratatui chrome can own row 1.
         assert!(
             initial.contains("pane output"),
             "initial frame should contain content: {initial:?}"
         );
         assert!(
-            initial.contains("\x1b[2;1Hpane output"),
-            "initial frame should position content below the full-width status bar: {initial:?}"
+            initial.contains("\x1b[1;1Hpane output"),
+            "initial frame should position content at the top of the terminal: {initial:?}"
         );
 
         let update = state.render_diff_text(&ws, "pane output\nsecond line changed");
-        // Row 1 is the status bar (always redrawn).
+        // The status bar is always redrawn on the final row.
         assert!(
-            update.contains("\x1b[1;1H"),
-            "diff should redraw status bar on row 1: {update:?}"
+            update.contains("nmux"),
+            "diff should redraw status bar: {update:?}"
         );
-        // Content row 2 (terminal row 3) changed.
+        // Content row 2 changed on terminal row 2.
         assert!(
-            update.contains("\x1b[3;1H\x1b[2Ksecond line changed"),
-            "diff should update changed content row at terminal row 3: {update:?}"
+            update.contains("\x1b[2;1H\x1b[2Ksecond line changed"),
+            "diff should update changed content row at terminal row 2: {update:?}"
         );
         // Status bar should show stats.
         assert!(
@@ -8527,10 +8519,10 @@ mod tests {
             .expect("fast speculative render");
 
         assert!(
-            update.contains("\x1b[2;6H\x1b[4mx\x1b[24m"),
+            update.contains("\x1b[1;6H\x1b[4mx\x1b[24m"),
             "fast path should only paint predicted cell at cursor: {update:?}"
         );
-        assert_eq!(state.previous_rows[1], "ready\x1b[4mx\x1b[24m");
+        assert_eq!(state.previous_rows[0], "ready\x1b[4mx\x1b[24m");
     }
 
     #[test]
@@ -8555,6 +8547,13 @@ mod tests {
         assert!(
             !status_bar_text.contains("title=") && !status_bar_text.contains("working-directory="),
             "status-bar redraw should not inject metadata rows: {status_bar_text:?}"
+        );
+        assert!(
+            status_bar_text
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains("Sessions")),
+            "ratatui menu should remain visible on row 1: {status_bar_text:?}"
         );
         assert!(status_bar_text.contains("pane output"));
 
@@ -9792,7 +9791,7 @@ mod tests {
             Some(LiveMouseDispatch::PaneScroll {
                 pane_id: "pane-1".to_owned(),
                 direction: LiveScrollDirection::Up,
-                visible_rows: 8,
+                visible_rows: 20,
             }),
             "pane content wheel scrolls nmux-owned scrollback when the pane app has not enabled mouse tracking"
         );
@@ -10094,8 +10093,7 @@ mod tests {
                 .lines
                 .iter()
                 .any(|line| line.text.contains("work Work")
-                    && line.action
-                        == Some(tui::OverlayAction::SwitchSession("work".to_owned())))
+                    && line.action == Some(tui::OverlayAction::SwitchSession("work".to_owned())))
         );
 
         assert_eq!(
@@ -10116,9 +10114,9 @@ mod tests {
                 80,
                 24,
             ),
-            Some(LiveMouseDispatch::Overlay(tui::OverlayAction::SwitchSession(
-                "work".to_owned()
-            )))
+            Some(LiveMouseDispatch::Overlay(
+                tui::OverlayAction::SwitchSession("work".to_owned())
+            ))
         );
     }
 

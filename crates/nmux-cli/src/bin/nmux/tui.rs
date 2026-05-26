@@ -380,24 +380,13 @@ fn render_leaf_pane(
     buffer: &mut Buffer,
     area: Rect,
     pane_id: &str,
-    pane_cols: u32,
-    pane_rows: u32,
+    _pane_cols: u32,
+    _pane_rows: u32,
     active: bool,
     surface_text: &str,
     hits: &mut Vec<HitRegion>,
 ) {
-    let pane_width = u16::try_from(pane_cols)
-        .unwrap_or(u16::MAX)
-        .saturating_add(2);
-    let pane_height = u16::try_from(pane_rows)
-        .unwrap_or(u16::MAX)
-        .saturating_add(2);
-    let chrome = Rect::new(
-        area.x,
-        area.y,
-        area.width.min(pane_width).max(1),
-        area.height.min(pane_height).max(1),
-    );
+    let chrome = area;
     draw_box(buffer, chrome, pane_id, active);
     hits.push(HitRegion {
         rect: chrome,
@@ -665,6 +654,15 @@ mod tests {
             20,
         );
 
+        assert!(
+            frame
+                .text
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains("Sessions") && line.contains("New Session")),
+            "menu should occupy the first visible row: {:?}",
+            frame.text
+        );
         assert!(frame.text.contains("Sessions"));
         assert!(frame.text.contains("New Session"));
         assert!(frame.text.contains("windows"));
