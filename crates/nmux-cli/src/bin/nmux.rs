@@ -406,16 +406,37 @@ fn attach_for_listing(args: &Args) -> Result<local::RenderedAttach, Box<dyn std:
 }
 
 fn run_session_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    let rendered = attach_for_listing(args)?;
+    let inventory = fetch_session_inventory(args)?;
     if args.output_json {
-        println!(
-            "{{\"sessions\":[{{\"session_id\":{},\"active\":true}}]}}",
-            local::json_string(&rendered.workspace.session_id)
-        );
+        println!("{}", format_session_inventory_json(&inventory));
     } else {
-        println!("{}", rendered.workspace.session_id);
+        for session in inventory.sessions {
+            let active = if session.session_id == inventory.active_session_id {
+                " active"
+            } else {
+                ""
+            };
+            println!("{}{} {}", session.session_id, active, session.title);
+        }
     }
     Ok(())
+}
+
+fn fetch_session_inventory(
+    args: &Args,
+) -> Result<local::SessionInventorySummary, Box<dyn std::error::Error>> {
+    let command = local::ControlCommandSummary {
+        actor_id: args.actor_id.clone(),
+        command_seq: 1,
+        kind: protocol::ControlCommandKind::SessionList,
+        pane_id: None,
+        tab_id: None,
+        split_axis: protocol::SplitAxis::None,
+        title: None,
+        session_id: args.target_session_id.clone(),
+    };
+    let stream = connect_to_daemon(args)?;
+    local::run_session_inventory_command_on_stream(stream, command)
 }
 
 fn run_tab_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -5866,6 +5887,26 @@ fn format_workspace_json(workspace: &local::WorkspaceSummary) -> String {
         workspace.cols,
         workspace.rows,
         local::json_string(resize_policy_name(workspace.resize_policy))
+    )
+}
+
+fn format_session_inventory_json(inventory: &local::SessionInventorySummary) -> String {
+    let sessions = inventory
+        .sessions
+        .iter()
+        .map(|session| {
+            format!(
+                "{{\"session_id\":{},\"title\":{},\"active\":{}}}",
+                local::json_string(&session.session_id),
+                local::json_string(&session.title),
+                session.session_id == inventory.active_session_id
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"active_session_id\":{},\"sessions\":[{sessions}]}}",
+        local::json_string(&inventory.active_session_id)
     )
 }
 

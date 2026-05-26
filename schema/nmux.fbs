@@ -75,6 +75,7 @@ enum ControlCommandKind : byte {
   SessionKill = 3,
   TabSwitch = 4,
   SessionNew = 5,
+  SessionList = 6,
 }
 
 enum ResizePolicy : byte {
@@ -137,6 +138,16 @@ table WorkspaceTreeSnapshot {
   session_id:string;
   tabs:[TabNode];
   active_tab_id:string;
+}
+
+table SessionInventorySnapshot {
+  active_session_id:string;
+  sessions:[SessionInventoryItem];
+}
+
+table SessionInventoryItem {
+  session_id:string;
+  title:string;
 }
 
 table TabNode {
@@ -447,6 +458,7 @@ union EnvelopeBody {
   Pong,
   ClientInventorySnapshot,
   ClientInventoryPatch,
+  SessionInventorySnapshot,
 }
 
 table Envelope {

@@ -1113,6 +1113,28 @@ fn scriptable_cli_creates_and_attaches_named_session() {
         "session new should return the new workspace:\n{session_new_stdout}"
     );
 
+    let session_list = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "ls",
+        ])
+        .output()
+        .expect("list sessions");
+    assert!(
+        session_list.status.success(),
+        "nmux ls failed: {}",
+        String::from_utf8_lossy(&session_list.stderr)
+    );
+    let session_list_stdout = String::from_utf8_lossy(&session_list.stdout);
+    assert!(
+        session_list_stdout.contains("\"session_id\":\"local\"")
+            && session_list_stdout.contains("\"session_id\":\"work\"")
+            && session_list_stdout.contains("\"title\":\"Work\""),
+        "session list should include default and named sessions:\n{session_list_stdout}"
+    );
+
     let attach_work = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
             "--socket",

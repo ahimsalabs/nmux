@@ -245,6 +245,11 @@ fn serve_unix_registry_once(
     {
         return serve_session_new_command(stream, command, args, registry, pty_host);
     }
+    if let local::ClientInitialFrame::Control(command) = &initial
+        && command.kind == protocol::ControlCommandKind::SessionList
+    {
+        return serve_session_list_command(stream, default_session_id, registry);
+    }
 
     let target_session_id = initial_target_session_id(&initial)
         .unwrap_or(default_session_id)
@@ -322,6 +327,35 @@ fn serve_session_new_command(
     }
     wire::write_default_frame(&mut stream, &workspace_frame)?;
     Ok(())
+}
+
+fn serve_session_list_command(
+    mut stream: std::os::unix::net::UnixStream,
+    active_session_id: &str,
+    registry: &SessionRegistry,
+) -> Result<(), ServeError> {
+    let inventory = local::SessionInventorySummary {
+        active_session_id: active_session_id.to_owned(),
+        sessions: registry
+            .iter()
+            .map(|(session_id, actor)| local::SessionInventoryItemSummary {
+                session_id: session_id.to_owned(),
+                title: session_title(actor.session()),
+            })
+            .collect(),
+    };
+    let frame = local::session_inventory_frame(&inventory, "local-client", 1);
+    wire::write_default_frame(&mut stream, &frame)?;
+    Ok(())
+}
+
+fn session_title(session: &Session) -> String {
+    session
+        .tabs
+        .iter()
+        .find(|tab| tab.id == session.active_tab_id)
+        .map(|tab| tab.title.clone())
+        .unwrap_or_else(|| session.id.clone())
 }
 
 fn initial_target_session_id(initial: &local::ClientInitialFrame) -> Option<&str> {

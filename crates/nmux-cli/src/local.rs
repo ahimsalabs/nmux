@@ -5377,6 +5377,14 @@ pub fn run_control_command_on_stream(
     Ok(read_control_command_response(&mut stream)?)
 }
 
+pub fn run_session_inventory_command_on_stream(
+    mut stream: UnixStream,
+    command: ControlCommandSummary,
+) -> Result<SessionInventorySummary, Box<dyn std::error::Error>> {
+    write_control_command(&mut stream, &command)?;
+    Ok(read_session_inventory_command_response(&mut stream)?)
+}
+
 impl AttachOptions {
     fn named_key_names(&self) -> Vec<&str> {
         if self.key_names.is_empty() {
@@ -5898,6 +5906,84 @@ pub(crate) fn workspace_summary_from_frame(frame: &[u8]) -> Result<WorkspaceSumm
         pane_tree: Some(pane_tree),
         tabs: tab_summaries,
     })
+}
+
+pub(crate) fn session_inventory_from_frame(
+    frame: &[u8],
+) -> Result<SessionInventorySummary, ServeError> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::SessionInventorySnapshot {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let snapshot = envelope
+        .body_as_session_inventory_snapshot()
+        .ok_or("missing session inventory body")?;
+    let active_session_id =
+        required_string(snapshot.active_session_id(), "session inventory active_session_id")?;
+    let sessions = snapshot
+        .sessions()
+        .ok_or("session inventory has no sessions")?;
+    let mut session_summaries = Vec::with_capacity(sessions.len());
+    for index in 0..sessions.len() {
+        let item = sessions.get(index);
+        session_summaries.push(SessionInventoryItemSummary {
+            session_id: required_string(item.session_id(), "session inventory session_id")?,
+            title: required_string(item.title(), "session inventory title")?,
+        });
+    }
+
+    Ok(SessionInventorySummary {
+        active_session_id,
+        sessions: session_summaries,
+    })
+}
+
+pub(crate) fn session_inventory_frame(
+    inventory: &SessionInventorySummary,
+    connection_id: &str,
+    seq: u64,
+) -> Vec<u8> {
+    let mut builder = FlatBufferBuilder::new();
+    let mut session_offsets = Vec::with_capacity(inventory.sessions.len());
+    for session in &inventory.sessions {
+        let session_id = builder.create_string(&session.session_id);
+        let title = builder.create_string(&session.title);
+        let item = protocol::SessionInventoryItem::create(
+            &mut builder,
+            &protocol::SessionInventoryItemArgs {
+                session_id: Some(session_id),
+                title: Some(title),
+            },
+        );
+        session_offsets.push(item);
+    }
+    let sessions = builder.create_vector(&session_offsets);
+    let active_session_id = builder.create_string(&inventory.active_session_id);
+    let snapshot = protocol::SessionInventorySnapshot::create(
+        &mut builder,
+        &protocol::SessionInventorySnapshotArgs {
+            active_session_id: Some(active_session_id),
+            sessions: Some(sessions),
+        },
+    );
+    let envelope_session_id = builder.create_string(&inventory.active_session_id);
+    let connection_id = builder.create_string(connection_id);
+    let envelope = protocol::Envelope::create(
+        &mut builder,
+        &protocol::EnvelopeArgs {
+            protocol_version: PROTOCOL_VERSION,
+            session_id: Some(envelope_session_id),
+            connection_id: Some(connection_id),
+            seq,
+            ack: 0,
+            sent_at_mono_ms: 0,
+            body_type: protocol::EnvelopeBody::SessionInventorySnapshot,
+            body: Some(snapshot.as_union_value()),
+        },
+    );
+    protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+    builder.finished_data().to_vec()
 }
 
 pub(crate) fn surface_text_from_frame(frame: &[u8]) -> Result<String, ServeError> {
@@ -6429,6 +6515,25 @@ fn read_control_command_response(stream: &mut UnixStream) -> Result<WorkspaceSum
             }
             protocol::EnvelopeBody::PresenceUpdate => {}
             other => return Err(format!("unexpected control response: {other:?}").into()),
+        }
+    }
+}
+
+fn read_session_inventory_command_response(
+    stream: &mut UnixStream,
+) -> Result<SessionInventorySummary, ServeError> {
+    loop {
+        let frame = wire::read_default_frame(stream)?;
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+        match envelope.body_type() {
+            protocol::EnvelopeBody::SessionInventorySnapshot => {
+                return session_inventory_from_frame(&frame);
+            }
+            protocol::EnvelopeBody::Error => {
+                return Err(server_error(error_summary_from_frame(&frame)?).into());
+            }
+            protocol::EnvelopeBody::PresenceUpdate => {}
+            other => return Err(format!("unexpected session inventory response: {other:?}").into()),
         }
     }
 }
@@ -8068,6 +8173,18 @@ pub struct WorkspaceSummary {
     pub resize_policy: protocol::ResizePolicy,
     pub pane_tree: Option<WorkspacePaneSummary>,
     pub tabs: Vec<WorkspaceTabSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionInventorySummary {
+    pub active_session_id: String,
+    pub sessions: Vec<SessionInventoryItemSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionInventoryItemSummary {
+    pub session_id: String,
+    pub title: String,
 }
 
 impl WorkspaceSummary {

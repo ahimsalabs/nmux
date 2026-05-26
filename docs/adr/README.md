@@ -55,3 +55,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0045: Tab Switch Control Command](0045-tab-switch-control-command.md) | Accepted |
 | [0046: Attach Session Target Envelope](0046-attach-session-target-envelope.md) | Accepted |
 | [0047: Session New Control Command](0047-session-new-control-command.md) | Accepted |
+| [0048: Session Inventory Control Command](0048-session-inventory-control-command.md) | Accepted |

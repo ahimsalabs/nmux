@@ -11,6 +11,7 @@ state-sync envelope bodies:
 
 - `Envelope` for versioning, sequencing, acknowledgements, and body dispatch.
 - `WorkspaceTreeSnapshot` for sessions, tabs, panes, split layout, pane sizes, and resize policy.
+- `SessionInventorySnapshot` for daemon-scoped named session discovery.
 - `PaneSurfaceSnapshot` for a full visible or alternate screen surface.
 - `PaneSurfacePatch` for row, cursor, or terminal-mode updates against a known
   surface version.
@@ -233,7 +234,8 @@ behavior.
 kind, and optional target fields. Pane split uses `pane_id` and `split_axis`;
 tab new uses `tab_id` and optional `title`; tab switch/close use `tab_id`;
 session new uses `session_id` and optional `title`; session kill uses
-`session_id`. Successful mutating commands return `WorkspaceTreeSnapshot`.
+`session_id`; session list has no target fields and returns
+`SessionInventorySnapshot`. Successful mutating commands return `WorkspaceTreeSnapshot`.
 `SessionKill` also asks the daemon to stop the targeted session after sending
 that acknowledgement. A non-empty `session_id` must match the daemon-owned
 session or the daemon returns `ErrorCode::SessionNotFound`.

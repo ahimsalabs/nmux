@@ -925,16 +925,17 @@ impl ::flatbuffers::SimpleToVerifyInSlice for ResizeReason {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_CONTROL_COMMAND_KIND: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_CONTROL_COMMAND_KIND: i8 = 5;
+pub const ENUM_MAX_CONTROL_COMMAND_KIND: i8 = 6;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_CONTROL_COMMAND_KIND: [ControlCommandKind; 6] = [
+pub const ENUM_VALUES_CONTROL_COMMAND_KIND: [ControlCommandKind; 7] = [
   ControlCommandKind::PaneSplit,
   ControlCommandKind::TabNew,
   ControlCommandKind::TabClose,
   ControlCommandKind::SessionKill,
   ControlCommandKind::TabSwitch,
   ControlCommandKind::SessionNew,
+  ControlCommandKind::SessionList,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -948,9 +949,10 @@ impl ControlCommandKind {
   pub const SessionKill: Self = Self(3);
   pub const TabSwitch: Self = Self(4);
   pub const SessionNew: Self = Self(5);
+  pub const SessionList: Self = Self(6);
 
   pub const ENUM_MIN: i8 = 0;
-  pub const ENUM_MAX: i8 = 5;
+  pub const ENUM_MAX: i8 = 6;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::PaneSplit,
     Self::TabNew,
@@ -958,6 +960,7 @@ impl ControlCommandKind {
     Self::SessionKill,
     Self::TabSwitch,
     Self::SessionNew,
+    Self::SessionList,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -968,6 +971,7 @@ impl ControlCommandKind {
       Self::SessionKill => Some("SessionKill"),
       Self::TabSwitch => Some("TabSwitch"),
       Self::SessionNew => Some("SessionNew"),
+      Self::SessionList => Some("SessionList"),
       _ => None,
     }
   }
@@ -1757,10 +1761,10 @@ impl ::flatbuffers::SimpleToVerifyInSlice for PresenceKind {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_ENVELOPE_BODY: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_ENVELOPE_BODY: u8 = 16;
+pub const ENUM_MAX_ENVELOPE_BODY: u8 = 17;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 17] = [
+pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 18] = [
   EnvelopeBody::NONE,
   EnvelopeBody::WorkspaceTreeSnapshot,
   EnvelopeBody::PaneSurfaceSnapshot,
@@ -1778,6 +1782,7 @@ pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 17] = [
   EnvelopeBody::Pong,
   EnvelopeBody::ClientInventorySnapshot,
   EnvelopeBody::ClientInventoryPatch,
+  EnvelopeBody::SessionInventorySnapshot,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -1802,9 +1807,10 @@ impl EnvelopeBody {
   pub const Pong: Self = Self(14);
   pub const ClientInventorySnapshot: Self = Self(15);
   pub const ClientInventoryPatch: Self = Self(16);
+  pub const SessionInventorySnapshot: Self = Self(17);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 16;
+  pub const ENUM_MAX: u8 = 17;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::NONE,
     Self::WorkspaceTreeSnapshot,
@@ -1823,6 +1829,7 @@ impl EnvelopeBody {
     Self::Pong,
     Self::ClientInventorySnapshot,
     Self::ClientInventoryPatch,
+    Self::SessionInventorySnapshot,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -1844,6 +1851,7 @@ impl EnvelopeBody {
       Self::Pong => Some("Pong"),
       Self::ClientInventorySnapshot => Some("ClientInventorySnapshot"),
       Self::ClientInventoryPatch => Some("ClientInventoryPatch"),
+      Self::SessionInventorySnapshot => Some("SessionInventorySnapshot"),
       _ => None,
     }
   }
@@ -2044,6 +2052,232 @@ impl ::core::fmt::Debug for WorkspaceTreeSnapshot<'_> {
       ds.field("session_id", &self.session_id());
       ds.field("tabs", &self.tabs());
       ds.field("active_tab_id", &self.active_tab_id());
+      ds.finish()
+  }
+}
+pub enum SessionInventorySnapshotOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SessionInventorySnapshot<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SessionInventorySnapshot<'a> {
+  type Inner = SessionInventorySnapshot<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SessionInventorySnapshot<'a> {
+  pub const VT_ACTIVE_SESSION_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_SESSIONS: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SessionInventorySnapshot { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SessionInventorySnapshotArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<SessionInventorySnapshot<'bldr>> {
+    let mut builder = SessionInventorySnapshotBuilder::new(_fbb);
+    if let Some(x) = args.sessions { builder.add_sessions(x); }
+    if let Some(x) = args.active_session_id { builder.add_active_session_id(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn active_session_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(SessionInventorySnapshot::VT_ACTIVE_SESSION_ID, None)}
+  }
+  #[inline]
+  pub fn sessions(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SessionInventoryItem<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SessionInventoryItem>>>>(SessionInventorySnapshot::VT_SESSIONS, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SessionInventorySnapshot<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("active_session_id", Self::VT_ACTIVE_SESSION_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SessionInventoryItem>>>>("sessions", Self::VT_SESSIONS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SessionInventorySnapshotArgs<'a> {
+    pub active_session_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub sessions: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SessionInventoryItem<'a>>>>>,
+}
+impl<'a> Default for SessionInventorySnapshotArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    SessionInventorySnapshotArgs {
+      active_session_id: None,
+      sessions: None,
+    }
+  }
+}
+
+pub struct SessionInventorySnapshotBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SessionInventorySnapshotBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_active_session_id(&mut self, active_session_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SessionInventorySnapshot::VT_ACTIVE_SESSION_ID, active_session_id);
+  }
+  #[inline]
+  pub fn add_sessions(&mut self, sessions: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<SessionInventoryItem<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SessionInventorySnapshot::VT_SESSIONS, sessions);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SessionInventorySnapshotBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SessionInventorySnapshotBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SessionInventorySnapshot<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SessionInventorySnapshot<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SessionInventorySnapshot");
+      ds.field("active_session_id", &self.active_session_id());
+      ds.field("sessions", &self.sessions());
+      ds.finish()
+  }
+}
+pub enum SessionInventoryItemOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct SessionInventoryItem<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for SessionInventoryItem<'a> {
+  type Inner = SessionInventoryItem<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> SessionInventoryItem<'a> {
+  pub const VT_SESSION_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_TITLE: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    SessionInventoryItem { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args SessionInventoryItemArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<SessionInventoryItem<'bldr>> {
+    let mut builder = SessionInventoryItemBuilder::new(_fbb);
+    if let Some(x) = args.title { builder.add_title(x); }
+    if let Some(x) = args.session_id { builder.add_session_id(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn session_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(SessionInventoryItem::VT_SESSION_ID, None)}
+  }
+  #[inline]
+  pub fn title(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(SessionInventoryItem::VT_TITLE, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for SessionInventoryItem<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("session_id", Self::VT_SESSION_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("title", Self::VT_TITLE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct SessionInventoryItemArgs<'a> {
+    pub session_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub title: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for SessionInventoryItemArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    SessionInventoryItemArgs {
+      session_id: None,
+      title: None,
+    }
+  }
+}
+
+pub struct SessionInventoryItemBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SessionInventoryItemBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_session_id(&mut self, session_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SessionInventoryItem::VT_SESSION_ID, session_id);
+  }
+  #[inline]
+  pub fn add_title(&mut self, title: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(SessionInventoryItem::VT_TITLE, title);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SessionInventoryItemBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    SessionInventoryItemBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<SessionInventoryItem<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for SessionInventoryItem<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("SessionInventoryItem");
+      ds.field("session_id", &self.session_id());
+      ds.field("title", &self.title());
       ds.finish()
   }
 }
@@ -8289,6 +8523,21 @@ impl<'a> Envelope<'a> {
     }
   }
 
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn body_as_session_inventory_snapshot(&self) -> Option<SessionInventorySnapshot<'a>> {
+    if self.body_type() == EnvelopeBody::SessionInventorySnapshot {
+      self.body().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { SessionInventorySnapshot::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
 }
 
 impl ::flatbuffers::Verifiable for Envelope<'_> {
@@ -8321,6 +8570,7 @@ impl ::flatbuffers::Verifiable for Envelope<'_> {
           EnvelopeBody::Pong => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<Pong>>("EnvelopeBody::Pong", pos),
           EnvelopeBody::ClientInventorySnapshot => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ClientInventorySnapshot>>("EnvelopeBody::ClientInventorySnapshot", pos),
           EnvelopeBody::ClientInventoryPatch => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ClientInventoryPatch>>("EnvelopeBody::ClientInventoryPatch", pos),
+          EnvelopeBody::SessionInventorySnapshot => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<SessionInventorySnapshot>>("EnvelopeBody::SessionInventorySnapshot", pos),
           _ => Ok(()),
         }
      })?
@@ -8524,6 +8774,13 @@ impl ::core::fmt::Debug for Envelope<'_> {
         },
         EnvelopeBody::ClientInventoryPatch => {
           if let Some(x) = self.body_as_client_inventory_patch() {
+            ds.field("body", &x)
+          } else {
+            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        EnvelopeBody::SessionInventorySnapshot => {
+          if let Some(x) = self.body_as_session_inventory_snapshot() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")

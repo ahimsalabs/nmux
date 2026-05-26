@@ -22,6 +22,12 @@ pub(super) fn serve_control_command(
     host: Option<&mut dyn ProcessHost>,
 ) -> Result<ControlCommandOutcome, ServeError> {
     let mut seq = 1;
+    if command.kind == protocol::ControlCommandKind::SessionList {
+        let inventory = session_inventory_for_session(session);
+        let frame = super::session_inventory_frame(&inventory, "local-client", seq);
+        wire::write_default_frame(stream, &frame)?;
+        return Ok(ControlCommandOutcome::Continue);
+    }
     match apply_control_command(session, host, &command) {
         Ok(outcome) => {
             let workspace_frame = session.workspace_tree_frame("local-client", seq);
@@ -50,6 +56,12 @@ pub(super) fn serve_control_command_with_session_actor(
     host: Option<&mut dyn ProcessHost>,
 ) -> Result<ControlCommandOutcome, ServeError> {
     let mut seq = 1;
+    if command.kind == protocol::ControlCommandKind::SessionList {
+        let inventory = session_inventory_for_session(actor.session());
+        let frame = super::session_inventory_frame(&inventory, "local-client", seq);
+        wire::write_default_frame(stream, &frame)?;
+        return Ok(ControlCommandOutcome::Continue);
+    }
     match apply_control_command_with_session_actor(actor, host, &command) {
         Ok(outcome) => {
             let workspace_frame = actor.session().workspace_tree_frame("local-client", seq);
@@ -69,6 +81,25 @@ pub(super) fn serve_control_command_with_session_actor(
             Ok(ControlCommandOutcome::Continue)
         }
     }
+}
+
+fn session_inventory_for_session(session: &Session) -> super::SessionInventorySummary {
+    super::SessionInventorySummary {
+        active_session_id: session.id.clone(),
+        sessions: vec![super::SessionInventoryItemSummary {
+            session_id: session.id.clone(),
+            title: session_title(session),
+        }],
+    }
+}
+
+fn session_title(session: &Session) -> String {
+    session
+        .tabs
+        .iter()
+        .find(|tab| tab.id == session.active_tab_id)
+        .map(|tab| tab.title.clone())
+        .unwrap_or_else(|| session.id.clone())
 }
 
 fn apply_control_command(
