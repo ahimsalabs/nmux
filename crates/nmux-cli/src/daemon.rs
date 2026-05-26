@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 use crate::error::ServeError;
 use crate::local;
 use clap::{ArgAction, Parser, ValueEnum};
-use nmux_core::host::{CommandSpec, HostKind, HostSpec, LocalPtyHost, ProcessHost};
+use nmux_core::host::{
+    CommandSpec, HostError, HostKind, HostSpec, LocalPtyHost, PaneProcess, ProcessHost,
+    ProcessOutput,
+};
 use nmux_core::session::{Session, SessionActor, SessionCore, SessionEvent, SessionRegistry};
 use nmux_core::terminal::TerminalEngineKind;
 use nmux_proto::protocol;
@@ -186,19 +189,22 @@ where
             inherited_origin.as_deref(),
         );
     }
+    let session_id = session_core.session().id.clone();
     let mut pty_host = LocalPtyHost::default();
-    for pane_id in &pane_ids {
-        let host_spec = session_core
-            .session()
-            .pane_host(pane_id)
-            .ok_or_else(|| format!("pane {pane_id} missing host"))?
-            .clone();
-        if let Err(err) = pty_host.start_pane(pane_id, &host_spec) {
-            report_ready_json_error(&args, &err)?;
-            return Err(Box::new(err));
+    {
+        let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+        for pane_id in &pane_ids {
+            let host_spec = session_core
+                .session()
+                .pane_host(pane_id)
+                .ok_or_else(|| format!("pane {pane_id} missing host"))?
+                .clone();
+            if let Err(err) = scoped_host.start_pane(pane_id, &host_spec) {
+                report_ready_json_error(&args, &err)?;
+                return Err(Box::new(err));
+            }
         }
     }
-    let session_id = session_core.session().id.clone();
     let mut session_registry = SessionRegistry::new();
     if !session_registry.insert(SessionActor::new(session_core, DAEMON_TRACE_RING_CAP)) {
         return Err(format!("duplicate daemon session id {session_id}").into());
@@ -206,7 +212,11 @@ where
     let session_actor = session_registry
         .get_mut(&session_id)
         .ok_or_else(|| format!("daemon session {session_id} missing from registry"))?;
-    if let Err(err) = wait_for_panes_output(session_actor, &mut pty_host, &pane_ids) {
+    let wait_result = {
+        let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+        wait_for_panes_output(session_actor, &mut scoped_host, &pane_ids)
+    };
+    if let Err(err) = wait_result {
         report_ready_json_error(&args, err.as_ref())?;
         return Err(err);
     }
@@ -224,15 +234,21 @@ where
             local::ServeConfig::live(clients, cycles)
         };
         let config = config.terminal_engine_kind(args.terminal_engine_kind);
-        let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => {
-                config.serve_with_session_core(listener, session_actor, &mut pty_host)
-            }
-            DaemonListener::Tcp(listener) => {
-                serve_tcp(&config, listener, &args, session_actor, &mut pty_host)
+        let serve_result = {
+            let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+            match &listener {
+                DaemonListener::Unix { listener, .. } => {
+                    config.serve_with_session_core(listener, session_actor, &mut scoped_host)
+                }
+                DaemonListener::Tcp(listener) => {
+                    serve_tcp(&config, listener, &args, session_actor, &mut scoped_host)
+                }
             }
         };
-        let stop_result = stop_panes(&mut pty_host, &session_actor.session().leaf_pane_ids());
+        let stop_result = {
+            let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+            stop_panes(&mut scoped_host, &session_actor.session().leaf_pane_ids())
+        };
         if let Err(err) = serve_result
             && !local::is_session_shutdown(&err)
         {
@@ -244,15 +260,21 @@ where
 
     if args.one_shot {
         let config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
-        let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => {
-                config.serve_with_session_core(listener, session_actor, &mut pty_host)
-            }
-            DaemonListener::Tcp(listener) => {
-                serve_tcp(&config, listener, &args, session_actor, &mut pty_host)
+        let serve_result = {
+            let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+            match &listener {
+                DaemonListener::Unix { listener, .. } => {
+                    config.serve_with_session_core(listener, session_actor, &mut scoped_host)
+                }
+                DaemonListener::Tcp(listener) => {
+                    serve_tcp(&config, listener, &args, session_actor, &mut scoped_host)
+                }
             }
         };
-        let stop_result = stop_panes(&mut pty_host, &session_actor.session().leaf_pane_ids());
+        let stop_result = {
+            let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+            stop_panes(&mut scoped_host, &session_actor.session().leaf_pane_ids())
+        };
         if let Err(err) = serve_result
             && !local::is_session_shutdown(&err)
         {
@@ -264,21 +286,25 @@ where
 
     let default_config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
     loop {
-        let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => {
-                default_config.serve_with_session_core(listener, session_actor, &mut pty_host)
+        let serve_result = {
+            let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+            match &listener {
+                DaemonListener::Unix { listener, .. } => {
+                    default_config.serve_with_session_core(listener, session_actor, &mut scoped_host)
+                }
+                DaemonListener::Tcp(listener) => serve_tcp(
+                    &default_config,
+                    listener,
+                    &args,
+                    session_actor,
+                    &mut scoped_host,
+                ),
             }
-            DaemonListener::Tcp(listener) => serve_tcp(
-                &default_config,
-                listener,
-                &args,
-                session_actor,
-                &mut pty_host,
-            ),
         };
         if let Err(err) = serve_result {
             if local::is_session_shutdown(&err) {
-                stop_panes(&mut pty_host, &session_actor.session().leaf_pane_ids())?;
+                let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+                stop_panes(&mut scoped_host, &session_actor.session().leaf_pane_ids())?;
                 return Ok(());
             }
             return Err(err.into());
@@ -291,7 +317,7 @@ fn serve_tcp(
     listener: &std::net::TcpListener,
     args: &Args,
     session_actor: &mut SessionActor,
-    host: &mut LocalPtyHost,
+    host: &mut (impl ProcessHost + ProcessOutput),
 ) -> Result<(), ServeError> {
     let token = args
         .tcp_token
@@ -330,6 +356,113 @@ enum DaemonListener {
     Tcp(std::net::TcpListener),
 }
 
+struct ScopedLocalPtyHost<'a> {
+    session_id: &'a str,
+    inner: &'a mut LocalPtyHost,
+}
+
+impl<'a> ScopedLocalPtyHost<'a> {
+    fn new(session_id: &'a str, inner: &'a mut LocalPtyHost) -> Self {
+        Self { session_id, inner }
+    }
+
+    fn host_pane_id(&self, pane_id: &str) -> String {
+        format!("{}:{pane_id}", self.session_id)
+    }
+
+    fn client_pane_id(&self, host_pane_id: &str) -> String {
+        host_pane_id
+            .strip_prefix(self.session_id)
+            .and_then(|suffix| suffix.strip_prefix(':'))
+            .unwrap_or(host_pane_id)
+            .to_owned()
+    }
+
+    fn client_process(&self, mut process: PaneProcess) -> PaneProcess {
+        process.pane_id = self.client_pane_id(&process.pane_id);
+        process
+    }
+
+    fn client_error(&self, error: HostError) -> HostError {
+        match error {
+            HostError::UnsupportedHostKind { .. } => error,
+            HostError::UnsupportedOperation { pane_id, operation } => {
+                HostError::UnsupportedOperation {
+                    pane_id: self.client_pane_id(&pane_id),
+                    operation,
+                }
+            }
+            HostError::AlreadyRunning { pane_id } => HostError::AlreadyRunning {
+                pane_id: self.client_pane_id(&pane_id),
+            },
+            HostError::NotRunning { pane_id } => HostError::NotRunning {
+                pane_id: self.client_pane_id(&pane_id),
+            },
+            HostError::Io {
+                pane_id,
+                operation,
+                message,
+            } => HostError::Io {
+                pane_id: self.client_pane_id(&pane_id),
+                operation,
+                message,
+            },
+        }
+    }
+}
+
+impl ProcessHost for ScopedLocalPtyHost<'_> {
+    fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .start_pane(&host_pane_id, spec)
+            .map(|process| self.client_process(process))
+            .map_err(|error| self.client_error(error))
+    }
+
+    fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .check_pane(&host_pane_id)
+            .map_err(|error| self.client_error(error))
+    }
+
+    fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .write_input(&host_pane_id, bytes)
+            .map_err(|error| self.client_error(error))
+    }
+
+    fn resize_pane(&mut self, pane_id: &str, cols: u32, rows: u32) -> Result<(), HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .resize_pane(&host_pane_id, cols, rows)
+            .map_err(|error| self.client_error(error))
+    }
+
+    fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .stop_pane(&host_pane_id)
+            .map(|process| self.client_process(process))
+            .map_err(|error| self.client_error(error))
+    }
+}
+
+impl ProcessOutput for ScopedLocalPtyHost<'_> {
+    fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .try_read_output(&host_pane_id, bytes)
+            .map_err(|error| self.client_error(error))
+    }
+
+    fn notify_fd(&self) -> Option<std::os::fd::RawFd> {
+        self.inner.notify_fd()
+    }
+}
+
 impl SocketCleanup {
     fn new(path: PathBuf) -> Self {
         let identity = local::socket_identity(&path).ok();
@@ -347,7 +480,7 @@ impl Drop for SocketCleanup {
 
 fn wait_for_panes_output(
     session_actor: &mut SessionActor,
-    output: &mut LocalPtyHost,
+    output: &mut dyn local::ProcessHostOutput,
     pane_ids: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let deadline = Instant::now() + Duration::from_millis(200);
@@ -365,10 +498,7 @@ fn wait_for_panes_output(
     Ok(())
 }
 
-fn stop_panes(
-    host: &mut LocalPtyHost,
-    pane_ids: &[String],
-) -> Result<(), nmux_core::host::HostError> {
+fn stop_panes(host: &mut dyn ProcessHost, pane_ids: &[String]) -> Result<(), HostError> {
     for pane_id in pane_ids {
         host.stop_pane(pane_id)?;
     }
