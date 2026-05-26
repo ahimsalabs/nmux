@@ -1038,52 +1038,48 @@ where
         }
         readable_client_indices.sort_unstable();
         readable_client_indices.dedup();
-        {
-            let (session, engines) = actor.session_and_engines_mut();
-            for client_index in readable_client_indices {
-                let Some(client) = clients.get_mut(client_index) else {
-                    continue;
-                };
-                if let Some(wake_reader) = client.wake_reader() {
-                    drain_wake_reader(wake_reader)?;
-                }
-                match drain_live_client_frames(
-                    client,
-                    session,
-                    host,
-                    engines,
-                    inventory_elapsed_ms(inventory_started_at),
-                ) {
-                    Ok(ClientDrainStatus::Open {
-                        had_input: client_had_input,
-                        input_pane_ids: client_input_pane_ids,
-                        frontend_resize_pane_ids: client_frontend_resize_pane_ids,
-                        changed_workspace: client_changed_workspace,
-                        close_after_drain,
-                    }) => {
-                        had_input |= client_had_input;
-                        input_pane_ids.extend(client_input_pane_ids);
-                        frontend_resize_pane_ids.extend(client_frontend_resize_pane_ids);
-                        changed_workspace |= client_changed_workspace;
-                        if client_had_input {
-                            inventory_updates.push(client.inventory_entry());
-                        }
-                        if close_after_drain {
-                            closed_clients.push(client_index);
-                        }
+        for client_index in readable_client_indices {
+            let Some(client) = clients.get_mut(client_index) else {
+                continue;
+            };
+            if let Some(wake_reader) = client.wake_reader() {
+                drain_wake_reader(wake_reader)?;
+            }
+            match drain_live_client_frames_with_session_actor(
+                client,
+                actor,
+                host,
+                inventory_elapsed_ms(inventory_started_at),
+            ) {
+                Ok(ClientDrainStatus::Open {
+                    had_input: client_had_input,
+                    input_pane_ids: client_input_pane_ids,
+                    frontend_resize_pane_ids: client_frontend_resize_pane_ids,
+                    changed_workspace: client_changed_workspace,
+                    close_after_drain,
+                }) => {
+                    had_input |= client_had_input;
+                    input_pane_ids.extend(client_input_pane_ids);
+                    frontend_resize_pane_ids.extend(client_frontend_resize_pane_ids);
+                    changed_workspace |= client_changed_workspace;
+                    if client_had_input {
+                        inventory_updates.push(client.inventory_entry());
                     }
-                    Ok(ClientDrainStatus::Closed) => {
-                        frontend_resize_pane_ids
-                            .extend(client.frontend_resize_constraints.keys().cloned());
+                    if close_after_drain {
                         closed_clients.push(client_index);
                     }
-                    Err(err) if is_socket_closed(&err) => {
-                        frontend_resize_pane_ids
-                            .extend(client.frontend_resize_constraints.keys().cloned());
-                        closed_clients.push(client_index);
-                    }
-                    Err(err) => return Err(err),
                 }
+                Ok(ClientDrainStatus::Closed) => {
+                    frontend_resize_pane_ids
+                        .extend(client.frontend_resize_constraints.keys().cloned());
+                    closed_clients.push(client_index);
+                }
+                Err(err) if is_socket_closed(&err) => {
+                    frontend_resize_pane_ids
+                        .extend(client.frontend_resize_constraints.keys().cloned());
+                    closed_clients.push(client_index);
+                }
+                Err(err) => return Err(err),
             }
         }
         closed_clients.sort_unstable();
@@ -1701,6 +1697,27 @@ fn commit_pane_resize_with_session_actor(
     Ok(changed)
 }
 
+fn accept_pane_input_with_session_actor(
+    actor: &mut SessionActor,
+    source_id: impl Into<String>,
+    pane_id: &str,
+    input_seq: u64,
+    bytes: &[u8],
+    session_mono_ms: u64,
+) {
+    actor.enqueue(PendingSessionEvent::new(
+        source_id,
+        SessionEventLane::Client,
+        session_mono_ms,
+        SessionEvent::ForwardPaneInput {
+            pane_id: pane_id.to_owned(),
+            input_seq,
+            bytes: bytes.to_vec(),
+        },
+    ));
+    actor.drain_ready();
+}
+
 fn smallest_read_write_frontend_resize(
     clients: &[LiveAttachedClient],
     pane_id: &str,
@@ -2258,6 +2275,152 @@ fn drain_live_client_frames(
     })
 }
 
+fn drain_live_client_frames_with_session_actor(
+    client: &mut LiveAttachedClient,
+    actor: &mut SessionActor,
+    host: &mut dyn ProcessHostOutput,
+    now_mono_ms: u64,
+) -> Result<ClientDrainStatus, ServeError> {
+    let mut had_input = false;
+    let mut input_pane_ids = Vec::new();
+    let mut frontend_resize_pane_ids = Vec::new();
+    let mut changed_workspace = false;
+    let mut close_after_drain = false;
+    loop {
+        match read_live_client_frame(client)? {
+            LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
+                client.last_seen_mono_ms = now_mono_ms;
+                let (session, _) = actor.session_and_engines_mut();
+                if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
+                    queue_scrollback_fetch_error_to_live_client(client, session, &fetch, error)?;
+                    if error == protocol::ErrorCode::StaleVersion {
+                        continue;
+                    }
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                let Some(chunk) = session.scrollback_chunk_frame_for_pane(
+                    "local-client",
+                    client.seq,
+                    &fetch.pane_id,
+                    fetch.start_line,
+                    fetch.line_count,
+                ) else {
+                    queue_pane_not_found_error_to_live_client(client, session, &fetch.pane_id, 0)?;
+                    return Ok(ClientDrainStatus::Closed);
+                };
+                queue_reliable_frame_to_live_client(client, chunk)?;
+            }
+            LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
+                client.last_seen_mono_ms = now_mono_ms;
+                {
+                    let (session, _) = actor.session_and_engines_mut();
+                    if !Session::input_allowed(&client.actor) {
+                        queue_protocol_error_to_live_client(
+                            client,
+                            session,
+                            protocol::ErrorCode::PermissionDenied,
+                            "resize rejected: actor is read-only",
+                            Some(&resize.pane_id),
+                            0,
+                        )?;
+                        return Ok(ClientDrainStatus::Closed);
+                    }
+                    if session.surface_version(&resize.pane_id).is_none() {
+                        queue_pane_not_found_error_to_live_client(
+                            client,
+                            session,
+                            &resize.pane_id,
+                            0,
+                        )?;
+                        return Ok(ClientDrainStatus::Closed);
+                    }
+                    let policy = session
+                        .pane_resize_policy(&resize.pane_id)
+                        .unwrap_or(protocol::ResizePolicy::Fixed);
+                    if !Session::resize_intent_allowed(policy, resize.reason) {
+                        continue;
+                    }
+                }
+                if resize.reason == protocol::ResizeReason::FrontendViewport {
+                    client
+                        .frontend_resize_constraints
+                        .insert(resize.pane_id.clone(), (resize.cols, resize.rows));
+                    frontend_resize_pane_ids.push(resize.pane_id);
+                    continue;
+                }
+                if let Err(err) = host.resize_pane(&resize.pane_id, resize.cols, resize.rows) {
+                    let (session, _) = actor.session_and_engines_mut();
+                    queue_protocol_error_to_live_client(
+                        client,
+                        session,
+                        protocol::ErrorCode::Unknown,
+                        &format!("resize failed: {err}"),
+                        Some(&resize.pane_id),
+                        0,
+                    )?;
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                changed_workspace |= commit_pane_resize_with_session_actor(
+                    actor,
+                    host,
+                    client.actor.id.clone(),
+                    &resize.pane_id,
+                    resize.cols,
+                    resize.rows,
+                    now_mono_ms,
+                )?;
+            }
+            LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
+                client.last_seen_mono_ms = now_mono_ms;
+                client.last_input_mono_ms = Some(now_mono_ms);
+                let input_pane_id = input.pane_id.clone();
+                if !Session::input_allowed(&client.actor) {
+                    let (session, _) = actor.session_and_engines_mut();
+                    queue_protocol_error_to_live_client(
+                        client,
+                        session,
+                        protocol::ErrorCode::PermissionDenied,
+                        "input rejected: actor is read-only",
+                        Some(&input.pane_id),
+                        input.input_seq,
+                    )?;
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                forward_live_input_to_live_client_with_session_actor(
+                    client,
+                    actor,
+                    host,
+                    input,
+                    now_mono_ms,
+                )?;
+                had_input = true;
+                input_pane_ids.push(input_pane_id);
+            }
+            LiveClientRead::Frame(LiveClientFrame::Ping(ping)) => {
+                client.last_seen_mono_ms = now_mono_ms;
+                let (session, _) = actor.session_and_engines_mut();
+                queue_pong_frame_to_live_client(client, session, &ping)?;
+            }
+            LiveClientRead::NoFrame => break,
+            LiveClientRead::Closed => {
+                close_after_drain = true;
+                break;
+            }
+        }
+
+        if !live_client_has_more_input(client)? {
+            break;
+        }
+    }
+    Ok(ClientDrainStatus::Open {
+        had_input,
+        input_pane_ids,
+        frontend_resize_pane_ids,
+        changed_workspace,
+        close_after_drain,
+    })
+}
+
 fn queue_scrollback_fetch_error_to_live_client(
     client: &mut LiveAttachedClient,
     session: &Session,
@@ -2389,6 +2552,87 @@ fn forward_live_input_to_live_client(
         if input_write_target_exited(&err, &input.pane_id) {
             return Ok(());
         }
+        queue_protocol_error_to_live_client(
+            client,
+            session,
+            protocol::ErrorCode::Unknown,
+            &format!("input forwarding failed: {err}"),
+            Some(&input.pane_id),
+            input.input_seq,
+        )?;
+    }
+    Ok(())
+}
+
+#[instrument(
+    level = "trace",
+    skip_all,
+    fields(pane_id = %input.pane_id, input_seq = input.input_seq)
+)]
+fn forward_live_input_to_live_client_with_session_actor(
+    client: &mut LiveAttachedClient,
+    actor: &mut SessionActor,
+    host: &mut dyn ProcessHostOutput,
+    input: InputSummary,
+    now_mono_ms: u64,
+) -> Result<(), ServeError> {
+    let bytes = {
+        let (session, engines) = actor.session_and_engines_mut();
+        if session.surface_version(&input.pane_id).is_none() {
+            queue_pane_not_found_error_to_live_client(
+                client,
+                session,
+                &input.pane_id,
+                input.input_seq,
+            )?;
+            return Ok(());
+        }
+        if let Some(rejection) = input.forwarding_rejection(session) {
+            queue_protocol_error_to_live_client(
+                client,
+                session,
+                protocol::ErrorCode::PermissionDenied,
+                rejection.message(),
+                Some(&input.pane_id),
+                input.input_seq,
+            )?;
+            return Ok(());
+        }
+        match input.forwarded_bytes(session, engines) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                queue_protocol_error_to_live_client(
+                    client,
+                    session,
+                    protocol::ErrorCode::Unknown,
+                    &err.to_string(),
+                    Some(&input.pane_id),
+                    input.input_seq,
+                )?;
+                return Ok(());
+            }
+        }
+    };
+    accept_pane_input_with_session_actor(
+        actor,
+        client.actor.id.clone(),
+        &input.pane_id,
+        input.input_seq,
+        &bytes,
+        now_mono_ms,
+    );
+    let write_span = tracing::trace_span!(
+        "host.write_input",
+        pane_id = %input.pane_id,
+        input_seq = input.input_seq,
+        bytes = bytes.len()
+    );
+    let write_result = write_span.in_scope(|| host.write_input(&input.pane_id, &bytes));
+    if let Err(err) = write_result {
+        if input_write_target_exited(&err, &input.pane_id) {
+            return Ok(());
+        }
+        let (session, _) = actor.session_and_engines_mut();
         queue_protocol_error_to_live_client(
             client,
             session,
@@ -3172,6 +3416,14 @@ fn serve_live_attached_client_with_session_actor(
                     }
                 }
             };
+            accept_pane_input_with_session_actor(
+                actor,
+                client_actor.id.clone(),
+                &input.pane_id,
+                input.input_seq,
+                &bytes,
+                inventory_elapsed_ms(started_at),
+            );
             let write_span = tracing::trace_span!(
                 "host.write_input",
                 pane_id = %input.pane_id,
@@ -12204,6 +12456,16 @@ mod tests {
         let accepted_events = trace_rx.recv().expect("actor trace");
         assert!(accepted_events.iter().any(|accepted| matches!(
             &accepted.event,
+            SessionEvent::ForwardPaneInput {
+                pane_id,
+                input_seq: 1,
+                bytes,
+            } if pane_id == "pane-1" && bytes == b"z"
+        ) && accepted.metadata.source_id
+            == "writer"
+            && accepted.metadata.lane == SessionEventLane::Client));
+        assert!(accepted_events.iter().any(|accepted| matches!(
+            &accepted.event,
             SessionEvent::PaneOutput { pane_id, bytes }
                 if pane_id == "pane-1" && bytes.windows(2).any(|window| window == b"z\n")
         )));
@@ -13882,6 +14144,16 @@ mod tests {
                 cols: 100,
                 rows: 30,
             } if pane_id == "pane-1"
+        ) && accepted.metadata.source_id
+            == "local-actor"
+            && accepted.metadata.lane == SessionEventLane::Client));
+        assert!(accepted_events.iter().any(|accepted| matches!(
+            &accepted.event,
+            SessionEvent::ForwardPaneInput {
+                pane_id,
+                input_seq: 1,
+                bytes,
+            } if pane_id == "pane-1" && bytes == b"after-resize"
         ) && accepted.metadata.source_id
             == "local-actor"
             && accepted.metadata.lane == SessionEventLane::Client));
