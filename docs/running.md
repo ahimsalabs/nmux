@@ -59,9 +59,12 @@ different local workspace.
 Use `--session NAME` or `-s NAME` on `nmux daemon` to publish a non-default
 session name; clients can target the same daemon with `nmux --session NAME`,
 `nmux attach NAME`, `nmux new NAME` for managed private sessions, or
-`nmux kill NAME` to stop the matching daemon-owned session. The current daemon
-still owns one session, so a mismatched target name fails clearly rather than
-selecting from a multi-session server.
+`nmux kill NAME` to stop the matching daemon-owned session. The default Unix
+daemon loop also accepts `nmux session new NAME [--title TITLE]`, creating a
+named session behind the same listener for later `--session NAME` attaches.
+The dedicated `--live-forever` serve loop still owns one live session actor, so
+the ratatui live session menu uses tab switching until live registry routing is
+added.
 
 For a private local workspace owned by one client command, use `--start`:
 
