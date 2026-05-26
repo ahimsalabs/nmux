@@ -110,6 +110,8 @@ const MOUSE_ACTION_NAMES: &[&str] = &["press", "release", "motion"];
 const MOUSE_BUTTON_NAMES: &[&str] = &["none", "left", "middle", "right", "wheel-up", "wheel-down"];
 const LOCAL_ECHO_NAMES: &[&str] = &["off", "tty"];
 const DETACH_KEY_NAMES: &[&str] = &["ctrl-]", "none"];
+const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
+const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
 const DEFAULT_MANAGED_STARTUP_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_REMOTE_PORT: u16 = 7007;
 const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
@@ -1087,33 +1089,54 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
-                            let input_span = tracing::trace_span!(
-                                "live.stdin_bytes.forward_input",
-                                bytes = input.len(),
-                                pane_id = %attached_pane_id
-                            );
-                            let input_seq = input_span.in_scope(|| {
-                                local::send_raw_input_with_sequence(
-                                    &mut stream,
-                                    &mut client_sequence,
-                                    &attached_pane_id,
-                                    &input,
-                                )
-                            })?;
-                            if let Ok(text) = std::str::from_utf8(&input) {
-                                repaint_speculative_echo(
-                                    stdin_bytes_speculative_echo_enabled(args),
-                                    &client_state,
-                                    &mut speculative_echo,
-                                    &attached_pane_id,
-                                    input_seq,
-                                    text,
-                                    &current_workspace,
-                                    &surface_state.current_surface_metadata,
-                                    &mut surface_state.current_surface_text,
-                                    redraw_state.as_mut(),
-                                    use_styled,
-                                )?;
+                            for forward in stdin_byte_forwards(&input) {
+                                match forward {
+                                    StdinByteForward::Raw(input) => {
+                                        let input_span = tracing::trace_span!(
+                                            "live.stdin_bytes.forward_input",
+                                            bytes = input.len(),
+                                            pane_id = %attached_pane_id
+                                        );
+                                        let input_seq = input_span.in_scope(|| {
+                                            local::send_raw_input_with_sequence(
+                                                &mut stream,
+                                                &mut client_sequence,
+                                                &attached_pane_id,
+                                                &input,
+                                            )
+                                        })?;
+                                        if let Ok(text) = std::str::from_utf8(&input) {
+                                            repaint_speculative_echo(
+                                                stdin_bytes_speculative_echo_enabled(args),
+                                                &client_state,
+                                                &mut speculative_echo,
+                                                &attached_pane_id,
+                                                input_seq,
+                                                text,
+                                                &current_workspace,
+                                                &surface_state.current_surface_metadata,
+                                                &mut surface_state.current_surface_text,
+                                                redraw_state.as_mut(),
+                                                use_styled,
+                                            )?;
+                                        }
+                                    }
+                                    StdinByteForward::Paste(text) => {
+                                        let input_span = tracing::trace_span!(
+                                            "live.stdin_bytes.forward_paste",
+                                            bytes = text.len(),
+                                            pane_id = %attached_pane_id
+                                        );
+                                        input_span.in_scope(|| {
+                                            local::send_paste_input_with_sequence(
+                                                &mut stream,
+                                                &mut client_sequence,
+                                                &attached_pane_id,
+                                                &text,
+                                            )
+                                        })?;
+                                    }
+                                }
                             }
                             sent_stdin_bytes_this_cycle = true;
                         }
@@ -2267,6 +2290,12 @@ enum StdinByteRead {
     Error(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StdinByteForward {
+    Raw(Vec<u8>),
+    Paste(String),
+}
+
 fn split_stdin_bytes_for_detach(input: &[u8], detach_byte: Option<u8>) -> (Option<Vec<u8>>, bool) {
     let Some(detach_byte) = detach_byte else {
         return (Some(input.to_vec()), false);
@@ -2281,6 +2310,48 @@ fn split_stdin_bytes_for_detach(input: &[u8], detach_byte: Option<u8>) -> (Optio
     } else {
         (Some(before_detach.to_vec()), true)
     }
+}
+
+fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
+    let mut forwards = Vec::new();
+    let mut offset = 0;
+    while offset < input.len() {
+        let Some(start_rel) = find_bytes(&input[offset..], BRACKETED_PASTE_START) else {
+            forwards.push(StdinByteForward::Raw(input[offset..].to_vec()));
+            break;
+        };
+        let start = offset + start_rel;
+        if start > offset {
+            forwards.push(StdinByteForward::Raw(input[offset..start].to_vec()));
+        }
+        let paste_start = start + BRACKETED_PASTE_START.len();
+        let Some(end_rel) = find_bytes(&input[paste_start..], BRACKETED_PASTE_END) else {
+            forwards.push(StdinByteForward::Raw(input[start..].to_vec()));
+            break;
+        };
+        let paste_end = paste_start + end_rel;
+        match std::str::from_utf8(&input[paste_start..paste_end]) {
+            Ok(text) => forwards.push(StdinByteForward::Paste(text.to_owned())),
+            Err(_) => forwards.push(StdinByteForward::Raw(
+                input[start..paste_end + BRACKETED_PASTE_END.len()].to_vec(),
+            )),
+        }
+        offset = paste_end + BRACKETED_PASTE_END.len();
+    }
+    forwards.retain(|forward| match forward {
+        StdinByteForward::Raw(bytes) => !bytes.is_empty(),
+        StdinByteForward::Paste(_) => true,
+    });
+    forwards
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 struct RawTerminalGuard;
@@ -5962,12 +6033,13 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AttachMode, ClientModeArgs, DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs,
-        FocusEvent, HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
-        LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
-        PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
-        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags,
-        SigwinchResizeContext, StateInfoSocketSummary, args_from_iter, configure_default_live_args,
+        AttachMode, BRACKETED_PASTE_END, BRACKETED_PASTE_START, ClientModeArgs,
+        DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs, FocusEvent, HostMouseModeContext,
+        InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
+        LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
+        RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
+        SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags, SigwinchResizeContext,
+        StateInfoSocketSummary, StdinByteForward, args_from_iter, configure_default_live_args,
         default_attach_error_needs_restart, format_cli_error_json, format_context_json,
         format_input_choices_json, format_key_names_json, format_live_attach_json,
         format_live_cli_error_json, format_live_detach_json, format_live_error_json,
@@ -5980,8 +6052,8 @@ mod tests {
         parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
         preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
         redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_fds,
-        terminal_size_unavailable, usage,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
+        terminal_size_from_fds, terminal_size_unavailable, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -8237,6 +8309,41 @@ mod tests {
         assert_eq!(
             split_stdin_bytes_for_detach(b"ping\n\x1d", None),
             (Some(b"ping\n\x1d".to_vec()), false)
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_decode_bracketed_paste_for_forwarding() {
+        let input = [
+            b"before".as_slice(),
+            BRACKETED_PASTE_START,
+            b"pasted\ntext".as_slice(),
+            BRACKETED_PASTE_END,
+            b"after".as_slice(),
+        ]
+        .concat();
+
+        assert_eq!(
+            stdin_byte_forwards(&input),
+            vec![
+                StdinByteForward::Raw(b"before".to_vec()),
+                StdinByteForward::Paste("pasted\ntext".to_owned()),
+                StdinByteForward::Raw(b"after".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_keep_incomplete_or_non_utf8_bracketed_paste_raw() {
+        assert_eq!(
+            stdin_byte_forwards(b"\x1b[200~unterminated"),
+            vec![StdinByteForward::Raw(b"\x1b[200~unterminated".to_vec())]
+        );
+
+        let input = [BRACKETED_PASTE_START, &[0xff, b'a'], BRACKETED_PASTE_END].concat();
+        assert_eq!(
+            stdin_byte_forwards(&input),
+            vec![StdinByteForward::Raw(b"\x1b[200~\xffa\x1b[201~".to_vec())]
         );
     }
 

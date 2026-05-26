@@ -7490,6 +7490,68 @@ fn live_cli_can_drive_input_chunks_from_stdin_bytes() {
 }
 
 #[test]
+fn live_cli_stdin_bytes_forwards_bracketed_paste_as_paste_input() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'ready\n'; while IFS= read -r line; do printf 'paste:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+
+    wait_for_socket(&socket_path);
+
+    let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--stdin-bytes",
+            "--interval-ms",
+            "1000",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
+
+    let mut stdin = client.stdin.take().expect("client stdin");
+    stdin
+        .write_all(b"\x1b[200~clip\n\x1b[201~")
+        .expect("write bracketed paste");
+    stdin.flush().expect("flush bracketed paste");
+    drop(stdin);
+
+    let client = client.wait_with_output().expect("wait for nmux");
+    let server_status = server.wait().expect("wait for daemon");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "daemon failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("paste:clip"),
+        "missing decoded paste output:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("[200~clip"),
+        "bracketed paste control bytes leaked to pane:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_stdin_bytes_keeps_polling_before_input_arrives() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
