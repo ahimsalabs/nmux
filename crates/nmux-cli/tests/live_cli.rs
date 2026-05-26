@@ -1951,9 +1951,9 @@ fn managed_shell_cli_runs_private_live_daemon() {
             "--iterations",
             "4",
             "--interval-ms",
-            "100",
+            "250",
             "--command",
-            "printf 'shell-ready\n'; while IFS= read -r line; do printf 'shell:%s\n' \"$line\"; done",
+            "printf 'shell-ready\n'; while IFS= read -r line; do sleep 0.02; printf 'shell:%s\n' \"$line\"; done",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

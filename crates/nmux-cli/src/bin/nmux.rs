@@ -724,6 +724,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let stdout_tty = stdout_is_tty();
     let post_input_stream_grace = if stdout_tty && stdin_bytes_speculative_echo_enabled(args) {
         Duration::ZERO
+    } else if args.stdin_bytes && !stdin_is_tty() {
+        live_poll_timeout
     } else {
         live_poll_timeout.min(Duration::from_millis(2))
     };
@@ -2546,7 +2548,14 @@ where
 fn terminal_size_unavailable(err: &io::Error) -> bool {
     matches!(
         err.raw_os_error(),
-        Some(libc::ENOTTY | libc::EBADF | libc::EINVAL | libc::EAGAIN | libc::ENODEV)
+        Some(
+            libc::ENOTTY
+                | libc::EBADF
+                | libc::EINVAL
+                | libc::EAGAIN
+                | libc::ENODEV
+                | libc::ENOENT
+        )
     )
 }
 
@@ -6308,7 +6317,7 @@ mod tests {
 
     #[test]
     fn terminal_size_treats_ci_tty_unavailable_errors_as_absent_size() {
-        for code in [libc::EAGAIN, libc::ENODEV] {
+        for code in [libc::EAGAIN, libc::ENODEV, libc::ENOENT] {
             let size = terminal_size_from_fds(&[], || Err(io::Error::from_raw_os_error(code)))
                 .expect("transient or absent tty should not fail managed startup");
             assert_eq!(size, None);
