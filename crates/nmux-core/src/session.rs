@@ -225,6 +225,11 @@ pub enum SessionEvent {
     RequestSessionShutdown {
         session_id: Option<String>,
     },
+    ForwardPaneInput {
+        pane_id: String,
+        input_seq: u64,
+        bytes: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -657,6 +662,7 @@ impl SessionCore {
                 return self.apply_pane_resize_event(event_index, pane_id, *cols, *rows);
             }
             SessionEvent::RequestSessionShutdown { .. } => false,
+            SessionEvent::ForwardPaneInput { .. } => false,
         };
         if changed {
             vec![SessionEffect::WorkspaceChanged {
@@ -3261,6 +3267,36 @@ mod tests {
             transition.accepted.event,
             SessionEvent::RequestSessionShutdown {
                 session_id: Some("local".to_owned()),
+            }
+        );
+        assert!(transition.effects.is_empty());
+        assert_eq!(core.session().version, 1);
+    }
+
+    #[test]
+    fn session_core_forwarded_input_is_accepted_without_effects() {
+        let mut core = SessionCore::initial();
+
+        let transition = core.accept(
+            "writer",
+            SessionEventLane::Client,
+            11,
+            SessionEvent::ForwardPaneInput {
+                pane_id: "pane-1".to_owned(),
+                input_seq: 5,
+                bytes: b"hello".to_vec(),
+            },
+        );
+
+        assert_eq!(transition.accepted.metadata.event_index, 0);
+        assert_eq!(transition.accepted.metadata.source_id, "writer");
+        assert_eq!(transition.accepted.metadata.lane, SessionEventLane::Client);
+        assert_eq!(
+            transition.accepted.event,
+            SessionEvent::ForwardPaneInput {
+                pane_id: "pane-1".to_owned(),
+                input_seq: 5,
+                bytes: b"hello".to_vec(),
             }
         );
         assert!(transition.effects.is_empty());

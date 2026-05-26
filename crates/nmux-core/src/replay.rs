@@ -179,6 +179,7 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::PaneOutput { .. } => "pane_output",
         SessionEvent::CommitPaneResize { .. } => "commit_pane_resize",
         SessionEvent::RequestSessionShutdown { .. } => "request_session_shutdown",
+        SessionEvent::ForwardPaneInput { .. } => "forward_pane_input",
     }
 }
 
@@ -268,6 +269,33 @@ mod tests {
         assert!(bytes.starts_with(b"NMUXTRACE\0\x01\0\0\0"));
         assert!(text.contains("lane=lifecycle"));
         assert!(text.contains("event=request_session_shutdown"));
+        assert!(!text.contains("effect="));
+    }
+
+    #[test]
+    fn trace_container_writes_forwarded_input_without_effects() {
+        let mut core = SessionCore::initial();
+        let transition = core.accept(
+            "writer",
+            SessionEventLane::Client,
+            11,
+            SessionEvent::ForwardPaneInput {
+                pane_id: "pane-1".to_owned(),
+                input_seq: 5,
+                bytes: b"hello".to_vec(),
+            },
+        );
+        let mut writer = TraceContainerWriter::new(Vec::new()).expect("writer");
+
+        writer
+            .write_record(&SessionTraceRecord::from_transition(transition))
+            .expect("write record");
+        let bytes = writer.into_inner();
+        let text = String::from_utf8_lossy(&bytes);
+
+        assert!(bytes.starts_with(b"NMUXTRACE\0\x01\0\0\0"));
+        assert!(text.contains("lane=client"));
+        assert!(text.contains("event=forward_pane_input"));
         assert!(!text.contains("effect="));
     }
 
