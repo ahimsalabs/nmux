@@ -250,6 +250,19 @@ impl ServeConfig {
         actor: &mut nmux_core::session::SessionActor,
         host: &mut H,
     ) -> Result<(), ServeError> {
+        if self.live && !self.connection_limit.uses_concurrent_live_loop() {
+            for _ in 0..self.connection_limit.bounded_count().unwrap_or(0) {
+                let (stream, _) = listener.accept()?;
+                serve_stream_impl_with_session_actor(
+                    stream,
+                    actor,
+                    host,
+                    true,
+                    self.cycles_per_client,
+                )?;
+            }
+            return Ok(());
+        }
         let (session, engines) = actor.session_and_engines_mut();
         self.serve_with_engines(listener, session, host, engines)
     }
@@ -294,6 +307,15 @@ impl ServeConfig {
         actor: &mut nmux_core::session::SessionActor,
         host: &mut H,
     ) -> Result<(), ServeError> {
+        if self.live {
+            return serve_stream_impl_with_session_actor(
+                stream,
+                actor,
+                host,
+                true,
+                self.cycles_per_client,
+            );
+        }
         let (session, engines) = actor.session_and_engines_mut();
         self.serve_stream_with_engines(stream, session, host, engines)
     }
@@ -373,6 +395,58 @@ fn serve_stream_impl<H: ProcessHost + ProcessOutput>(
         }
         serve_live_attached_client(&mut stream, request, session, host, engines, cycles)
     } else {
+        serve_attached_client(&mut stream, request, session, Some(host), engines)
+    }
+}
+
+fn serve_stream_impl_with_session_actor<H: ProcessHost + ProcessOutput>(
+    mut stream: UnixStream,
+    actor: &mut SessionActor,
+    host: &mut H,
+    live: bool,
+    cycles: usize,
+) -> Result<(), ServeError> {
+    let request = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach(request) => request,
+        ClientInitialFrame::Control(command) => {
+            let (session, _) = actor.session_and_engines_mut();
+            return match serve_control_command(&mut stream, command, session, Some(host))? {
+                ControlCommandOutcome::Continue => Ok(()),
+                ControlCommandOutcome::Shutdown => Err(ServeError::SessionShutdown),
+            };
+        }
+        ClientInitialFrame::HealthProbe(probe) => {
+            let (session, engines) = actor.session_and_engines_mut();
+            return serve_health_probe(&mut stream, probe, session, Some(host), Some(engines));
+        }
+    };
+    let pane_id = {
+        let (session, _) = actor.session_and_engines_mut();
+        attach_target_pane_id(session, &request)
+    };
+    let Some(pane_id) = pane_id else {
+        let mut seq = 1;
+        write_attach_target_not_found_error(&mut stream, actor.session(), &mut seq, &request)?;
+        return Ok(());
+    };
+    if let Err(err) = poll_panes_output_with_session_actor_once(
+        actor,
+        host,
+        std::slice::from_ref(&pane_id),
+        std::slice::from_ref(&pane_id),
+        0,
+    ) {
+        let mut seq = 1;
+        write_host_output_error(&mut stream, actor.session(), &mut seq, &pane_id, err)?;
+        return Ok(());
+    }
+    if live {
+        if let Some(notify_fd) = host.notify_fd() {
+            drain_notify_fd(notify_fd)?;
+        }
+        serve_live_attached_client_with_session_actor(&mut stream, request, actor, host, cycles)
+    } else {
+        let (session, engines) = actor.session_and_engines_mut();
         serve_attached_client(&mut stream, request, session, Some(host), engines)
     }
 }
@@ -2235,6 +2309,389 @@ fn serve_live_attached_client(
     Ok(())
 }
 
+fn serve_live_attached_client_with_session_actor(
+    stream: &mut UnixStream,
+    request: AttachRequest,
+    actor: &mut SessionActor,
+    host: &mut dyn ProcessHostOutput,
+    cycles: usize,
+) -> Result<(), ServeError> {
+    let started_at = Instant::now();
+    let mut seq = 1;
+    let Some((pane_id, client_actor)) = ({
+        let (session, _) = actor.session_and_engines_mut();
+        write_attach_handshake(stream, &request, session, &mut seq)?
+    }) else {
+        return Ok(());
+    };
+    let leaf_pane_ids = actor.session().leaf_pane_ids();
+    let mut known_surface_versions = known_surface_versions_from_request(&request);
+    if let Some(current) = actor.session().surface_version(&pane_id) {
+        known_surface_versions.insert(pane_id.clone(), current);
+    }
+
+    let mut completed_cycles = 0;
+    while completed_cycles < cycles {
+        let mut count_cycle = false;
+        let mut readiness =
+            poll_live_client_sources(stream, host.notify_fd(), LIVE_IDLE_POLL_TIMEOUT)?;
+        if let Some(notify_fd) = host.notify_fd()
+            && readiness.host_output
+        {
+            drain_notify_fd(notify_fd)?;
+        }
+        if readiness.host_output && !readiness.client_input {
+            let client_readiness =
+                poll_live_client_sources(stream, None, LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT)?;
+            readiness.client_input = client_readiness.client_input;
+        }
+
+        let mut input_pane_id = None;
+        {
+            let (session, engines) = actor.session_and_engines_mut();
+            let mut inputs = Vec::new();
+            if readiness.client_input {
+                loop {
+                    match read_live_client_frame_from_stream(stream)? {
+                        LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)) => {
+                            count_cycle = false;
+                            if let Some(error) = scrollback_fetch_error_code(session, &fetch) {
+                                write_scrollback_fetch_error(
+                                    stream, session, &mut seq, &fetch, error,
+                                )?;
+                                if error == protocol::ErrorCode::StaleVersion {
+                                    continue;
+                                }
+                                return Ok(());
+                            }
+                            let Some(chunk) = session.scrollback_chunk_frame_for_pane(
+                                "local-client",
+                                seq,
+                                &fetch.pane_id,
+                                fetch.start_line,
+                                fetch.line_count,
+                            ) else {
+                                write_pane_not_found_error(
+                                    stream,
+                                    session,
+                                    &mut seq,
+                                    &fetch.pane_id,
+                                )?;
+                                return Ok(());
+                            };
+                            wire::write_default_frame(stream, &chunk)?;
+                            seq += 1;
+                        }
+                        LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
+                            count_cycle = false;
+                            if !Session::input_allowed(&client_actor) {
+                                write_protocol_error(
+                                    stream,
+                                    session,
+                                    &mut seq,
+                                    protocol::ErrorCode::PermissionDenied,
+                                    "resize rejected: actor is read-only",
+                                    Some(&resize.pane_id),
+                                    0,
+                                )?;
+                                return Ok(());
+                            }
+                            if session.surface_version(&resize.pane_id).is_none() {
+                                write_pane_not_found_error(
+                                    stream,
+                                    session,
+                                    &mut seq,
+                                    &resize.pane_id,
+                                )?;
+                                return Ok(());
+                            }
+                            let policy = session
+                                .pane_resize_policy(&resize.pane_id)
+                                .unwrap_or(protocol::ResizePolicy::Fixed);
+                            if !Session::resize_intent_allowed(policy, resize.reason) {
+                                continue;
+                            }
+                            if let Err(err) =
+                                host.resize_pane(&resize.pane_id, resize.cols, resize.rows)
+                            {
+                                write_protocol_error(
+                                    stream,
+                                    session,
+                                    &mut seq,
+                                    protocol::ErrorCode::Unknown,
+                                    &format!("resize failed: {err}"),
+                                    Some(&resize.pane_id),
+                                    0,
+                                )?;
+                                return Ok(());
+                            }
+                            if session.commit_pane_resize_with_engine(
+                                &resize.pane_id,
+                                resize.cols,
+                                resize.rows,
+                                engines.engine_mut(&resize.pane_id),
+                            ) {
+                                let workspace_frame =
+                                    session.workspace_tree_frame("local-client", seq);
+                                wire::write_default_frame(stream, &workspace_frame)?;
+                                seq += 1;
+                            }
+                        }
+                        LiveClientRead::Frame(LiveClientFrame::Input(input)) => {
+                            count_cycle = true;
+                            if Session::input_allowed(&client_actor) {
+                                inputs.push(input);
+                            } else {
+                                write_protocol_error(
+                                    stream,
+                                    session,
+                                    &mut seq,
+                                    protocol::ErrorCode::PermissionDenied,
+                                    "input rejected: actor is read-only",
+                                    Some(&input.pane_id),
+                                    input.input_seq,
+                                )?;
+                                return Ok(());
+                            }
+                        }
+                        LiveClientRead::Frame(LiveClientFrame::Ping(ping)) => {
+                            count_cycle = false;
+                            write_pong_frame(stream, session, &mut seq, &ping)?;
+                        }
+                        LiveClientRead::NoFrame => break,
+                        LiveClientRead::Closed => return Ok(()),
+                    }
+
+                    if !stream_readable_within(stream, Duration::ZERO)? {
+                        break;
+                    }
+                }
+            }
+
+            for input in inputs {
+                input_pane_id = Some(input.pane_id.clone());
+                if session.surface_version(&input.pane_id).is_none() {
+                    write_pane_not_found_error_with_input_seq(
+                        stream,
+                        session,
+                        &mut seq,
+                        &input.pane_id,
+                        input.input_seq,
+                    )?;
+                    return Ok(());
+                }
+                if let Some(rejection) = input.forwarding_rejection(session) {
+                    write_protocol_error(
+                        stream,
+                        session,
+                        &mut seq,
+                        protocol::ErrorCode::PermissionDenied,
+                        rejection.message(),
+                        Some(&input.pane_id),
+                        input.input_seq,
+                    )?;
+                    return Ok(());
+                }
+                let bytes = match input.forwarded_bytes(session, engines) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        write_protocol_error(
+                            stream,
+                            session,
+                            &mut seq,
+                            protocol::ErrorCode::Unknown,
+                            &err.to_string(),
+                            Some(&input.pane_id),
+                            input.input_seq,
+                        )?;
+                        return Ok(());
+                    }
+                };
+                let write_span = tracing::trace_span!(
+                    "host.write_input",
+                    pane_id = %input.pane_id,
+                    input_seq = input.input_seq,
+                    bytes = bytes.len()
+                );
+                let write_result = write_span.in_scope(|| host.write_input(&input.pane_id, &bytes));
+                if let Err(err) = write_result {
+                    if input_write_target_exited(&err, &input.pane_id) {
+                        return Ok(());
+                    }
+                    write_protocol_error(
+                        stream,
+                        session,
+                        &mut seq,
+                        protocol::ErrorCode::Unknown,
+                        &format!("input forwarding failed: {err}"),
+                        Some(&input.pane_id),
+                        input.input_seq,
+                    )?;
+                    return Ok(());
+                }
+            }
+        }
+
+        if input_pane_id.is_some()
+            && !readiness.host_output
+            && let Some(notify_fd) = host.notify_fd()
+        {
+            let readiness = poll_live_client_sources(
+                stream,
+                Some(notify_fd),
+                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+            )?;
+            if readiness.host_output {
+                drain_notify_fd(notify_fd)?;
+            }
+        }
+
+        let input_pane_ids = input_pane_id.iter().cloned().collect::<Vec<_>>();
+        let attempted_fast_output = input_pane_id.is_some() || readiness.host_output;
+        let coalesce_after_input = cycles != usize::MAX;
+        let hold_first_surface_for_coalesce =
+            input_pane_id.is_some() && coalesce_after_input && host.notify_fd().is_some();
+        let mut fast_changed = false;
+        if attempted_fast_output {
+            let poll_span = tracing::trace_span!(
+                "host.output.first_poll",
+                reason = if input_pane_id.is_some() {
+                    "post_input"
+                } else {
+                    "host_ready"
+                },
+                panes = leaf_pane_ids.len(),
+                priority_panes = input_pane_ids.len(),
+            );
+            match poll_span.in_scope(|| {
+                poll_panes_output_with_session_actor_once(
+                    actor,
+                    host,
+                    &leaf_pane_ids,
+                    &input_pane_ids,
+                    inventory_elapsed_ms(started_at),
+                )
+            }) {
+                Ok(true) => {
+                    fast_changed = true;
+                    if !hold_first_surface_for_coalesce {
+                        let surface_span = tracing::trace_span!(
+                            "surface.write_first_changed",
+                            reason = if input_pane_id.is_some() {
+                                "post_input"
+                            } else {
+                                "host_ready"
+                            },
+                            panes = leaf_pane_ids.len()
+                        );
+                        surface_span.in_scope(|| {
+                            let (session, _) = actor.session_and_engines_mut();
+                            write_changed_surface_frames(
+                                stream,
+                                session,
+                                &mut seq,
+                                &leaf_pane_ids,
+                                &mut known_surface_versions,
+                            )
+                        })?;
+                    }
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    let error_pane_id = host_error_pane_id(&err).to_owned();
+                    let (session, _) = actor.session_and_engines_mut();
+                    write_host_output_error(stream, session, &mut seq, &error_pane_id, err)?;
+                    return Ok(());
+                }
+            }
+        }
+
+        let quiet_timeout = if input_pane_id.is_some() {
+            LIVE_POST_INPUT_POLL_TIMEOUT
+        } else {
+            LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
+        };
+        let output_result =
+            if input_pane_id.is_some() && host.notify_fd().is_some() && coalesce_after_input {
+                let poll_span = tracing::trace_span!(
+                    "host.output.poll",
+                    reason = "post_input",
+                    panes = leaf_pane_ids.len(),
+                    notify_fd = true,
+                    after_first = fast_changed
+                );
+                poll_span.in_scope(|| {
+                    poll_panes_output_with_session_actor_until_poll_quiet_state(
+                        actor,
+                        host,
+                        &leaf_pane_ids,
+                        quiet_timeout,
+                        false,
+                        inventory_elapsed_ms(started_at),
+                    )
+                })
+            } else if attempted_fast_output && host.notify_fd().is_some() {
+                Ok(false)
+            } else if host.notify_fd().is_some() {
+                Ok(false)
+            } else {
+                let poll_span = tracing::trace_span!(
+                    "host.output.poll",
+                    reason = if input_pane_id.is_some() {
+                        "post_input"
+                    } else {
+                        "background"
+                    },
+                    panes = leaf_pane_ids.len(),
+                    notify_fd = false
+                );
+                poll_span.in_scope(|| {
+                    poll_panes_output_with_session_actor_until_quiet(
+                        actor,
+                        host,
+                        &leaf_pane_ids,
+                        inventory_elapsed_ms(started_at),
+                    )
+                })
+            };
+        let output_changed = match output_result {
+            Ok(changed) => fast_changed || changed,
+            Err(err) => {
+                let error_pane_id = host_error_pane_id(&err).to_owned();
+                let (session, _) = actor.session_and_engines_mut();
+                write_host_output_error(stream, session, &mut seq, &error_pane_id, err)?;
+                return Ok(());
+            }
+        };
+
+        let surface_span = tracing::trace_span!(
+            "surface.write_changed",
+            reason = if input_pane_id.is_some() {
+                "post_input"
+            } else {
+                "background"
+            },
+            panes = leaf_pane_ids.len()
+        );
+        surface_span.in_scope(|| {
+            let (session, _) = actor.session_and_engines_mut();
+            write_changed_surface_frames(
+                stream,
+                session,
+                &mut seq,
+                &leaf_pane_ids,
+                &mut known_surface_versions,
+            )
+        })?;
+        let host_completion = readiness.host_output && client_actor.mode == AttachMode::ReadOnly;
+        if count_cycle || output_changed || host_completion {
+            completed_cycles += 1;
+        }
+    }
+
+    Ok(())
+}
+
 fn read_live_client_frame_from_stream(
     stream: &mut UnixStream,
 ) -> Result<LiveClientRead, ServeError> {
@@ -3123,6 +3580,26 @@ fn poll_panes_output_with_host_once(
     Ok(changed)
 }
 
+fn poll_panes_output_with_session_actor_once(
+    actor: &mut SessionActor,
+    host: &mut dyn ProcessHostOutput,
+    pane_ids: &[String],
+    priority_pane_ids: &[String],
+    session_mono_ms: u64,
+) -> Result<bool, HostError> {
+    let mut changed = false;
+    for pane_id in priority_pane_ids {
+        changed |= poll_pane_output_with_session_actor(actor, host, pane_id, session_mono_ms)?;
+    }
+    for pane_id in pane_ids {
+        if priority_pane_ids.iter().any(|priority| priority == pane_id) {
+            continue;
+        }
+        changed |= poll_pane_output_with_session_actor(actor, host, pane_id, session_mono_ms)?;
+    }
+    Ok(changed)
+}
+
 fn poll_panes_output_with_host_until_quiet(
     session: &mut Session,
     engines: &mut PaneTerminalEngines,
@@ -3138,6 +3615,41 @@ fn poll_panes_output_with_host_until_quiet(
         for pane_id in pane_ids {
             cycle_changed |=
                 poll_pane_output_with_host_and_engines(session, engines, host, pane_id)?;
+        }
+        if cycle_changed {
+            changed = true;
+            quiet_since = None;
+        } else if changed {
+            let quiet_start = quiet_since.get_or_insert_with(Instant::now);
+            if quiet_start.elapsed() >= Duration::from_millis(20) {
+                return Ok(true);
+            }
+        } else if Instant::now() >= deadline {
+            return Ok(false);
+        }
+
+        if Instant::now() >= deadline {
+            return Ok(changed);
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn poll_panes_output_with_session_actor_until_quiet(
+    actor: &mut SessionActor,
+    host: &mut dyn ProcessHostOutput,
+    pane_ids: &[String],
+    session_mono_ms: u64,
+) -> Result<bool, HostError> {
+    let deadline = Instant::now() + LIVE_HOST_OUTPUT_POLL_DEADLINE;
+    let mut quiet_since = None;
+    let mut changed = false;
+
+    loop {
+        let mut cycle_changed = false;
+        for pane_id in pane_ids {
+            cycle_changed |=
+                poll_pane_output_with_session_actor(actor, host, pane_id, session_mono_ms)?;
         }
         if cycle_changed {
             changed = true;
@@ -3203,6 +3715,74 @@ fn poll_panes_output_with_host_until_poll_quiet_state(
         for pane_id in pane_ids {
             cycle_changed |=
                 poll_pane_output_with_host_and_engines(session, engines, host, pane_id)?;
+        }
+        if cycle_changed {
+            changed = true;
+            quiet_since = None;
+        } else if changed {
+            let quiet_start = quiet_since.get_or_insert_with(Instant::now);
+            if quiet_start.elapsed() >= quiet_timeout {
+                return Ok(true);
+            }
+        } else if Instant::now() >= deadline {
+            return Ok(false);
+        }
+
+        if Instant::now() >= deadline {
+            return Ok(changed);
+        }
+
+        let timeout = if changed {
+            quiet_timeout
+        } else {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(LIVE_IDLE_POLL_TIMEOUT)
+        };
+        if let Err(error) = poll_notify_fd(notify_fd, timeout) {
+            let pane_id = pane_ids.first().map(String::as_str).unwrap_or("unknown");
+            return Err(HostError::Io {
+                pane_id: pane_id.to_owned(),
+                operation: "poll_notify_fd".to_owned(),
+                message: error.to_string(),
+            });
+        }
+    }
+}
+
+fn poll_panes_output_with_session_actor_until_poll_quiet_state(
+    actor: &mut SessionActor,
+    host: &mut dyn ProcessHostOutput,
+    pane_ids: &[String],
+    quiet_timeout: Duration,
+    initial_changed: bool,
+    session_mono_ms: u64,
+) -> Result<bool, HostError> {
+    let Some(notify_fd) = host.notify_fd() else {
+        return poll_panes_output_with_session_actor_until_quiet(
+            actor,
+            host,
+            pane_ids,
+            session_mono_ms,
+        );
+    };
+    let deadline = Instant::now() + LIVE_POST_INPUT_COALESCE_DEADLINE;
+    let mut quiet_since = initial_changed.then(Instant::now);
+    let mut changed = initial_changed;
+
+    loop {
+        if let Err(error) = drain_notify_fd(notify_fd) {
+            let pane_id = pane_ids.first().map(String::as_str).unwrap_or("unknown");
+            return Err(HostError::Io {
+                pane_id: pane_id.to_owned(),
+                operation: "drain_notify_fd".to_owned(),
+                message: error.to_string(),
+            });
+        }
+        let mut cycle_changed = false;
+        for pane_id in pane_ids {
+            cycle_changed |=
+                poll_pane_output_with_session_actor(actor, host, pane_id, session_mono_ms)?;
         }
         if cycle_changed {
             changed = true;
