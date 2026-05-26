@@ -198,10 +198,6 @@ where
             return Err(Box::new(err));
         }
     }
-    if let Err(err) = wait_for_panes_output(&mut session_core, &mut pty_host, &pane_ids) {
-        report_ready_json_error(&args, err.as_ref())?;
-        return Err(err);
-    }
     let session_id = session_core.session().id.clone();
     let mut session_registry = SessionRegistry::new();
     if !session_registry.insert(SessionActor::new(session_core, DAEMON_TRACE_RING_CAP)) {
@@ -210,6 +206,10 @@ where
     let session_actor = session_registry
         .get_mut(&session_id)
         .ok_or_else(|| format!("daemon session {session_id} missing from registry"))?;
+    if let Err(err) = wait_for_panes_output(session_actor, &mut pty_host, &pane_ids) {
+        report_ready_json_error(&args, err.as_ref())?;
+        return Err(err);
+    }
     if let Some(ready_json) = ready_json {
         println!("{ready_json}");
         io::stdout().flush()?;
@@ -346,7 +346,7 @@ impl Drop for SocketCleanup {
 }
 
 fn wait_for_panes_output(
-    session_core: &mut SessionCore,
+    session_actor: &mut SessionActor,
     output: &mut LocalPtyHost,
     pane_ids: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -354,7 +354,8 @@ fn wait_for_panes_output(
     while Instant::now() < deadline {
         let mut changed = false;
         for pane_id in pane_ids {
-            changed |= local::poll_pane_output_with_session_core(session_core, output, pane_id, 0)?;
+            changed |=
+                local::poll_pane_output_with_session_actor(session_actor, output, pane_id, 0)?;
         }
         if changed {
             return Ok(());
