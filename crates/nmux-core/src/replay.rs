@@ -178,6 +178,7 @@ fn event_name(event: &SessionEvent) -> &'static str {
         SessionEvent::SetPaneResizePolicy { .. } => "set_pane_resize_policy",
         SessionEvent::PaneOutput { .. } => "pane_output",
         SessionEvent::CommitPaneResize { .. } => "commit_pane_resize",
+        SessionEvent::RequestSessionShutdown { .. } => "request_session_shutdown",
     }
 }
 
@@ -243,6 +244,31 @@ mod tests {
         assert!(bytes.starts_with(b"NMUXTRACE\0\x01\0\0\0"));
         assert!(String::from_utf8_lossy(&bytes).contains("event=commit_pane_resize"));
         assert!(String::from_utf8_lossy(&bytes).contains("effect=pane_resized"));
+    }
+
+    #[test]
+    fn trace_container_writes_shutdown_request_without_effects() {
+        let mut core = SessionCore::initial();
+        let transition = core.accept(
+            "controller",
+            SessionEventLane::Lifecycle,
+            9,
+            SessionEvent::RequestSessionShutdown {
+                session_id: Some("local".to_owned()),
+            },
+        );
+        let mut writer = TraceContainerWriter::new(Vec::new()).expect("writer");
+
+        writer
+            .write_record(&SessionTraceRecord::from_transition(transition))
+            .expect("write record");
+        let bytes = writer.into_inner();
+        let text = String::from_utf8_lossy(&bytes);
+
+        assert!(bytes.starts_with(b"NMUXTRACE\0\x01\0\0\0"));
+        assert!(text.contains("lane=lifecycle"));
+        assert!(text.contains("event=request_session_shutdown"));
+        assert!(!text.contains("effect="));
     }
 
     #[test]

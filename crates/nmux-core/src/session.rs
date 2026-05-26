@@ -222,6 +222,9 @@ pub enum SessionEvent {
         cols: u32,
         rows: u32,
     },
+    RequestSessionShutdown {
+        session_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -653,6 +656,7 @@ impl SessionCore {
             } => {
                 return self.apply_pane_resize_event(event_index, pane_id, *cols, *rows);
             }
+            SessionEvent::RequestSessionShutdown { .. } => false,
         };
         if changed {
             vec![SessionEffect::WorkspaceChanged {
@@ -3232,6 +3236,35 @@ mod tests {
             ]
         );
         assert_eq!(core.session().pane_size("pane-1"), Some((100, 30)));
+    }
+
+    #[test]
+    fn session_core_shutdown_request_is_accepted_without_effects() {
+        let mut core = SessionCore::initial();
+
+        let transition = core.accept(
+            "controller",
+            SessionEventLane::Lifecycle,
+            9,
+            SessionEvent::RequestSessionShutdown {
+                session_id: Some("local".to_owned()),
+            },
+        );
+
+        assert_eq!(transition.accepted.metadata.event_index, 0);
+        assert_eq!(transition.accepted.metadata.source_id, "controller");
+        assert_eq!(
+            transition.accepted.metadata.lane,
+            SessionEventLane::Lifecycle
+        );
+        assert_eq!(
+            transition.accepted.event,
+            SessionEvent::RequestSessionShutdown {
+                session_id: Some("local".to_owned()),
+            }
+        );
+        assert!(transition.effects.is_empty());
+        assert_eq!(core.session().version, 1);
     }
 
     #[test]
