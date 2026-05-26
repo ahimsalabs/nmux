@@ -22,6 +22,9 @@ use nmux_cli::{daemon, local};
 use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
 
+#[path = "nmux/tui.rs"]
+mod tui;
+
 const STDIN_BYTES_DETACH: u8 = 0x1d;
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
 const SUPPORTED_KEY_NAMES: &[&str] = &[
@@ -2549,12 +2552,7 @@ fn terminal_size_unavailable(err: &io::Error) -> bool {
     matches!(
         err.raw_os_error(),
         Some(
-            libc::ENOTTY
-                | libc::EBADF
-                | libc::EINVAL
-                | libc::EAGAIN
-                | libc::ENODEV
-                | libc::ENOENT
+            libc::ENOTTY | libc::EBADF | libc::EINVAL | libc::EAGAIN | libc::ENODEV | libc::ENOENT
         )
     )
 }
@@ -3325,13 +3323,27 @@ fn redraw_text_with_context(
     has_status_bar: bool,
     pane_surfaces: Option<&BTreeMap<String, String>>,
 ) -> String {
-    let mut text = String::new();
-    if !has_status_bar {
-        // Without a status bar, include workspace info as a header line.
-        text.push_str(&workspace.display_line());
-        text.push('\n');
-        append_terminal_metadata(&mut text, metadata);
+    if has_status_bar {
+        let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
+        let rows = rows.saturating_sub(1).max(1).min(u16::MAX as u32) as u16;
+        let cols = cols.max(1).min(u16::MAX as u32) as u16;
+        return tui::render_workspace_frame(
+            tui::WorkspaceFrameInput {
+                workspace,
+                active_surface_text: surface_text,
+                pane_surfaces,
+            },
+            cols,
+            rows,
+        )
+        .text;
     }
+
+    let mut text = String::new();
+    // Without a status bar, include workspace info as a header line.
+    text.push_str(&workspace.display_line());
+    text.push('\n');
+    append_terminal_metadata(&mut text, metadata);
     if let Some(scrollback) = scrollback {
         text.push_str(&format_scrollback(&scrollback));
     }
