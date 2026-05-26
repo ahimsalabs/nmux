@@ -45,7 +45,9 @@ pub use client_state::{
     ClientAttachState, ClientPaneScrollback, ClientStateSummary, ClientStateSurfaceSummary,
     SocketIdentitySummary,
 };
-use control::{ControlCommandOutcome, serve_control_command};
+use control::{
+    ControlCommandOutcome, serve_control_command, serve_control_command_with_session_actor,
+};
 pub use surface::{
     CachedSurfaceSummary, CellRunSummary, ClientPaneSurface, CursorSummary, HyperlinkSummary,
     RenderedSurfaceSummary, StyleSummary, SurfaceRowUpdate, SurfaceUpdate, SurfaceUpdateKind,
@@ -418,8 +420,12 @@ fn serve_stream_impl_with_session_actor<H: ProcessHost + ProcessOutput>(
     let request = match read_client_initial_frame(&mut stream)? {
         ClientInitialFrame::Attach(request) => request,
         ClientInitialFrame::Control(command) => {
-            let (session, _) = actor.session_and_engines_mut();
-            return match serve_control_command(&mut stream, command, session, Some(host))? {
+            return match serve_control_command_with_session_actor(
+                &mut stream,
+                command,
+                actor,
+                Some(host),
+            )? {
                 ControlCommandOutcome::Continue => Ok(()),
                 ControlCommandOutcome::Shutdown => Err(ServeError::SessionShutdown),
             };
@@ -1911,8 +1917,12 @@ fn accept_live_client_with_session_actor(
     let request = match read_client_initial_frame(&mut stream)? {
         ClientInitialFrame::Attach(request) => request,
         ClientInitialFrame::Control(command) => {
-            let (session, _) = actor.session_and_engines_mut();
-            return match serve_control_command(&mut stream, command, session, Some(host))? {
+            return match serve_control_command_with_session_actor(
+                &mut stream,
+                command,
+                actor,
+                Some(host),
+            )? {
                 ControlCommandOutcome::Continue => Ok(Some(LiveClientAccept::Command)),
                 ControlCommandOutcome::Shutdown => Ok(Some(LiveClientAccept::Shutdown)),
             };
@@ -12303,6 +12313,164 @@ mod tests {
             } if pane_id == "pane-1"
         ) && accepted.metadata.lane
             == SessionEventLane::Client));
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn actor_live_control_tab_close_routes_commit_through_actor() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let second_host = session.tabs[0].root.host.clone();
+        assert!(session.add_tab("tab-2", "Second", "tab-2-pane-1", second_host.clone()));
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start first pane");
+        host.start_pane("tab-2-pane-1", &second_host)
+            .expect("start second pane");
+
+        let (trace_tx, trace_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(1, usize::MAX)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor live control");
+            trace_tx
+                .send((host.events().to_vec(), actor.trace().accepted_events()))
+                .expect("send actor trace")
+        });
+
+        let stream = UnixStream::connect(&socket_path).expect("connect control client");
+        let workspace = run_control_command_on_stream(
+            stream,
+            ControlCommandSummary {
+                actor_id: "controller".to_owned(),
+                command_seq: 7,
+                kind: protocol::ControlCommandKind::TabClose,
+                pane_id: None,
+                tab_id: None,
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                session_id: None,
+            },
+        )
+        .expect("run tab close");
+
+        assert_eq!(workspace.tab_id, "tab-2");
+        assert_eq!(workspace.pane_id, "tab-2-pane-1");
+        server.join().expect("server thread");
+        let (host_events, accepted_events) = trace_rx.recv().expect("actor trace");
+        assert!(host_events.contains(&HostEvent::Stopped {
+            pane_id: "pane-1".to_owned(),
+        }));
+        assert!(accepted_events.iter().any(|accepted| matches!(
+            &accepted.event,
+            SessionEvent::CloseTab { tab_id } if tab_id == "tab-1"
+        ) && accepted.metadata.source_id
+            == "controller"
+            && accepted.metadata.lane == SessionEventLane::Control));
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn actor_live_control_session_kill_routes_lifecycle_event_through_actor() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start pane");
+
+        let (trace_tx, trace_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            let result = ServeConfig::live(1, usize::MAX)
+                .serve_with_session_core(&listener, &mut actor, &mut host);
+            assert!(matches!(result, Err(ServeError::SessionShutdown)));
+            trace_tx
+                .send(actor.trace().accepted_events())
+                .expect("send actor trace")
+        });
+
+        let stream = UnixStream::connect(&socket_path).expect("connect control client");
+        let workspace = run_control_command_on_stream(
+            stream,
+            ControlCommandSummary {
+                actor_id: "controller".to_owned(),
+                command_seq: 9,
+                kind: protocol::ControlCommandKind::SessionKill,
+                pane_id: None,
+                tab_id: None,
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                session_id: Some("local".to_owned()),
+            },
+        )
+        .expect("run session kill");
+
+        assert_eq!(workspace.session_id, "local");
+        server.join().expect("server thread");
+        let accepted_events = trace_rx.recv().expect("actor trace");
+        assert!(accepted_events.iter().any(|accepted| matches!(
+            &accepted.event,
+            SessionEvent::RequestSessionShutdown {
+                session_id: Some(session_id),
+            } if session_id == "local"
+        ) && accepted.metadata.source_id
+            == "controller"
+            && accepted.metadata.lane == SessionEventLane::Lifecycle));
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn actor_live_control_wrong_session_kill_does_not_enqueue_lifecycle_event() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start pane");
+
+        let (trace_tx, trace_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(1, usize::MAX)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor live control");
+            trace_tx
+                .send(actor.trace().accepted_events())
+                .expect("send actor trace")
+        });
+
+        let stream = UnixStream::connect(&socket_path).expect("connect control client");
+        let err = run_control_command_on_stream(
+            stream,
+            ControlCommandSummary {
+                actor_id: "controller".to_owned(),
+                command_seq: 10,
+                kind: protocol::ControlCommandKind::SessionKill,
+                pane_id: None,
+                tab_id: None,
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                session_id: Some("other".to_owned()),
+            },
+        )
+        .expect_err("wrong-session kill should fail");
+
+        assert!(
+            err.to_string().contains("session not found: other"),
+            "unexpected error: {err}"
+        );
+        server.join().expect("server thread");
+        let accepted_events = trace_rx.recv().expect("actor trace");
+        assert!(!accepted_events.iter().any(|accepted| matches!(
+            &accepted.event,
+            SessionEvent::RequestSessionShutdown { .. }
+        )));
         let _ = fs::remove_file(socket_path);
     }
 
