@@ -12,7 +12,7 @@ see all panes restored.
 
 ## Next features (priority order)
 
-- Wire ADR 0043 runtime into the daemon live path.
+None queued.
 
 ## Test gaps to close
 
