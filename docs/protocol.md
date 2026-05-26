@@ -24,7 +24,13 @@ state-sync envelope bodies:
   tab switch/close, and session kill.
 - `PresenceUpdate` for actor join/leave-style presence events. Decoders require
   non-empty actor, user, display, and present focused-pane IDs.
-- `AttachRequest` for actor identity, attach mode, focused pane, and known pane surface versions at attach time. Decoded attach requests reject missing or empty identity strings and known-surface pane IDs instead of substituting local defaults.
+- `AttachRequest` for actor identity, attach mode, focused pane, and known pane
+  surface versions at attach time. `Envelope.session_id` is an optional attach
+  target; absent means the daemon default/current session, while a present
+  non-empty value must identify the daemon-owned session or attach returns
+  `ErrorCode::SessionNotFound`. Decoded attach requests reject missing or empty
+  identity strings and known-surface pane IDs instead of substituting local
+  defaults.
 - `AttachStatus` for the daemon-selected pane and whether a surface frame
   follows the attach response.
 - `Error` for protocol-level failures.

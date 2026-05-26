@@ -307,7 +307,11 @@ fn wait_for_default_daemon_attach(args: &Args) -> Result<(), Box<dyn std::error:
         match local::connect_to_daemon_with_timeout(&args.socket_path, Duration::from_millis(100)) {
             Ok(mut stream) => {
                 let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-                if let Err(err) = local::write_attach_request(&mut stream, &request) {
+                if let Err(err) = local::write_attach_request_for_session(
+                    &mut stream,
+                    &request,
+                    args.target_session_id.as_deref(),
+                ) {
                     last_error = Some(err.into());
                 } else {
                     match local::attach_from_stream(&mut stream) {
@@ -801,6 +805,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut client_inventory = ClientInventoryCache::default();
 
     let mut options = local::AttachOptions {
+        target_session_id: args.target_session_id.clone(),
         input_text: args.input_text.clone(),
         key_name: args.key_name.clone(),
         key_names: args.key_names.clone(),
@@ -843,7 +848,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
-    if let Err(err) = local::write_attach_request(&mut stream, &options.request) {
+    if let Err(err) = local::write_attach_request_for_session(
+        &mut stream,
+        &options.request,
+        args.target_session_id.as_deref(),
+    ) {
         report_live_setup_error(args, &err)?;
         return Err(err.into());
     }
@@ -3575,6 +3584,7 @@ fn attach_once(
     client_state: &mut local::ClientAttachState,
 ) -> Result<local::RenderedAttach, Box<dyn std::error::Error>> {
     let mut options = local::AttachOptions {
+        target_session_id: args.target_session_id.clone(),
         input_text: args.input_text.clone(),
         key_name: args.key_name.clone(),
         key_names: args.key_names.clone(),

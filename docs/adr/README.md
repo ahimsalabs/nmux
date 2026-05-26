@@ -53,3 +53,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0043: Session Actor Runtime Boundary](0043-session-actor-runtime-boundary.md) | Accepted |
 | [0044: Deterministic Replay Trace Container](0044-deterministic-replay-trace-container.md) | Accepted |
 | [0045: Tab Switch Control Command](0045-tab-switch-control-command.md) | Accepted |
+| [0046: Attach Session Target Envelope](0046-attach-session-target-envelope.md) | Accepted |
