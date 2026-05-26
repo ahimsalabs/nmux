@@ -4,16 +4,20 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nmux_cli::{local, observability};
 use nmux_core::session::AttachMode;
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use tracing::instrument;
 
 const DEFAULT_ITERATIONS: usize = 50;
 const DEFAULT_WARMUP: usize = 5;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 const SAMPLE_COOLDOWN: Duration = Duration::from_millis(10);
+const STDIN_BYTES_DETACH: u8 = 0x1d;
 
 fn main() {
     if let Err(err) = run() {
@@ -92,6 +96,14 @@ fn run_latency_suite(
         )?;
         reports.push(report);
     }
+    let interactive_socket_path = case_socket_path(socket_path, "interactive-redraw-stdin-bytes");
+    reports.push(run_interactive_redraw_case(
+        nmux,
+        &interactive_socket_path,
+        trace_path,
+        iterations,
+        warmup,
+    )?);
     Ok(LatencySuiteReport { cases: reports })
 }
 
@@ -141,6 +153,171 @@ fn run_single_client_case(
     }
 
     Ok(LatencyCaseReport::from_samples(case.name, samples))
+}
+
+fn run_interactive_redraw_case(
+    nmux: &Path,
+    socket_path: &Path,
+    trace_path: Option<&Path>,
+    iterations: usize,
+    warmup: usize,
+) -> Result<LatencyCaseReport, Box<dyn std::error::Error>> {
+    let _ = fs::remove_file(socket_path);
+    let mut daemon = start_daemon(nmux, socket_path, trace_path, None)?;
+    let result = run_interactive_redraw_client(nmux, socket_path, trace_path, iterations, warmup);
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    let _ = fs::remove_file(socket_path);
+    result
+}
+
+fn run_interactive_redraw_client(
+    nmux: &Path,
+    socket_path: &Path,
+    trace_path: Option<&Path>,
+    iterations: usize,
+    warmup: usize,
+) -> Result<LatencyCaseReport, Box<dyn std::error::Error>> {
+    let mut client = spawn_interactive_nmux_client(nmux, socket_path, trace_path)?;
+    client.wait_for_output("pane-1", DEFAULT_TIMEOUT)?;
+    let mut samples = Vec::with_capacity(iterations);
+
+    for index in 0..(warmup + iterations) {
+        let token = format!(
+            "interactive-redraw-stdin-bytes-{}-{index}",
+            std::process::id()
+        );
+        let input = format!("{token}\n");
+        let sample_span = tracing::trace_span!("interactive_redraw_sample", token = %token, index);
+        let elapsed = sample_span.in_scope(|| {
+            let start = Instant::now();
+            client.write_input(input.as_bytes())?;
+            client.wait_for_output(&token, DEFAULT_TIMEOUT)?;
+            Ok::<Duration, Box<dyn std::error::Error>>(start.elapsed())
+        })?;
+        if index >= warmup {
+            samples.push(elapsed);
+        }
+        std::thread::sleep(SAMPLE_COOLDOWN);
+    }
+
+    client.detach();
+    let _ = client.wait();
+    Ok(LatencyCaseReport::from_samples(
+        "interactive-redraw-stdin-bytes",
+        samples,
+    ))
+}
+
+struct InteractiveNmuxClient {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    writer: Box<dyn Write + Send>,
+    output_rx: mpsc::Receiver<Vec<u8>>,
+    reader_thread: thread::JoinHandle<()>,
+    output: Vec<u8>,
+}
+
+fn spawn_interactive_nmux_client(
+    nmux: &Path,
+    socket_path: &Path,
+    trace_path: Option<&Path>,
+) -> Result<InteractiveNmuxClient, Box<dyn std::error::Error>> {
+    let pty_system = native_pty_system();
+    let pair = pty_system.openpty(PtySize {
+        rows: 24,
+        cols: 100,
+        pixel_width: 0,
+        pixel_height: 0,
+    })?;
+    let mut command = CommandBuilder::new(nmux);
+    command.args([
+        "--socket",
+        socket_path
+            .to_str()
+            .ok_or("socket path is not valid UTF-8")?,
+        "--live",
+        "--stdin-bytes",
+        "--redraw",
+        "--no-scrollback",
+        "--interval-ms",
+        "16",
+        "--connect-timeout-ms",
+        "5000",
+    ]);
+    command.env("TERM", "xterm-256color");
+    if let Some(trace_path) = trace_path {
+        command.env("NMUX_TRACE_FILE", trace_path);
+        command.env("NMUX_TRACE", "info,nmux_cli=trace,nmux=trace");
+    }
+    let child = pair.slave.spawn_command(command)?;
+    drop(pair.slave);
+
+    let mut reader = pair.master.try_clone_reader()?;
+    let writer = pair.master.take_writer()?;
+    let (output_tx, output_rx) = mpsc::channel();
+    let reader_thread = thread::spawn(move || {
+        let mut buffer = [0_u8; 4096];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    if output_tx.send(buffer[..count].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    Ok(InteractiveNmuxClient {
+        child,
+        writer,
+        output_rx,
+        reader_thread,
+        output: Vec::new(),
+    })
+}
+
+impl InteractiveNmuxClient {
+    fn write_input(&mut self, input: &[u8]) -> io::Result<()> {
+        self.writer.write_all(input)?;
+        self.writer.flush()
+    }
+
+    fn wait_for_output(
+        &mut self,
+        needle: &str,
+        timeout: Duration,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if String::from_utf8_lossy(&self.output).contains(needle) {
+                return Ok(());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self
+                .output_rx
+                .recv_timeout(remaining.min(Duration::from_millis(50)))
+            {
+                Ok(chunk) => self.output.extend_from_slice(&chunk),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        Err(format!("timed out waiting for interactive output {needle:?}").into())
+    }
+
+    fn detach(&mut self) {
+        let _ = self.write_input(&[STDIN_BYTES_DETACH]);
+    }
+
+    fn wait(mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = self.child.wait()?;
+        drop(self.output_rx);
+        let _ = self.reader_thread.join();
+        Ok(())
+    }
 }
 
 fn attach_live_stream(
