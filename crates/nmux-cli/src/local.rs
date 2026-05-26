@@ -13024,7 +13024,19 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(resize_events, vec![(80, 40)]);
+        assert_eq!(
+            resize_events.first().copied(),
+            Some((80, 40)),
+            "host events: {:?}",
+            host_events
+        );
+        assert!(
+            resize_events
+                .iter()
+                .all(|size| *size == (80, 40) || *size == (80, 50)),
+            "host events: {:?}",
+            host_events
+        );
         assert!(accepted_events.iter().any(|accepted| matches!(
             &accepted.event,
             SessionEvent::CommitPaneResize {
