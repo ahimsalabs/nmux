@@ -126,6 +126,17 @@ fn run_latency_suite(
         iterations,
         warmup,
     )?);
+    let speculative_socket_path = case_socket_path(
+        socket_path,
+        "interactive-redraw-speculative-after-repeated-output",
+    );
+    reports.push(run_interactive_speculative_repeated_output_case(
+        nmux,
+        &speculative_socket_path,
+        trace_path,
+        iterations,
+        warmup,
+    )?);
     Ok(LatencySuiteReport { cases: reports })
 }
 
@@ -370,6 +381,85 @@ fn run_interactive_repeated_output_client(
     ))
 }
 
+fn run_interactive_speculative_repeated_output_case(
+    nmux: &Path,
+    socket_path: &Path,
+    trace_path: Option<&Path>,
+    iterations: usize,
+    warmup: usize,
+) -> Result<LatencyCaseReport, Box<dyn std::error::Error>> {
+    let _ = fs::remove_file(socket_path);
+    let mut daemon = start_daemon(nmux, socket_path, trace_path, None)?;
+    let result = run_interactive_speculative_repeated_output_client(
+        nmux,
+        socket_path,
+        trace_path,
+        iterations,
+        warmup,
+    );
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    let _ = fs::remove_file(socket_path);
+    result
+}
+
+fn run_interactive_speculative_repeated_output_client(
+    nmux: &Path,
+    socket_path: &Path,
+    trace_path: Option<&Path>,
+    iterations: usize,
+    warmup: usize,
+) -> Result<LatencyCaseReport, Box<dyn std::error::Error>> {
+    let mut client = spawn_interactive_nmux_client(nmux, socket_path, trace_path)?;
+    client.wait_for_output("pane-1", DEFAULT_TIMEOUT)?;
+    let mut samples = Vec::with_capacity(iterations);
+
+    for index in 0..(warmup + iterations) {
+        let anchor = format!(
+            "interactive-redraw-speculative-anchor-{}-{index}",
+            std::process::id()
+        );
+        let expected = "\x1b[4mx";
+        let burst_marker = format!(
+            "interactive-redraw-speculative-burst-{}-{index}",
+            std::process::id()
+        );
+        client.write_input(format!("{anchor}\n").as_bytes())?;
+        client.wait_for_output(&anchor, DEFAULT_TIMEOUT)?;
+
+        let burst = format!(
+            "__nmux_bench_repeated_output:{burst_marker}:{REPEATED_OUTPUT_LINES_PER_SAMPLE}\n"
+        );
+        client.write_input(burst.as_bytes())?;
+        std::thread::sleep(Duration::from_millis(1));
+        client.clear_output();
+
+        let sample_span = tracing::trace_span!(
+            "interactive_speculative_repeated_output_sample",
+            anchor = %anchor,
+            index
+        );
+        let elapsed = sample_span.in_scope(|| {
+            let start = Instant::now();
+            client.write_input(b"x")?;
+            client.wait_for_output(&expected, DEFAULT_TIMEOUT)?;
+            Ok::<Duration, Box<dyn std::error::Error>>(start.elapsed())
+        })?;
+        if index >= warmup {
+            samples.push(elapsed);
+        }
+        client.write_input(b"\n")?;
+        std::thread::sleep(SAMPLE_COOLDOWN);
+    }
+
+    client.detach();
+    let _ = client.wait();
+    Ok(LatencyCaseReport::from_samples(
+        "interactive-redraw-speculative-after-repeated-output",
+        samples,
+    ))
+}
+
 struct InteractiveNmuxClient {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
@@ -447,6 +537,13 @@ impl InteractiveNmuxClient {
     fn write_input(&mut self, input: &[u8]) -> io::Result<()> {
         self.writer.write_all(input)?;
         self.writer.flush()
+    }
+
+    fn clear_output(&mut self) {
+        self.output.clear();
+        while let Ok(chunk) = self.output_rx.try_recv() {
+            drop(chunk);
+        }
     }
 
     fn wait_for_output(
