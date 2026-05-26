@@ -990,15 +990,27 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     if args.live_resize.is_none()
         && let Some((cols, rows)) = sigwinch_resize.current_resize()?
     {
+        let (pane_cols, pane_rows) = frontend_resize_pane_size(
+            &current_workspace,
+            &attached_pane_id,
+            cols,
+            rows,
+            args.redraw && stdout_tty,
+        );
         local::send_resize_intent_with_reason_and_sequence(
             &mut stream,
             &mut client_sequence,
             &attached_pane_id,
-            cols,
-            rows,
+            pane_cols,
+            pane_rows,
             protocol::ResizeReason::FrontendViewport,
         )?;
-        apply_frontend_workspace_size(&mut current_workspace, cols, rows);
+        apply_frontend_workspace_size(
+            &mut current_workspace,
+            &attached_pane_id,
+            pane_cols,
+            pane_rows,
+        );
         recorder.record(&format_live_workspace_json(&current_workspace))?;
         let _ = stream.set_read_timeout(Some(live_socket_read_timeout));
         loop {
@@ -1165,15 +1177,27 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     sent_explicit_live_resize = true;
                 }
             } else if let Some((cols, rows)) = sigwinch_resize.next_resize()? {
+                let (pane_cols, pane_rows) = frontend_resize_pane_size(
+                    &current_workspace,
+                    &attached_pane_id,
+                    cols,
+                    rows,
+                    args.redraw && stdout_tty,
+                );
                 local::send_resize_intent_with_reason_and_sequence(
                     &mut stream,
                     &mut client_sequence,
                     &attached_pane_id,
-                    cols,
-                    rows,
+                    pane_cols,
+                    pane_rows,
                     protocol::ResizeReason::FrontendViewport,
                 )?;
-                apply_frontend_workspace_size(&mut current_workspace, cols, rows);
+                apply_frontend_workspace_size(
+                    &mut current_workspace,
+                    &attached_pane_id,
+                    pane_cols,
+                    pane_rows,
+                );
                 let event = format_live_workspace_json(&current_workspace);
                 recorder.record(&event)?;
                 if args.output_json {
@@ -1870,15 +1894,55 @@ fn process_surface_update(
     Ok(())
 }
 
-fn apply_frontend_workspace_size(workspace: &mut local::WorkspaceSummary, cols: u32, rows: u32) {
+fn frontend_resize_pane_size(
+    workspace: &local::WorkspaceSummary,
+    pane_id: &str,
+    terminal_cols: u32,
+    terminal_rows: u32,
+    ratatui_redraw: bool,
+) -> (u32, u32) {
+    if !ratatui_redraw {
+        return (terminal_cols, terminal_rows);
+    }
+
+    let cols = terminal_cols.max(1).min(u16::MAX as u32) as u16;
+    let rows = terminal_rows.saturating_sub(1).max(1).min(u16::MAX as u32) as u16;
+    tui::pane_content_rect(workspace, cols, rows, pane_id)
+        .map(|rect| (u32::from(rect.width.max(1)), u32::from(rect.height.max(1))))
+        .unwrap_or((terminal_cols, terminal_rows))
+}
+
+fn apply_frontend_workspace_size(
+    workspace: &mut local::WorkspaceSummary,
+    pane_id: &str,
+    cols: u32,
+    rows: u32,
+) {
     workspace.cols = cols;
     workspace.rows = rows;
-    if let Some(tree) = workspace.pane_tree.as_mut()
-        && tree.pane_id == workspace.pane_id
-    {
-        tree.cols = cols;
-        tree.rows = rows;
+    if let Some(tree) = workspace.pane_tree.as_mut() {
+        apply_frontend_pane_size(tree, pane_id, cols, rows);
     }
+}
+
+fn apply_frontend_pane_size(
+    pane: &mut local::WorkspacePaneSummary,
+    pane_id: &str,
+    cols: u32,
+    rows: u32,
+) -> bool {
+    if pane.pane_id == pane_id {
+        pane.cols = cols;
+        pane.rows = rows;
+        return true;
+    }
+
+    for child in &mut pane.children {
+        if apply_frontend_pane_size(child, pane_id, cols, rows) {
+            return true;
+        }
+    }
+    false
 }
 
 fn run_managed(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -7695,17 +7759,18 @@ mod tests {
         format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
         format_live_error_json, format_live_presence_json, format_live_surface_update_json,
         format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        format_state_info_json, format_state_info_text, host_mouse_mode_disable_sequence,
-        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
-        interim_surface_fidelity_warning_needed, live_mouse_dispatch_for_workspace_size,
-        live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
-        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory, parse_detach_key,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        render_scrollback_view_summary, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, tui, usage,
+        format_state_info_json, format_state_info_text, frontend_resize_pane_size,
+        host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
+        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
+        live_mouse_dispatch_for_workspace_size, live_session_new_should_fallback,
+        live_update_print_kind, managed_ready_error_message, menu_overlay_for_action,
+        menu_overlay_for_action_with_session_inventory, parse_detach_key, parse_env_assignment,
+        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
+        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, preprocess_args,
+        raw_terminal_fixup_termios, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        redraw_text_with_context, redraw_workspace_surface_text, render_scrollback_view_summary,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
+        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -8955,6 +9020,53 @@ mod tests {
             fallback_text.contains("title=shell title")
                 && fallback_text.contains("working-directory=file://localhost/tmp/nmux"),
             "non-status redraw should keep metadata rows: {fallback_text:?}"
+        );
+    }
+
+    #[test]
+    fn frontend_resize_uses_ratatui_pane_content_size() {
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-2".to_owned(),
+            cols: 40,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: Some(local::WorkspacePaneSummary {
+                pane_id: "pane-root".to_owned(),
+                cols: 80,
+                rows: 24,
+                resize_policy: protocol::ResizePolicy::Fixed,
+                split_axis: protocol::SplitAxis::Vertical,
+                children: vec![
+                    local::WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 40,
+                        rows: 24,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                    local::WorkspacePaneSummary {
+                        pane_id: "pane-2".to_owned(),
+                        cols: 40,
+                        rows: 24,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                ],
+            }),
+            tabs: Vec::new(),
+        };
+
+        assert_eq!(
+            frontend_resize_pane_size(&workspace, "pane-2", 100, 20, true),
+            (35, 16)
+        );
+        assert_eq!(
+            frontend_resize_pane_size(&workspace, "pane-2", 100, 20, false),
+            (100, 20)
         );
     }
 

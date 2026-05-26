@@ -174,6 +174,102 @@ pub fn hit_test_region(hits: &[HitRegion], x: u16, y: u16) -> Option<&HitRegion>
     hits.iter().rev().find(|hit| rect_contains(hit.rect, x, y))
 }
 
+pub fn pane_content_rect(
+    workspace: &local::WorkspaceSummary,
+    cols: u16,
+    rows: u16,
+    pane_id: &str,
+) -> Option<Rect> {
+    let area = Rect::new(0, 0, cols, rows);
+    if area.width == 0 || area.height <= MENU_HEIGHT {
+        return None;
+    }
+
+    let body = Rect::new(
+        area.x,
+        area.y + MENU_HEIGHT,
+        area.width,
+        area.height - MENU_HEIGHT,
+    );
+    let tree_width = tree_width_for(body.width, workspace.pane_tree.as_ref());
+    let pane_area = if tree_width == 0 {
+        body
+    } else {
+        let pane_x = body.x.saturating_add(tree_width).saturating_add(1);
+        let pane_width = body.width.saturating_sub(tree_width.saturating_add(1));
+        Rect::new(pane_x, body.y, pane_width, body.height)
+    };
+
+    if let Some(root) = workspace.pane_tree.as_ref() {
+        pane_content_rect_for_node(root, pane_area, pane_id)
+    } else if workspace.pane_id == pane_id {
+        inset(pane_area, 1)
+    } else {
+        None
+    }
+}
+
+fn pane_content_rect_for_node(
+    pane: &local::WorkspacePaneSummary,
+    area: Rect,
+    pane_id: &str,
+) -> Option<Rect> {
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+    if pane.children.is_empty() {
+        return (pane.pane_id == pane_id).then(|| inset(area, 1)).flatten();
+    }
+
+    let count = pane.children.len().max(1) as u16;
+    match pane.split_axis {
+        protocol::SplitAxis::Vertical => {
+            let mut x = area.x;
+            let mut remaining_width = area.width;
+            for (index, child) in pane.children.iter().enumerate() {
+                let remaining_children = count.saturating_sub(index as u16);
+                let width = if remaining_children <= 1 {
+                    remaining_width
+                } else {
+                    remaining_width / remaining_children
+                };
+                let child_area = Rect::new(x, area.y, width, area.height);
+                if let Some(rect) = pane_content_rect_for_node(child, child_area, pane_id) {
+                    return Some(rect);
+                }
+                x = x.saturating_add(width);
+                remaining_width = remaining_width.saturating_sub(width);
+            }
+        }
+        protocol::SplitAxis::Horizontal => {
+            let mut y = area.y;
+            let mut remaining_height = area.height;
+            for (index, child) in pane.children.iter().enumerate() {
+                let remaining_children = count.saturating_sub(index as u16);
+                let height = if remaining_children <= 1 {
+                    remaining_height
+                } else {
+                    remaining_height / remaining_children
+                };
+                let child_area = Rect::new(area.x, y, area.width, height);
+                if let Some(rect) = pane_content_rect_for_node(child, child_area, pane_id) {
+                    return Some(rect);
+                }
+                y = y.saturating_add(height);
+                remaining_height = remaining_height.saturating_sub(height);
+            }
+        }
+        _ => {
+            for child in &pane.children {
+                if let Some(rect) = pane_content_rect_for_node(child, area, pane_id) {
+                    return Some(rect);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn tree_width_for(width: u16, root: Option<&local::WorkspacePaneSummary>) -> u16 {
     if root.is_none() || width < 64 {
         return 0;
@@ -881,6 +977,15 @@ mod tests {
             hit_test(&frame.hits, 50, 3),
             Some(HitTarget::PaneContent(_))
         ));
+    }
+
+    #[test]
+    fn pane_content_rect_reports_inner_ratatui_pane_size() {
+        let workspace = split_workspace();
+        let rect = pane_content_rect(&workspace, 100, 19, "pane-2").expect("pane content rect");
+
+        assert_eq!(rect.width, 35);
+        assert_eq!(rect.height, 16);
     }
 
     #[test]

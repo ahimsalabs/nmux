@@ -2678,7 +2678,7 @@ fn live_tty_client_resize_updates_daemon_pane_size() {
     );
     let stdout = String::from_utf8_lossy(&observe.stdout);
     assert!(
-        stdout.contains("session=local tab=tab-1 pane=pane-1 size=72x19 resize=fixed"),
+        stdout.contains("session=local tab=tab-1 pane=pane-1 size=51x15 resize=fixed"),
         "daemon did not commit tty resize:\n{stdout}"
     );
 }
@@ -2773,7 +2773,7 @@ fn live_tty_client_records_resize_without_followup_input() {
     while Instant::now() < deadline {
         record_contents = fs::read_to_string(&record_path).unwrap_or_default();
         if record_contents.contains(
-            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":72,\"rows\":19,\"resize_policy\":\"fixed\"}",
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":51,\"rows\":15,\"resize_policy\":\"fixed\"}",
         ) {
             break;
         }
@@ -2794,7 +2794,7 @@ fn live_tty_client_records_resize_without_followup_input() {
     );
     assert!(
         record_contents.contains(
-            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":72,\"rows\":19,\"resize_policy\":\"fixed\"}"
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":51,\"rows\":15,\"resize_policy\":\"fixed\"}"
         ),
         "client did not record resize before follow-up input:\nrecord:\n{record_contents}\noutput:\n{}",
         client_output.output
@@ -2939,7 +2939,7 @@ fn live_tty_client_initial_size_renders_before_input() {
     while Instant::now() < deadline {
         record = fs::read_to_string(&record_path).unwrap_or_default();
         if record.contains(
-            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":100,\"rows\":24,\"resize_policy\":\"fixed\"}",
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":72,\"rows\":20,\"resize_policy\":\"fixed\"}",
         ) {
             break;
         }
@@ -2954,7 +2954,7 @@ fn live_tty_client_initial_size_renders_before_input() {
 
     assert!(
         record.contains(
-            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":100,\"rows\":24,\"resize_policy\":\"fixed\"}"
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":72,\"rows\":20,\"resize_policy\":\"fixed\"}"
         ),
         "client did not render initial tty resize before input:\nrecord:\n{record}\noutput:\n{}",
         client_output.output
