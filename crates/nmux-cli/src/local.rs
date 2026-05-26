@@ -931,6 +931,7 @@ where
     let inventory_started_at = Instant::now();
     let mut inventory_version = 0_u64;
     let mut next_connection_id = 1_u64;
+    let async_runtime = LiveAsyncRuntime::new()?;
 
     while connection_limit.accepts_more(accepted_clients) || !clients.is_empty() {
         let readiness = poll_live_concurrent_sources(
@@ -952,6 +953,7 @@ where
                     listener,
                     actor,
                     host,
+                    Some(&async_runtime),
                     connection_id,
                     inventory_elapsed_ms(inventory_started_at),
                 ) {
@@ -1734,6 +1736,15 @@ fn async_live_client_transport(
     next_seq: u64,
     known_surface_versions: BTreeMap<String, u64>,
 ) -> Result<LiveClientTransport, ServeError> {
+    async_live_client_transport_with_runtime(stream, next_seq, known_surface_versions, None)
+}
+
+fn async_live_client_transport_with_runtime(
+    stream: UnixStream,
+    next_seq: u64,
+    known_surface_versions: BTreeMap<String, u64>,
+    runtime: Option<&LiveAsyncRuntime>,
+) -> Result<LiveClientTransport, ServeError> {
     let read_stream = stream.try_clone()?;
     read_stream.set_nonblocking(true)?;
     stream.set_nonblocking(true)?;
@@ -1747,19 +1758,109 @@ fn async_live_client_transport(
         ASYNC_LIVE_RELIABLE_FRAME_CAP,
         ASYNC_LIVE_RELIABLE_BYTE_CAP,
     );
-    spawn_async_live_client_tasks(
-        read_stream,
-        stream,
-        input_tx,
-        output_rx,
-        next_seq,
-        known_surface_versions,
-    );
+    if let Some(runtime) = runtime {
+        runtime.spawn_client_tasks(
+            read_stream,
+            stream,
+            input_tx,
+            output_rx,
+            next_seq,
+            known_surface_versions,
+        )?;
+    } else {
+        spawn_async_live_client_tasks(
+            read_stream,
+            stream,
+            input_tx,
+            output_rx,
+            next_seq,
+            known_surface_versions,
+        );
+    }
     Ok(LiveClientTransport::Async {
         input,
         output,
         wake_reader,
     })
+}
+
+struct LiveAsyncRuntime {
+    task_tx: tokio::sync::mpsc::UnboundedSender<LiveAsyncClientTask>,
+}
+
+struct LiveAsyncClientTask {
+    read_stream: UnixStream,
+    write_stream: UnixStream,
+    input_tx: async_live::AsyncClientInputTx,
+    output_rx: async_live::AsyncClientOutputRx,
+    next_seq: u64,
+    known_surface_versions: BTreeMap<String, u64>,
+}
+
+impl LiveAsyncRuntime {
+    fn new() -> Result<Self, ServeError> {
+        let (task_tx, mut task_rx) = tokio::sync::mpsc::unbounded_channel::<LiveAsyncClientTask>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(err) => {
+                    let _ = ready_tx.send(Err(format!(
+                        "failed to build shared async live runtime: {err}"
+                    )));
+                    return;
+                }
+            };
+            let _ = ready_tx.send(Ok(()));
+            runtime.block_on(async move {
+                while let Some(task) = task_rx.recv().await {
+                    tokio::spawn(async move {
+                        if let Err(err) = run_async_live_client_tasks_on_runtime(
+                            task.read_stream,
+                            task.write_stream,
+                            task.input_tx,
+                            task.output_rx,
+                            task.next_seq,
+                            task.known_surface_versions,
+                        )
+                        .await
+                        {
+                            tracing::debug!(error = %err, "async live client task exited");
+                        }
+                    });
+                }
+            });
+        });
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(Self { task_tx }),
+            Ok(Err(err)) => Err(err.into()),
+            Err(err) => Err(format!("shared async live runtime did not start: {err}").into()),
+        }
+    }
+
+    fn spawn_client_tasks(
+        &self,
+        read_stream: UnixStream,
+        write_stream: UnixStream,
+        input_tx: async_live::AsyncClientInputTx,
+        output_rx: async_live::AsyncClientOutputRx,
+        next_seq: u64,
+        known_surface_versions: BTreeMap<String, u64>,
+    ) -> Result<(), ServeError> {
+        self.task_tx
+            .send(LiveAsyncClientTask {
+                read_stream,
+                write_stream,
+                input_tx,
+                output_rx,
+                next_seq,
+                known_surface_versions,
+            })
+            .map_err(|_| "shared async live runtime stopped".into())
+    }
 }
 
 fn spawn_async_live_client_tasks(
@@ -1796,28 +1897,44 @@ fn run_async_live_client_tasks(
         .enable_io()
         .build()
         .map_err(|err| format!("failed to build async live runtime: {err}"))?;
-    runtime.block_on(async move {
-        let reader = tokio::net::UnixStream::from_std(read_stream)
-            .map_err(|err| format!("failed to register live client reader: {err}"))?;
-        let writer = tokio::net::UnixStream::from_std(write_stream)
-            .map_err(|err| format!("failed to register live client writer: {err}"))?;
-        let mut surface_source = BundledSurfaceFrameSource;
-        let mut state = async_live::ClientWriteTaskState::new(next_seq, known_surface_versions);
+    runtime.block_on(run_async_live_client_tasks_on_runtime(
+        read_stream,
+        write_stream,
+        input_tx,
+        output_rx,
+        next_seq,
+        known_surface_versions,
+    ))
+}
 
-        tokio::select! {
-            result = async_live::run_client_read_task(reader, input_tx) => {
-                result.map_err(|err| format!("live client read task failed: {err:?}"))
-            }
-            result = async_live::run_client_write_task(
-                writer,
-                output_rx,
-                &mut surface_source,
-                &mut state,
-            ) => {
-                result.map_err(|err| format!("live client write task failed: {err:?}"))
-            }
+async fn run_async_live_client_tasks_on_runtime(
+    read_stream: UnixStream,
+    write_stream: UnixStream,
+    input_tx: async_live::AsyncClientInputTx,
+    output_rx: async_live::AsyncClientOutputRx,
+    next_seq: u64,
+    known_surface_versions: BTreeMap<String, u64>,
+) -> Result<(), String> {
+    let reader = tokio::net::UnixStream::from_std(read_stream)
+        .map_err(|err| format!("failed to register live client reader: {err}"))?;
+    let writer = tokio::net::UnixStream::from_std(write_stream)
+        .map_err(|err| format!("failed to register live client writer: {err}"))?;
+    let mut surface_source = BundledSurfaceFrameSource;
+    let mut state = async_live::ClientWriteTaskState::new(next_seq, known_surface_versions);
+
+    tokio::select! {
+        result = async_live::run_client_read_task(reader, input_tx) => {
+            result.map_err(|err| format!("live client read task failed: {err:?}"))
         }
-    })
+        result = async_live::run_client_write_task(
+            writer,
+            output_rx,
+            &mut surface_source,
+            &mut state,
+        ) => {
+            result.map_err(|err| format!("live client write task failed: {err:?}"))
+        }
+    }
 }
 
 fn accept_live_client(
@@ -1922,6 +2039,7 @@ fn accept_live_client_with_session_actor(
     listener: &UnixListener,
     actor: &mut SessionActor,
     host: &mut dyn ProcessHostOutput,
+    async_runtime: Option<&LiveAsyncRuntime>,
     connection_id: String,
     now_mono_ms: u64,
 ) -> Result<Option<LiveClientAccept>, ServeError> {
@@ -1995,7 +2113,12 @@ fn accept_live_client_with_session_actor(
                 known_surface_versions.insert(pane_id, current);
             }
         }
-        let transport = async_live_client_transport(stream, seq, known_surface_versions.clone())?;
+        let transport = async_live_client_transport_with_runtime(
+            stream,
+            seq,
+            known_surface_versions.clone(),
+            async_runtime,
+        )?;
         return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
             transport,
             connection_id,
@@ -7814,6 +7937,25 @@ mod tests {
             text: render_decoded_rows(&rows),
             row_updates: rows,
         }
+    }
+
+    fn wait_for_async_input_event(
+        input: &mut async_live::AsyncClientInputRx,
+        wake_reader: &UnixStream,
+    ) -> async_live::ClientInputEvent {
+        for _ in 0..100 {
+            let _ = drain_wake_reader(wake_reader);
+            match input.try_recv() {
+                Ok(event) => return event,
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    panic!("async input task disconnected");
+                }
+            }
+        }
+        panic!("timed out waiting for async input event");
     }
 
     fn surface_row(row: u32, text: &str) -> SurfaceRowUpdate {
@@ -17376,6 +17518,78 @@ mod tests {
                 actor_id: "actor-1".to_owned(),
                 ping_seq: 42,
             })
+        );
+    }
+
+    #[test]
+    fn shared_live_async_runtime_services_multiple_transports() {
+        let runtime = LiveAsyncRuntime::new().expect("shared async runtime");
+        let (mut client_a, server_a) = UnixStream::pair().expect("socket pair a");
+        let (mut client_b, server_b) = UnixStream::pair().expect("socket pair b");
+        client_a
+            .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .expect("client a read timeout");
+        client_b
+            .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .expect("client b read timeout");
+
+        let transport_a =
+            async_live_client_transport_with_runtime(server_a, 1, BTreeMap::new(), Some(&runtime))
+                .expect("transport a");
+        let transport_b =
+            async_live_client_transport_with_runtime(server_b, 10, BTreeMap::new(), Some(&runtime))
+                .expect("transport b");
+        let (mut input_a, output_a, wake_a) = match transport_a {
+            LiveClientTransport::Async {
+                input,
+                output,
+                wake_reader,
+            } => (input, output, wake_reader),
+            LiveClientTransport::Legacy { .. } => panic!("expected async transport a"),
+        };
+        let (mut input_b, output_b, wake_b) = match transport_b {
+            LiveClientTransport::Async {
+                input,
+                output,
+                wake_reader,
+            } => (input, output, wake_reader),
+            LiveClientTransport::Legacy { .. } => panic!("expected async transport b"),
+        };
+
+        send_key_input(&mut client_a, "pane-1", "a").expect("send input a");
+        send_key_input(&mut client_b, "pane-1", "b").expect("send input b");
+
+        match wait_for_async_input_event(&mut input_a, &wake_a) {
+            async_live::ClientInputEvent::Input(input) => {
+                assert_eq!(input.pane_id, "pane-1");
+                assert_eq!(input.bytes, b"a");
+            }
+            other => panic!("expected input a, got {other:?}"),
+        }
+        match wait_for_async_input_event(&mut input_b, &wake_b) {
+            async_live::ClientInputEvent::Input(input) => {
+                assert_eq!(input.pane_id, "pane-1");
+                assert_eq!(input.bytes, b"b");
+            }
+            other => panic!("expected input b, got {other:?}"),
+        }
+
+        let frame_a = Session::initial().workspace_tree_frame("conn-a", 21);
+        let frame_b = Session::initial().workspace_tree_frame("conn-b", 22);
+        output_a
+            .try_send_reliable(async_live::ReliableFrame::new(frame_a.clone()))
+            .expect("queue output a");
+        output_b
+            .try_send_reliable(async_live::ReliableFrame::new(frame_b.clone()))
+            .expect("queue output b");
+
+        assert_eq!(
+            wire::read_default_frame(&mut client_a).expect("read output a"),
+            frame_a
+        );
+        assert_eq!(
+            wire::read_default_frame(&mut client_b).expect("read output b"),
+            frame_b
         );
     }
 
