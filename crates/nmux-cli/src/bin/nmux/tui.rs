@@ -17,6 +17,12 @@ pub struct TuiFrame {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuiOverlay {
+    pub title: String,
+    pub lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HitRegion {
     pub rect: Rect,
     pub target: HitTarget,
@@ -43,6 +49,7 @@ pub struct WorkspaceFrameInput<'a> {
     pub workspace: &'a local::WorkspaceSummary,
     pub active_surface_text: &'a str,
     pub pane_surfaces: Option<&'a BTreeMap<String, String>>,
+    pub overlay: Option<&'a TuiOverlay>,
 }
 
 pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u16) -> TuiFrame {
@@ -122,6 +129,10 @@ pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u
             input.active_surface_text,
             &mut hits,
         );
+    }
+
+    if let Some(overlay) = input.overlay {
+        render_overlay(&mut buffer, area, overlay);
     }
 
     TuiFrame {
@@ -416,6 +427,56 @@ fn paint_background(buffer: &mut Buffer, area: Rect) {
     }
 }
 
+fn render_overlay(buffer: &mut Buffer, area: Rect, overlay: &TuiOverlay) {
+    if area.width < 12 || area.height < 5 {
+        return;
+    }
+    let max_line_width = overlay
+        .lines
+        .iter()
+        .map(|line| line.chars().count() as u16)
+        .max()
+        .unwrap_or(0)
+        .max(overlay.title.chars().count() as u16);
+    let width = max_line_width
+        .saturating_add(4)
+        .clamp(12, area.width.saturating_sub(2).max(12));
+    let height = (overlay.lines.len() as u16)
+        .saturating_add(4)
+        .clamp(5, area.height.saturating_sub(2).max(5));
+    let overlay_area = Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    fill_rect(
+        buffer,
+        overlay_area,
+        " ",
+        Style::default().fg(Color::White).bg(Color::Black),
+    );
+    draw_box(buffer, overlay_area, &overlay.title, true);
+    let Some(inner) = inset(overlay_area, 1) else {
+        return;
+    };
+    for (offset, line) in overlay
+        .lines
+        .iter()
+        .take(usize::from(inner.height))
+        .enumerate()
+    {
+        write_text(
+            buffer,
+            inner.x,
+            inner.y + offset as u16,
+            inner.width,
+            line,
+            Style::default().fg(Color::White).bg(Color::Black),
+        );
+    }
+}
+
 fn draw_box(buffer: &mut Buffer, area: Rect, title: &str, active: bool) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -572,6 +633,7 @@ mod tests {
                 workspace: &workspace,
                 active_surface_text: "right active",
                 pane_surfaces: Some(&surfaces),
+                overlay: None,
             },
             100,
             20,
@@ -598,6 +660,7 @@ mod tests {
                 workspace: &workspace,
                 active_surface_text: "right active",
                 pane_surfaces: None,
+                overlay: None,
             },
             100,
             20,
@@ -615,5 +678,26 @@ mod tests {
             hit_test(&frame.hits, 50, 3),
             Some(HitTarget::PaneContent(_))
         ));
+    }
+
+    #[test]
+    fn renders_menu_overlay() {
+        let workspace = split_workspace();
+        let frame = render_workspace_frame(
+            WorkspaceFrameInput {
+                workspace: &workspace,
+                active_surface_text: "right active",
+                pane_surfaces: None,
+                overlay: Some(&TuiOverlay {
+                    title: "sessions".to_owned(),
+                    lines: vec!["* local".to_owned(), "click a menu item".to_owned()],
+                }),
+            },
+            100,
+            20,
+        );
+
+        assert!(frame.text.contains("sessions active"), "{:?}", frame.text);
+        assert!(frame.text.contains("* local"), "{:?}", frame.text);
     }
 }

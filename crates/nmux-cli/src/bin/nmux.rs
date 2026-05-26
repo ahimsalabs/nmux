@@ -1033,6 +1033,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     });
     let mut cycles = 0;
     let mut sent_explicit_live_resize = false;
+    let mut active_overlay: Option<tui::TuiOverlay> = None;
     let detach_reason = loop {
         if cycle_limit.is_some_and(|iterations| cycles >= iterations) {
             break LiveDetachReason::IterationLimit;
@@ -1072,13 +1073,14 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 if args.output_json {
                     println!("{event}");
                 } else if args.redraw {
-                    print_live_surface(
+                    print_live_surface_with_overlay(
                         &current_workspace,
                         &surface_state.current_surface_metadata,
                         &surface_state.current_surface_text,
                         args.redraw,
                         redraw_state.as_mut(),
                         Some(&surface_state.current_pane_surfaces),
+                        active_overlay.as_ref(),
                     );
                 } else {
                     println!("{}", current_workspace.display_line());
@@ -1147,6 +1149,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                             surface_state.current_modes,
                                         ) {
                                             Some(LiveMouseDispatch::FocusPane(pane_id)) => {
+                                                active_overlay = None;
                                                 if focus_live_client_pane(
                                                     &pane_id,
                                                     &mut attached_pane_id,
@@ -1168,6 +1171,41 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                     &pane_id,
                                                     mouse,
                                                 )?;
+                                            }
+                                            Some(LiveMouseDispatch::Menu(action)) => {
+                                                active_overlay = Some(menu_overlay_for_action(
+                                                    action,
+                                                    &current_workspace,
+                                                    &surface_state,
+                                                ));
+                                                if args.redraw && !args.output_json {
+                                                    print_live_surface_with_overlay(
+                                                        &current_workspace,
+                                                        &surface_state.current_surface_metadata,
+                                                        &surface_state.current_surface_text,
+                                                        args.redraw,
+                                                        redraw_state.as_mut(),
+                                                        Some(&surface_state.current_pane_surfaces),
+                                                        active_overlay.as_ref(),
+                                                    );
+                                                    flush_stdout()?;
+                                                }
+                                            }
+                                            Some(LiveMouseDispatch::ClearOverlay) => {
+                                                if active_overlay.take().is_some()
+                                                    && args.redraw
+                                                    && !args.output_json
+                                                {
+                                                    print_live_surface(
+                                                        &current_workspace,
+                                                        &surface_state.current_surface_metadata,
+                                                        &surface_state.current_surface_text,
+                                                        args.redraw,
+                                                        redraw_state.as_mut(),
+                                                        Some(&surface_state.current_pane_surfaces),
+                                                    );
+                                                    flush_stdout()?;
+                                                }
                                             }
                                             None => {}
                                         }
@@ -1318,13 +1356,14 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     if args.output_json {
                         println!("{event}");
                     } else if args.redraw {
-                        print_live_surface(
+                        print_live_surface_with_overlay(
                             &current_workspace,
                             &surface_state.current_surface_metadata,
                             &surface_state.current_surface_text,
                             args.redraw,
                             redraw_state.as_mut(),
                             Some(&surface_state.current_pane_surfaces),
+                            active_overlay.as_ref(),
                         );
                     } else {
                         println!("{}", current_workspace.display_line());
@@ -1343,13 +1382,14 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     client_inventory.apply_snapshot(snapshot);
                     if let Some(state) = redraw_state.as_mut() {
                         state.record_client_count(client_inventory.count());
-                        print_live_surface(
+                        print_live_surface_with_overlay(
                             &current_workspace,
                             &surface_state.current_surface_metadata,
                             &surface_state.current_surface_text,
                             args.redraw,
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
+                            active_overlay.as_ref(),
                         );
                         flush_stdout()?;
                     }
@@ -1359,13 +1399,14 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         && let Some(state) = redraw_state.as_mut()
                     {
                         state.record_client_count(client_inventory.count());
-                        print_live_surface(
+                        print_live_surface_with_overlay(
                             &current_workspace,
                             &surface_state.current_surface_metadata,
                             &surface_state.current_surface_text,
                             args.redraw,
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
+                            active_overlay.as_ref(),
                         );
                         flush_stdout()?;
                     }
@@ -1376,13 +1417,14 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     {
                         if let Some(state) = redraw_state.as_mut() {
                             state.record_rtt(rtt);
-                            print_live_surface(
+                            print_live_surface_with_overlay(
                                 &current_workspace,
                                 &surface_state.current_surface_metadata,
                                 &surface_state.current_surface_text,
                                 args.redraw,
                                 Some(state),
                                 Some(&surface_state.current_pane_surfaces),
+                                active_overlay.as_ref(),
                             );
                             flush_stdout()?;
                         }
@@ -2501,7 +2543,9 @@ fn parse_sgr_mouse_sequence(input: &[u8]) -> Option<(SgrMouseInput, usize)> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LiveMouseDispatch {
     FocusPane(String),
+    Menu(tui::MenuAction),
     PaneMouse(String, local::AttachMouseInput),
+    ClearOverlay,
 }
 
 fn live_mouse_dispatch_for_workspace(
@@ -2539,6 +2583,7 @@ fn live_mouse_dispatch_for_workspace_size(
             workspace,
             active_surface_text,
             pane_surfaces,
+            overlay: None,
         },
         cols.max(1),
         frame_rows,
@@ -2572,12 +2617,62 @@ fn live_mouse_dispatch_for_workspace_size(
         {
             Some(LiveMouseDispatch::FocusPane(pane_id.clone()))
         }
+        tui::HitTarget::Menu(action) if sgr_mouse_is_primary_press(mouse) => {
+            Some(LiveMouseDispatch::Menu(*action))
+        }
+        tui::HitTarget::Background if sgr_mouse_is_primary_press(mouse) => {
+            Some(LiveMouseDispatch::ClearOverlay)
+        }
         _ => None,
     }
 }
 
 fn sgr_mouse_is_primary_press(mouse: SgrMouseInput) -> bool {
     mouse.action == protocol::MouseAction::Press && mouse.button == protocol::MouseButton::Left
+}
+
+fn menu_overlay_for_action(
+    action: tui::MenuAction,
+    workspace: &local::WorkspaceSummary,
+    surface_state: &LiveSurfaceState,
+) -> tui::TuiOverlay {
+    let (title, lines) = match action {
+        tui::MenuAction::Sessions => (
+            "sessions".to_owned(),
+            vec![
+                format!("* {}", workspace.session_id),
+                "session switching needs session-control protocol".to_owned(),
+            ],
+        ),
+        tui::MenuAction::NewSession => (
+            "new session".to_owned(),
+            vec!["session creation needs session-control protocol".to_owned()],
+        ),
+        tui::MenuAction::Windows => {
+            let mut lines = vec![format!("tab {}", workspace.tab_id)];
+            for pane in workspace_panes(workspace) {
+                let marker = if pane.pane_id == workspace.pane_id {
+                    "*"
+                } else {
+                    " "
+                };
+                lines.push(format!(
+                    "{marker} {} {}x{}",
+                    pane.pane_id, pane.cols, pane.rows
+                ));
+            }
+            ("windows".to_owned(), lines)
+        }
+        tui::MenuAction::Clipboard => {
+            let paste_mode = if surface_state.current_modes.bracketed_paste {
+                "pane bracketed paste enabled"
+            } else {
+                "nmux paste forwarding enabled"
+            };
+            ("clipboard".to_owned(), vec![paste_mode.to_owned()])
+        }
+    };
+    tui::TuiOverlay { title, lines }
 }
 
 fn focus_live_client_pane(
@@ -3132,6 +3227,7 @@ fn print_live_rendered(
             initial_scrollback,
             has_status_bar,
             pane_surfaces,
+            None,
         );
         if let Some(state) = redraw_state {
             state.render_initial(&rendered.workspace, &redraw_text);
@@ -3155,6 +3251,27 @@ fn print_live_surface(
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
 ) {
+    print_live_surface_with_overlay(
+        workspace,
+        metadata,
+        surface_text,
+        redraw,
+        redraw_state,
+        pane_surfaces,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn print_live_surface_with_overlay(
+    workspace: &local::WorkspaceSummary,
+    metadata: &local::TerminalMetadataSummary,
+    surface_text: &str,
+    redraw: bool,
+    redraw_state: Option<&mut RedrawState>,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
+    overlay: Option<&tui::TuiOverlay>,
+) {
     if redraw {
         let has_status_bar = redraw_state.is_some();
         let text = redraw_text_with_context(
@@ -3164,6 +3281,7 @@ fn print_live_surface(
             None,
             has_status_bar,
             pane_surfaces,
+            overlay,
         );
         if let Some(state) = redraw_state {
             state.render_diff(workspace, &text);
@@ -3207,6 +3325,7 @@ fn print_live_update(
                         None,
                         true,
                         pane_surfaces,
+                        None,
                     );
                     state.render_diff(workspace, &text);
                 }
@@ -3700,6 +3819,7 @@ fn redraw_text_with_context(
     scrollback: Option<local::ScrollbackChunkSummary>,
     has_status_bar: bool,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    overlay: Option<&tui::TuiOverlay>,
 ) -> String {
     if has_status_bar {
         let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
@@ -3710,6 +3830,7 @@ fn redraw_text_with_context(
                 workspace,
                 active_surface_text: surface_text,
                 pane_surfaces,
+                overlay,
             },
             cols,
             rows,
@@ -6343,25 +6464,26 @@ mod tests {
         AttachMode, BRACKETED_PASTE_END, BRACKETED_PASTE_START, ClientModeArgs,
         DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs, FocusEvent, HostMouseModeContext,
         InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES, LiveDetachReason,
-        LiveMouseDispatch, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
-        PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
-        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags,
-        SgrMouseInput, SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward,
-        args_from_iter, configure_default_live_args, default_attach_error_needs_restart,
-        format_cli_error_json, format_context_json, format_input_choices_json,
-        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
-        format_live_detach_json, format_live_error_json, format_live_presence_json,
-        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
-        format_scrollback, format_state_info_json, format_state_info_text,
-        host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
+        LiveMouseDispatch, LiveSurfaceState, LiveUpdatePrintKind, LocalEcho, MouseEvent,
+        NoInputResizeArgs, PositiveNumericArgs, RawTerminalModeContext, RedrawState,
+        RedrawTerminalContext, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand,
+        ScrollbackSelectionArgFlags, SgrMouseInput, SigwinchResizeContext, StateInfoSocketSummary,
+        StdinByteForward, args_from_iter, configure_default_live_args,
+        default_attach_error_needs_restart, format_cli_error_json, format_context_json,
+        format_input_choices_json, format_key_names_json, format_live_attach_json,
+        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
+        format_live_presence_json, format_live_surface_update_json, format_live_workspace_json,
+        format_rendered_attach_json, format_scrollback, format_state_info_json,
+        format_state_info_text, host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
         host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
         live_mouse_dispatch_for_workspace_size, live_update_print_kind,
-        managed_ready_error_message, parse_detach_key, parse_env_assignment, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
-        raw_terminal_mode_needed, redraw_terminal_guard_needed, redraw_text_with_context,
-        redraw_workspace_surface_text, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, usage,
+        managed_ready_error_message, menu_overlay_for_action, parse_detach_key,
+        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
+        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
+        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -7511,7 +7633,7 @@ mod tests {
         };
 
         let status_bar_text =
-            redraw_text_with_context(&ws, &metadata, "pane output", None, true, None);
+            redraw_text_with_context(&ws, &metadata, "pane output", None, true, None, None);
         assert!(
             !status_bar_text.contains("title=") && !status_bar_text.contains("working-directory="),
             "status-bar redraw should not inject metadata rows: {status_bar_text:?}"
@@ -7519,7 +7641,7 @@ mod tests {
         assert!(status_bar_text.contains("pane output"));
 
         let fallback_text =
-            redraw_text_with_context(&ws, &metadata, "pane output", None, false, None);
+            redraw_text_with_context(&ws, &metadata, "pane output", None, false, None, None);
         assert!(
             fallback_text.contains("title=shell title")
                 && fallback_text.contains("working-directory=file://localhost/tmp/nmux"),
@@ -8841,6 +8963,51 @@ mod tests {
             None,
             "wheel over the tree is consumed until nmux-owned scrolling exists"
         );
+    }
+
+    #[test]
+    fn live_mouse_menu_click_opens_menu_overlay() {
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 20,
+            rows: 8,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+        };
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 0,
+                    col: 1,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                local::TerminalModeSummary::default(),
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::Menu(tui::MenuAction::Sessions))
+        );
+
+        let overlay = menu_overlay_for_action(
+            tui::MenuAction::Windows,
+            &workspace,
+            &LiveSurfaceState {
+                current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_modes: local::TerminalModeSummary::default(),
+                current_surface_text: String::new(),
+                current_pane_surfaces: BTreeMap::new(),
+            },
+        );
+        assert_eq!(overlay.title, "windows");
+        assert!(overlay.lines.iter().any(|line| line.contains("* pane-1")));
     }
 
     fn scrollback_summary(
