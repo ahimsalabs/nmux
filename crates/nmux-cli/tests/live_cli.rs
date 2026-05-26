@@ -1949,7 +1949,7 @@ fn managed_shell_cli_runs_private_live_daemon() {
         .args([
             "--shell",
             "--iterations",
-            "2",
+            "4",
             "--interval-ms",
             "100",
             "--command",
