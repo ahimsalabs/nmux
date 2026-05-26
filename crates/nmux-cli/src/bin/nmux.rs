@@ -1153,6 +1153,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut cycles = 0;
     let mut sent_explicit_live_resize = false;
     let mut active_overlay: Option<tui::TuiOverlay> = None;
+    let mut active_menu_index: Option<usize> = None;
     let detach_reason = loop {
         if cycle_limit.is_some_and(|iterations| cycles >= iterations) {
             break LiveDetachReason::IterationLimit;
@@ -1272,6 +1273,64 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                             )
                                         })?;
                                     }
+                                    StdinByteForward::Key(key) => {
+                                        match handle_live_tui_key(
+                                            key,
+                                            &mut active_menu_index,
+                                            &mut active_overlay,
+                                            &mut stream,
+                                            &mut client_sequence,
+                                            &mut attached_pane_id,
+                                            &mut current_workspace,
+                                            &mut surface_state,
+                                            &mut client_state,
+                                            &mut host_mouse_modes,
+                                            &mut speculative_echo,
+                                            &mut client_inventory,
+                                            &mut recorder,
+                                            socket_scope,
+                                            &options,
+                                            setup_read_timeout,
+                                            live_socket_read_timeout,
+                                            &mut redraw_state,
+                                            args,
+                                            use_styled,
+                                        )? {
+                                            LiveKeyHandling::Handled => {
+                                                flush_stdout()?;
+                                            }
+                                            LiveKeyHandling::Forward(bytes) => {
+                                                let input_span = tracing::trace_span!(
+                                                    "live.stdin_bytes.forward_input",
+                                                    bytes = bytes.len(),
+                                                    pane_id = %attached_pane_id
+                                                );
+                                                let input_seq = input_span.in_scope(|| {
+                                                    local::send_raw_input_with_sequence(
+                                                        &mut stream,
+                                                        &mut client_sequence,
+                                                        &attached_pane_id,
+                                                        &bytes,
+                                                    )
+                                                })?;
+                                                if let Ok(text) = std::str::from_utf8(&bytes) {
+                                                    repaint_speculative_echo(
+                                                        stdin_bytes_speculative_echo_enabled(args),
+                                                        &client_state,
+                                                        &mut speculative_echo,
+                                                        &attached_pane_id,
+                                                        input_seq,
+                                                        text,
+                                                        &current_workspace,
+                                                        &surface_state.current_surface_metadata,
+                                                        &mut surface_state.current_surface_text,
+                                                        &mut redraw_state,
+                                                        use_styled,
+                                                    )?;
+                                                }
+                                            }
+                                        }
+                                    }
                                     StdinByteForward::Mouse(mouse) => {
                                         match live_mouse_dispatch_for_workspace(
                                             mouse,
@@ -1284,6 +1343,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                         ) {
                                             Some(LiveMouseDispatch::FocusPane(pane_id)) => {
                                                 active_overlay = None;
+                                                active_menu_index = None;
                                                 if focus_live_client_pane(
                                                     &pane_id,
                                                     &mut attached_pane_id,
@@ -1300,6 +1360,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                             }
                                             Some(LiveMouseDispatch::PaneMouse(pane_id, mouse)) => {
                                                 active_overlay = None;
+                                                active_menu_index = None;
                                                 local::send_mouse_input_with_sequence(
                                                     &mut stream,
                                                     &mut client_sequence,
@@ -1313,6 +1374,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 visible_rows,
                                             }) => {
                                                 active_overlay = None;
+                                                active_menu_index = None;
                                                 if scroll_live_pane_view(
                                                     &mut stream,
                                                     &mut client_sequence,
@@ -1335,8 +1397,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 }
                                             }
                                             Some(LiveMouseDispatch::Menu(action)) => {
+                                                active_menu_index = menu_index(action);
                                                 if action == tui::MenuAction::NewSession {
                                                     active_overlay = None;
+                                                    active_menu_index = None;
                                                     let workspace =
                                                         run_live_new_session_menu_command(args)?;
                                                     current_workspace = workspace;
@@ -1416,6 +1480,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 match action {
                                                     tui::OverlayAction::SwitchTab(tab_id) => {
                                                         active_overlay = None;
+                                                        active_menu_index = None;
                                                         let workspace =
                                                             run_live_tab_switch_menu_command(
                                                                 args, &tab_id,
@@ -1454,6 +1519,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                         session_id,
                                                     ) => {
                                                         active_overlay = None;
+                                                        active_menu_index = None;
                                                         if session_id
                                                             != current_workspace.session_id
                                                         {
@@ -1482,10 +1548,28 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                             flush_stdout()?;
                                                         }
                                                     }
+                                                    tui::OverlayAction::FocusPane(pane_id) => {
+                                                        active_overlay = None;
+                                                        active_menu_index = None;
+                                                        if focus_live_client_pane(
+                                                            &pane_id,
+                                                            &mut attached_pane_id,
+                                                            &mut current_workspace,
+                                                            &mut surface_state,
+                                                            &client_state,
+                                                            host_mouse_modes.as_mut(),
+                                                            redraw_state.as_mut(),
+                                                            args,
+                                                            use_styled,
+                                                        )? {
+                                                            flush_stdout()?;
+                                                        }
+                                                    }
                                                 }
                                             }
                                             Some(LiveMouseDispatch::ClearOverlay) => {
-                                                if active_overlay.take().is_some()
+                                                if (active_overlay.take().is_some()
+                                                    || active_menu_index.take().is_some())
                                                     && args.redraw
                                                     && !args.output_json
                                                 {
@@ -2762,6 +2846,26 @@ enum StdinByteForward {
     Raw(Vec<u8>),
     Paste(String),
     Mouse(SgrMouseInput),
+    Key(StdinKeyInput),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdinKey {
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter,
+    Escape,
+    Tab,
+    BackTab,
+    OpenMenu(tui::MenuAction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StdinKeyInput {
+    key: StdinKey,
+    bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2796,9 +2900,12 @@ fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
         let paste = find_bytes(&input[offset..], BRACKETED_PASTE_START);
         let mouse = find_sgr_mouse_sequence(&input[offset..])
             .map(|(start, mouse, end)| (start, StdinByteForward::Mouse(mouse), end));
+        let key = find_tui_key_sequence(&input[offset..])
+            .map(|(start, key, end)| (start, StdinByteForward::Key(key), end));
         let Some((start_rel, forward, end_rel)) = next_structured_stdin_forward(
             paste.map(|start| (start, StdinByteForward::Raw(Vec::new()), 0)),
             mouse,
+            key,
         ) else {
             forwards.push(StdinByteForward::Raw(input[offset..].to_vec()));
             break;
@@ -2807,7 +2914,10 @@ fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
         if start > offset {
             forwards.push(StdinByteForward::Raw(input[offset..start].to_vec()));
         }
-        if matches!(forward, StdinByteForward::Mouse(_)) {
+        if matches!(
+            forward,
+            StdinByteForward::Mouse(_) | StdinByteForward::Key(_)
+        ) {
             forwards.push(forward);
             offset += end_rel;
             continue;
@@ -2830,6 +2940,7 @@ fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
         StdinByteForward::Raw(bytes) => !bytes.is_empty(),
         StdinByteForward::Paste(_) => true,
         StdinByteForward::Mouse(_) => true,
+        StdinByteForward::Key(_) => true,
     });
     forwards
 }
@@ -2837,19 +2948,49 @@ fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
 fn next_structured_stdin_forward(
     paste: Option<(usize, StdinByteForward, usize)>,
     mouse: Option<(usize, StdinByteForward, usize)>,
+    key: Option<(usize, StdinByteForward, usize)>,
 ) -> Option<(usize, StdinByteForward, usize)> {
-    match (paste, mouse) {
-        (Some(paste), Some(mouse)) => {
-            if paste.0 <= mouse.0 {
-                Some(paste)
-            } else {
-                Some(mouse)
-            }
+    [paste, mouse, key]
+        .into_iter()
+        .flatten()
+        .min_by_key(|candidate| candidate.0)
+}
+
+fn find_tui_key_sequence(input: &[u8]) -> Option<(usize, StdinKeyInput, usize)> {
+    for start in 0..input.len() {
+        if let Some((key, len)) = parse_tui_key_sequence(&input[start..]) {
+            return Some((start, key, start + len));
         }
-        (Some(paste), None) => Some(paste),
-        (None, Some(mouse)) => Some(mouse),
-        (None, None) => None,
     }
+    None
+}
+
+fn parse_tui_key_sequence(input: &[u8]) -> Option<(StdinKeyInput, usize)> {
+    let candidates: &[(&[u8], StdinKey)] = &[
+        (b"\x1b[A", StdinKey::Up),
+        (b"\x1b[B", StdinKey::Down),
+        (b"\x1b[C", StdinKey::Right),
+        (b"\x1b[D", StdinKey::Left),
+        (b"\x1b[Z", StdinKey::BackTab),
+        (b"\r", StdinKey::Enter),
+        (b"\n", StdinKey::Enter),
+        (b"\t", StdinKey::Tab),
+        (b"\x1bs", StdinKey::OpenMenu(tui::MenuAction::Sessions)),
+        (b"\x1bn", StdinKey::OpenMenu(tui::MenuAction::NewSession)),
+        (b"\x1bw", StdinKey::OpenMenu(tui::MenuAction::Windows)),
+        (b"\x1bc", StdinKey::OpenMenu(tui::MenuAction::Clipboard)),
+        (b"\x1b", StdinKey::Escape),
+    ];
+    let (bytes, key) = candidates
+        .iter()
+        .find(|(bytes, _)| input.starts_with(bytes))?;
+    Some((
+        StdinKeyInput {
+            key: *key,
+            bytes: bytes.to_vec(),
+        },
+        bytes.len(),
+    ))
 }
 
 fn find_sgr_mouse_sequence(input: &[u8]) -> Option<(usize, SgrMouseInput, usize)> {
@@ -2946,6 +3087,369 @@ enum LiveMouseDispatch {
 enum LiveScrollDirection {
     Up,
     Down,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LiveKeyHandling {
+    Handled,
+    Forward(Vec<u8>),
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_live_tui_key(
+    key: StdinKeyInput,
+    active_menu_index: &mut Option<usize>,
+    active_overlay: &mut Option<tui::TuiOverlay>,
+    stream: &mut UnixStream,
+    client_sequence: &mut local::ClientFrameSequence,
+    attached_pane_id: &mut String,
+    current_workspace: &mut local::WorkspaceSummary,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &mut local::ClientAttachState,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    options: &local::AttachOptions,
+    setup_read_timeout: Duration,
+    live_socket_read_timeout: Duration,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+    use_styled: bool,
+) -> Result<LiveKeyHandling, Box<dyn std::error::Error>> {
+    if args.output_json || !args.redraw {
+        return Ok(LiveKeyHandling::Forward(key.bytes));
+    }
+
+    if key.key == StdinKey::Escape {
+        if active_overlay.take().is_some() || active_menu_index.take().is_some() {
+            print_live_surface(
+                current_workspace,
+                &surface_state.current_surface_metadata,
+                &surface_state.current_surface_text,
+                args.redraw,
+                redraw_state.as_mut(),
+                Some(&surface_state.current_pane_surfaces),
+                Some(&surface_state.current_pane_surface_summaries),
+            );
+            return Ok(LiveKeyHandling::Handled);
+        }
+        return Ok(LiveKeyHandling::Forward(key.bytes));
+    }
+
+    if let Some(action) = match key.key {
+        StdinKey::OpenMenu(action) => Some(action),
+        _ => None,
+    } {
+        *active_menu_index = menu_index(action);
+        open_live_menu_overlay(
+            action,
+            active_menu_index,
+            active_overlay,
+            stream,
+            client_sequence,
+            attached_pane_id,
+            current_workspace,
+            surface_state,
+            client_state,
+            host_mouse_modes,
+            speculative_echo,
+            client_inventory,
+            recorder,
+            socket_scope,
+            options,
+            setup_read_timeout,
+            live_socket_read_timeout,
+            redraw_state,
+            args,
+            use_styled,
+        )?;
+        return Ok(LiveKeyHandling::Handled);
+    }
+
+    if active_overlay.is_some() {
+        match key.key {
+            StdinKey::Up | StdinKey::BackTab => {
+                if let Some(overlay) = active_overlay.as_mut() {
+                    tui::move_overlay_selection(overlay, -1);
+                }
+                repaint_live_overlay(
+                    current_workspace,
+                    surface_state,
+                    redraw_state,
+                    args,
+                    active_overlay.as_ref(),
+                );
+                return Ok(LiveKeyHandling::Handled);
+            }
+            StdinKey::Down | StdinKey::Tab => {
+                if let Some(overlay) = active_overlay.as_mut() {
+                    tui::move_overlay_selection(overlay, 1);
+                }
+                repaint_live_overlay(
+                    current_workspace,
+                    surface_state,
+                    redraw_state,
+                    args,
+                    active_overlay.as_ref(),
+                );
+                return Ok(LiveKeyHandling::Handled);
+            }
+            StdinKey::Enter => {
+                if let Some(action) = active_overlay
+                    .as_ref()
+                    .and_then(tui::selected_overlay_action)
+                {
+                    *active_overlay = None;
+                    *active_menu_index = None;
+                    handle_live_overlay_action(
+                        action,
+                        stream,
+                        client_sequence,
+                        attached_pane_id,
+                        current_workspace,
+                        surface_state,
+                        client_state,
+                        host_mouse_modes,
+                        speculative_echo,
+                        client_inventory,
+                        recorder,
+                        socket_scope,
+                        options,
+                        setup_read_timeout,
+                        live_socket_read_timeout,
+                        redraw_state,
+                        args,
+                        use_styled,
+                    )?;
+                }
+                return Ok(LiveKeyHandling::Handled);
+            }
+            _ => return Ok(LiveKeyHandling::Forward(key.bytes)),
+        }
+    }
+
+    if active_menu_index.is_some() {
+        match key.key {
+            StdinKey::Left | StdinKey::BackTab => {
+                cycle_live_menu(active_menu_index, -1);
+            }
+            StdinKey::Right | StdinKey::Tab => {
+                cycle_live_menu(active_menu_index, 1);
+            }
+            StdinKey::Down | StdinKey::Enter => {}
+            _ => return Ok(LiveKeyHandling::Forward(key.bytes)),
+        }
+        let action = tui::MENU_ACTIONS[active_menu_index.unwrap_or(0)];
+        open_live_menu_overlay(
+            action,
+            active_menu_index,
+            active_overlay,
+            stream,
+            client_sequence,
+            attached_pane_id,
+            current_workspace,
+            surface_state,
+            client_state,
+            host_mouse_modes,
+            speculative_echo,
+            client_inventory,
+            recorder,
+            socket_scope,
+            options,
+            setup_read_timeout,
+            live_socket_read_timeout,
+            redraw_state,
+            args,
+            use_styled,
+        )?;
+        return Ok(LiveKeyHandling::Handled);
+    }
+
+    Ok(LiveKeyHandling::Forward(key.bytes))
+}
+
+fn menu_index(action: tui::MenuAction) -> Option<usize> {
+    tui::MENU_ACTIONS
+        .iter()
+        .position(|candidate| *candidate == action)
+}
+
+fn cycle_live_menu(active_menu_index: &mut Option<usize>, delta: i32) {
+    let current = active_menu_index.unwrap_or(0);
+    let next = (current as i32 + delta).rem_euclid(tui::MENU_ACTIONS.len() as i32) as usize;
+    *active_menu_index = Some(next);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_live_menu_overlay(
+    action: tui::MenuAction,
+    active_menu_index: &mut Option<usize>,
+    active_overlay: &mut Option<tui::TuiOverlay>,
+    stream: &mut UnixStream,
+    client_sequence: &mut local::ClientFrameSequence,
+    attached_pane_id: &mut String,
+    current_workspace: &mut local::WorkspaceSummary,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &local::ClientAttachState,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    options: &local::AttachOptions,
+    setup_read_timeout: Duration,
+    live_socket_read_timeout: Duration,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+    use_styled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if action == tui::MenuAction::NewSession {
+        *active_overlay = None;
+        *active_menu_index = None;
+        let workspace = run_live_new_session_menu_command(args)?;
+        *current_workspace = workspace;
+        *attached_pane_id = current_workspace.pane_id.clone();
+        switch_live_surface_to_workspace_pane(
+            current_workspace,
+            surface_state,
+            client_state,
+            host_mouse_modes.as_mut(),
+            use_styled,
+        )?;
+        repaint_live_overlay(current_workspace, surface_state, redraw_state, args, None);
+        return Ok(());
+    }
+
+    let session_inventory = if action == tui::MenuAction::Sessions {
+        Some(fetch_session_inventory(args)?)
+    } else {
+        None
+    };
+    *active_overlay = Some(menu_overlay_for_action_with_session_inventory(
+        action,
+        current_workspace,
+        surface_state,
+        session_inventory.as_ref(),
+    ));
+    if let Some(overlay) = active_overlay.as_mut() {
+        overlay.selected = tui::selectable_overlay_index(overlay);
+    }
+    repaint_live_overlay(
+        current_workspace,
+        surface_state,
+        redraw_state,
+        args,
+        active_overlay.as_ref(),
+    );
+    let _ = (
+        stream,
+        client_sequence,
+        speculative_echo,
+        client_inventory,
+        recorder,
+        socket_scope,
+        options,
+        setup_read_timeout,
+        live_socket_read_timeout,
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_live_overlay_action(
+    action: tui::OverlayAction,
+    stream: &mut UnixStream,
+    client_sequence: &mut local::ClientFrameSequence,
+    attached_pane_id: &mut String,
+    current_workspace: &mut local::WorkspaceSummary,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &mut local::ClientAttachState,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    options: &local::AttachOptions,
+    setup_read_timeout: Duration,
+    live_socket_read_timeout: Duration,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+    use_styled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        tui::OverlayAction::SwitchTab(tab_id) => {
+            let workspace = run_live_tab_switch_menu_command(args, &tab_id)?;
+            *current_workspace = workspace;
+            *attached_pane_id = current_workspace.pane_id.clone();
+            switch_live_surface_to_workspace_pane(
+                current_workspace,
+                surface_state,
+                client_state,
+                host_mouse_modes.as_mut(),
+                use_styled,
+            )?;
+            repaint_live_overlay(current_workspace, surface_state, redraw_state, args, None);
+        }
+        tui::OverlayAction::SwitchSession(session_id) => {
+            if session_id != current_workspace.session_id {
+                let switched = switch_live_session(
+                    args,
+                    options,
+                    client_state,
+                    speculative_echo,
+                    host_mouse_modes,
+                    client_inventory,
+                    recorder,
+                    socket_scope,
+                    &session_id,
+                    setup_read_timeout,
+                    live_socket_read_timeout,
+                    redraw_state,
+                    use_styled,
+                )?;
+                *stream = switched.stream;
+                *client_sequence = switched.client_sequence;
+                *attached_pane_id = switched.attached_pane_id;
+                *current_workspace = switched.workspace;
+                *surface_state = switched.surface_state;
+            }
+        }
+        tui::OverlayAction::FocusPane(pane_id) => {
+            let _ = focus_live_client_pane(
+                &pane_id,
+                attached_pane_id,
+                current_workspace,
+                surface_state,
+                client_state,
+                host_mouse_modes.as_mut(),
+                redraw_state.as_mut(),
+                args,
+                use_styled,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn repaint_live_overlay(
+    current_workspace: &local::WorkspaceSummary,
+    surface_state: &LiveSurfaceState,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+    active_overlay: Option<&tui::TuiOverlay>,
+) {
+    print_live_surface_with_overlay(
+        current_workspace,
+        &surface_state.current_surface_metadata,
+        &surface_state.current_surface_text,
+        args.redraw,
+        redraw_state.as_mut(),
+        Some(&surface_state.current_pane_surfaces),
+        Some(&surface_state.current_pane_surface_summaries),
+        active_overlay,
+    );
 }
 
 fn live_mouse_dispatch_for_workspace(
@@ -3113,10 +3617,11 @@ fn menu_overlay_for_action_with_session_inventory(
                 } else {
                     " "
                 };
-                lines.push(overlay_text(format!(
-                    "{marker} {} {}x{}",
-                    pane.pane_id, pane.cols, pane.rows
-                )));
+                lines.push(tui::TuiOverlayLine {
+                    text: format!("{marker} {} {}x{}", pane.pane_id, pane.cols, pane.rows),
+                    action: (pane.pane_id != workspace.pane_id)
+                        .then(|| tui::OverlayAction::FocusPane(pane.pane_id)),
+                });
             }
             ("windows".to_owned(), lines)
         }
@@ -3129,7 +3634,12 @@ fn menu_overlay_for_action_with_session_inventory(
             ("clipboard".to_owned(), vec![overlay_text(paste_mode)])
         }
     };
-    tui::TuiOverlay { title, lines }
+    let selected = lines.iter().position(|line| line.action.is_some());
+    tui::TuiOverlay {
+        title,
+        lines,
+        selected,
+    }
 }
 
 fn overlay_text(text: impl Into<String>) -> tui::TuiOverlayLine {
@@ -7824,13 +8334,13 @@ mod tests {
         LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
         RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
         SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags, SgrMouseInput,
-        SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward, args_from_iter,
-        configure_default_live_args, default_attach_error_needs_restart, format_cli_error_json,
-        format_context_json, format_input_choices_json, format_key_names_json,
-        format_live_attach_json, format_live_cli_error_json, format_live_detach_json,
-        format_live_error_json, format_live_presence_json, format_live_surface_update_json,
-        format_live_workspace_json, format_rendered_attach_json, format_scrollback,
-        format_state_info_json, format_state_info_text, format_stats_right,
+        SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward, StdinKey, StdinKeyInput,
+        args_from_iter, configure_default_live_args, default_attach_error_needs_restart,
+        format_cli_error_json, format_context_json, format_input_choices_json,
+        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
+        format_live_detach_json, format_live_error_json, format_live_presence_json,
+        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
+        format_scrollback, format_state_info_json, format_state_info_text, format_stats_right,
         frontend_resize_pane_size, host_mouse_mode_disable_sequence,
         host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
         interim_surface_fidelity_warning_needed, live_mouse_dispatch_for_workspace_size,
@@ -10371,6 +10881,29 @@ mod tests {
                 action: protocol::MouseAction::Release,
                 modifiers: 3,
             })]
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_decode_tui_keyboard_navigation_for_forwarding() {
+        assert_eq!(
+            stdin_byte_forwards(b"before\x1b[A\x1bw\rafter"),
+            vec![
+                StdinByteForward::Raw(b"before".to_vec()),
+                StdinByteForward::Key(StdinKeyInput {
+                    key: StdinKey::Up,
+                    bytes: b"\x1b[A".to_vec(),
+                }),
+                StdinByteForward::Key(StdinKeyInput {
+                    key: StdinKey::OpenMenu(tui::MenuAction::Windows),
+                    bytes: b"\x1bw".to_vec(),
+                }),
+                StdinByteForward::Key(StdinKeyInput {
+                    key: StdinKey::Enter,
+                    bytes: b"\r".to_vec(),
+                }),
+                StdinByteForward::Raw(b"after".to_vec()),
+            ]
         );
     }
 

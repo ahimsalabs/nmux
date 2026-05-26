@@ -21,6 +21,7 @@ pub struct TuiFrame {
 pub struct TuiOverlay {
     pub title: String,
     pub lines: Vec<TuiOverlayLine>,
+    pub selected: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +34,7 @@ pub struct TuiOverlayLine {
 pub enum OverlayAction {
     SwitchTab(String),
     SwitchSession(String),
+    FocusPane(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +59,43 @@ pub enum MenuAction {
     NewSession,
     Windows,
     Clipboard,
+}
+
+pub const MENU_ACTIONS: [MenuAction; 4] = [
+    MenuAction::Sessions,
+    MenuAction::NewSession,
+    MenuAction::Windows,
+    MenuAction::Clipboard,
+];
+
+pub fn selectable_overlay_index(overlay: &TuiOverlay) -> Option<usize> {
+    overlay.lines.iter().position(|line| line.action.is_some())
+}
+
+pub fn move_overlay_selection(overlay: &mut TuiOverlay, delta: i32) {
+    let selectable: Vec<usize> = overlay
+        .lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| line.action.is_some().then_some(index))
+        .collect();
+    if selectable.is_empty() {
+        overlay.selected = None;
+        return;
+    }
+    let current = overlay
+        .selected
+        .and_then(|selected| selectable.iter().position(|index| *index == selected))
+        .unwrap_or(0);
+    let next = (current as i32 + delta).rem_euclid(selectable.len() as i32) as usize;
+    overlay.selected = Some(selectable[next]);
+}
+
+pub fn selected_overlay_action(overlay: &TuiOverlay) -> Option<OverlayAction> {
+    overlay
+        .selected
+        .and_then(|index| overlay.lines.get(index))
+        .and_then(|line| line.action.clone())
 }
 
 pub struct WorkspaceFrameInput<'a> {
@@ -697,14 +736,13 @@ fn render_overlay(
         .enumerate()
     {
         let row = inner.y + offset as u16;
-        write_text(
-            buffer,
-            inner.x,
-            row,
-            inner.width,
-            &line.text,
-            Style::default().fg(Color::White).bg(Color::Black),
-        );
+        let selected = overlay.selected == Some(offset) && line.action.is_some();
+        let style = if selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White).bg(Color::Black)
+        };
+        write_text(buffer, inner.x, row, inner.width, &line.text, style);
         if let Some(action) = line.action.clone() {
             hits.push(HitRegion {
                 rect: Rect::new(inner.x, row, inner.width, 1),
@@ -1074,6 +1112,7 @@ mod tests {
                 pane_surface_summaries: None,
                 overlay: Some(&TuiOverlay {
                     title: "sessions".to_owned(),
+                    selected: None,
                     lines: vec![
                         TuiOverlayLine {
                             text: "* local".to_owned(),
