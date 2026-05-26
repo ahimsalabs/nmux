@@ -1072,6 +1072,96 @@ fn scriptable_cli_splits_panes_and_manages_tabs() {
 }
 
 #[test]
+fn scriptable_cli_creates_and_attaches_named_session() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--command",
+            "printf 'ready:%s:%s\\n' \"$NMUX_SESSION_ID\" \"$NMUX_PANE_ID\"; cat >/dev/null",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+
+    wait_for_socket(&socket_path);
+
+    let session_new = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "session",
+            "new",
+            "work",
+            "--title",
+            "Work",
+        ])
+        .output()
+        .expect("run nmux session new");
+    assert!(
+        session_new.status.success(),
+        "nmux session new failed: {}",
+        String::from_utf8_lossy(&session_new.stderr)
+    );
+    let session_new_stdout = String::from_utf8_lossy(&session_new.stdout);
+    assert!(
+        session_new_stdout.contains("\"session_id\":\"work\"")
+            && session_new_stdout.contains("\"pane_id\":\"pane-1\""),
+        "session new should return the new workspace:\n{session_new_stdout}"
+    );
+
+    let attach_work = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--json",
+        ])
+        .output()
+        .expect("attach work session");
+    assert!(
+        attach_work.status.success(),
+        "nmux attach work failed: {}",
+        String::from_utf8_lossy(&attach_work.stderr)
+    );
+    let attach_work_stdout = String::from_utf8_lossy(&attach_work.stdout);
+    assert!(
+        attach_work_stdout.contains("\"session_id\":\"work\"")
+            && attach_work_stdout.contains("ready:work:pane-1"),
+        "attach should target the new named session:\n{attach_work_stdout}"
+    );
+
+    let attach_default = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+        ])
+        .output()
+        .expect("attach default session");
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        attach_default.status.success(),
+        "nmux attach default failed: {}",
+        String::from_utf8_lossy(&attach_default.stderr)
+    );
+    let attach_default_stdout = String::from_utf8_lossy(&attach_default.stdout);
+    assert!(
+        attach_default_stdout.contains("\"session_id\":\"local\"")
+            && attach_default_stdout.contains("ready:local:pane-1"),
+        "untargeted attach should keep using the default session:\n{attach_default_stdout}"
+    );
+}
+
+#[test]
 fn scriptable_named_session_panes_inherit_session_environment() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);

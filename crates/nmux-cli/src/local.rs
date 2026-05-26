@@ -333,6 +333,27 @@ impl ServeConfig {
         self.serve_stream_with_engines(stream, session, host, engines)
     }
 
+    /// Serve a single pre-accepted stream after the caller has already read
+    /// the first client frame for routing.
+    pub(crate) fn serve_stream_with_initial_frame_and_session_core<
+        H: ProcessHost + ProcessOutput,
+    >(
+        &self,
+        stream: UnixStream,
+        initial: ClientInitialFrame,
+        actor: &mut nmux_core::session::SessionActor,
+        host: &mut H,
+    ) -> Result<(), ServeError> {
+        serve_stream_impl_with_session_actor_initial(
+            stream,
+            initial,
+            actor,
+            host,
+            self.live,
+            self.cycles_per_client,
+        )
+    }
+
     /// Serve clients without a host (snapshot mode only, no input forwarding).
     ///
     /// Used by tests that don't need a process host.
@@ -427,7 +448,19 @@ fn serve_stream_impl_with_session_actor<H: ProcessHost + ProcessOutput>(
     live: bool,
     cycles: usize,
 ) -> Result<(), ServeError> {
-    let (target_session_id, request) = match read_client_initial_frame(&mut stream)? {
+    let initial = read_client_initial_frame(&mut stream)?;
+    serve_stream_impl_with_session_actor_initial(stream, initial, actor, host, live, cycles)
+}
+
+fn serve_stream_impl_with_session_actor_initial<H: ProcessHost + ProcessOutput>(
+    mut stream: UnixStream,
+    initial: ClientInitialFrame,
+    actor: &mut SessionActor,
+    host: &mut H,
+    live: bool,
+    cycles: usize,
+) -> Result<(), ServeError> {
+    let (target_session_id, request) = match initial {
         ClientInitialFrame::Attach {
             target_session_id,
             request,
@@ -3935,7 +3968,7 @@ fn socket_closed_error(err: &io::Error) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ClientInitialFrame {
+pub(crate) enum ClientInitialFrame {
     Attach {
         target_session_id: Option<String>,
         request: AttachRequest,
@@ -3944,7 +3977,7 @@ enum ClientInitialFrame {
     HealthProbe(PresenceSummary),
 }
 
-fn read_client_initial_frame<R: Read>(reader: &mut R) -> io::Result<ClientInitialFrame> {
+pub(crate) fn read_client_initial_frame<R: Read>(reader: &mut R) -> io::Result<ClientInitialFrame> {
     let frame = wire::read_frame(reader, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)?;
     let envelope = protocol::size_prefixed_root_as_envelope(&frame).map_err(|err| {
         io::Error::new(
@@ -4488,7 +4521,7 @@ fn write_host_output_error(
     )
 }
 
-fn write_protocol_error(
+pub(crate) fn write_protocol_error(
     stream: &mut UnixStream,
     session: &Session,
     seq: &mut u64,

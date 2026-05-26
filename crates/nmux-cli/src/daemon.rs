@@ -14,7 +14,7 @@ use nmux_core::host::{
 };
 use nmux_core::session::{Session, SessionActor, SessionCore, SessionEvent, SessionRegistry};
 use nmux_core::terminal::TerminalEngineKind;
-use nmux_proto::protocol;
+use nmux_proto::{protocol, wire};
 
 const RESIZE_POLICY_NAMES: &[&str] = &["fixed", "leader", "active-client", "manual"];
 const SPLIT_AXIS_NAMES: &[&str] = &["horizontal", "vertical"];
@@ -91,135 +91,23 @@ where
         None
     };
 
-    let mut session_core =
-        SessionCore::with_terminal_engine_kind(Session::initial(), args.terminal_engine_kind);
-    session_core.session_mut().id.clone_from(&args.session_id);
-    if let Some(command) = args.command.as_deref() {
-        session_core.session_mut().tabs[0].root.host.command =
-            CommandSpec::new("sh").with_args(["-lc", command]);
-    }
-    if let Some((cols, rows)) = args.initial_size {
-        session_core.session_mut().tabs[0].root.cols = cols;
-        session_core.session_mut().tabs[0].root.rows = rows;
-        session_core.session_mut().tabs[0]
-            .root
-            .host
-            .command
-            .initial_size = Some((cols, rows));
-    }
-    if let Some(working_dir) = args.working_dir.as_ref() {
-        session_core.session_mut().tabs[0]
-            .root
-            .host
-            .command
-            .working_dir = Some(working_dir.clone());
-    }
-    if !args.env.is_empty() {
-        session_core.session_mut().tabs[0]
-            .root
-            .host
-            .command
-            .env
-            .extend(args.env.iter().cloned());
-    }
-    apply_initial_host_kind(&mut session_core.session_mut().tabs[0].root.host, &args)?;
-    for tab_number in 2..=args.initial_tabs {
-        let pane_id = format!("tab-{tab_number}-pane-1");
-        let tab_id = format!("tab-{tab_number}");
-        let host = session_core
-            .session()
-            .pane_host("pane-1")
-            .ok_or("initial pane missing host")?
-            .clone();
-        if session_core
-            .apply(SessionEvent::AddTab {
-                tab_id: tab_id.clone(),
-                title: tab_id,
-                pane_id,
-                host,
-            })
-            .is_empty()
-        {
-            return Err(format!("failed to create initial tab {tab_number}").into());
-        }
-    }
-    if let Some(tab_id) = args.active_tab_id.as_deref()
-        && session_core
-            .apply(SessionEvent::SwitchTab {
-                tab_id: tab_id.to_owned(),
-            })
-            .is_empty()
-        && session_core.session().active_tab_id != tab_id
-    {
-        return Err(format!("failed to switch to initial tab {tab_id}").into());
-    }
-    if let Some(axis) = args.initial_split {
-        let active_pane_id = session_core
-            .session()
-            .active_pane_id()
-            .ok_or("active pane missing before initial split")?
-            .to_owned();
-        let host = session_core
-            .session()
-            .pane_host(&active_pane_id)
-            .ok_or("active pane missing host")?
-            .clone();
-        if session_core
-            .apply(SessionEvent::SplitPane {
-                pane_id: active_pane_id,
-                axis,
-                new_pane_id: "pane-2".to_owned(),
-                new_host: host,
-            })
-            .is_empty()
-        {
-            return Err("failed to create initial split pane".into());
-        }
-    }
-    let pane_ids = session_core.session().leaf_pane_ids();
-    let inherited_origin = inherited_nmux_origin();
-    for pane_id in &pane_ids {
-        session_core.apply(SessionEvent::SetPaneResizePolicy {
-            pane_id: pane_id.clone(),
-            policy: args.resize_policy,
-        });
-        session_core.session_mut().set_pane_nmux_environment(
-            pane_id,
-            args.transport_endpoint(),
-            inherited_origin.as_deref(),
-        );
-    }
-    let session_id = session_core.session().id.clone();
     let mut pty_host = LocalPtyHost::default();
-    {
-        let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
-        for pane_id in &pane_ids {
-            let host_spec = session_core
-                .session()
-                .pane_host(pane_id)
-                .ok_or_else(|| format!("pane {pane_id} missing host"))?
-                .clone();
-            if let Err(err) = scoped_host.start_pane(pane_id, &host_spec) {
-                report_ready_json_error(&args, &err)?;
-                return Err(Box::new(err));
+    let session_id = args.session_id.clone();
+    let session_actor =
+        match create_daemon_session_actor(&args, &session_id, None, &mut pty_host) {
+            Ok(actor) => actor,
+            Err(err) => {
+                report_ready_json_error(&args, err.as_ref())?;
+                return Err(err);
             }
-        }
-    }
+        };
     let mut session_registry = SessionRegistry::new();
-    if !session_registry.insert(SessionActor::new(session_core, DAEMON_TRACE_RING_CAP)) {
+    if !session_registry.insert(session_actor) {
         return Err(format!("duplicate daemon session id {session_id}").into());
     }
     let session_actor = session_registry
         .get_mut(&session_id)
         .ok_or_else(|| format!("daemon session {session_id} missing from registry"))?;
-    let wait_result = {
-        let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
-        wait_for_panes_output(session_actor, &mut scoped_host, &pane_ids)
-    };
-    if let Err(err) = wait_result {
-        report_ready_json_error(&args, err.as_ref())?;
-        return Err(err);
-    }
     if let Some(ready_json) = ready_json {
         println!("{ready_json}");
         io::stdout().flush()?;
@@ -286,25 +174,35 @@ where
 
     let default_config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
     loop {
-        let serve_result = {
-            let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
-            match &listener {
-                DaemonListener::Unix { listener, .. } => {
-                    default_config.serve_with_session_core(listener, session_actor, &mut scoped_host)
-                }
-                DaemonListener::Tcp(listener) => serve_tcp(
+        let serve_result = match &listener {
+            DaemonListener::Unix { listener, .. } => serve_unix_registry_once(
+                &default_config,
+                listener,
+                &args,
+                &mut session_registry,
+                &session_id,
+                &mut pty_host,
+            ),
+            DaemonListener::Tcp(listener) => {
+                let session_actor = session_registry
+                    .get_mut(&session_id)
+                    .ok_or_else(|| format!("daemon session {session_id} missing from registry"))?;
+                let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+                serve_tcp(
                     &default_config,
                     listener,
                     &args,
                     session_actor,
                     &mut scoped_host,
-                ),
+                )
             }
         };
         if let Err(err) = serve_result {
             if local::is_session_shutdown(&err) {
-                let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
-                stop_panes(&mut scoped_host, &session_actor.session().leaf_pane_ids())?;
+                if let Some(session_actor) = session_registry.get(&session_id) {
+                    let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+                    stop_panes(&mut scoped_host, &session_actor.session().leaf_pane_ids())?;
+                }
                 return Ok(());
             }
             return Err(err.into());
@@ -330,6 +228,246 @@ fn serve_tcp(
         config.serve_stream_with_session_core(stream, session_actor, host)?;
     }
     Ok(())
+}
+
+fn serve_unix_registry_once(
+    config: &local::ServeConfig,
+    listener: &std::os::unix::net::UnixListener,
+    args: &Args,
+    registry: &mut SessionRegistry,
+    default_session_id: &str,
+    pty_host: &mut LocalPtyHost,
+) -> Result<(), ServeError> {
+    let (mut stream, _) = listener.accept()?;
+    let initial = local::read_client_initial_frame(&mut stream)?;
+    if let local::ClientInitialFrame::Control(command) = &initial
+        && command.kind == protocol::ControlCommandKind::SessionNew
+    {
+        return serve_session_new_command(stream, command, args, registry, pty_host);
+    }
+
+    let target_session_id = initial_target_session_id(&initial)
+        .unwrap_or(default_session_id)
+        .to_owned();
+    let Some(actor) = registry.get_mut(&target_session_id) else {
+        let fallback = registry
+            .get(default_session_id)
+            .ok_or_else(|| format!("daemon session {default_session_id} missing from registry"))?;
+        let mut seq = 1;
+        local::write_protocol_error(
+            &mut stream,
+            fallback.session(),
+            &mut seq,
+            protocol::ErrorCode::SessionNotFound,
+            &format!("session not found: {}", target_session_id),
+            None,
+            0,
+        )?;
+        return Ok(());
+    };
+    let mut scoped_host = ScopedLocalPtyHost::new(&target_session_id, pty_host);
+    config.serve_stream_with_initial_frame_and_session_core(
+        stream,
+        initial,
+        actor,
+        &mut scoped_host,
+    )
+}
+
+fn serve_session_new_command(
+    mut stream: std::os::unix::net::UnixStream,
+    command: &local::ControlCommandSummary,
+    args: &Args,
+    registry: &mut SessionRegistry,
+    pty_host: &mut LocalPtyHost,
+) -> Result<(), ServeError> {
+    let Some(session_id) = command.session_id.as_deref().filter(|value| !value.is_empty()) else {
+        let fallback = registry
+            .get(&args.session_id)
+            .ok_or_else(|| format!("daemon session {} missing from registry", args.session_id))?;
+        let mut seq = 1;
+        local::write_protocol_error(
+            &mut stream,
+            fallback.session(),
+            &mut seq,
+            protocol::ErrorCode::SessionNotFound,
+            "session new requires a non-empty session id",
+            None,
+            command.command_seq,
+        )?;
+        return Ok(());
+    };
+    if registry.get(session_id).is_some() {
+        let fallback = registry
+            .get(&args.session_id)
+            .ok_or_else(|| format!("daemon session {} missing from registry", args.session_id))?;
+        let mut seq = 1;
+        local::write_protocol_error(
+            &mut stream,
+            fallback.session(),
+            &mut seq,
+            protocol::ErrorCode::Unknown,
+            &format!("session already exists: {session_id}"),
+            None,
+            command.command_seq,
+        )?;
+        return Ok(());
+    }
+
+    let actor = create_daemon_session_actor(args, session_id, command.title.as_deref(), pty_host)
+        .map_err(ServeError::from)?;
+    let workspace_frame = actor.session().workspace_tree_frame("local-client", 1);
+    if !registry.insert(actor) {
+        return Err(format!("duplicate daemon session id {session_id}").into());
+    }
+    wire::write_default_frame(&mut stream, &workspace_frame)?;
+    Ok(())
+}
+
+fn initial_target_session_id(initial: &local::ClientInitialFrame) -> Option<&str> {
+    match initial {
+        local::ClientInitialFrame::Attach {
+            target_session_id, ..
+        } => target_session_id.as_deref(),
+        local::ClientInitialFrame::Control(command) => command.session_id.as_deref(),
+        local::ClientInitialFrame::HealthProbe(_) => None,
+    }
+}
+
+fn create_daemon_session_actor(
+    args: &Args,
+    session_id: &str,
+    title: Option<&str>,
+    pty_host: &mut LocalPtyHost,
+) -> Result<SessionActor, Box<dyn std::error::Error>> {
+    let session_core = build_daemon_session_core(args, session_id, title)?;
+    let pane_ids = session_core.session().leaf_pane_ids();
+    {
+        let mut scoped_host = ScopedLocalPtyHost::new(session_id, pty_host);
+        for pane_id in &pane_ids {
+            let host_spec = session_core
+                .session()
+                .pane_host(pane_id)
+                .ok_or_else(|| format!("pane {pane_id} missing host"))?
+                .clone();
+            scoped_host.start_pane(pane_id, &host_spec)?;
+        }
+    }
+    let mut actor = SessionActor::new(session_core, DAEMON_TRACE_RING_CAP);
+    {
+        let mut scoped_host = ScopedLocalPtyHost::new(session_id, pty_host);
+        wait_for_panes_output(&mut actor, &mut scoped_host, &pane_ids)?;
+    }
+    Ok(actor)
+}
+
+fn build_daemon_session_core(
+    args: &Args,
+    session_id: &str,
+    title: Option<&str>,
+) -> Result<SessionCore, Box<dyn std::error::Error>> {
+    let mut session_core =
+        SessionCore::with_terminal_engine_kind(Session::initial(), args.terminal_engine_kind);
+    session_core.session_mut().id = session_id.to_owned();
+    if let Some(title) = title {
+        session_core.session_mut().tabs[0].title = title.to_owned();
+    }
+    if let Some(command) = args.command.as_deref() {
+        session_core.session_mut().tabs[0].root.host.command =
+            CommandSpec::new("sh").with_args(["-lc", command]);
+    }
+    if let Some((cols, rows)) = args.initial_size {
+        session_core.session_mut().tabs[0].root.cols = cols;
+        session_core.session_mut().tabs[0].root.rows = rows;
+        session_core.session_mut().tabs[0]
+            .root
+            .host
+            .command
+            .initial_size = Some((cols, rows));
+    }
+    if let Some(working_dir) = args.working_dir.as_ref() {
+        session_core.session_mut().tabs[0]
+            .root
+            .host
+            .command
+            .working_dir = Some(working_dir.clone());
+    }
+    if !args.env.is_empty() {
+        session_core.session_mut().tabs[0]
+            .root
+            .host
+            .command
+            .env
+            .extend(args.env.iter().cloned());
+    }
+    apply_initial_host_kind(&mut session_core.session_mut().tabs[0].root.host, args)?;
+    for tab_number in 2..=args.initial_tabs {
+        let pane_id = format!("tab-{tab_number}-pane-1");
+        let tab_id = format!("tab-{tab_number}");
+        let host = session_core
+            .session()
+            .pane_host("pane-1")
+            .ok_or("initial pane missing host")?
+            .clone();
+        if session_core
+            .apply(SessionEvent::AddTab {
+                tab_id: tab_id.clone(),
+                title: tab_id,
+                pane_id,
+                host,
+            })
+            .is_empty()
+        {
+            return Err(format!("failed to create initial tab {tab_number}").into());
+        }
+    }
+    if let Some(tab_id) = args.active_tab_id.as_deref()
+        && session_core
+            .apply(SessionEvent::SwitchTab {
+                tab_id: tab_id.to_owned(),
+            })
+            .is_empty()
+        && session_core.session().active_tab_id != tab_id
+    {
+        return Err(format!("failed to switch to initial tab {tab_id}").into());
+    }
+    if let Some(axis) = args.initial_split {
+        let active_pane_id = session_core
+            .session()
+            .active_pane_id()
+            .ok_or("active pane missing before initial split")?
+            .to_owned();
+        let host = session_core
+            .session()
+            .pane_host(&active_pane_id)
+            .ok_or("active pane missing host")?
+            .clone();
+        if session_core
+            .apply(SessionEvent::SplitPane {
+                pane_id: active_pane_id,
+                axis,
+                new_pane_id: "pane-2".to_owned(),
+                new_host: host,
+            })
+            .is_empty()
+        {
+            return Err("failed to create initial split pane".into());
+        }
+    }
+    let pane_ids = session_core.session().leaf_pane_ids();
+    let inherited_origin = inherited_nmux_origin();
+    for pane_id in &pane_ids {
+        session_core.apply(SessionEvent::SetPaneResizePolicy {
+            pane_id: pane_id.clone(),
+            policy: args.resize_policy,
+        });
+        session_core.session_mut().set_pane_nmux_environment(
+            pane_id,
+            args.transport_endpoint(),
+            inherited_origin.as_deref(),
+        );
+    }
+    Ok(session_core)
 }
 
 fn inherited_nmux_origin() -> Option<String> {
