@@ -21,6 +21,13 @@ use crossterm::{
 use nmux_cli::{daemon, local};
 use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
+use ratatui::{
+    TerminalOptions, Viewport,
+    buffer::Buffer,
+    layout::Rect,
+    prelude::{CrosstermBackend, Terminal},
+    style::{Color, Modifier, Style},
+};
 
 #[path = "nmux/tui.rs"]
 mod tui;
@@ -1052,7 +1059,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     // terminals. When stdout is captured (tests, pipes), fall back to the
     // legacy full-screen-clear path so output is plain text.
     let mut redraw_state = if args.redraw && stdout_tty {
-        Some(RedrawState::new())
+        Some(RedrawState::new_with_terminal()?)
     } else {
         None
     };
@@ -2318,7 +2325,16 @@ fn repaint_speculative_echo(
     *current_surface_text = predicted;
     match redraw_state {
         Some(state) => {
-            if let Some(prediction) = prediction.as_ref()
+            if state.terminal.is_some() {
+                print_live_surface(
+                    workspace,
+                    metadata,
+                    current_surface_text,
+                    true,
+                    Some(state),
+                    None,
+                );
+            } else if let Some(prediction) = prediction.as_ref()
                 && let Some(text) = state.render_speculative_append_text(
                     workspace,
                     current_surface_text,
@@ -3068,14 +3084,14 @@ fn run_live_new_tab_menu_command(
 }
 
 fn live_session_new_should_fallback(error: &(dyn std::error::Error + 'static)) -> bool {
-    error
+    const SINGLE_SESSION_REJECTION: &str = "session new requires daemon registry routing";
+    if error
         .downcast_ref::<local::ServerError>()
-        .is_some_and(|error| {
-            error
-                .error
-                .message
-                .contains("session new requires daemon registry routing")
-        })
+        .is_some_and(|error| error.error.message.contains(SINGLE_SESSION_REJECTION))
+    {
+        return true;
+    }
+    error.to_string().contains(SINGLE_SESSION_REJECTION)
 }
 
 fn live_menu_new_session_id() -> String {
@@ -3994,19 +4010,30 @@ fn print_live_rendered(
         let surface_text = rendered
             .surface_text
             .unwrap_or_else(|| rendered.workspace.display_line());
-        let has_status_bar = redraw_state.is_some();
-        let redraw_text = redraw_text_with_context(
-            &rendered.workspace,
-            &rendered.surface_metadata,
-            &surface_text,
-            initial_scrollback,
-            has_status_bar,
-            pane_surfaces,
-            None,
-        );
         if let Some(state) = redraw_state {
+            if state.render_workspace(&rendered.workspace, &surface_text, pane_surfaces, None) {
+                return;
+            }
+            let redraw_text = redraw_text_with_context(
+                &rendered.workspace,
+                &rendered.surface_metadata,
+                &surface_text,
+                initial_scrollback,
+                false,
+                pane_surfaces,
+                None,
+            );
             state.render_initial(&rendered.workspace, &redraw_text);
         } else {
+            let redraw_text = redraw_text_with_context(
+                &rendered.workspace,
+                &rendered.surface_metadata,
+                &surface_text,
+                initial_scrollback,
+                false,
+                pane_surfaces,
+                None,
+            );
             redraw_terminal(&redraw_text);
         }
         return;
@@ -4048,19 +4075,30 @@ fn print_live_surface_with_overlay(
     overlay: Option<&tui::TuiOverlay>,
 ) {
     if redraw {
-        let has_status_bar = redraw_state.is_some();
-        let text = redraw_text_with_context(
-            workspace,
-            metadata,
-            surface_text,
-            None,
-            has_status_bar,
-            pane_surfaces,
-            overlay,
-        );
         if let Some(state) = redraw_state {
+            if state.render_workspace(workspace, surface_text, pane_surfaces, overlay) {
+                return;
+            }
+            let text = redraw_text_with_context(
+                workspace,
+                metadata,
+                surface_text,
+                None,
+                false,
+                pane_surfaces,
+                overlay,
+            );
             state.render_diff(workspace, &text);
         } else {
+            let text = redraw_text_with_context(
+                workspace,
+                metadata,
+                surface_text,
+                None,
+                false,
+                pane_surfaces,
+                overlay,
+            );
             redraw_terminal(&text);
         }
     } else {
@@ -4092,17 +4130,7 @@ fn print_live_update(
         LiveUpdatePrintKind::Metadata => {
             if redraw {
                 if let Some(state) = redraw_state {
-                    // Re-render with new metadata via differential update.
-                    let text = redraw_text_with_context(
-                        workspace,
-                        metadata,
-                        surface_text,
-                        None,
-                        true,
-                        pane_surfaces,
-                        None,
-                    );
-                    state.render_diff(workspace, &text);
+                    let _ = state.render_workspace(workspace, surface_text, pane_surfaces, None);
                 }
             } else {
                 print_terminal_metadata(metadata);
@@ -4263,6 +4291,8 @@ impl ClientInventoryCache {
 
 /// Tracks displayed rows for differential rendering with a status bar.
 struct RedrawState {
+    /// Ratatui terminal compositor for interactive redraw on real TTYs.
+    terminal: Option<Terminal<CrosstermBackend<io::Stdout>>>,
     /// Previously displayed rows (content rows, then the bottom status bar).
     previous_rows: Vec<String>,
     /// Terminal width for status bar formatting.
@@ -4286,6 +4316,7 @@ struct RedrawState {
 impl RedrawState {
     fn new() -> Self {
         Self {
+            terminal: None,
             previous_rows: Vec::new(),
             terminal_cols: 80,
             terminal_rows: 24,
@@ -4296,6 +4327,21 @@ impl RedrawState {
             last_client_count: None,
             hostname: resolve_short_hostname(),
         }
+    }
+
+    fn new_with_terminal() -> io::Result<Self> {
+        let mut state = Self::new();
+        let area = redraw_terminal_area();
+        state.terminal_cols = u32::from(area.width);
+        state.terminal_rows = u32::from(area.height);
+        clear_redraw_terminal()?;
+        state.terminal = Some(Terminal::with_options(
+            CrosstermBackend::new(io::stdout()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(area),
+            },
+        )?);
+        Ok(state)
     }
 
     fn update_terminal_size(&mut self) -> bool {
@@ -4322,8 +4368,73 @@ impl RedrawState {
         self.last_stats.client_count = Some(count);
     }
 
-    /// Build the full-width inverse-video status bar line.
-    fn format_status_bar(&self, workspace: &local::WorkspaceSummary) -> String {
+    fn render_workspace(
+        &mut self,
+        workspace: &local::WorkspaceSummary,
+        surface_text: &str,
+        pane_surfaces: Option<&BTreeMap<String, String>>,
+        overlay: Option<&tui::TuiOverlay>,
+    ) -> bool {
+        let render_start = Instant::now();
+        let frame_interval = render_start.duration_since(self.last_frame_time);
+        let status_text = self.format_status_text(workspace);
+        let area = redraw_terminal_area();
+        let resized = self.terminal_cols != u32::from(area.width)
+            || self.terminal_rows != u32::from(area.height);
+        let Some(terminal) = self.terminal.as_mut() else {
+            return false;
+        };
+        if resized {
+            let _ = clear_redraw_terminal();
+            let _ = terminal.resize(area);
+            let _ = terminal.clear();
+        }
+
+        let draw_result = terminal.draw(|frame| {
+            let area = frame.area();
+            if area.width == 0 || area.height == 0 {
+                return;
+            }
+            let workspace_height = area.height.saturating_sub(1).max(1);
+            let workspace_area = Rect::new(area.x, area.y, area.width, workspace_height);
+            tui::render_workspace_to_buffer(
+                frame.buffer_mut(),
+                workspace_area,
+                tui::WorkspaceFrameInput {
+                    workspace,
+                    active_surface_text: surface_text,
+                    pane_surfaces,
+                    overlay,
+                },
+            );
+            if area.height > 1 {
+                let status_area = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
+                render_ratatui_status_bar(frame.buffer_mut(), status_area, &status_text);
+            }
+        });
+
+        let Ok(completed) = draw_result else {
+            return false;
+        };
+
+        let render_time = render_start.elapsed();
+        self.terminal_cols = u32::from(completed.area.width);
+        self.terminal_rows = u32::from(completed.area.height);
+        self.last_stats = FrameStats {
+            frame_interval,
+            decode_time: self.pending_decode_time,
+            render_time,
+            rows_changed: 0,
+            rows_total: surface_text.lines().count(),
+            rtt: self.last_rtt,
+            client_count: self.last_client_count,
+        };
+        self.pending_decode_time = Duration::ZERO;
+        self.last_frame_time = Instant::now();
+        true
+    }
+
+    fn format_status_text(&self, workspace: &local::WorkspaceSummary) -> String {
         // Leave the final terminal column untouched. Printing a full-width
         // line on the bottom row can set the terminal's autowrap state and
         // scroll the alternate screen on the next write, which pushes the
@@ -4338,7 +4449,7 @@ impl RedrawState {
         let right = format_stats_right(&self.last_stats);
 
         let content_len = left.len() + right.len();
-        let content = if width > content_len {
+        if width > content_len {
             format!(
                 "{left}{:padding$}{right}",
                 "",
@@ -4346,7 +4457,13 @@ impl RedrawState {
             )
         } else {
             truncate_chars(&format!("{left} {right}"), width)
-        };
+        }
+    }
+
+    /// Build the full-width inverse-video status bar line for the legacy
+    /// string redraw fallback.
+    fn format_status_bar(&self, workspace: &local::WorkspaceSummary) -> String {
+        let content = self.format_status_text(workspace);
 
         format!(
             "{}{content}{}",
@@ -4529,6 +4646,40 @@ fn terminal_row(row_1_based: usize) -> u16 {
 
 fn truncate_chars(value: &str, width: usize) -> String {
     value.chars().take(width).collect()
+}
+
+fn redraw_terminal_area() -> Rect {
+    let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
+    Rect::new(
+        0,
+        0,
+        cols.max(1).min(u16::MAX as u32) as u16,
+        rows.max(1).min(u16::MAX as u32) as u16,
+    )
+}
+
+fn clear_redraw_terminal() -> io::Result<()> {
+    execute!(io::stdout(), Clear(ClearType::All), cursor::MoveTo(0, 0))
+}
+
+fn render_ratatui_status_bar(buffer: &mut Buffer, area: Rect, text: &str) {
+    let style = Style::default()
+        .fg(Color::Black)
+        .bg(Color::White)
+        .add_modifier(Modifier::REVERSED);
+    let width = area.width.saturating_sub(1).max(1);
+    for x in area.x..area.x.saturating_add(width) {
+        if let Some(cell) = buffer.cell_mut((x, area.y)) {
+            cell.set_symbol(" ");
+            cell.set_style(style);
+        }
+    }
+    for (offset, ch) in text.chars().take(usize::from(width)).enumerate() {
+        if let Some(cell) = buffer.cell_mut((area.x + offset as u16, area.y)) {
+            cell.set_symbol(&ch.to_string());
+            cell.set_style(style);
+        }
+    }
 }
 
 fn resolve_short_hostname() -> String {

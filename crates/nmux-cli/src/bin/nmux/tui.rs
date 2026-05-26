@@ -5,6 +5,7 @@ use nmux_proto::protocol;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
 const TREE_MIN_WIDTH: u16 = 18;
 const TREE_MAX_WIDTH: u16 = 28;
@@ -68,7 +69,20 @@ pub struct WorkspaceFrameInput<'a> {
 pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u16) -> TuiFrame {
     let area = Rect::new(0, 0, cols, rows);
     let mut buffer = Buffer::empty(area);
-    paint_background(&mut buffer, area);
+    let hits = render_workspace_to_buffer(&mut buffer, area, input);
+
+    TuiFrame {
+        text: buffer_to_string(&buffer, area),
+        hits,
+    }
+}
+
+pub fn render_workspace_to_buffer(
+    buffer: &mut Buffer,
+    area: Rect,
+    input: WorkspaceFrameInput<'_>,
+) -> Vec<HitRegion> {
+    paint_background(buffer, area);
 
     let mut hits = Vec::new();
     hits.push(HitRegion {
@@ -76,20 +90,14 @@ pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u
         target: HitTarget::Background,
     });
     if area.width == 0 || area.height == 0 {
-        return TuiFrame {
-            text: String::new(),
-            hits,
-        };
+        return hits;
     }
 
     let menu = Rect::new(area.x, area.y, area.width, MENU_HEIGHT.min(area.height));
-    render_menu(&mut buffer, menu, &mut hits);
+    render_menu(buffer, menu, &mut hits);
 
     if area.height <= MENU_HEIGHT {
-        return TuiFrame {
-            text: buffer_to_string(&buffer, area),
-            hits,
-        };
+        return hits;
     }
 
     let body = Rect::new(
@@ -112,9 +120,9 @@ pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u
     };
 
     if tree_area.width > 0 {
-        render_window_tree(&mut buffer, tree_area, input.workspace, &mut hits);
+        render_window_tree(buffer, tree_area, input.workspace, &mut hits);
         draw_vertical_rule(
-            &mut buffer,
+            buffer,
             tree_area.x + tree_area.width,
             tree_area.y,
             tree_area.height,
@@ -123,7 +131,7 @@ pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u
 
     if let Some(root) = input.workspace.pane_tree.as_ref() {
         render_pane_node(
-            &mut buffer,
+            buffer,
             pane_area,
             root,
             input.workspace,
@@ -133,7 +141,7 @@ pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u
         );
     } else {
         render_leaf_pane(
-            &mut buffer,
+            buffer,
             pane_area,
             &input.workspace.pane_id,
             input.workspace.cols,
@@ -145,13 +153,10 @@ pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u
     }
 
     if let Some(overlay) = input.overlay {
-        render_overlay(&mut buffer, area, overlay, &mut hits);
+        render_overlay(buffer, area, overlay, &mut hits);
     }
 
-    TuiFrame {
-        text: buffer_to_string(&buffer, area),
-        hits,
-    }
+    hits
 }
 
 #[allow(dead_code)]
@@ -180,12 +185,10 @@ fn render_menu(buffer: &mut Buffer, area: Rect, hits: &mut Vec<HitRegion>) {
         (" Windows ", MenuAction::Windows),
         (" Clipboard ", MenuAction::Clipboard),
     ];
-    fill_rect(
-        buffer,
-        area,
-        " ",
-        Style::default().bg(Color::DarkGray).fg(Color::White),
-    );
+    let menu_style = Style::default()
+        .bg(Color::Rgb(32, 36, 42))
+        .fg(Color::Rgb(226, 232, 240));
+    fill_rect(buffer, area, " ", menu_style);
     let mut x = area.x;
     for (label, action) in items {
         if x >= area.x + area.width {
@@ -198,10 +201,7 @@ fn render_menu(buffer: &mut Buffer, area: Rect, hits: &mut Vec<HitRegion>) {
             area.y,
             area.x + area.width - x,
             label,
-            Style::default()
-                .bg(Color::DarkGray)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            menu_style.add_modifier(Modifier::BOLD),
         );
         hits.push(HitRegion {
             rect: Rect::new(x, area.y, item_width, area.height),
@@ -419,12 +419,15 @@ fn render_leaf_pane(
 fn paint_background(buffer: &mut Buffer, area: Rect) {
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
-            let symbol = if (u32::from(x) + u32::from(y)) % 2 == 0 {
-                "."
-            } else {
-                " "
-            };
-            set_cell(buffer, x, y, symbol, Style::default().fg(Color::DarkGray));
+            set_cell(
+                buffer,
+                x,
+                y,
+                " ",
+                Style::default()
+                    .fg(Color::Rgb(203, 213, 225))
+                    .bg(Color::Rgb(17, 19, 24)),
+            );
         }
     }
 }
@@ -496,24 +499,14 @@ fn draw_box(buffer: &mut Buffer, area: Rect, title: &str, active: bool) {
         return;
     }
     let border_style = if active {
-        Style::default().fg(Color::Cyan)
+        Style::default()
+            .fg(Color::Rgb(94, 234, 212))
+            .bg(Color::Rgb(17, 19, 24))
     } else {
-        Style::default().fg(Color::Gray)
+        Style::default()
+            .fg(Color::Rgb(100, 116, 139))
+            .bg(Color::Rgb(17, 19, 24))
     };
-    let x2 = area.x + area.width - 1;
-    let y2 = area.y + area.height - 1;
-    for x in area.x..=x2 {
-        set_cell(buffer, x, area.y, "-", border_style);
-        set_cell(buffer, x, y2, "-", border_style);
-    }
-    for y in area.y..=y2 {
-        set_cell(buffer, area.x, y, "|", border_style);
-        set_cell(buffer, x2, y, "|", border_style);
-    }
-    set_cell(buffer, area.x, area.y, "+", border_style);
-    set_cell(buffer, x2, area.y, "+", border_style);
-    set_cell(buffer, area.x, y2, "+", border_style);
-    set_cell(buffer, x2, y2, "+", border_style);
 
     if area.width > 4 {
         let title = if active {
@@ -521,20 +514,33 @@ fn draw_box(buffer: &mut Buffer, area: Rect, title: &str, active: bool) {
         } else {
             format!(" {} ", title)
         };
-        write_text(
-            buffer,
-            area.x.saturating_add(1),
-            area.y,
-            area.width.saturating_sub(2),
-            &title,
-            border_style.add_modifier(Modifier::BOLD),
-        );
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(border_style)
+            .title_style(border_style.add_modifier(Modifier::BOLD))
+            .title(title)
+            .render(area, buffer);
+    } else {
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(border_style)
+            .render(area, buffer);
     }
 }
 
 fn draw_vertical_rule(buffer: &mut Buffer, x: u16, y: u16, height: u16) {
     for row in y..y.saturating_add(height) {
-        set_cell(buffer, x, row, "|", Style::default().fg(Color::DarkGray));
+        set_cell(
+            buffer,
+            x,
+            row,
+            "│",
+            Style::default()
+                .fg(Color::Rgb(71, 85, 105))
+                .bg(Color::Rgb(17, 19, 24)),
+        );
     }
 }
 
@@ -671,8 +677,8 @@ mod tests {
         assert!(frame.text.contains("left cached"));
         assert!(frame.text.contains("right active"));
         assert!(
-            frame.text.contains("."),
-            "unused space should expose patterned background"
+            frame.text.contains("╭") || frame.text.contains("╰"),
+            "pane chrome should use rounded ratatui borders"
         );
     }
 
