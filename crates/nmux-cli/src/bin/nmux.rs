@@ -3447,10 +3447,13 @@ fn scroll_live_pane_view(
     }
     client_state.cache_scrollback_chunk(&scrollback);
     let rendered = render_scrollback_view_text(&scrollback);
+    let rendered_summary = render_scrollback_view_summary(&scrollback);
     surface_state
         .current_pane_surfaces
         .insert(pane_id.to_owned(), rendered.clone());
-    surface_state.current_pane_surface_summaries.remove(pane_id);
+    surface_state
+        .current_pane_surface_summaries
+        .insert(pane_id.to_owned(), rendered_summary);
     if pane_id == workspace.pane_id {
         surface_state.current_surface_text = rendered;
     }
@@ -3514,6 +3517,43 @@ fn render_scrollback_view_text(scrollback: &local::ScrollbackChunkSummary) -> St
         .map(|line| line.text.as_str())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn render_scrollback_view_summary(
+    scrollback: &local::ScrollbackChunkSummary,
+) -> local::RenderedSurfaceSummary {
+    let row_updates = scrollback
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| local::SurfaceRowUpdate {
+            row: u32::try_from(index).unwrap_or(u32::MAX),
+            text: line.text.clone(),
+            runs: line.runs.clone(),
+            dirty_hash: line.dirty_hash,
+            row_state_hash: line.row_state_hash,
+            semantic_prompt: line.semantic_prompt,
+            dirty: line.dirty,
+            kitty_virtual_placeholder: line.kitty_virtual_placeholder,
+        })
+        .collect();
+    let cols = scrollback
+        .lines
+        .iter()
+        .map(|line| line.text.chars().count())
+        .max()
+        .unwrap_or(0);
+
+    local::RenderedSurfaceSummary {
+        pane_id: scrollback.pane_id.clone(),
+        version: scrollback.scrollback_version,
+        cols: u32::try_from(cols).unwrap_or(u32::MAX),
+        rows: u32::try_from(scrollback.lines.len()).unwrap_or(u32::MAX),
+        colors: scrollback.colors.clone(),
+        styles: scrollback.styles.clone(),
+        hyperlinks: scrollback.hyperlinks.clone(),
+        row_updates,
+    }
 }
 
 fn switch_live_surface_to_workspace_pane(
@@ -7664,8 +7704,8 @@ mod tests {
         parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
         preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
         redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
-        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
+        render_scrollback_view_summary, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -9991,6 +10031,46 @@ mod tests {
             format_scrollback(&empty),
             "scrollback empty from 10 of 5:\n"
         );
+    }
+
+    #[test]
+    fn scrollback_view_summary_preserves_runs_and_styles() {
+        let mut scrollback = scrollback_summary(4, 9, &[(4, "four"), (5, "five")]);
+        scrollback.styles.push(local::StyleSummary {
+            fg_rgba: 0xff0000ff,
+            bg_rgba: 0,
+            underline_rgba: 0,
+            flags: 1,
+        });
+        scrollback.lines[0].runs = vec![local::CellRunSummary {
+            text: "four".to_owned(),
+            cell_widths: vec![1, 1, 1, 1],
+            style_id: 0,
+            flags: 0,
+            hyperlink_id: 0,
+            semantic_content: protocol::CellSemanticContent::Output,
+        }];
+        scrollback.lines[0].dirty_hash = 12;
+        scrollback.lines[0].row_state_hash = 13;
+        scrollback.lines[0].semantic_prompt = protocol::RowSemanticPrompt::Prompt;
+        scrollback.lines[0].dirty = true;
+
+        let summary = render_scrollback_view_summary(&scrollback);
+
+        assert_eq!(summary.pane_id, "pane-1");
+        assert_eq!(summary.version, 1);
+        assert_eq!(summary.rows, 2);
+        assert_eq!(summary.styles, scrollback.styles);
+        assert_eq!(summary.row_updates[0].row, 0);
+        assert_eq!(summary.row_updates[0].text, "four");
+        assert_eq!(summary.row_updates[0].runs, scrollback.lines[0].runs);
+        assert_eq!(summary.row_updates[0].dirty_hash, 12);
+        assert_eq!(summary.row_updates[0].row_state_hash, 13);
+        assert_eq!(
+            summary.row_updates[0].semantic_prompt,
+            protocol::RowSemanticPrompt::Prompt
+        );
+        assert!(summary.row_updates[0].dirty);
     }
 
     #[test]
