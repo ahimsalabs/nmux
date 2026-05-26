@@ -448,6 +448,10 @@ impl SessionActor {
         &mut self.core
     }
 
+    pub fn session_and_engines_mut(&mut self) -> (&mut Session, &mut PaneTerminalEngines) {
+        (&mut self.core.session, &mut self.core.terminal_engines)
+    }
+
     pub fn enqueue(&mut self, pending: PendingSessionEvent) {
         self.scheduler.push(pending);
     }
@@ -3383,6 +3387,28 @@ mod tests {
                 .last()
                 .map(String::as_str),
             Some("actor output")
+        );
+    }
+
+    #[test]
+    fn session_actor_exposes_legacy_session_engine_bridge() {
+        let mut actor = SessionActor::initial(8);
+        let (session, engines) = actor.session_and_engines_mut();
+
+        assert_eq!(session.id, "local");
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"bridge output\n",
+            engines.engine_mut("pane-1")
+        ));
+        assert_eq!(
+            session
+                .pane_surface("pane-1")
+                .expect("pane")
+                .lines
+                .last()
+                .map(String::as_str),
+            Some("bridge output")
         );
     }
 

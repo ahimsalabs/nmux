@@ -9,14 +9,15 @@ use crate::error::ServeError;
 use crate::local;
 use clap::{ArgAction, Parser, ValueEnum};
 use nmux_core::host::{CommandSpec, HostKind, HostSpec, LocalPtyHost, ProcessHost};
-use nmux_core::session::{Session, SessionCore, SessionEvent};
-use nmux_core::terminal::{PaneTerminalEngines, TerminalEngineKind};
+use nmux_core::session::{Session, SessionActor, SessionCore, SessionEvent, SessionRegistry};
+use nmux_core::terminal::TerminalEngineKind;
 use nmux_proto::protocol;
 
 const RESIZE_POLICY_NAMES: &[&str] = &["fixed", "leader", "active-client", "manual"];
 const SPLIT_AXIS_NAMES: &[&str] = &["horizontal", "vertical"];
 const HOST_KIND_NAMES: &[&str] = &["local", "sandbox", "container"];
 const TERMINAL_ENGINE_NAMES: &[&str] = &["interim", "libghostty-vt"];
+const DAEMON_TRACE_RING_CAP: usize = 1024;
 
 pub fn run_from_iter<I, S>(argv: I) -> Result<(), Box<dyn std::error::Error>>
 where
@@ -201,7 +202,14 @@ where
         report_ready_json_error(&args, err.as_ref())?;
         return Err(err);
     }
-    let (mut session, mut terminal_engines) = session_core.into_parts();
+    let session_id = session_core.session().id.clone();
+    let mut session_registry = SessionRegistry::new();
+    if !session_registry.insert(SessionActor::new(session_core, DAEMON_TRACE_RING_CAP)) {
+        return Err(format!("duplicate daemon session id {session_id}").into());
+    }
+    let session_actor = session_registry
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("daemon session {session_id} missing from registry"))?;
     if let Some(ready_json) = ready_json {
         println!("{ready_json}");
         io::stdout().flush()?;
@@ -217,22 +225,14 @@ where
         };
         let config = config.terminal_engine_kind(args.terminal_engine_kind);
         let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => config.serve_with_engines(
-                listener,
-                &mut session,
-                &mut pty_host,
-                &mut terminal_engines,
-            ),
-            DaemonListener::Tcp(listener) => serve_tcp(
-                &config,
-                listener,
-                &args,
-                &mut session,
-                &mut pty_host,
-                &mut terminal_engines,
-            ),
+            DaemonListener::Unix { listener, .. } => {
+                config.serve_with_session_core(listener, session_actor, &mut pty_host)
+            }
+            DaemonListener::Tcp(listener) => {
+                serve_tcp(&config, listener, &args, session_actor, &mut pty_host)
+            }
         };
-        let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
+        let stop_result = stop_panes(&mut pty_host, &session_actor.session().leaf_pane_ids());
         if let Err(err) = serve_result
             && !local::is_session_shutdown(&err)
         {
@@ -245,22 +245,14 @@ where
     if args.one_shot {
         let config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
         let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => config.serve_with_engines(
-                listener,
-                &mut session,
-                &mut pty_host,
-                &mut terminal_engines,
-            ),
-            DaemonListener::Tcp(listener) => serve_tcp(
-                &config,
-                listener,
-                &args,
-                &mut session,
-                &mut pty_host,
-                &mut terminal_engines,
-            ),
+            DaemonListener::Unix { listener, .. } => {
+                config.serve_with_session_core(listener, session_actor, &mut pty_host)
+            }
+            DaemonListener::Tcp(listener) => {
+                serve_tcp(&config, listener, &args, session_actor, &mut pty_host)
+            }
         };
-        let stop_result = stop_panes(&mut pty_host, &session.leaf_pane_ids());
+        let stop_result = stop_panes(&mut pty_host, &session_actor.session().leaf_pane_ids());
         if let Err(err) = serve_result
             && !local::is_session_shutdown(&err)
         {
@@ -273,24 +265,20 @@ where
     let default_config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
     loop {
         let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => default_config.serve_with_engines(
-                listener,
-                &mut session,
-                &mut pty_host,
-                &mut terminal_engines,
-            ),
+            DaemonListener::Unix { listener, .. } => {
+                default_config.serve_with_session_core(listener, session_actor, &mut pty_host)
+            }
             DaemonListener::Tcp(listener) => serve_tcp(
                 &default_config,
                 listener,
                 &args,
-                &mut session,
+                session_actor,
                 &mut pty_host,
-                &mut terminal_engines,
             ),
         };
         if let Err(err) = serve_result {
             if local::is_session_shutdown(&err) {
-                stop_panes(&mut pty_host, &session.leaf_pane_ids())?;
+                stop_panes(&mut pty_host, &session_actor.session().leaf_pane_ids())?;
                 return Ok(());
             }
             return Err(err.into());
@@ -302,9 +290,8 @@ fn serve_tcp(
     config: &local::ServeConfig,
     listener: &std::net::TcpListener,
     args: &Args,
-    session: &mut Session,
+    session_actor: &mut SessionActor,
     host: &mut LocalPtyHost,
-    engines: &mut PaneTerminalEngines,
 ) -> Result<(), ServeError> {
     let token = args
         .tcp_token
@@ -314,7 +301,7 @@ fn serve_tcp(
     while config.connection_limit.accepts_more(accepted_connections) {
         let stream = local::accept_authenticated_tcp_client(listener, token)?;
         accepted_connections = accepted_connections.saturating_add(1);
-        config.serve_stream_with_engines(stream, session, host, engines)?;
+        config.serve_stream_with_session_core(stream, session_actor, host)?;
     }
     Ok(())
 }
