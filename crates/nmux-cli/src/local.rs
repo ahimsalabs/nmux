@@ -4670,8 +4670,12 @@ fn flush_pane_output_handoff_to_session_actor(
             bytes: output,
         },
     ));
-    actor
-        .drain_ready()
+    let drain_span = tracing::trace_span!(
+        "session_actor.drain_ready",
+        pane_id = %handoff.pane_id
+    );
+    drain_span
+        .in_scope(|| actor.drain_ready())
         .iter()
         .any(|record| !record.effects.is_empty())
 }

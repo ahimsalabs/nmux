@@ -977,7 +977,8 @@ mod ghostty_vt {
             state.osc7.ingest(output);
             let pty_write_count = state.pty_writes.borrow().len();
             let saw_wraparound_query = state.ingest_decrqm_query(output);
-            state.terminal.vt_write(output);
+            let vt_write_span = tracing::trace_span!("terminal.libghostty.vt_write");
+            vt_write_span.in_scope(|| state.terminal.vt_write(output));
             if saw_wraparound_query && state.pty_writes.borrow().len() == pty_write_count {
                 state.pty_writes.borrow_mut().push(b"\x1b[?7;1$y".to_vec());
             }
@@ -1089,6 +1090,8 @@ mod ghostty_vt {
                 None
             };
             self.terminal.scroll_viewport(ScrollViewport::Bottom);
+            let surface_span = tracing::trace_span!("terminal.libghostty.extract_surface_rows");
+            let surface_guard = surface_span.enter();
             let snapshot = self.render_state.update(&self.terminal).ok()?;
             let mut surface_rows = extract_rows(
                 &snapshot,
@@ -1096,6 +1099,7 @@ mod ghostty_vt {
                 &mut self.cell_iterator,
                 &mut styles,
             )?;
+            drop(surface_guard);
             if preserve_input_rows && surface == input.surface {
                 surface_rows = ExtractedRows {
                     lines: input.surface_lines.to_vec(),
@@ -1123,8 +1127,24 @@ mod ghostty_vt {
             } else if let Some(total_rows) = total_main_rows {
                 if total_rows <= surface_rows.lines.len() {
                     surface_rows.truncated(total_rows)
+                } else if let Some(scrollback_rows) =
+                    cached_main_scrollback_rows(&input, total_rows, &surface_rows)
+                {
+                    let cached_span = tracing::trace_span!(
+                        "terminal.libghostty.cached_scrollback_rows",
+                        total_rows,
+                        surface_rows = surface_rows.lines.len(),
+                        input_scrollback_rows = input.scrollback_lines.len()
+                    );
+                    cached_span.in_scope(|| scrollback_rows)
                 } else {
-                    self.scrollback_rows(total_rows, &mut styles)?
+                    let full_span = tracing::trace_span!(
+                        "terminal.libghostty.extract_full_scrollback_rows",
+                        total_rows,
+                        surface_rows = surface_rows.lines.len(),
+                        input_scrollback_rows = input.scrollback_lines.len()
+                    );
+                    full_span.in_scope(|| self.scrollback_rows(total_rows, &mut styles))?
                 }
             } else {
                 ExtractedRows {
@@ -1266,6 +1286,7 @@ mod ghostty_vt {
         }
     }
 
+    #[derive(Clone)]
     struct ExtractedRows {
         lines: Vec<String>,
         row_runs: Vec<Vec<CellRun>>,
@@ -1286,6 +1307,71 @@ mod ghostty_vt {
         fn truncated(mut self, len: usize) -> Self {
             self.truncate(len);
             self
+        }
+    }
+
+    fn cached_main_scrollback_rows(
+        input: &TerminalInput<'_>,
+        total_rows: usize,
+        surface_rows: &ExtractedRows,
+    ) -> Option<ExtractedRows> {
+        let history_len = total_rows.checked_sub(surface_rows.lines.len())?;
+        if history_len > input.scrollback_lines.len() {
+            return None;
+        }
+
+        let history_lines = input.scrollback_lines[..history_len].to_vec();
+        let mut rows = ExtractedRows {
+            row_runs: row_runs_prefix_or_plain(
+                &history_lines,
+                input.scrollback_row_runs,
+                history_len,
+            ),
+            semantic_prompts: row_values_prefix_or_default(
+                input.scrollback_semantic_prompts,
+                history_len,
+                protocol::RowSemanticPrompt::None,
+            ),
+            dirty_rows: row_values_prefix_or_default(
+                input.scrollback_dirty_rows,
+                history_len,
+                false,
+            ),
+            kitty_placeholders: row_values_prefix_or_default(
+                input.scrollback_kitty_placeholders,
+                history_len,
+                false,
+            ),
+            lines: history_lines,
+        };
+        rows.lines.extend(surface_rows.lines.iter().cloned());
+        rows.row_runs.extend(surface_rows.row_runs.iter().cloned());
+        rows.semantic_prompts
+            .extend(surface_rows.semantic_prompts.iter().copied());
+        rows.dirty_rows
+            .extend(surface_rows.dirty_rows.iter().copied());
+        rows.kitty_placeholders
+            .extend(surface_rows.kitty_placeholders.iter().copied());
+        Some(rows)
+    }
+
+    fn row_runs_prefix_or_plain(
+        lines: &[String],
+        runs: &[Vec<CellRun>],
+        len: usize,
+    ) -> Vec<Vec<CellRun>> {
+        if runs.len() >= len {
+            runs[..len].to_vec()
+        } else {
+            super::plain_row_runs(lines)
+        }
+    }
+
+    fn row_values_prefix_or_default<T: Copy>(values: &[T], len: usize, default: T) -> Vec<T> {
+        if values.len() >= len {
+            values[..len].to_vec()
+        } else {
+            vec![default; len]
         }
     }
 

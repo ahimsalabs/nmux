@@ -15,6 +15,7 @@ libc.workspace = true
 libghostty-vt = { git = "https://github.com/uzaaft/libghostty-rs.git", rev = "31d1f70004ff80727e36437cd540984f927333ce", optional = true }
 nmux-proto.workspace = true
 portable-pty.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

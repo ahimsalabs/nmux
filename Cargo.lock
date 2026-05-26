@@ -423,6 +423,7 @@ dependencies = [
  "nmux-proto",
  "portable-pty",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
