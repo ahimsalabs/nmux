@@ -518,6 +518,12 @@ impl SessionRegistry {
         self.actors.get_mut(session_id)
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &SessionActor)> {
+        self.actors
+            .iter()
+            .map(|(session_id, actor)| (session_id.as_str(), actor))
+    }
+
     pub fn remove(&mut self, session_id: &str) -> Option<SessionActor> {
         self.actors.remove(session_id)
     }

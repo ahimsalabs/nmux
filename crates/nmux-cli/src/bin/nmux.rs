@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
@@ -21,6 +21,16 @@ use crossterm::{
 use nmux_cli::{daemon, local};
 use nmux_core::session::AttachMode;
 use nmux_proto::protocol;
+use ratatui::{
+    TerminalOptions, Viewport,
+    buffer::Buffer,
+    layout::Rect,
+    prelude::{CrosstermBackend, Terminal},
+    style::{Color, Modifier, Style},
+};
+
+#[path = "nmux/tui.rs"]
+mod tui;
 
 const STDIN_BYTES_DETACH: u8 = 0x1d;
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
@@ -107,10 +117,14 @@ const MOUSE_ACTION_NAMES: &[&str] = &["press", "release", "motion"];
 const MOUSE_BUTTON_NAMES: &[&str] = &["none", "left", "middle", "right", "wheel-up", "wheel-down"];
 const LOCAL_ECHO_NAMES: &[&str] = &["off", "tty"];
 const DETACH_KEY_NAMES: &[&str] = &["ctrl-]", "none"];
+const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
+const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
+const SGR_MOUSE_START: &[u8] = b"\x1b[<";
 const DEFAULT_MANAGED_STARTUP_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_REMOTE_PORT: u16 = 7007;
 const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
 const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
+const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
 
 fn main() {
     if let Err(err) = run() {
@@ -202,7 +216,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some(
             ScriptCommand::PaneSplit
             | ScriptCommand::TabNew
+            | ScriptCommand::TabSwitch
             | ScriptCommand::TabClose
+            | ScriptCommand::SessionNew
             | ScriptCommand::SessionKill,
         ) => return run_control_command(&args),
         Some(ScriptCommand::TabList) => return run_tab_list(&args),
@@ -300,7 +316,11 @@ fn wait_for_default_daemon_attach(args: &Args) -> Result<(), Box<dyn std::error:
         match local::connect_to_daemon_with_timeout(&args.socket_path, Duration::from_millis(100)) {
             Ok(mut stream) => {
                 let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-                if let Err(err) = local::write_attach_request(&mut stream, &request) {
+                if let Err(err) = local::write_attach_request_for_session(
+                    &mut stream,
+                    &request,
+                    args.target_session_id.as_deref(),
+                ) {
                     last_error = Some(err.into());
                 } else {
                     match local::attach_from_stream(&mut stream) {
@@ -394,29 +414,90 @@ fn attach_for_listing(args: &Args) -> Result<local::RenderedAttach, Box<dyn std:
 }
 
 fn run_session_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    let rendered = attach_for_listing(args)?;
+    let inventory = fetch_session_inventory(args)?;
     if args.output_json {
-        println!(
-            "{{\"sessions\":[{{\"session_id\":{},\"active\":true}}]}}",
-            local::json_string(&rendered.workspace.session_id)
-        );
+        println!("{}", format_session_inventory_json(&inventory));
     } else {
-        println!("{}", rendered.workspace.session_id);
+        for session in inventory.sessions {
+            let active = if session.session_id == inventory.active_session_id {
+                " active"
+            } else {
+                ""
+            };
+            println!("{}{} {}", session.session_id, active, session.title);
+        }
     }
     Ok(())
 }
 
+fn fetch_session_inventory(
+    args: &Args,
+) -> Result<local::SessionInventorySummary, Box<dyn std::error::Error>> {
+    let command = local::ControlCommandSummary {
+        actor_id: args.actor_id.clone(),
+        command_seq: 1,
+        kind: protocol::ControlCommandKind::SessionList,
+        pane_id: None,
+        tab_id: None,
+        split_axis: protocol::SplitAxis::None,
+        title: None,
+        session_id: args.target_session_id.clone(),
+    };
+    let stream = connect_to_daemon(args)?;
+    local::run_session_inventory_command_on_stream(stream, command)
+}
+
 fn run_tab_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let rendered = attach_for_listing(args)?;
+    let tabs = workspace_tabs(&rendered.workspace);
     if args.output_json {
-        println!(
-            "{{\"tabs\":[{{\"tab_id\":{},\"active\":true}}]}}",
-            local::json_string(&rendered.workspace.tab_id)
-        );
+        let tabs_json = tabs
+            .iter()
+            .map(|tab| {
+                format!(
+                    "{{\"tab_id\":{},\"title\":{},\"active\":{}}}",
+                    local::json_string(&tab.tab_id),
+                    local::json_string(&tab.title),
+                    tab.tab_id == rendered.workspace.tab_id
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("{{\"tabs\":[{tabs_json}]}}");
     } else {
-        println!("{} active", rendered.workspace.tab_id);
+        for tab in tabs {
+            let active = if tab.tab_id == rendered.workspace.tab_id {
+                " active"
+            } else {
+                ""
+            };
+            println!("{}{} {}", tab.tab_id, active, tab.title);
+        }
     }
     Ok(())
+}
+
+fn workspace_tabs(workspace: &local::WorkspaceSummary) -> Vec<local::WorkspaceTabSummary> {
+    if !workspace.tabs.is_empty() {
+        return workspace.tabs.clone();
+    }
+    let root = workspace
+        .pane_tree
+        .clone()
+        .unwrap_or_else(|| local::WorkspacePaneSummary {
+            pane_id: workspace.pane_id.clone(),
+            cols: workspace.cols,
+            rows: workspace.rows,
+            resize_policy: workspace.resize_policy,
+            split_axis: protocol::SplitAxis::None,
+            children: Vec::new(),
+        });
+    vec![local::WorkspaceTabSummary {
+        tab_id: workspace.tab_id.clone(),
+        title: workspace.tab_id.clone(),
+        active_pane_id: workspace.pane_id.clone(),
+        root,
+    }]
 }
 
 fn run_pane_list(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -530,7 +611,9 @@ fn run_control_command(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let command_kind = match args.script_command {
         Some(ScriptCommand::PaneSplit) => protocol::ControlCommandKind::PaneSplit,
         Some(ScriptCommand::TabNew) => protocol::ControlCommandKind::TabNew,
+        Some(ScriptCommand::TabSwitch) => protocol::ControlCommandKind::TabSwitch,
         Some(ScriptCommand::TabClose) => protocol::ControlCommandKind::TabClose,
+        Some(ScriptCommand::SessionNew) => protocol::ControlCommandKind::SessionNew,
         Some(ScriptCommand::SessionKill) => protocol::ControlCommandKind::SessionKill,
         _ => return Err("missing control command".into()),
     };
@@ -753,6 +836,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut client_inventory = ClientInventoryCache::default();
 
     let mut options = local::AttachOptions {
+        target_session_id: args.target_session_id.clone(),
         input_text: args.input_text.clone(),
         key_name: args.key_name.clone(),
         key_names: args.key_names.clone(),
@@ -795,7 +879,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
-    if let Err(err) = local::write_attach_request(&mut stream, &options.request) {
+    if let Err(err) = local::write_attach_request_for_session(
+        &mut stream,
+        &options.request,
+        args.target_session_id.as_deref(),
+    ) {
         report_live_setup_error(args, &err)?;
         return Err(err.into());
     }
@@ -807,7 +895,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let initial_presence = snapshot.presence.clone();
-    let attached_pane_id = snapshot.status.pane_id.clone();
+    let mut attached_pane_id = snapshot.status.pane_id.clone();
     client_state.apply_scope(local::socket_identity(&args.socket_path).ok());
     let mut rendered = match client_state.render_attach(snapshot) {
         Ok(rendered) => rendered,
@@ -853,11 +941,24 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         &client_state,
         use_styled,
     );
+    let mut initial_pane_surface_summaries = BTreeMap::new();
+    initial_pane_surface_summaries.insert(attached_pane_id.clone(), rendered.surface.clone());
+    seed_cached_pane_surface_summaries(
+        &mut initial_pane_surface_summaries,
+        &current_workspace,
+        &client_state,
+    );
+    let mut initial_pane_modes = BTreeMap::new();
+    initial_pane_modes.insert(attached_pane_id.clone(), rendered.modes);
+    seed_cached_pane_modes(&mut initial_pane_modes, &current_workspace, &client_state);
     let mut surface_state = LiveSurfaceState {
         current_surface_metadata: rendered.surface_metadata.clone(),
         current_modes: rendered.modes,
         current_surface_text: initial_surface_text,
         current_pane_surfaces: initial_pane_surfaces,
+        current_pane_surface_summaries: initial_pane_surface_summaries,
+        current_pane_modes: initial_pane_modes,
+        scrollback_views: BTreeMap::new(),
     };
     let (scrollback, pending_surface_updates, pending_live_reads) = match initial_live_scrollback(
         args,
@@ -890,15 +991,27 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     if args.live_resize.is_none()
         && let Some((cols, rows)) = sigwinch_resize.current_resize()?
     {
+        let (pane_cols, pane_rows) = frontend_resize_pane_size(
+            &current_workspace,
+            &attached_pane_id,
+            cols,
+            rows,
+            args.redraw && stdout_tty,
+        );
         local::send_resize_intent_with_reason_and_sequence(
             &mut stream,
             &mut client_sequence,
             &attached_pane_id,
-            cols,
-            rows,
+            pane_cols,
+            pane_rows,
             protocol::ResizeReason::FrontendViewport,
         )?;
-        apply_frontend_workspace_size(&mut current_workspace, cols, rows);
+        apply_frontend_workspace_size(
+            &mut current_workspace,
+            &attached_pane_id,
+            pane_cols,
+            pane_rows,
+        );
         recorder.record(&format_live_workspace_json(&current_workspace))?;
         let _ = stream.set_read_timeout(Some(live_socket_read_timeout));
         loop {
@@ -916,6 +1029,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             match local::read_live_surface_update_from_stream(&mut stream)? {
                 local::LiveSurfaceRead::Workspace(workspace) => {
                     current_workspace = workspace;
+                    preserve_live_client_focus(&mut current_workspace, &attached_pane_id);
                     recorder.record(&format_live_workspace_json(&current_workspace))?;
                 }
                 local::LiveSurfaceRead::Update(update) => {
@@ -929,6 +1043,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     surface_state
                         .current_pane_surfaces
                         .insert(update.pane_id.clone(), update_surface_text.clone());
+                    if let Some(summary) =
+                        client_state.cached_rendered_surface_summary(&update.pane_id)
+                    {
+                        surface_state
+                            .current_pane_surface_summaries
+                            .insert(update.pane_id.clone(), summary);
+                    }
+                    surface_state
+                        .current_pane_modes
+                        .insert(update.pane_id.clone(), update.modes);
+                    surface_state.scrollback_views.remove(&update.pane_id);
                     if update.pane_id == current_workspace.pane_id {
                         surface_state.current_surface_metadata = update_metadata;
                         surface_state.current_modes = update.modes;
@@ -962,7 +1087,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     // terminals. When stdout is captured (tests, pipes), fall back to the
     // legacy full-screen-clear path so output is plain text.
     let mut redraw_state = if args.redraw && stdout_tty {
-        Some(RedrawState::new())
+        Some(RedrawState::new_with_terminal()?)
     } else {
         None
     };
@@ -997,6 +1122,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             scrollback,
             redraw_state.as_mut(),
             Some(&surface_state.current_pane_surfaces),
+            Some(&surface_state.current_pane_surface_summaries),
         );
     }
     flush_stdout()?;
@@ -1026,6 +1152,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     });
     let mut cycles = 0;
     let mut sent_explicit_live_resize = false;
+    let mut active_overlay: Option<tui::TuiOverlay> = None;
+    let mut active_menu_index: Option<usize> = None;
     let detach_reason = loop {
         if cycle_limit.is_some_and(|iterations| cycles >= iterations) {
             break LiveDetachReason::IterationLimit;
@@ -1051,27 +1179,41 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     sent_explicit_live_resize = true;
                 }
             } else if let Some((cols, rows)) = sigwinch_resize.next_resize()? {
+                let (pane_cols, pane_rows) = frontend_resize_pane_size(
+                    &current_workspace,
+                    &attached_pane_id,
+                    cols,
+                    rows,
+                    args.redraw && stdout_tty,
+                );
                 local::send_resize_intent_with_reason_and_sequence(
                     &mut stream,
                     &mut client_sequence,
                     &attached_pane_id,
-                    cols,
-                    rows,
+                    pane_cols,
+                    pane_rows,
                     protocol::ResizeReason::FrontendViewport,
                 )?;
-                apply_frontend_workspace_size(&mut current_workspace, cols, rows);
+                apply_frontend_workspace_size(
+                    &mut current_workspace,
+                    &attached_pane_id,
+                    pane_cols,
+                    pane_rows,
+                );
                 let event = format_live_workspace_json(&current_workspace);
                 recorder.record(&event)?;
                 if args.output_json {
                     println!("{event}");
                 } else if args.redraw {
-                    print_live_surface(
+                    print_live_surface_with_overlay(
                         &current_workspace,
                         &surface_state.current_surface_metadata,
                         &surface_state.current_surface_text,
                         args.redraw,
                         redraw_state.as_mut(),
                         Some(&surface_state.current_pane_surfaces),
+                        Some(&surface_state.current_pane_surface_summaries),
+                        active_overlay.as_ref(),
                     );
                 } else {
                     println!("{}", current_workspace.display_line());
@@ -1084,33 +1226,372 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
-                            let input_span = tracing::trace_span!(
-                                "live.stdin_bytes.forward_input",
-                                bytes = input.len(),
-                                pane_id = %attached_pane_id
-                            );
-                            let input_seq = input_span.in_scope(|| {
-                                local::send_raw_input_with_sequence(
-                                    &mut stream,
-                                    &mut client_sequence,
-                                    &attached_pane_id,
-                                    &input,
-                                )
-                            })?;
-                            if let Ok(text) = std::str::from_utf8(&input) {
-                                repaint_speculative_echo(
-                                    stdin_bytes_speculative_echo_enabled(args),
-                                    &client_state,
-                                    &mut speculative_echo,
-                                    &attached_pane_id,
-                                    input_seq,
-                                    text,
-                                    &current_workspace,
-                                    &surface_state.current_surface_metadata,
-                                    &mut surface_state.current_surface_text,
-                                    redraw_state.as_mut(),
-                                    use_styled,
-                                )?;
+                            for forward in stdin_byte_forwards(&input) {
+                                match forward {
+                                    StdinByteForward::Raw(input) => {
+                                        let input_span = tracing::trace_span!(
+                                            "live.stdin_bytes.forward_input",
+                                            bytes = input.len(),
+                                            pane_id = %attached_pane_id
+                                        );
+                                        let input_seq = input_span.in_scope(|| {
+                                            local::send_raw_input_with_sequence(
+                                                &mut stream,
+                                                &mut client_sequence,
+                                                &attached_pane_id,
+                                                &input,
+                                            )
+                                        })?;
+                                        if let Ok(text) = std::str::from_utf8(&input) {
+                                            repaint_speculative_echo(
+                                                stdin_bytes_speculative_echo_enabled(args),
+                                                &client_state,
+                                                &mut speculative_echo,
+                                                &attached_pane_id,
+                                                input_seq,
+                                                text,
+                                                &current_workspace,
+                                                &surface_state.current_surface_metadata,
+                                                &mut surface_state.current_surface_text,
+                                                &mut redraw_state,
+                                                use_styled,
+                                            )?;
+                                        }
+                                    }
+                                    StdinByteForward::Paste(text) => {
+                                        let input_span = tracing::trace_span!(
+                                            "live.stdin_bytes.forward_paste",
+                                            bytes = text.len(),
+                                            pane_id = %attached_pane_id
+                                        );
+                                        input_span.in_scope(|| {
+                                            local::send_paste_input_with_sequence(
+                                                &mut stream,
+                                                &mut client_sequence,
+                                                &attached_pane_id,
+                                                &text,
+                                            )
+                                        })?;
+                                    }
+                                    StdinByteForward::Key(key) => {
+                                        match handle_live_tui_key(
+                                            key,
+                                            &mut active_menu_index,
+                                            &mut active_overlay,
+                                            &mut stream,
+                                            &mut client_sequence,
+                                            &mut attached_pane_id,
+                                            &mut current_workspace,
+                                            &mut surface_state,
+                                            &mut client_state,
+                                            &mut host_mouse_modes,
+                                            &mut speculative_echo,
+                                            &mut client_inventory,
+                                            &mut recorder,
+                                            socket_scope,
+                                            &options,
+                                            setup_read_timeout,
+                                            live_socket_read_timeout,
+                                            &mut redraw_state,
+                                            args,
+                                            use_styled,
+                                        )? {
+                                            LiveKeyHandling::Handled => {
+                                                flush_stdout()?;
+                                            }
+                                            LiveKeyHandling::Forward(bytes) => {
+                                                let input_span = tracing::trace_span!(
+                                                    "live.stdin_bytes.forward_input",
+                                                    bytes = bytes.len(),
+                                                    pane_id = %attached_pane_id
+                                                );
+                                                let input_seq = input_span.in_scope(|| {
+                                                    local::send_raw_input_with_sequence(
+                                                        &mut stream,
+                                                        &mut client_sequence,
+                                                        &attached_pane_id,
+                                                        &bytes,
+                                                    )
+                                                })?;
+                                                if let Ok(text) = std::str::from_utf8(&bytes) {
+                                                    repaint_speculative_echo(
+                                                        stdin_bytes_speculative_echo_enabled(args),
+                                                        &client_state,
+                                                        &mut speculative_echo,
+                                                        &attached_pane_id,
+                                                        input_seq,
+                                                        text,
+                                                        &current_workspace,
+                                                        &surface_state.current_surface_metadata,
+                                                        &mut surface_state.current_surface_text,
+                                                        &mut redraw_state,
+                                                        use_styled,
+                                                    )?;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    StdinByteForward::Mouse(mouse) => {
+                                        match live_mouse_dispatch_for_workspace(
+                                            mouse,
+                                            &current_workspace,
+                                            &surface_state.current_surface_text,
+                                            Some(&surface_state.current_pane_surfaces),
+                                            Some(&surface_state.current_pane_modes),
+                                            surface_state.current_modes,
+                                            active_overlay.as_ref(),
+                                        ) {
+                                            Some(LiveMouseDispatch::FocusPane(pane_id)) => {
+                                                active_overlay = None;
+                                                active_menu_index = None;
+                                                if focus_live_client_pane(
+                                                    &pane_id,
+                                                    &mut attached_pane_id,
+                                                    &mut current_workspace,
+                                                    &mut surface_state,
+                                                    &client_state,
+                                                    host_mouse_modes.as_mut(),
+                                                    redraw_state.as_mut(),
+                                                    args,
+                                                    use_styled,
+                                                )? {
+                                                    flush_stdout()?;
+                                                }
+                                            }
+                                            Some(LiveMouseDispatch::PaneMouse(pane_id, mouse)) => {
+                                                active_overlay = None;
+                                                active_menu_index = None;
+                                                local::send_mouse_input_with_sequence(
+                                                    &mut stream,
+                                                    &mut client_sequence,
+                                                    &pane_id,
+                                                    mouse,
+                                                )?;
+                                            }
+                                            Some(LiveMouseDispatch::PaneScroll {
+                                                pane_id,
+                                                direction,
+                                                visible_rows,
+                                            }) => {
+                                                active_overlay = None;
+                                                active_menu_index = None;
+                                                if scroll_live_pane_view(
+                                                    &mut stream,
+                                                    &mut client_sequence,
+                                                    &pane_id,
+                                                    direction,
+                                                    visible_rows,
+                                                    &mut surface_state,
+                                                    &mut client_state,
+                                                    &mut speculative_echo,
+                                                    &mut host_mouse_modes,
+                                                    &mut client_inventory,
+                                                    &mut recorder,
+                                                    socket_scope,
+                                                    &current_workspace,
+                                                    args,
+                                                    redraw_state.as_mut(),
+                                                    use_styled,
+                                                )? {
+                                                    flush_stdout()?;
+                                                }
+                                            }
+                                            Some(LiveMouseDispatch::Menu(action)) => {
+                                                active_menu_index = menu_index(action);
+                                                if action == tui::MenuAction::NewSession {
+                                                    active_overlay = None;
+                                                    active_menu_index = None;
+                                                    let workspace =
+                                                        run_live_new_session_menu_command(args)?;
+                                                    current_workspace = workspace;
+                                                    attached_pane_id =
+                                                        current_workspace.pane_id.clone();
+                                                    switch_live_surface_to_workspace_pane(
+                                                        &current_workspace,
+                                                        &mut surface_state,
+                                                        &client_state,
+                                                        host_mouse_modes.as_mut(),
+                                                        use_styled,
+                                                    )?;
+                                                    if args.redraw && !args.output_json {
+                                                        print_live_surface(
+                                                            &current_workspace,
+                                                            &surface_state.current_surface_metadata,
+                                                            &surface_state.current_surface_text,
+                                                            args.redraw,
+                                                            redraw_state.as_mut(),
+                                                            Some(
+                                                                &surface_state
+                                                                    .current_pane_surfaces,
+                                                            ),
+                                                            Some(
+                                                                &surface_state
+                                                                    .current_pane_surface_summaries,
+                                                            ),
+                                                        );
+                                                        flush_stdout()?;
+                                                    }
+                                                } else {
+                                                    let session_inventory =
+                                                        if action == tui::MenuAction::Sessions {
+                                                            Some(fetch_session_inventory(args)?)
+                                                        } else {
+                                                            None
+                                                        };
+                                                    active_overlay = Some(menu_overlay_for_action(
+                                                        action,
+                                                        &current_workspace,
+                                                        &surface_state,
+                                                    ));
+                                                    if let Some(inventory) =
+                                                        session_inventory.as_ref()
+                                                    {
+                                                        active_overlay = Some(
+                                                            menu_overlay_for_action_with_session_inventory(
+                                                                action,
+                                                                &current_workspace,
+                                                                &surface_state,
+                                                                Some(inventory),
+                                                            ),
+                                                        );
+                                                    }
+                                                    if args.redraw && !args.output_json {
+                                                        print_live_surface_with_overlay(
+                                                            &current_workspace,
+                                                            &surface_state.current_surface_metadata,
+                                                            &surface_state.current_surface_text,
+                                                            args.redraw,
+                                                            redraw_state.as_mut(),
+                                                            Some(
+                                                                &surface_state
+                                                                    .current_pane_surfaces,
+                                                            ),
+                                                            Some(
+                                                                &surface_state
+                                                                    .current_pane_surface_summaries,
+                                                            ),
+                                                            active_overlay.as_ref(),
+                                                        );
+                                                        flush_stdout()?;
+                                                    }
+                                                }
+                                            }
+                                            Some(LiveMouseDispatch::Overlay(action)) => {
+                                                match action {
+                                                    tui::OverlayAction::SwitchTab(tab_id) => {
+                                                        active_overlay = None;
+                                                        active_menu_index = None;
+                                                        let workspace =
+                                                            run_live_tab_switch_menu_command(
+                                                                args, &tab_id,
+                                                            )?;
+                                                        current_workspace = workspace;
+                                                        attached_pane_id =
+                                                            current_workspace.pane_id.clone();
+                                                        switch_live_surface_to_workspace_pane(
+                                                            &current_workspace,
+                                                            &mut surface_state,
+                                                            &client_state,
+                                                            host_mouse_modes.as_mut(),
+                                                            use_styled,
+                                                        )?;
+                                                        if args.redraw && !args.output_json {
+                                                            print_live_surface(
+                                                                &current_workspace,
+                                                                &surface_state
+                                                                    .current_surface_metadata,
+                                                                &surface_state.current_surface_text,
+                                                                args.redraw,
+                                                                redraw_state.as_mut(),
+                                                                Some(
+                                                                    &surface_state
+                                                                        .current_pane_surfaces,
+                                                                ),
+                                                                Some(
+                                                                    &surface_state
+                                                                        .current_pane_surface_summaries,
+                                                                ),
+                                                            );
+                                                            flush_stdout()?;
+                                                        }
+                                                    }
+                                                    tui::OverlayAction::SwitchSession(
+                                                        session_id,
+                                                    ) => {
+                                                        active_overlay = None;
+                                                        active_menu_index = None;
+                                                        if session_id
+                                                            != current_workspace.session_id
+                                                        {
+                                                            let switched = switch_live_session(
+                                                                args,
+                                                                &options,
+                                                                &mut client_state,
+                                                                &mut speculative_echo,
+                                                                &mut host_mouse_modes,
+                                                                &mut client_inventory,
+                                                                &mut recorder,
+                                                                socket_scope,
+                                                                &session_id,
+                                                                setup_read_timeout,
+                                                                live_socket_read_timeout,
+                                                                &mut redraw_state,
+                                                                use_styled,
+                                                            )?;
+                                                            stream = switched.stream;
+                                                            client_sequence =
+                                                                switched.client_sequence;
+                                                            attached_pane_id =
+                                                                switched.attached_pane_id;
+                                                            current_workspace = switched.workspace;
+                                                            surface_state = switched.surface_state;
+                                                            flush_stdout()?;
+                                                        }
+                                                    }
+                                                    tui::OverlayAction::FocusPane(pane_id) => {
+                                                        active_overlay = None;
+                                                        active_menu_index = None;
+                                                        if focus_live_client_pane(
+                                                            &pane_id,
+                                                            &mut attached_pane_id,
+                                                            &mut current_workspace,
+                                                            &mut surface_state,
+                                                            &client_state,
+                                                            host_mouse_modes.as_mut(),
+                                                            redraw_state.as_mut(),
+                                                            args,
+                                                            use_styled,
+                                                        )? {
+                                                            flush_stdout()?;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Some(LiveMouseDispatch::ClearOverlay) => {
+                                                if (active_overlay.take().is_some()
+                                                    || active_menu_index.take().is_some())
+                                                    && args.redraw
+                                                    && !args.output_json
+                                                {
+                                                    print_live_surface(
+                                                        &current_workspace,
+                                                        &surface_state.current_surface_metadata,
+                                                        &surface_state.current_surface_text,
+                                                        args.redraw,
+                                                        redraw_state.as_mut(),
+                                                        Some(&surface_state.current_pane_surfaces),
+                                                        Some(
+                                                            &surface_state
+                                                                .current_pane_surface_summaries,
+                                                        ),
+                                                    );
+                                                    flush_stdout()?;
+                                                }
+                                            }
+                                            None => {}
+                                        }
+                                    }
+                                }
                             }
                             sent_stdin_bytes_this_cycle = true;
                         }
@@ -1206,7 +1687,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     &current_workspace,
                     &surface_state.current_surface_metadata,
                     &mut surface_state.current_surface_text,
-                    redraw_state.as_mut(),
+                    &mut redraw_state,
                     use_styled,
                 )?;
             }
@@ -1250,18 +1731,21 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             match read {
                 local::LiveSurfaceRead::Workspace(workspace) => {
                     current_workspace = workspace;
+                    preserve_live_client_focus(&mut current_workspace, &attached_pane_id);
                     let event = format_live_workspace_json(&current_workspace);
                     recorder.record(&event)?;
                     if args.output_json {
                         println!("{event}");
                     } else if args.redraw {
-                        print_live_surface(
+                        print_live_surface_with_overlay(
                             &current_workspace,
                             &surface_state.current_surface_metadata,
                             &surface_state.current_surface_text,
                             args.redraw,
                             redraw_state.as_mut(),
                             Some(&surface_state.current_pane_surfaces),
+                            Some(&surface_state.current_pane_surface_summaries),
+                            active_overlay.as_ref(),
                         );
                     } else {
                         println!("{}", current_workspace.display_line());
@@ -1280,13 +1764,15 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     client_inventory.apply_snapshot(snapshot);
                     if let Some(state) = redraw_state.as_mut() {
                         state.record_client_count(client_inventory.count());
-                        print_live_surface(
+                        print_live_surface_with_overlay(
                             &current_workspace,
                             &surface_state.current_surface_metadata,
                             &surface_state.current_surface_text,
                             args.redraw,
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
+                            Some(&surface_state.current_pane_surface_summaries),
+                            active_overlay.as_ref(),
                         );
                         flush_stdout()?;
                     }
@@ -1296,13 +1782,15 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         && let Some(state) = redraw_state.as_mut()
                     {
                         state.record_client_count(client_inventory.count());
-                        print_live_surface(
+                        print_live_surface_with_overlay(
                             &current_workspace,
                             &surface_state.current_surface_metadata,
                             &surface_state.current_surface_text,
                             args.redraw,
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
+                            Some(&surface_state.current_pane_surface_summaries),
+                            active_overlay.as_ref(),
                         );
                         flush_stdout()?;
                     }
@@ -1313,13 +1801,15 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     {
                         if let Some(state) = redraw_state.as_mut() {
                             state.record_rtt(rtt);
-                            print_live_surface(
+                            print_live_surface_with_overlay(
                                 &current_workspace,
                                 &surface_state.current_surface_metadata,
                                 &surface_state.current_surface_text,
                                 args.redraw,
                                 Some(state),
                                 Some(&surface_state.current_pane_surfaces),
+                                Some(&surface_state.current_pane_surface_summaries),
+                                active_overlay.as_ref(),
                             );
                             flush_stdout()?;
                         }
@@ -1387,6 +1877,24 @@ struct LiveSurfaceState {
     current_modes: local::TerminalModeSummary,
     current_surface_text: String,
     current_pane_surfaces: BTreeMap<String, String>,
+    current_pane_surface_summaries: BTreeMap<String, local::RenderedSurfaceSummary>,
+    current_pane_modes: BTreeMap<String, local::TerminalModeSummary>,
+    scrollback_views: BTreeMap<String, LiveScrollbackView>,
+}
+
+struct LiveSessionSwitch {
+    stream: UnixStream,
+    client_sequence: local::ClientFrameSequence,
+    attached_pane_id: String,
+    workspace: local::WorkspaceSummary,
+    surface_state: LiveSurfaceState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LiveScrollbackView {
+    start_line: u64,
+    line_count: u32,
+    total_lines: u64,
 }
 
 /// Process a single surface update: reconcile speculative echo, render the
@@ -1417,6 +1925,15 @@ fn process_surface_update(
     state
         .current_pane_surfaces
         .insert(update.pane_id.clone(), update_surface_text.clone());
+    if let Some(summary) = client_state.cached_rendered_surface_summary(&update.pane_id) {
+        state
+            .current_pane_surface_summaries
+            .insert(update.pane_id.clone(), summary);
+    }
+    state
+        .current_pane_modes
+        .insert(update.pane_id.clone(), update.modes);
+    state.scrollback_views.remove(&update.pane_id);
     if update.pane_id == current_workspace.pane_id {
         state.current_surface_metadata = update_metadata.clone();
         state.current_modes = update.modes;
@@ -1455,21 +1972,62 @@ fn process_surface_update(
             args.redraw,
             redraw_state.as_mut(),
             Some(&state.current_pane_surfaces),
+            Some(&state.current_pane_surface_summaries),
         );
     }
     flush_stdout()?;
     Ok(())
 }
 
-fn apply_frontend_workspace_size(workspace: &mut local::WorkspaceSummary, cols: u32, rows: u32) {
+fn frontend_resize_pane_size(
+    workspace: &local::WorkspaceSummary,
+    pane_id: &str,
+    terminal_cols: u32,
+    terminal_rows: u32,
+    ratatui_redraw: bool,
+) -> (u32, u32) {
+    if !ratatui_redraw {
+        return (terminal_cols, terminal_rows);
+    }
+
+    let cols = terminal_cols.max(1).min(u16::MAX as u32) as u16;
+    let rows = terminal_rows.saturating_sub(1).max(1).min(u16::MAX as u32) as u16;
+    tui::pane_content_rect(workspace, cols, rows, pane_id)
+        .map(|rect| (u32::from(rect.width.max(1)), u32::from(rect.height.max(1))))
+        .unwrap_or((terminal_cols, terminal_rows))
+}
+
+fn apply_frontend_workspace_size(
+    workspace: &mut local::WorkspaceSummary,
+    pane_id: &str,
+    cols: u32,
+    rows: u32,
+) {
     workspace.cols = cols;
     workspace.rows = rows;
-    if let Some(tree) = workspace.pane_tree.as_mut()
-        && tree.pane_id == workspace.pane_id
-    {
-        tree.cols = cols;
-        tree.rows = rows;
+    if let Some(tree) = workspace.pane_tree.as_mut() {
+        apply_frontend_pane_size(tree, pane_id, cols, rows);
     }
+}
+
+fn apply_frontend_pane_size(
+    pane: &mut local::WorkspacePaneSummary,
+    pane_id: &str,
+    cols: u32,
+    rows: u32,
+) -> bool {
+    if pane.pane_id == pane_id {
+        pane.cols = cols;
+        pane.rows = rows;
+        return true;
+    }
+
+    for child in &mut pane.children {
+        if apply_frontend_pane_size(child, pane_id, cols, rows) {
+            return true;
+        }
+    }
+    false
 }
 
 fn run_managed(mut args: Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -1945,7 +2503,7 @@ fn repaint_speculative_echo(
     workspace: &local::WorkspaceSummary,
     metadata: &local::TerminalMetadataSummary,
     current_surface_text: &mut String,
-    redraw_state: Option<&mut RedrawState>,
+    redraw_state: &mut Option<RedrawState>,
     use_styled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !enabled {
@@ -1960,7 +2518,17 @@ fn repaint_speculative_echo(
     *current_surface_text = predicted;
     match redraw_state {
         Some(state) => {
-            if let Some(prediction) = prediction.as_ref()
+            if state.terminal.is_some() {
+                print_live_surface(
+                    workspace,
+                    metadata,
+                    current_surface_text,
+                    true,
+                    Some(state),
+                    None,
+                    None,
+                );
+            } else if let Some(prediction) = prediction.as_ref()
                 && let Some(text) = state.render_speculative_append_text(
                     workspace,
                     current_surface_text,
@@ -1976,11 +2544,20 @@ fn repaint_speculative_echo(
                     true,
                     Some(state),
                     None,
+                    None,
                 );
             }
         }
         None => {
-            print_live_surface(workspace, metadata, current_surface_text, true, None, None);
+            print_live_surface(
+                workspace,
+                metadata,
+                current_surface_text,
+                true,
+                None,
+                None,
+                None,
+            );
         }
     }
     flush_stdout()?;
@@ -2264,6 +2841,42 @@ enum StdinByteRead {
     Error(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StdinByteForward {
+    Raw(Vec<u8>),
+    Paste(String),
+    Mouse(SgrMouseInput),
+    Key(StdinKeyInput),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdinKey {
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter,
+    Escape,
+    Tab,
+    BackTab,
+    OpenMenu(tui::MenuAction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StdinKeyInput {
+    key: StdinKey,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SgrMouseInput {
+    row: u32,
+    col: u32,
+    button: protocol::MouseButton,
+    action: protocol::MouseAction,
+    modifiers: u32,
+}
+
 fn split_stdin_bytes_for_detach(input: &[u8], detach_byte: Option<u8>) -> (Option<Vec<u8>>, bool) {
     let Some(detach_byte) = detach_byte else {
         return (Some(input.to_vec()), false);
@@ -2278,6 +2891,1354 @@ fn split_stdin_bytes_for_detach(input: &[u8], detach_byte: Option<u8>) -> (Optio
     } else {
         (Some(before_detach.to_vec()), true)
     }
+}
+
+fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
+    let mut forwards = Vec::new();
+    let mut offset = 0;
+    while offset < input.len() {
+        let paste = find_bytes(&input[offset..], BRACKETED_PASTE_START);
+        let mouse = find_sgr_mouse_sequence(&input[offset..])
+            .map(|(start, mouse, end)| (start, StdinByteForward::Mouse(mouse), end));
+        let key = find_tui_key_sequence(&input[offset..])
+            .map(|(start, key, end)| (start, StdinByteForward::Key(key), end));
+        let Some((start_rel, forward, end_rel)) = next_structured_stdin_forward(
+            paste.map(|start| (start, StdinByteForward::Raw(Vec::new()), 0)),
+            mouse,
+            key,
+        ) else {
+            forwards.push(StdinByteForward::Raw(input[offset..].to_vec()));
+            break;
+        };
+        let start = offset + start_rel;
+        if start > offset {
+            forwards.push(StdinByteForward::Raw(input[offset..start].to_vec()));
+        }
+        if matches!(
+            forward,
+            StdinByteForward::Mouse(_) | StdinByteForward::Key(_)
+        ) {
+            forwards.push(forward);
+            offset += end_rel;
+            continue;
+        }
+        let paste_start = start + BRACKETED_PASTE_START.len();
+        let Some(end_rel) = find_bytes(&input[paste_start..], BRACKETED_PASTE_END) else {
+            forwards.push(StdinByteForward::Raw(input[start..].to_vec()));
+            break;
+        };
+        let paste_end = paste_start + end_rel;
+        match std::str::from_utf8(&input[paste_start..paste_end]) {
+            Ok(text) => forwards.push(StdinByteForward::Paste(text.to_owned())),
+            Err(_) => forwards.push(StdinByteForward::Raw(
+                input[start..paste_end + BRACKETED_PASTE_END.len()].to_vec(),
+            )),
+        }
+        offset = paste_end + BRACKETED_PASTE_END.len();
+    }
+    forwards.retain(|forward| match forward {
+        StdinByteForward::Raw(bytes) => !bytes.is_empty(),
+        StdinByteForward::Paste(_) => true,
+        StdinByteForward::Mouse(_) => true,
+        StdinByteForward::Key(_) => true,
+    });
+    forwards
+}
+
+fn next_structured_stdin_forward(
+    paste: Option<(usize, StdinByteForward, usize)>,
+    mouse: Option<(usize, StdinByteForward, usize)>,
+    key: Option<(usize, StdinByteForward, usize)>,
+) -> Option<(usize, StdinByteForward, usize)> {
+    [paste, mouse, key]
+        .into_iter()
+        .flatten()
+        .min_by_key(|candidate| candidate.0)
+}
+
+fn find_tui_key_sequence(input: &[u8]) -> Option<(usize, StdinKeyInput, usize)> {
+    for start in 0..input.len() {
+        if let Some((key, len)) = parse_tui_key_sequence(&input[start..]) {
+            return Some((start, key, start + len));
+        }
+    }
+    None
+}
+
+fn parse_tui_key_sequence(input: &[u8]) -> Option<(StdinKeyInput, usize)> {
+    let candidates: &[(&[u8], StdinKey)] = &[
+        (b"\x1b[A", StdinKey::Up),
+        (b"\x1b[B", StdinKey::Down),
+        (b"\x1b[C", StdinKey::Right),
+        (b"\x1b[D", StdinKey::Left),
+        (b"\x1b[Z", StdinKey::BackTab),
+        (b"\r", StdinKey::Enter),
+        (b"\n", StdinKey::Enter),
+        (b"\t", StdinKey::Tab),
+        (b"\x1bs", StdinKey::OpenMenu(tui::MenuAction::Sessions)),
+        (b"\x1bn", StdinKey::OpenMenu(tui::MenuAction::NewSession)),
+        (b"\x1bw", StdinKey::OpenMenu(tui::MenuAction::Windows)),
+        (b"\x1bc", StdinKey::OpenMenu(tui::MenuAction::Clipboard)),
+        (b"\x1b", StdinKey::Escape),
+    ];
+    let (bytes, key) = candidates
+        .iter()
+        .find(|(bytes, _)| input.starts_with(bytes))?;
+    Some((
+        StdinKeyInput {
+            key: *key,
+            bytes: bytes.to_vec(),
+        },
+        bytes.len(),
+    ))
+}
+
+fn find_sgr_mouse_sequence(input: &[u8]) -> Option<(usize, SgrMouseInput, usize)> {
+    let mut search_offset = 0;
+    while search_offset < input.len() {
+        let start_rel = find_bytes(&input[search_offset..], SGR_MOUSE_START)?;
+        let start = search_offset + start_rel;
+        match parse_sgr_mouse_sequence(&input[start..]) {
+            Some((mouse, len)) => return Some((start, mouse, start + len)),
+            None => search_offset = start.saturating_add(1),
+        }
+    }
+    None
+}
+
+fn parse_sgr_mouse_sequence(input: &[u8]) -> Option<(SgrMouseInput, usize)> {
+    if !input.starts_with(SGR_MOUSE_START) {
+        return None;
+    }
+    let mut end = SGR_MOUSE_START.len();
+    while end < input.len() && input[end] != b'M' && input[end] != b'm' {
+        end += 1;
+    }
+    if end >= input.len() {
+        return None;
+    }
+    let final_byte = input[end];
+    let params = std::str::from_utf8(&input[SGR_MOUSE_START.len()..end]).ok()?;
+    let mut parts = params.split(';');
+    let code = parts.next()?.parse::<u32>().ok()?;
+    let x = parts.next()?.parse::<u32>().ok()?;
+    let y = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() || x == 0 || y == 0 {
+        return None;
+    }
+    let action = if final_byte == b'm' {
+        protocol::MouseAction::Release
+    } else if code & 32 != 0 {
+        protocol::MouseAction::Motion
+    } else {
+        protocol::MouseAction::Press
+    };
+    let button = if code & 64 != 0 {
+        if code & 1 != 0 {
+            protocol::MouseButton::WheelDown
+        } else {
+            protocol::MouseButton::WheelUp
+        }
+    } else {
+        match code & 3 {
+            0 => protocol::MouseButton::Left,
+            1 => protocol::MouseButton::Middle,
+            2 => protocol::MouseButton::Right,
+            _ => protocol::MouseButton::None,
+        }
+    };
+    let mut modifiers = 0;
+    if code & 4 != 0 {
+        modifiers |= 1;
+    }
+    if code & 16 != 0 {
+        modifiers |= 2;
+    }
+    if code & 8 != 0 {
+        modifiers |= 4;
+    }
+    Some((
+        SgrMouseInput {
+            row: y - 1,
+            col: x - 1,
+            button,
+            action,
+            modifiers,
+        },
+        end + 1,
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LiveMouseDispatch {
+    FocusPane(String),
+    Menu(tui::MenuAction),
+    Overlay(tui::OverlayAction),
+    PaneMouse(String, local::AttachMouseInput),
+    PaneScroll {
+        pane_id: String,
+        direction: LiveScrollDirection,
+        visible_rows: u16,
+    },
+    ClearOverlay,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveScrollDirection {
+    Up,
+    Down,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LiveKeyHandling {
+    Handled,
+    Forward(Vec<u8>),
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_live_tui_key(
+    key: StdinKeyInput,
+    active_menu_index: &mut Option<usize>,
+    active_overlay: &mut Option<tui::TuiOverlay>,
+    stream: &mut UnixStream,
+    client_sequence: &mut local::ClientFrameSequence,
+    attached_pane_id: &mut String,
+    current_workspace: &mut local::WorkspaceSummary,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &mut local::ClientAttachState,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    options: &local::AttachOptions,
+    setup_read_timeout: Duration,
+    live_socket_read_timeout: Duration,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+    use_styled: bool,
+) -> Result<LiveKeyHandling, Box<dyn std::error::Error>> {
+    if args.output_json || !args.redraw {
+        return Ok(LiveKeyHandling::Forward(key.bytes));
+    }
+
+    if key.key == StdinKey::Escape {
+        if active_overlay.take().is_some() || active_menu_index.take().is_some() {
+            print_live_surface(
+                current_workspace,
+                &surface_state.current_surface_metadata,
+                &surface_state.current_surface_text,
+                args.redraw,
+                redraw_state.as_mut(),
+                Some(&surface_state.current_pane_surfaces),
+                Some(&surface_state.current_pane_surface_summaries),
+            );
+            return Ok(LiveKeyHandling::Handled);
+        }
+        return Ok(LiveKeyHandling::Forward(key.bytes));
+    }
+
+    if let Some(action) = match key.key {
+        StdinKey::OpenMenu(action) => Some(action),
+        _ => None,
+    } {
+        *active_menu_index = menu_index(action);
+        open_live_menu_overlay(
+            action,
+            active_menu_index,
+            active_overlay,
+            stream,
+            client_sequence,
+            attached_pane_id,
+            current_workspace,
+            surface_state,
+            client_state,
+            host_mouse_modes,
+            speculative_echo,
+            client_inventory,
+            recorder,
+            socket_scope,
+            options,
+            setup_read_timeout,
+            live_socket_read_timeout,
+            redraw_state,
+            args,
+            use_styled,
+        )?;
+        return Ok(LiveKeyHandling::Handled);
+    }
+
+    if active_overlay.is_some() {
+        match key.key {
+            StdinKey::Up | StdinKey::BackTab => {
+                if let Some(overlay) = active_overlay.as_mut() {
+                    tui::move_overlay_selection(overlay, -1);
+                }
+                repaint_live_overlay(
+                    current_workspace,
+                    surface_state,
+                    redraw_state,
+                    args,
+                    active_overlay.as_ref(),
+                );
+                return Ok(LiveKeyHandling::Handled);
+            }
+            StdinKey::Down | StdinKey::Tab => {
+                if let Some(overlay) = active_overlay.as_mut() {
+                    tui::move_overlay_selection(overlay, 1);
+                }
+                repaint_live_overlay(
+                    current_workspace,
+                    surface_state,
+                    redraw_state,
+                    args,
+                    active_overlay.as_ref(),
+                );
+                return Ok(LiveKeyHandling::Handled);
+            }
+            StdinKey::Enter => {
+                if let Some(action) = active_overlay
+                    .as_ref()
+                    .and_then(tui::selected_overlay_action)
+                {
+                    *active_overlay = None;
+                    *active_menu_index = None;
+                    handle_live_overlay_action(
+                        action,
+                        stream,
+                        client_sequence,
+                        attached_pane_id,
+                        current_workspace,
+                        surface_state,
+                        client_state,
+                        host_mouse_modes,
+                        speculative_echo,
+                        client_inventory,
+                        recorder,
+                        socket_scope,
+                        options,
+                        setup_read_timeout,
+                        live_socket_read_timeout,
+                        redraw_state,
+                        args,
+                        use_styled,
+                    )?;
+                }
+                return Ok(LiveKeyHandling::Handled);
+            }
+            _ => return Ok(LiveKeyHandling::Forward(key.bytes)),
+        }
+    }
+
+    if active_menu_index.is_some() {
+        match key.key {
+            StdinKey::Left | StdinKey::BackTab => {
+                cycle_live_menu(active_menu_index, -1);
+            }
+            StdinKey::Right | StdinKey::Tab => {
+                cycle_live_menu(active_menu_index, 1);
+            }
+            StdinKey::Down | StdinKey::Enter => {}
+            _ => return Ok(LiveKeyHandling::Forward(key.bytes)),
+        }
+        let action = tui::MENU_ACTIONS[active_menu_index.unwrap_or(0)];
+        open_live_menu_overlay(
+            action,
+            active_menu_index,
+            active_overlay,
+            stream,
+            client_sequence,
+            attached_pane_id,
+            current_workspace,
+            surface_state,
+            client_state,
+            host_mouse_modes,
+            speculative_echo,
+            client_inventory,
+            recorder,
+            socket_scope,
+            options,
+            setup_read_timeout,
+            live_socket_read_timeout,
+            redraw_state,
+            args,
+            use_styled,
+        )?;
+        return Ok(LiveKeyHandling::Handled);
+    }
+
+    Ok(LiveKeyHandling::Forward(key.bytes))
+}
+
+fn menu_index(action: tui::MenuAction) -> Option<usize> {
+    tui::MENU_ACTIONS
+        .iter()
+        .position(|candidate| *candidate == action)
+}
+
+fn cycle_live_menu(active_menu_index: &mut Option<usize>, delta: i32) {
+    let current = active_menu_index.unwrap_or(0);
+    let next = (current as i32 + delta).rem_euclid(tui::MENU_ACTIONS.len() as i32) as usize;
+    *active_menu_index = Some(next);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_live_menu_overlay(
+    action: tui::MenuAction,
+    active_menu_index: &mut Option<usize>,
+    active_overlay: &mut Option<tui::TuiOverlay>,
+    stream: &mut UnixStream,
+    client_sequence: &mut local::ClientFrameSequence,
+    attached_pane_id: &mut String,
+    current_workspace: &mut local::WorkspaceSummary,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &local::ClientAttachState,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    options: &local::AttachOptions,
+    setup_read_timeout: Duration,
+    live_socket_read_timeout: Duration,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+    use_styled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if action == tui::MenuAction::NewSession {
+        *active_overlay = None;
+        *active_menu_index = None;
+        let workspace = run_live_new_session_menu_command(args)?;
+        *current_workspace = workspace;
+        *attached_pane_id = current_workspace.pane_id.clone();
+        switch_live_surface_to_workspace_pane(
+            current_workspace,
+            surface_state,
+            client_state,
+            host_mouse_modes.as_mut(),
+            use_styled,
+        )?;
+        repaint_live_overlay(current_workspace, surface_state, redraw_state, args, None);
+        return Ok(());
+    }
+
+    let session_inventory = if action == tui::MenuAction::Sessions {
+        Some(fetch_session_inventory(args)?)
+    } else {
+        None
+    };
+    *active_overlay = Some(menu_overlay_for_action_with_session_inventory(
+        action,
+        current_workspace,
+        surface_state,
+        session_inventory.as_ref(),
+    ));
+    if let Some(overlay) = active_overlay.as_mut() {
+        overlay.selected = tui::selectable_overlay_index(overlay);
+    }
+    repaint_live_overlay(
+        current_workspace,
+        surface_state,
+        redraw_state,
+        args,
+        active_overlay.as_ref(),
+    );
+    let _ = (
+        stream,
+        client_sequence,
+        speculative_echo,
+        client_inventory,
+        recorder,
+        socket_scope,
+        options,
+        setup_read_timeout,
+        live_socket_read_timeout,
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_live_overlay_action(
+    action: tui::OverlayAction,
+    stream: &mut UnixStream,
+    client_sequence: &mut local::ClientFrameSequence,
+    attached_pane_id: &mut String,
+    current_workspace: &mut local::WorkspaceSummary,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &mut local::ClientAttachState,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    options: &local::AttachOptions,
+    setup_read_timeout: Duration,
+    live_socket_read_timeout: Duration,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+    use_styled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        tui::OverlayAction::SwitchTab(tab_id) => {
+            let workspace = run_live_tab_switch_menu_command(args, &tab_id)?;
+            *current_workspace = workspace;
+            *attached_pane_id = current_workspace.pane_id.clone();
+            switch_live_surface_to_workspace_pane(
+                current_workspace,
+                surface_state,
+                client_state,
+                host_mouse_modes.as_mut(),
+                use_styled,
+            )?;
+            repaint_live_overlay(current_workspace, surface_state, redraw_state, args, None);
+        }
+        tui::OverlayAction::SwitchSession(session_id) => {
+            if session_id != current_workspace.session_id {
+                let switched = switch_live_session(
+                    args,
+                    options,
+                    client_state,
+                    speculative_echo,
+                    host_mouse_modes,
+                    client_inventory,
+                    recorder,
+                    socket_scope,
+                    &session_id,
+                    setup_read_timeout,
+                    live_socket_read_timeout,
+                    redraw_state,
+                    use_styled,
+                )?;
+                *stream = switched.stream;
+                *client_sequence = switched.client_sequence;
+                *attached_pane_id = switched.attached_pane_id;
+                *current_workspace = switched.workspace;
+                *surface_state = switched.surface_state;
+            }
+        }
+        tui::OverlayAction::FocusPane(pane_id) => {
+            let _ = focus_live_client_pane(
+                &pane_id,
+                attached_pane_id,
+                current_workspace,
+                surface_state,
+                client_state,
+                host_mouse_modes.as_mut(),
+                redraw_state.as_mut(),
+                args,
+                use_styled,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn repaint_live_overlay(
+    current_workspace: &local::WorkspaceSummary,
+    surface_state: &LiveSurfaceState,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+    active_overlay: Option<&tui::TuiOverlay>,
+) {
+    print_live_surface_with_overlay(
+        current_workspace,
+        &surface_state.current_surface_metadata,
+        &surface_state.current_surface_text,
+        args.redraw,
+        redraw_state.as_mut(),
+        Some(&surface_state.current_pane_surfaces),
+        Some(&surface_state.current_pane_surface_summaries),
+        active_overlay,
+    );
+}
+
+fn live_mouse_dispatch_for_workspace(
+    mouse: SgrMouseInput,
+    workspace: &local::WorkspaceSummary,
+    active_surface_text: &str,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_modes: Option<&BTreeMap<String, local::TerminalModeSummary>>,
+    active_modes: local::TerminalModeSummary,
+    overlay: Option<&tui::TuiOverlay>,
+) -> Option<LiveMouseDispatch> {
+    let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
+    live_mouse_dispatch_for_workspace_size(
+        mouse,
+        workspace,
+        active_surface_text,
+        pane_surfaces,
+        pane_modes,
+        active_modes,
+        overlay,
+        cols.max(1).min(u16::MAX as u32) as u16,
+        rows.max(1).min(u16::MAX as u32) as u16,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn live_mouse_dispatch_for_workspace_size(
+    mouse: SgrMouseInput,
+    workspace: &local::WorkspaceSummary,
+    active_surface_text: &str,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_modes: Option<&BTreeMap<String, local::TerminalModeSummary>>,
+    active_modes: local::TerminalModeSummary,
+    overlay: Option<&tui::TuiOverlay>,
+    cols: u16,
+    rows: u16,
+) -> Option<LiveMouseDispatch> {
+    let frame_rows = rows.saturating_sub(1).max(1);
+    let frame = tui::render_workspace_frame(
+        tui::WorkspaceFrameInput {
+            workspace,
+            active_surface_text,
+            pane_surfaces,
+            pane_surface_summaries: None,
+            pane_chrome: None,
+            overlay,
+        },
+        cols.max(1),
+        frame_rows,
+    );
+    let x = u16::try_from(mouse.col).ok()?;
+    let y = u16::try_from(mouse.row).ok()?;
+    let hit = tui::hit_test_region(&frame.hits, x, y)?;
+
+    match &hit.target {
+        tui::HitTarget::PaneContent(pane_id) => {
+            let target_modes = pane_modes
+                .and_then(|modes| modes.get(pane_id))
+                .copied()
+                .unwrap_or_else(|| {
+                    if pane_id == &workspace.pane_id {
+                        active_modes
+                    } else {
+                        local::TerminalModeSummary::default()
+                    }
+                });
+            if target_modes.mouse_tracking {
+                return Some(LiveMouseDispatch::PaneMouse(
+                    pane_id.clone(),
+                    local::AttachMouseInput {
+                        row: u32::from(y.saturating_sub(hit.rect.y)),
+                        col: u32::from(x.saturating_sub(hit.rect.x)),
+                        pixel_x: None,
+                        pixel_y: None,
+                        button: mouse.button,
+                        action: mouse.action,
+                        modifiers: mouse.modifiers,
+                    },
+                ));
+            }
+            if let Some(direction) = sgr_mouse_scroll_direction(mouse) {
+                return Some(LiveMouseDispatch::PaneScroll {
+                    pane_id: pane_id.clone(),
+                    direction,
+                    visible_rows: hit.rect.height.max(1),
+                });
+            }
+            if pane_id != &workspace.pane_id && sgr_mouse_is_primary_press(mouse) {
+                return Some(LiveMouseDispatch::FocusPane(pane_id.clone()));
+            }
+            None
+        }
+        tui::HitTarget::Pane(pane_id) | tui::HitTarget::WindowTreePane(pane_id)
+            if sgr_mouse_is_primary_press(mouse) =>
+        {
+            Some(LiveMouseDispatch::FocusPane(pane_id.clone()))
+        }
+        tui::HitTarget::Menu(action) if sgr_mouse_is_primary_press(mouse) => {
+            Some(LiveMouseDispatch::Menu(*action))
+        }
+        tui::HitTarget::Overlay(action) if sgr_mouse_is_primary_press(mouse) => {
+            Some(LiveMouseDispatch::Overlay(action.clone()))
+        }
+        tui::HitTarget::Background if sgr_mouse_is_primary_press(mouse) => {
+            Some(LiveMouseDispatch::ClearOverlay)
+        }
+        _ => None,
+    }
+}
+
+fn sgr_mouse_is_primary_press(mouse: SgrMouseInput) -> bool {
+    mouse.action == protocol::MouseAction::Press && mouse.button == protocol::MouseButton::Left
+}
+
+fn sgr_mouse_scroll_direction(mouse: SgrMouseInput) -> Option<LiveScrollDirection> {
+    if mouse.action != protocol::MouseAction::Press {
+        return None;
+    }
+    match mouse.button {
+        protocol::MouseButton::WheelUp => Some(LiveScrollDirection::Up),
+        protocol::MouseButton::WheelDown => Some(LiveScrollDirection::Down),
+        _ => None,
+    }
+}
+
+fn menu_overlay_for_action(
+    action: tui::MenuAction,
+    workspace: &local::WorkspaceSummary,
+    surface_state: &LiveSurfaceState,
+) -> tui::TuiOverlay {
+    menu_overlay_for_action_with_session_inventory(action, workspace, surface_state, None)
+}
+
+fn menu_overlay_for_action_with_session_inventory(
+    action: tui::MenuAction,
+    workspace: &local::WorkspaceSummary,
+    surface_state: &LiveSurfaceState,
+    session_inventory: Option<&local::SessionInventorySummary>,
+) -> tui::TuiOverlay {
+    let (title, lines) = match action {
+        tui::MenuAction::Sessions => (
+            "sessions".to_owned(),
+            session_overlay_lines(workspace, session_inventory),
+        ),
+        tui::MenuAction::NewSession => (
+            "new session".to_owned(),
+            vec![overlay_text("new named session")],
+        ),
+        tui::MenuAction::Windows => {
+            let mut lines = vec![overlay_text(format!("tab {}", workspace.tab_id))];
+            for tab in workspace_tabs(workspace) {
+                let marker = if tab.tab_id == workspace.tab_id {
+                    "*"
+                } else {
+                    " "
+                };
+                lines.push(tui::TuiOverlayLine {
+                    text: format!("{marker} {} {}", tab.tab_id, tab.title),
+                    action: (tab.tab_id != workspace.tab_id)
+                        .then(|| tui::OverlayAction::SwitchTab(tab.tab_id)),
+                });
+            }
+            for pane in workspace_panes(workspace) {
+                let marker = if pane.pane_id == workspace.pane_id {
+                    "*"
+                } else {
+                    " "
+                };
+                lines.push(tui::TuiOverlayLine {
+                    text: format!("{marker} {} {}x{}", pane.pane_id, pane.cols, pane.rows),
+                    action: (pane.pane_id != workspace.pane_id)
+                        .then(|| tui::OverlayAction::FocusPane(pane.pane_id)),
+                });
+            }
+            ("windows".to_owned(), lines)
+        }
+        tui::MenuAction::Clipboard => {
+            let paste_mode = if surface_state.current_modes.bracketed_paste {
+                "pane bracketed paste enabled"
+            } else {
+                "nmux paste forwarding enabled"
+            };
+            ("clipboard".to_owned(), vec![overlay_text(paste_mode)])
+        }
+    };
+    let selected = lines.iter().position(|line| line.action.is_some());
+    tui::TuiOverlay {
+        title,
+        lines,
+        selected,
+    }
+}
+
+fn overlay_text(text: impl Into<String>) -> tui::TuiOverlayLine {
+    tui::TuiOverlayLine {
+        text: text.into(),
+        action: None,
+    }
+}
+
+fn session_overlay_lines(
+    workspace: &local::WorkspaceSummary,
+    session_inventory: Option<&local::SessionInventorySummary>,
+) -> Vec<tui::TuiOverlayLine> {
+    let Some(inventory) = session_inventory else {
+        return vec![overlay_text(format!("session {}", workspace.session_id))];
+    };
+    let mut lines = Vec::new();
+    for session in &inventory.sessions {
+        let marker = if session.session_id == workspace.session_id {
+            "*"
+        } else {
+            " "
+        };
+        lines.push(tui::TuiOverlayLine {
+            text: format!("{marker} {} {}", session.session_id, session.title),
+            action: (session.session_id != workspace.session_id)
+                .then(|| tui::OverlayAction::SwitchSession(session.session_id.clone())),
+        });
+    }
+    lines
+}
+
+fn run_live_new_session_menu_command(
+    args: &Args,
+) -> Result<local::WorkspaceSummary, Box<dyn std::error::Error>> {
+    let session_id = live_menu_new_session_id();
+    let session_command = local::ControlCommandSummary {
+        actor_id: args.actor_id.clone(),
+        command_seq: 1,
+        kind: protocol::ControlCommandKind::SessionNew,
+        pane_id: None,
+        tab_id: None,
+        split_axis: protocol::SplitAxis::None,
+        title: Some("new session".to_owned()),
+        session_id: Some(session_id),
+    };
+    let stream = connect_to_daemon(args)?;
+    match local::run_control_command_on_stream(stream, session_command) {
+        Ok(workspace) => return Ok(workspace),
+        Err(err) if live_session_new_should_fallback(err.as_ref()) => {}
+        Err(err) => return Err(err),
+    }
+
+    run_live_new_tab_menu_command(args)
+}
+
+fn run_live_new_tab_menu_command(
+    args: &Args,
+) -> Result<local::WorkspaceSummary, Box<dyn std::error::Error>> {
+    let command = local::ControlCommandSummary {
+        actor_id: args.actor_id.clone(),
+        command_seq: 1,
+        kind: protocol::ControlCommandKind::TabNew,
+        pane_id: None,
+        tab_id: None,
+        split_axis: protocol::SplitAxis::None,
+        title: Some("new session".to_owned()),
+        session_id: None,
+    };
+    let stream = connect_to_daemon(args)?;
+    local::run_control_command_on_stream(stream, command)
+}
+
+fn live_session_new_should_fallback(error: &(dyn std::error::Error + 'static)) -> bool {
+    const SINGLE_SESSION_REJECTION: &str = "session new requires daemon registry routing";
+    if error
+        .downcast_ref::<local::ServerError>()
+        .is_some_and(|error| error.error.message.contains(SINGLE_SESSION_REJECTION))
+    {
+        return true;
+    }
+    error.to_string().contains(SINGLE_SESSION_REJECTION)
+}
+
+fn live_menu_new_session_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("session-{millis}")
+}
+
+fn run_live_tab_switch_menu_command(
+    args: &Args,
+    tab_id: &str,
+) -> Result<local::WorkspaceSummary, Box<dyn std::error::Error>> {
+    let command = local::ControlCommandSummary {
+        actor_id: args.actor_id.clone(),
+        command_seq: 1,
+        kind: protocol::ControlCommandKind::TabSwitch,
+        pane_id: None,
+        tab_id: Some(tab_id.to_owned()),
+        split_axis: protocol::SplitAxis::None,
+        title: None,
+        session_id: None,
+    };
+    let stream = connect_to_daemon(args)?;
+    local::run_control_command_on_stream(stream, command)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn switch_live_session(
+    args: &Args,
+    options: &local::AttachOptions,
+    client_state: &mut local::ClientAttachState,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    session_id: &str,
+    setup_read_timeout: Duration,
+    live_socket_read_timeout: Duration,
+    redraw_state: &mut Option<RedrawState>,
+    use_styled: bool,
+) -> Result<LiveSessionSwitch, Box<dyn std::error::Error>> {
+    let mut stream = connect_to_daemon(args)?;
+    stream.set_read_timeout(Some(setup_read_timeout))?;
+    let mut switch_options = options.clone();
+    switch_options.target_session_id = Some(session_id.to_owned());
+    switch_options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
+    switch_options.known_scrollback_versions =
+        client_state.known_scrollback_versions_for_scope(socket_scope);
+    local::write_attach_request_for_session(
+        &mut stream,
+        &switch_options.request,
+        Some(session_id),
+    )?;
+    let snapshot = local::attach_from_stream(&mut stream)?;
+    let attached_pane_id = snapshot.status.pane_id.clone();
+    client_state.apply_scope(socket_scope);
+    let mut rendered = client_state.render_attach(snapshot)?;
+    if use_styled && rendered.surface_text.is_some() {
+        rendered.surface_text = client_state.cached_surface_text_styled(&attached_pane_id, true);
+    }
+    if rendered.surface_text.is_none() {
+        rendered.surface_text =
+            client_state.cached_surface_text_styled(&attached_pane_id, use_styled);
+        if let Some(surface) = client_state.cached_surface_summary(&attached_pane_id) {
+            rendered.surface_kind = surface.surface_kind;
+            rendered.cursor = surface.cursor;
+            rendered.modes = surface.modes;
+        }
+        rendered.surface_metadata = client_state
+            .cached_surface_metadata(&attached_pane_id)
+            .unwrap_or_default();
+    }
+
+    let workspace = rendered.workspace.clone();
+    let initial_surface_text = rendered
+        .surface_text
+        .clone()
+        .unwrap_or_else(|| workspace.display_line());
+    let mut pane_surfaces = BTreeMap::new();
+    pane_surfaces.insert(attached_pane_id.clone(), initial_surface_text.clone());
+    seed_cached_pane_surfaces(&mut pane_surfaces, &workspace, client_state, use_styled);
+    let mut pane_surface_summaries = BTreeMap::new();
+    pane_surface_summaries.insert(attached_pane_id.clone(), rendered.surface.clone());
+    seed_cached_pane_surface_summaries(&mut pane_surface_summaries, &workspace, client_state);
+    let mut pane_modes = BTreeMap::new();
+    pane_modes.insert(attached_pane_id.clone(), rendered.modes);
+    seed_cached_pane_modes(&mut pane_modes, &workspace, client_state);
+    let mut surface_state = LiveSurfaceState {
+        current_surface_metadata: rendered.surface_metadata.clone(),
+        current_modes: rendered.modes,
+        current_surface_text: initial_surface_text,
+        current_pane_surfaces: pane_surfaces,
+        current_pane_surface_summaries: pane_surface_summaries,
+        current_pane_modes: pane_modes,
+        scrollback_views: BTreeMap::new(),
+    };
+
+    let mut client_sequence = local::ClientFrameSequence::default();
+    let (scrollback, pending_surface_updates, pending_live_reads) = initial_live_scrollback(
+        args,
+        &mut stream,
+        &mut client_sequence,
+        &attached_pane_id,
+        client_state,
+        socket_scope,
+    )?;
+    for pending in pending_live_reads {
+        match pending {
+            local::LiveSurfaceRead::ClientInventorySnapshot(snapshot) => {
+                client_inventory.apply_snapshot(snapshot);
+            }
+            local::LiveSurfaceRead::ClientInventoryPatch(patch) => {
+                let _ = client_inventory.apply_patch(patch);
+            }
+            _ => {}
+        }
+    }
+    if let Some(scrollback) = scrollback.as_ref() {
+        client_state.cache_scrollback_chunk(scrollback);
+    }
+    if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+        mouse_modes.sync(surface_state.current_modes)?;
+    }
+    if args.output_json {
+        let mut rendered = rendered;
+        rendered.scrollback = scrollback;
+        let event = format_live_attach_json(&rendered);
+        recorder.record(&event)?;
+        println!("{event}");
+    } else {
+        print_live_rendered(
+            rendered,
+            args.redraw,
+            scrollback,
+            redraw_state.as_mut(),
+            Some(&surface_state.current_pane_surfaces),
+            Some(&surface_state.current_pane_surface_summaries),
+        );
+    }
+    recorder.record(&format_live_workspace_json(&workspace))?;
+    for update in pending_surface_updates {
+        process_surface_update(
+            &update,
+            &mut surface_state,
+            speculative_echo,
+            client_state,
+            host_mouse_modes,
+            redraw_state,
+            recorder,
+            &workspace,
+            args,
+            use_styled,
+        )?;
+    }
+    stream.set_read_timeout(Some(live_socket_read_timeout))?;
+    Ok(LiveSessionSwitch {
+        stream,
+        client_sequence,
+        attached_pane_id,
+        workspace,
+        surface_state,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scroll_live_pane_view(
+    stream: &mut UnixStream,
+    sequence: &mut local::ClientFrameSequence,
+    pane_id: &str,
+    direction: LiveScrollDirection,
+    visible_rows: u16,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &mut local::ClientAttachState,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    workspace: &local::WorkspaceSummary,
+    args: &Args,
+    mut redraw_state: Option<&mut RedrawState>,
+    use_styled: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if args.output_json || !args.redraw {
+        return Ok(false);
+    }
+    let line_count = u32::from(visible_rows.max(1));
+    let existing = surface_state.scrollback_views.get(pane_id).copied();
+    let (start_line, tail_count) = match (direction, existing) {
+        (LiveScrollDirection::Up, None) => (1, Some(line_count)),
+        (LiveScrollDirection::Up, Some(view)) if view.start_line > 1 => (view.start_line - 1, None),
+        (LiveScrollDirection::Up, Some(_)) => return Ok(false),
+        (LiveScrollDirection::Down, None) => return Ok(false),
+        (LiveScrollDirection::Down, Some(view)) => {
+            let max_start = scrollback_max_start(view.total_lines, view.line_count);
+            if view.start_line >= max_start {
+                restore_live_pane_surface(
+                    pane_id,
+                    surface_state,
+                    client_state,
+                    workspace,
+                    use_styled,
+                );
+                print_live_surface(
+                    workspace,
+                    &surface_state.current_surface_metadata,
+                    &surface_state.current_surface_text,
+                    args.redraw,
+                    redraw_state.as_deref_mut(),
+                    Some(&surface_state.current_pane_surfaces),
+                    Some(&surface_state.current_pane_surface_summaries),
+                );
+                return Ok(true);
+            }
+            (view.start_line + 1, None)
+        }
+    };
+
+    let mut pending_updates = Vec::new();
+    let mut pending_live = Vec::new();
+    let scrollback = local::fetch_scrollback_chunk_with_selection_and_pending_live(
+        stream,
+        sequence,
+        pane_id,
+        start_line,
+        line_count,
+        tail_count,
+        |range_start, range_count| {
+            client_state
+                .cached_scrollback_version_for_scope(
+                    socket_scope,
+                    pane_id,
+                    range_start,
+                    range_count,
+                )
+                .unwrap_or(0)
+        },
+        Some(&mut pending_updates),
+        Some(&mut pending_live),
+    )?;
+    for pending in pending_live {
+        match pending {
+            local::LiveSurfaceRead::ClientInventorySnapshot(snapshot) => {
+                client_inventory.apply_snapshot(snapshot);
+            }
+            local::LiveSurfaceRead::ClientInventoryPatch(patch) => {
+                let _ = client_inventory.apply_patch(patch);
+            }
+            _ => {}
+        }
+    }
+    if let Some(state) = redraw_state.as_deref_mut() {
+        state.record_client_count(client_inventory.count());
+    }
+    for update in pending_updates {
+        speculative_echo.reconcile_update(&update);
+        let update_metadata = local::TerminalMetadataSummary {
+            title: update.title.clone(),
+            working_directory: update.working_directory.clone(),
+        };
+        let update_surface_text = client_state.render_surface_update_styled(&update, use_styled)?;
+        surface_state
+            .current_pane_surfaces
+            .insert(update.pane_id.clone(), update_surface_text.clone());
+        if let Some(summary) = client_state.cached_rendered_surface_summary(&update.pane_id) {
+            surface_state
+                .current_pane_surface_summaries
+                .insert(update.pane_id.clone(), summary);
+        }
+        surface_state
+            .current_pane_modes
+            .insert(update.pane_id.clone(), update.modes);
+        surface_state.scrollback_views.remove(&update.pane_id);
+        if update.pane_id == workspace.pane_id {
+            surface_state.current_surface_metadata = update_metadata.clone();
+            surface_state.current_modes = update.modes;
+            if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+                mouse_modes.sync(surface_state.current_modes)?;
+            }
+            surface_state.current_surface_text = update_surface_text.clone();
+        } else if let Some(active_text) =
+            surface_state.current_pane_surfaces.get(&workspace.pane_id)
+        {
+            surface_state.current_surface_text = active_text.clone();
+        }
+        recorder.record(&format_live_surface_update_json(
+            workspace,
+            &update_metadata,
+            &update_surface_text,
+            &update,
+        ))?;
+    }
+    if scrollback.lines.is_empty() {
+        return Ok(false);
+    }
+    client_state.cache_scrollback_chunk(&scrollback);
+    let rendered = render_scrollback_view_text(&scrollback);
+    let rendered_summary = render_scrollback_view_summary(&scrollback);
+    surface_state
+        .current_pane_surfaces
+        .insert(pane_id.to_owned(), rendered.clone());
+    surface_state
+        .current_pane_surface_summaries
+        .insert(pane_id.to_owned(), rendered_summary);
+    if pane_id == workspace.pane_id {
+        surface_state.current_surface_text = rendered;
+    }
+    surface_state.scrollback_views.insert(
+        pane_id.to_owned(),
+        LiveScrollbackView {
+            start_line: scrollback.start_line,
+            line_count: u32::try_from(scrollback.lines.len()).unwrap_or(u32::MAX),
+            total_lines: scrollback.total_lines,
+        },
+    );
+    print_live_surface(
+        workspace,
+        &surface_state.current_surface_metadata,
+        &surface_state.current_surface_text,
+        args.redraw,
+        redraw_state.as_deref_mut(),
+        Some(&surface_state.current_pane_surfaces),
+        Some(&surface_state.current_pane_surface_summaries),
+    );
+    Ok(true)
+}
+
+fn scrollback_max_start(total_lines: u64, line_count: u32) -> u64 {
+    let line_count = u64::from(line_count.max(1));
+    if total_lines > line_count {
+        total_lines - line_count + 1
+    } else {
+        1
+    }
+}
+
+fn restore_live_pane_surface(
+    pane_id: &str,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &local::ClientAttachState,
+    workspace: &local::WorkspaceSummary,
+    use_styled: bool,
+) {
+    surface_state.scrollback_views.remove(pane_id);
+    let surface_text = client_state
+        .cached_surface_text_styled(pane_id, use_styled)
+        .unwrap_or_else(|| "(surface not cached)".to_owned());
+    surface_state
+        .current_pane_surfaces
+        .insert(pane_id.to_owned(), surface_text.clone());
+    if let Some(summary) = client_state.cached_rendered_surface_summary(pane_id) {
+        surface_state
+            .current_pane_surface_summaries
+            .insert(pane_id.to_owned(), summary);
+    }
+    if pane_id == workspace.pane_id {
+        surface_state.current_surface_text = surface_text;
+    }
+}
+
+fn render_scrollback_view_text(scrollback: &local::ScrollbackChunkSummary) -> String {
+    scrollback
+        .lines
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_scrollback_view_summary(
+    scrollback: &local::ScrollbackChunkSummary,
+) -> local::RenderedSurfaceSummary {
+    let row_updates = scrollback
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| local::SurfaceRowUpdate {
+            row: u32::try_from(index).unwrap_or(u32::MAX),
+            text: line.text.clone(),
+            runs: line.runs.clone(),
+            dirty_hash: line.dirty_hash,
+            row_state_hash: line.row_state_hash,
+            semantic_prompt: line.semantic_prompt,
+            dirty: line.dirty,
+            kitty_virtual_placeholder: line.kitty_virtual_placeholder,
+        })
+        .collect();
+    let cols = scrollback
+        .lines
+        .iter()
+        .map(|line| line.text.chars().count())
+        .max()
+        .unwrap_or(0);
+
+    local::RenderedSurfaceSummary {
+        pane_id: scrollback.pane_id.clone(),
+        version: scrollback.scrollback_version,
+        cols: u32::try_from(cols).unwrap_or(u32::MAX),
+        rows: u32::try_from(scrollback.lines.len()).unwrap_or(u32::MAX),
+        colors: scrollback.colors.clone(),
+        styles: scrollback.styles.clone(),
+        hyperlinks: scrollback.hyperlinks.clone(),
+        row_updates,
+    }
+}
+
+fn switch_live_surface_to_workspace_pane(
+    workspace: &local::WorkspaceSummary,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &local::ClientAttachState,
+    host_mouse_modes: Option<&mut HostMouseModeMirror>,
+    use_styled: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let pane_id = &workspace.pane_id;
+    let surface_text = client_state
+        .cached_surface_text_styled(pane_id, use_styled)
+        .unwrap_or_else(|| "(surface not cached)".to_owned());
+    surface_state
+        .current_pane_surfaces
+        .insert(pane_id.clone(), surface_text.clone());
+    if let Some(summary) = client_state.cached_rendered_surface_summary(pane_id) {
+        surface_state
+            .current_pane_surface_summaries
+            .insert(pane_id.clone(), summary);
+    }
+    surface_state.scrollback_views.remove(pane_id);
+    surface_state.current_surface_text = surface_text;
+    surface_state.current_surface_metadata = client_state
+        .cached_surface_metadata(pane_id)
+        .unwrap_or_default();
+    if let Some(surface) = client_state.cached_surface_summary(pane_id) {
+        surface_state.current_modes = surface.modes;
+        surface_state
+            .current_pane_modes
+            .insert(pane_id.clone(), surface.modes);
+    } else {
+        surface_state.current_modes = local::TerminalModeSummary::default();
+        surface_state
+            .current_pane_modes
+            .insert(pane_id.clone(), local::TerminalModeSummary::default());
+    }
+    if let Some(mouse_modes) = host_mouse_modes {
+        mouse_modes.sync(surface_state.current_modes)?;
+    }
+    Ok(())
+}
+
+fn focus_live_client_pane(
+    pane_id: &str,
+    attached_pane_id: &mut String,
+    workspace: &mut local::WorkspaceSummary,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &local::ClientAttachState,
+    host_mouse_modes: Option<&mut HostMouseModeMirror>,
+    redraw_state: Option<&mut RedrawState>,
+    args: &Args,
+    use_styled: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if pane_id == attached_pane_id {
+        return Ok(false);
+    }
+    if !workspace_panes(workspace)
+        .iter()
+        .any(|pane| pane.pane_id == pane_id)
+    {
+        return Ok(false);
+    }
+
+    *attached_pane_id = pane_id.to_owned();
+    workspace.pane_id = pane_id.to_owned();
+    switch_live_surface_to_workspace_pane(
+        workspace,
+        surface_state,
+        client_state,
+        host_mouse_modes,
+        use_styled,
+    )?;
+
+    if args.output_json {
+        return Ok(false);
+    }
+    if args.redraw {
+        print_live_surface(
+            workspace,
+            &surface_state.current_surface_metadata,
+            &surface_state.current_surface_text,
+            args.redraw,
+            redraw_state,
+            Some(&surface_state.current_pane_surfaces),
+            Some(&surface_state.current_pane_surface_summaries),
+        );
+    } else {
+        println!("{}", workspace.display_line());
+    }
+    Ok(true)
+}
+
+fn preserve_live_client_focus(workspace: &mut local::WorkspaceSummary, pane_id: &str) {
+    if workspace_panes(workspace)
+        .iter()
+        .any(|pane| pane.pane_id == pane_id)
+    {
+        workspace.pane_id = pane_id.to_owned();
+    }
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 struct RawTerminalGuard;
@@ -2386,7 +4347,7 @@ fn host_mouse_mode_disable_sequence() -> &'static str {
 
 fn host_mouse_mode_enable_sequence(modes: local::TerminalModeSummary) -> &'static str {
     if !modes.mouse_tracking {
-        return "";
+        return "\x1b[?1000h\x1b[?1006h";
     }
     match (modes.mouse_tracking_mode, modes.mouse_format) {
         (protocol::MouseTrackingMode::X10, protocol::MouseFormat::Sgr) => "\x1b[?1000h\x1b[?1006h",
@@ -2549,12 +4510,7 @@ fn terminal_size_unavailable(err: &io::Error) -> bool {
     matches!(
         err.raw_os_error(),
         Some(
-            libc::ENOTTY
-                | libc::EBADF
-                | libc::EINVAL
-                | libc::EAGAIN
-                | libc::ENODEV
-                | libc::ENOENT
+            libc::ENOTTY | libc::EBADF | libc::EINVAL | libc::EAGAIN | libc::ENODEV | libc::ENOENT
         )
     )
 }
@@ -2628,6 +4584,7 @@ fn attach_once(
     client_state: &mut local::ClientAttachState,
 ) -> Result<local::RenderedAttach, Box<dyn std::error::Error>> {
     let mut options = local::AttachOptions {
+        target_session_id: args.target_session_id.clone(),
         input_text: args.input_text.clone(),
         key_name: args.key_name.clone(),
         key_names: args.key_names.clone(),
@@ -2743,23 +4700,42 @@ fn print_live_rendered(
     initial_scrollback: Option<local::ScrollbackChunkSummary>,
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
 ) {
     if redraw {
         let surface_text = rendered
             .surface_text
             .unwrap_or_else(|| rendered.workspace.display_line());
-        let has_status_bar = redraw_state.is_some();
-        let redraw_text = redraw_text_with_context(
-            &rendered.workspace,
-            &rendered.surface_metadata,
-            &surface_text,
-            initial_scrollback,
-            has_status_bar,
-            pane_surfaces,
-        );
         if let Some(state) = redraw_state {
+            if state.render_workspace(
+                &rendered.workspace,
+                &surface_text,
+                pane_surfaces,
+                pane_surface_summaries,
+                None,
+            ) {
+                return;
+            }
+            let redraw_text = redraw_text_with_context(
+                &rendered.workspace,
+                &rendered.surface_metadata,
+                &surface_text,
+                initial_scrollback,
+                false,
+                pane_surfaces,
+                None,
+            );
             state.render_initial(&rendered.workspace, &redraw_text);
         } else {
+            let redraw_text = redraw_text_with_context(
+                &rendered.workspace,
+                &rendered.surface_metadata,
+                &surface_text,
+                initial_scrollback,
+                false,
+                pane_surfaces,
+                None,
+            );
             redraw_terminal(&redraw_text);
         }
         return;
@@ -2778,20 +4754,62 @@ fn print_live_surface(
     redraw: bool,
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+) {
+    print_live_surface_with_overlay(
+        workspace,
+        metadata,
+        surface_text,
+        redraw,
+        redraw_state,
+        pane_surfaces,
+        pane_surface_summaries,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn print_live_surface_with_overlay(
+    workspace: &local::WorkspaceSummary,
+    metadata: &local::TerminalMetadataSummary,
+    surface_text: &str,
+    redraw: bool,
+    redraw_state: Option<&mut RedrawState>,
+    pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+    overlay: Option<&tui::TuiOverlay>,
 ) {
     if redraw {
-        let has_status_bar = redraw_state.is_some();
-        let text = redraw_text_with_context(
-            workspace,
-            metadata,
-            surface_text,
-            None,
-            has_status_bar,
-            pane_surfaces,
-        );
         if let Some(state) = redraw_state {
+            if state.render_workspace(
+                workspace,
+                surface_text,
+                pane_surfaces,
+                pane_surface_summaries,
+                overlay,
+            ) {
+                return;
+            }
+            let text = redraw_text_with_context(
+                workspace,
+                metadata,
+                surface_text,
+                None,
+                false,
+                pane_surfaces,
+                overlay,
+            );
             state.render_diff(workspace, &text);
         } else {
+            let text = redraw_text_with_context(
+                workspace,
+                metadata,
+                surface_text,
+                None,
+                false,
+                pane_surfaces,
+                overlay,
+            );
             redraw_terminal(&text);
         }
     } else {
@@ -2810,6 +4828,7 @@ fn print_live_update(
     redraw: bool,
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
 ) {
     match live_update_print_kind(previous_metadata, metadata, update, redraw) {
         LiveUpdatePrintKind::Surface => print_live_surface(
@@ -2819,20 +4838,18 @@ fn print_live_update(
             redraw,
             redraw_state,
             pane_surfaces,
+            pane_surface_summaries,
         ),
         LiveUpdatePrintKind::Metadata => {
             if redraw {
                 if let Some(state) = redraw_state {
-                    // Re-render with new metadata via differential update.
-                    let text = redraw_text_with_context(
+                    let _ = state.render_workspace(
                         workspace,
-                        metadata,
                         surface_text,
-                        None,
-                        true,
                         pane_surfaces,
+                        pane_surface_summaries,
+                        None,
                     );
-                    state.render_diff(workspace, &text);
                 }
             } else {
                 print_terminal_metadata(metadata);
@@ -2881,8 +4898,6 @@ fn redraw_terminal(surface_text: &str) {
 /// Frame statistics for the status bar.
 #[derive(Debug, Clone, Default)]
 struct FrameStats {
-    /// Time since the previous frame was rendered.
-    frame_interval: Duration,
     /// Time spent decoding the protocol update and applying it to client state.
     decode_time: Duration,
     /// Time spent diffing rows and writing ANSI output.
@@ -2895,6 +4910,45 @@ struct FrameStats {
     rtt: Option<Duration>,
     /// Most recently observed subscribed live client count.
     client_count: Option<usize>,
+    /// Rolling FPS for frames that changed visible content.
+    rendered_fps: Option<u32>,
+    /// Whether the latest frame had no visible content changes.
+    idle: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedFps {
+    window: Duration,
+    rendered_at: VecDeque<Instant>,
+}
+
+impl Default for RenderedFps {
+    fn default() -> Self {
+        Self {
+            window: STATUS_FPS_WINDOW,
+            rendered_at: VecDeque::new(),
+        }
+    }
+}
+
+impl RenderedFps {
+    fn record(&mut self, now: Instant, rendered: bool) -> Option<u32> {
+        if rendered {
+            self.rendered_at.push_back(now);
+        }
+        while self
+            .rendered_at
+            .front()
+            .is_some_and(|rendered_at| now.duration_since(*rendered_at) > self.window)
+        {
+            self.rendered_at.pop_front();
+        }
+        if self.rendered_at.is_empty() {
+            return None;
+        }
+        let fps = (self.rendered_at.len() as u128 * 1000) / self.window.as_millis().max(1);
+        Some(fps.max(1).min(u128::from(u32::MAX)) as u32)
+    }
 }
 
 #[derive(Debug)]
@@ -2993,7 +5047,9 @@ impl ClientInventoryCache {
 
 /// Tracks displayed rows for differential rendering with a status bar.
 struct RedrawState {
-    /// Previously displayed rows (row 0 = status bar, then content rows).
+    /// Ratatui terminal compositor for interactive redraw on real TTYs.
+    terminal: Option<Terminal<CrosstermBackend<io::Stdout>>>,
+    /// Previously displayed rows (content rows, then the bottom status bar).
     previous_rows: Vec<String>,
     /// Terminal width for status bar formatting.
     terminal_cols: u32,
@@ -3009,13 +5065,14 @@ struct RedrawState {
     last_rtt: Option<Duration>,
     /// Most recently observed subscribed live client count.
     last_client_count: Option<usize>,
-    /// Local hostname, resolved once at startup.
-    hostname: String,
+    /// Rolling rate for frames that changed visible content.
+    rendered_fps: RenderedFps,
 }
 
 impl RedrawState {
     fn new() -> Self {
         Self {
+            terminal: None,
             previous_rows: Vec::new(),
             terminal_cols: 80,
             terminal_rows: 24,
@@ -3024,8 +5081,23 @@ impl RedrawState {
             pending_decode_time: Duration::ZERO,
             last_rtt: None,
             last_client_count: None,
-            hostname: resolve_short_hostname(),
+            rendered_fps: RenderedFps::default(),
         }
+    }
+
+    fn new_with_terminal() -> io::Result<Self> {
+        let mut state = Self::new();
+        let area = redraw_terminal_area();
+        state.terminal_cols = u32::from(area.width);
+        state.terminal_rows = u32::from(area.height);
+        clear_redraw_terminal()?;
+        state.terminal = Some(Terminal::with_options(
+            CrosstermBackend::new(io::stdout()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(area),
+            },
+        )?);
+        Ok(state)
     }
 
     fn update_terminal_size(&mut self) -> bool {
@@ -3052,35 +5124,145 @@ impl RedrawState {
         self.last_stats.client_count = Some(count);
     }
 
-    /// Build the full-width inverse-video status bar line.
-    fn format_status_bar(&self, workspace: &local::WorkspaceSummary) -> String {
-        let cols = self.terminal_cols as usize;
+    fn render_workspace(
+        &mut self,
+        workspace: &local::WorkspaceSummary,
+        surface_text: &str,
+        pane_surfaces: Option<&BTreeMap<String, String>>,
+        pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+        overlay: Option<&tui::TuiOverlay>,
+    ) -> bool {
+        let render_start = Instant::now();
+        let area = redraw_terminal_area();
+        let resized = self.terminal_cols != u32::from(area.width)
+            || self.terminal_rows != u32::from(area.height);
+        let workspace_height = area.height.saturating_sub(1).max(1);
+        let workspace_text = tui::render_workspace_frame(
+            tui::WorkspaceFrameInput {
+                workspace,
+                active_surface_text: surface_text,
+                pane_surfaces,
+                pane_surface_summaries,
+                pane_chrome: None,
+                overlay,
+            },
+            area.width.max(1),
+            workspace_height,
+        )
+        .text;
+        let content_rows: Vec<String> = workspace_text.lines().map(String::from).collect();
+        let previous_content_rows = self.previous_rows.len().saturating_sub(1);
+        let mut rows_changed = 0;
+        for index in 0..content_rows.len().max(previous_content_rows) {
+            let new_row = content_rows.get(index).map(String::as_str).unwrap_or("");
+            let old_row = self
+                .previous_rows
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or("");
+            if new_row != old_row {
+                rows_changed += 1;
+            }
+        }
+        let rendered_fps = self.rendered_fps.record(render_start, rows_changed > 0);
+        let render_time = render_start.elapsed();
+        self.last_stats = FrameStats {
+            decode_time: self.pending_decode_time,
+            render_time,
+            rows_changed,
+            rows_total: content_rows.len(),
+            rtt: self.last_rtt,
+            client_count: self.last_client_count,
+            rendered_fps,
+            idle: rows_changed == 0,
+        };
+        let status_text = self.format_status_text(workspace);
+        let Some(terminal) = self.terminal.as_mut() else {
+            return false;
+        };
+        if resized {
+            let _ = clear_redraw_terminal();
+            let _ = terminal.resize(area);
+            let _ = terminal.clear();
+        }
 
-        let left = format!(
-            " nmux  {}  {}x{}  {}",
-            workspace.pane_id, workspace.cols, workspace.rows, self.hostname
-        );
+        let draw_result = terminal.draw(|frame| {
+            let area = frame.area();
+            if area.width == 0 || area.height == 0 {
+                return;
+            }
+            let workspace_area = Rect::new(area.x, area.y, area.width, workspace_height);
+            tui::render_workspace_to_buffer(
+                frame.buffer_mut(),
+                workspace_area,
+                tui::WorkspaceFrameInput {
+                    workspace,
+                    active_surface_text: surface_text,
+                    pane_surfaces,
+                    pane_surface_summaries,
+                    pane_chrome: None,
+                    overlay,
+                },
+            );
+            if area.height > 1 {
+                let status_area = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
+                render_ratatui_status_bar(frame.buffer_mut(), status_area, &status_text);
+            }
+        });
+
+        let Ok(completed) = draw_result else {
+            return false;
+        };
+
+        self.terminal_cols = u32::from(completed.area.width);
+        self.terminal_rows = u32::from(completed.area.height);
+        self.pending_decode_time = Duration::ZERO;
+        self.last_frame_time = Instant::now();
+        let mut all_rows = content_rows;
+        all_rows.push(status_text);
+        self.previous_rows = all_rows;
+        true
+    }
+
+    fn format_status_text(&self, workspace: &local::WorkspaceSummary) -> String {
+        // Leave the final terminal column untouched. Printing a full-width
+        // line on the bottom row can set the terminal's autowrap state and
+        // scroll the alternate screen on the next write, which pushes the
+        // ratatui menu off the top of the viewport.
+        let width = self.terminal_cols.saturating_sub(1).max(1) as usize;
+
+        let identity = fixed_status_field(&workspace.pane_id, 6);
+        let size = fixed_status_field(&format!("{}x{}", workspace.cols, workspace.rows), 5);
+        let left = format!(" nmux {identity} {size}");
 
         let right = format_stats_right(&self.last_stats);
 
-        // Pad between left and right so the bar fills the terminal width.
         let content_len = left.len() + right.len();
-        let padding = if cols > content_len {
-            cols - content_len
+        if width > content_len {
+            format!(
+                "{left}{:padding$}{right}",
+                "",
+                padding = width - content_len
+            )
         } else {
-            1
-        };
+            truncate_chars(&format!("{left} {right}"), width)
+        }
+    }
+
+    /// Build the full-width inverse-video status bar line for the legacy
+    /// string redraw fallback.
+    fn format_status_bar(&self, workspace: &local::WorkspaceSummary) -> String {
+        let content = self.format_status_text(workspace);
 
         format!(
-            "{}{left}{:padding$}{right}{}",
+            "{}{content}{}",
             SetAttribute(Attribute::Reverse),
-            "",
             SetAttribute(Attribute::NoReverse)
         )
     }
 
     /// Render the full surface text differentially: only write rows that changed.
-    /// Row 1 is always the status bar; content starts at row 2.
+    /// The status bar occupies the final terminal row; content starts at row 1.
     fn render_diff(&mut self, workspace: &local::WorkspaceSummary, surface_text: &str) {
         print!("{}", self.render_diff_text(workspace, surface_text));
     }
@@ -3091,7 +5273,6 @@ impl RedrawState {
         surface_text: &str,
     ) -> String {
         let render_start = Instant::now();
-        let frame_interval = render_start.duration_since(self.last_frame_time);
         if self.update_terminal_size() && !self.previous_rows.is_empty() {
             return self.render_initial_text(workspace, surface_text);
         }
@@ -3103,23 +5284,17 @@ impl RedrawState {
         // Hide cursor during update to avoid flicker.
         output.push_str(&format!("{}", cursor::Hide));
 
-        // Diff content rows (starting at terminal row 2).
-        let max_content = content_rows.len().max(
-            self.previous_rows.len().saturating_sub(1), // previous_rows[0] was status bar
-        );
+        // Diff content rows (starting at terminal row 1).
+        let max_content = content_rows
+            .len()
+            .max(self.previous_rows.len().saturating_sub(1));
         for i in 0..max_content {
             let new_row = content_rows.get(i).map(String::as_str).unwrap_or("");
-            // previous_rows[0] is the status bar, so content is at [i+1].
-            let old_row = self
-                .previous_rows
-                .get(i + 1)
-                .map(String::as_str)
-                .unwrap_or("");
+            let old_row = self.previous_rows.get(i).map(String::as_str).unwrap_or("");
             if new_row != old_row {
-                // Terminal row i+2 (1-based: row 1=status bar, row 2=first content).
                 output.push_str(&format!(
                     "{}{}{}",
-                    cursor::MoveTo(0, terminal_row(i + 2)),
+                    cursor::MoveTo(0, terminal_row(i + 1)),
                     Clear(ClearType::CurrentLine),
                     new_row
                 ));
@@ -3128,36 +5303,37 @@ impl RedrawState {
         }
 
         let render_time = render_start.elapsed();
+        let rendered_fps = self.rendered_fps.record(render_start, rows_changed > 0);
 
         self.last_stats = FrameStats {
-            frame_interval,
             decode_time: self.pending_decode_time,
             render_time,
             rows_changed,
             rows_total: content_rows.len(),
             rtt: self.last_rtt,
             client_count: self.last_client_count,
+            rendered_fps,
+            idle: rows_changed == 0,
         };
         self.pending_decode_time = Duration::ZERO;
         self.last_frame_time = Instant::now();
 
-        // Always redraw the status bar (row 1) since stats change every frame.
+        // Always redraw the status bar since stats change every frame.
         let status_bar = self.format_status_bar(workspace);
+        let status_row = self.status_row();
         output.push_str(&format!(
             "{}{}{}",
-            cursor::MoveTo(0, 0),
+            cursor::MoveTo(0, status_row),
             Clear(ClearType::CurrentLine),
             status_bar
         ));
 
-        // Park cursor below content to avoid visual artifacts.
-        let park_row = content_rows.len() + 2; // +1 for status bar, +1 for park
-        output.push_str(&format!("{}", cursor::MoveTo(0, terminal_row(park_row))));
+        output.push_str(&format!("{}", cursor::MoveTo(0, status_row)));
 
-        // Store status bar + content rows for next diff.
+        // Store content rows + status bar for next diff.
         let mut all_rows = Vec::with_capacity(content_rows.len() + 1);
-        all_rows.push(status_bar);
         all_rows.extend(content_rows);
+        all_rows.push(status_bar);
         self.previous_rows = all_rows;
 
         output
@@ -3180,19 +5356,18 @@ impl RedrawState {
             return None;
         }
         let row_index = usize::try_from(prediction.row).ok()?;
-        let content_row_index = row_index + 1;
-        if self.previous_rows.len() <= content_row_index {
+        if self.previous_rows.len() <= row_index {
             return None;
         }
         let row_text = surface_text.lines().nth(row_index)?;
-        self.previous_rows[content_row_index] = row_text.to_owned();
+        self.previous_rows[row_index] = row_text.to_owned();
         self.last_frame_time = Instant::now();
         self.last_stats.rows_changed = 1;
         self.last_stats.rows_total = surface_text.lines().count();
 
-        let terminal_row_index = terminal_row(row_index + 2);
+        let terminal_row_index = terminal_row(row_index + 1);
         let terminal_col = prediction.col.min(u16::MAX as u32) as u16;
-        let park_row = surface_text.lines().count() + 2;
+        let status_row = self.status_row();
         let mut output = String::new();
         output.push_str(&format!(
             "{}{}{}{}",
@@ -3201,7 +5376,7 @@ impl RedrawState {
             prediction.text,
             SetAttribute(Attribute::NoUnderline)
         ));
-        output.push_str(&format!("{}", cursor::MoveTo(0, terminal_row(park_row))));
+        output.push_str(&format!("{}", cursor::MoveTo(0, status_row)));
         Some(output)
     }
 
@@ -3224,36 +5399,84 @@ impl RedrawState {
         self.last_stats.rows_total = content_rows.len();
         self.last_stats.rtt = self.last_rtt;
         self.last_stats.client_count = self.last_client_count;
+        self.last_stats.rendered_fps = self.rendered_fps.record(self.last_frame_time, true);
+        self.last_stats.idle = false;
 
         let status_bar = self.format_status_bar(workspace);
 
-        // Clear screen, draw status bar on row 1, then content starting row 2.
-        // The status bar is full-width; moving explicitly avoids terminal
-        // autowrap shifting the first content byte to the right edge.
+        // Clear screen, draw content from row 1, then keep the status bar on
+        // the final row so row 1 remains available for ratatui menus.
         let mut output = String::new();
+        let status_row = self.status_row();
         output.push_str(&format!(
-            "{}{}{}{}{}",
+            "{}{}{}{}{}{}{}",
             Clear(ClearType::All),
             cursor::MoveTo(0, 0),
+            surface_text,
+            cursor::MoveTo(0, status_row),
+            Clear(ClearType::CurrentLine),
             status_bar,
-            cursor::MoveTo(0, 1),
-            surface_text
+            cursor::MoveTo(0, status_row)
         ));
 
-        let park_row = content_rows.len() + 2;
-        output.push_str(&format!("{}", cursor::MoveTo(0, terminal_row(park_row))));
-
         let mut all_rows = Vec::with_capacity(content_rows.len() + 1);
-        all_rows.push(status_bar);
         all_rows.extend(content_rows);
+        all_rows.push(status_bar);
         self.previous_rows = all_rows;
 
         output
+    }
+
+    fn status_row(&self) -> u16 {
+        self.terminal_rows.saturating_sub(1).min(u16::MAX as u32) as u16
     }
 }
 
 fn terminal_row(row_1_based: usize) -> u16 {
     row_1_based.saturating_sub(1).min(u16::MAX as usize) as u16
+}
+
+fn truncate_chars(value: &str, width: usize) -> String {
+    value.chars().take(width).collect()
+}
+
+fn fixed_status_field(value: &str, width: usize) -> String {
+    let truncated = truncate_chars(value, width);
+    format!("{truncated:<width$}")
+}
+
+fn redraw_terminal_area() -> Rect {
+    let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
+    Rect::new(
+        0,
+        0,
+        cols.max(1).min(u16::MAX as u32) as u16,
+        rows.max(1).min(u16::MAX as u32) as u16,
+    )
+}
+
+fn clear_redraw_terminal() -> io::Result<()> {
+    execute!(io::stdout(), Clear(ClearType::All), cursor::MoveTo(0, 0))
+}
+
+fn render_ratatui_status_bar(buffer: &mut Buffer, area: Rect, text: &str) {
+    let style = Style::default()
+        .fg(Color::Black)
+        .bg(Color::White)
+        .add_modifier(Modifier::REVERSED);
+    let width = area.width.saturating_sub(1).max(1);
+    for x in area.x..area.x.saturating_add(width) {
+        if let Some(cell) = buffer.cell_mut((x, area.y)) {
+            cell.set_symbol(" ");
+            cell.set_style(style);
+        }
+    }
+    for (offset, ch) in text.chars().take(usize::from(width)).enumerate() {
+        if let Some(cell) = buffer.cell_mut((area.x + offset as u16, area.y)) {
+            cell.set_symbol(&ch.to_string());
+            cell.set_style(style);
+        }
+    }
 }
 
 fn resolve_short_hostname() -> String {
@@ -3276,32 +5499,30 @@ fn resolve_short_hostname() -> String {
 }
 
 fn format_stats_right(stats: &FrameStats) -> String {
-    let interval_ms = stats.frame_interval.as_millis();
-    let decode_us = stats.decode_time.as_micros();
-    let render_us = stats.render_time.as_micros();
-    let fps = if interval_ms > 0 {
-        1000 / interval_ms
+    let decode = fixed_status_field(&format_duration_short(stats.decode_time.as_micros()), 6);
+    let render = fixed_status_field(&format_duration_short(stats.render_time.as_micros()), 6);
+    let rows = fixed_status_field(&format!("{}/{}", stats.rows_changed, stats.rows_total), 5);
+    let fps = if stats.idle {
+        "idle".to_owned()
     } else {
-        0
+        stats
+            .rendered_fps
+            .map(|fps| format!("{fps:>3}fps"))
+            .unwrap_or_else(|| "  0fps".to_owned())
     };
+    let fps = fixed_status_field(&fps, 6);
     let rtt = stats
         .rtt
-        .map(|rtt| format!("rtt:{}  ", format_duration_short(rtt.as_micros())))
-        .unwrap_or_default();
+        .map(|rtt| format_duration_short(rtt.as_micros()))
+        .unwrap_or_else(|| "-".to_owned());
+    let rtt = fixed_status_field(&rtt, 4);
     let clients = stats
         .client_count
-        .map(|count| format!("clients:{count}  "))
-        .unwrap_or_default();
+        .map(|count| count.to_string())
+        .unwrap_or_else(|| "-".to_owned());
+    let clients = fixed_status_field(&clients, 1);
     format!(
-        "{rows}/{total} rows  {clients}{rtt}decode:{decode}  render:{render}  {interval}ms ({fps}fps) ",
-        rows = stats.rows_changed,
-        total = stats.rows_total,
-        clients = clients,
-        rtt = rtt,
-        decode = format_duration_short(decode_us),
-        render = format_duration_short(render_us),
-        interval = interval_ms,
-        fps = fps,
+        "rows:{rows} rows clients:{clients} rtt:{rtt} fps:{fps} decode:{decode} render:{render} "
     )
 }
 
@@ -3324,14 +5545,32 @@ fn redraw_text_with_context(
     scrollback: Option<local::ScrollbackChunkSummary>,
     has_status_bar: bool,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    overlay: Option<&tui::TuiOverlay>,
 ) -> String {
-    let mut text = String::new();
-    if !has_status_bar {
-        // Without a status bar, include workspace info as a header line.
-        text.push_str(&workspace.display_line());
-        text.push('\n');
-        append_terminal_metadata(&mut text, metadata);
+    if has_status_bar {
+        let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
+        let rows = rows.saturating_sub(1).max(1).min(u16::MAX as u32) as u16;
+        let cols = cols.max(1).min(u16::MAX as u32) as u16;
+        return tui::render_workspace_frame(
+            tui::WorkspaceFrameInput {
+                workspace,
+                active_surface_text: surface_text,
+                pane_surfaces,
+                pane_surface_summaries: None,
+                pane_chrome: None,
+                overlay,
+            },
+            cols,
+            rows,
+        )
+        .text;
     }
+
+    let mut text = String::new();
+    // Without a status bar, include workspace info as a header line.
+    text.push_str(&workspace.display_line());
+    text.push('\n');
+    append_terminal_metadata(&mut text, metadata);
     if let Some(scrollback) = scrollback {
         text.push_str(&format_scrollback(&scrollback));
     }
@@ -3489,6 +5728,72 @@ fn seed_cached_pane_surfaces_from_node(
 
     for child in &pane.children {
         seed_cached_pane_surfaces_from_node(surfaces, child, client_state, styled);
+    }
+}
+
+fn seed_cached_pane_surface_summaries(
+    surfaces: &mut BTreeMap<String, local::RenderedSurfaceSummary>,
+    workspace: &local::WorkspaceSummary,
+    client_state: &local::ClientAttachState,
+) {
+    if let Some(root) = workspace.pane_tree.as_ref() {
+        seed_cached_pane_surface_summaries_from_node(surfaces, root, client_state);
+    } else if !surfaces.contains_key(&workspace.pane_id)
+        && let Some(summary) = client_state.cached_rendered_surface_summary(&workspace.pane_id)
+    {
+        surfaces.insert(workspace.pane_id.clone(), summary);
+    }
+}
+
+fn seed_cached_pane_surface_summaries_from_node(
+    surfaces: &mut BTreeMap<String, local::RenderedSurfaceSummary>,
+    pane: &local::WorkspacePaneSummary,
+    client_state: &local::ClientAttachState,
+) {
+    if pane.children.is_empty() {
+        if !surfaces.contains_key(&pane.pane_id)
+            && let Some(summary) = client_state.cached_rendered_surface_summary(&pane.pane_id)
+        {
+            surfaces.insert(pane.pane_id.clone(), summary);
+        }
+        return;
+    }
+
+    for child in &pane.children {
+        seed_cached_pane_surface_summaries_from_node(surfaces, child, client_state);
+    }
+}
+
+fn seed_cached_pane_modes(
+    modes: &mut BTreeMap<String, local::TerminalModeSummary>,
+    workspace: &local::WorkspaceSummary,
+    client_state: &local::ClientAttachState,
+) {
+    if let Some(root) = workspace.pane_tree.as_ref() {
+        seed_cached_pane_modes_from_node(modes, root, client_state);
+    } else if !modes.contains_key(&workspace.pane_id)
+        && let Some(mode_summary) = client_state.cached_surface_modes(&workspace.pane_id)
+    {
+        modes.insert(workspace.pane_id.clone(), mode_summary);
+    }
+}
+
+fn seed_cached_pane_modes_from_node(
+    modes: &mut BTreeMap<String, local::TerminalModeSummary>,
+    pane: &local::WorkspacePaneSummary,
+    client_state: &local::ClientAttachState,
+) {
+    if pane.children.is_empty() {
+        if !modes.contains_key(&pane.pane_id)
+            && let Some(mode_summary) = client_state.cached_surface_modes(&pane.pane_id)
+        {
+            modes.insert(pane.pane_id.clone(), mode_summary);
+        }
+        return;
+    }
+
+    for child in &pane.children {
+        seed_cached_pane_modes_from_node(modes, child, client_state);
     }
 }
 
@@ -3800,7 +6105,9 @@ enum ScriptCommand {
     PaneSplit,
     TabList,
     TabNew,
+    TabSwitch,
     TabClose,
+    SessionNew,
     SessionKill,
     Replay,
 }
@@ -3814,6 +6121,10 @@ enum RawCommand {
     Tab {
         #[command(subcommand)]
         command: RawTabCommand,
+    },
+    Session {
+        #[command(subcommand)]
+        command: RawSessionCommand,
     },
     Replay {
         #[arg(value_name = "PATH")]
@@ -3882,6 +6193,20 @@ enum RawTabCommand {
     Close {
         #[arg(value_name = "TAB_ID", allow_hyphen_values = true)]
         tab_id: Option<String>,
+    },
+    Switch {
+        #[arg(value_name = "TAB_ID", allow_hyphen_values = true)]
+        tab_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RawSessionCommand {
+    New {
+        #[arg(value_name = "SESSION", allow_hyphen_values = true)]
+        session: String,
+        #[arg(long = "title", value_name = "TITLE", allow_hyphen_values = true)]
+        title: Option<String>,
     },
 }
 
@@ -4212,7 +6537,7 @@ where
 fn known_command(value: &str) -> bool {
     matches!(
         value,
-        "pane" | "tab" | "replay" | "attach" | "new" | "ls" | "kill" | "send-keys"
+        "pane" | "tab" | "session" | "replay" | "attach" | "new" | "ls" | "kill" | "send-keys"
     )
 }
 
@@ -4468,8 +6793,44 @@ fn normalize_script_command(
                         replay_path: None,
                     })
                 }
+                RawTabCommand::Switch { tab_id } => {
+                    if tab_id.is_empty() {
+                        return Err("tab switch requires a non-empty tab ID".into());
+                    }
+                    raw.target_tab_id = Some(tab_id);
+                    raw.no_input = true;
+                    raw.no_scrollback = true;
+                    Ok(NormalizedScriptCommand {
+                        command: Some(ScriptCommand::TabSwitch),
+                        split_axis: protocol::SplitAxis::None,
+                        title: None,
+                        replay_path: None,
+                    })
+                }
             }
         }
+        RawCommand::Session { command } => match command {
+            RawSessionCommand::New { session, title } => {
+                if raw.target_session_id.is_some() {
+                    return Err("--session cannot be combined with the session subcommand".into());
+                }
+                if session.is_empty() {
+                    return Err("session new requires a non-empty session name".into());
+                }
+                if title.as_deref().is_some_and(str::is_empty) {
+                    return Err("session new --title requires a non-empty title".into());
+                }
+                raw.target_session_id = Some(session);
+                raw.no_input = true;
+                raw.no_scrollback = true;
+                Ok(NormalizedScriptCommand {
+                    command: Some(ScriptCommand::SessionNew),
+                    split_axis: protocol::SplitAxis::None,
+                    title,
+                    replay_path: None,
+                })
+            }
+        },
     }
 }
 
@@ -4735,6 +7096,26 @@ fn format_workspace_json(workspace: &local::WorkspaceSummary) -> String {
         workspace.cols,
         workspace.rows,
         local::json_string(resize_policy_name(workspace.resize_policy))
+    )
+}
+
+fn format_session_inventory_json(inventory: &local::SessionInventorySummary) -> String {
+    let sessions = inventory
+        .sessions
+        .iter()
+        .map(|session| {
+            format!(
+                "{{\"session_id\":{},\"title\":{},\"active\":{}}}",
+                local::json_string(&session.session_id),
+                local::json_string(&session.title),
+                session.session_id == inventory.active_session_id
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"active_session_id\":{},\"sessions\":[{sessions}]}}",
+        local::json_string(&inventory.active_session_id)
     )
 }
 
@@ -5632,6 +8013,7 @@ Usage:
   nmux [OPTIONS] pane split horizontal|vertical [PANE_ID]
   nmux [OPTIONS] tab ls [--json]
   nmux [OPTIONS] tab new [TAB_ID] [--title TITLE]
+  nmux [OPTIONS] tab switch TAB_ID
   nmux [OPTIONS] tab close [TAB_ID]
   nmux send-keys [-t PANE_ID] KEYS...
   nmux replay PATH
@@ -5708,6 +8090,7 @@ Subcommands:
   pane split AXIS [PANE_ID]       Split a pane horizontally or vertically
   tab ls [--json]                 List tabs visible to the current protocol
   tab new [TAB_ID]                Create and switch to a new tab
+  tab switch TAB_ID               Switch to an existing tab
   tab close [TAB_ID]              Close a tab, defaulting to the active tab
   send-keys [-t PANE_ID] KEYS...  Send text keys to a pane
   replay PATH                     Print surface frames from a recorded live session
@@ -5950,26 +8333,31 @@ fn parse_one_based_cell(value: &str) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AttachMode, ClientModeArgs, DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs,
-        FocusEvent, HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
-        LiveDetachReason, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
-        PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
-        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags,
-        SigwinchResizeContext, StateInfoSocketSummary, args_from_iter, configure_default_live_args,
-        default_attach_error_needs_restart, format_cli_error_json, format_context_json,
-        format_input_choices_json, format_key_names_json, format_live_attach_json,
-        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
-        format_live_presence_json, format_live_surface_update_json, format_live_workspace_json,
-        format_rendered_attach_json, format_scrollback, format_state_info_json,
-        format_state_info_text, host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
-        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
-        live_update_print_kind, managed_ready_error_message, parse_detach_key,
+        AttachMode, BRACKETED_PASTE_END, BRACKETED_PASTE_START, ClientModeArgs,
+        DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs, FocusEvent, FrameStats,
+        HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
+        LiveDetachReason, LiveMouseDispatch, LiveScrollDirection, LiveSurfaceState,
+        LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
+        RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
+        SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags, SgrMouseInput,
+        SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward, StdinKey, StdinKeyInput,
+        args_from_iter, configure_default_live_args, default_attach_error_needs_restart,
+        format_cli_error_json, format_context_json, format_input_choices_json,
+        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
+        format_live_detach_json, format_live_error_json, format_live_presence_json,
+        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
+        format_scrollback, format_state_info_json, format_state_info_text, format_stats_right,
+        frontend_resize_pane_size, host_mouse_mode_disable_sequence,
+        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
+        interim_surface_fidelity_warning_needed, live_mouse_dispatch_for_workspace_size,
+        live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
+        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory, parse_detach_key,
         parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
         parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
         preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
         redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, terminal_size_from_fds,
-        terminal_size_unavailable, usage,
+        render_scrollback_view_summary, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -5984,6 +8372,25 @@ mod tests {
         // SAFETY: tests assign the termios fields read by raw_terminal_fixup_termios
         // before asserting against the returned value.
         unsafe { std::mem::zeroed() }
+    }
+
+    fn strip_csi_for_test(value: &str) -> String {
+        let mut stripped = String::new();
+        let mut chars = value.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\x1b' {
+                if chars.next() == Some('[') {
+                    for next in chars.by_ref() {
+                        if next.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+            } else {
+                stripped.push(ch);
+            }
+        }
+        stripped
     }
 
     fn test_surface_update(
@@ -6159,6 +8566,12 @@ mod tests {
         assert_eq!(tab_close.script_command, Some(ScriptCommand::TabClose));
         assert_eq!(tab_close.target_tab_id.as_deref(), Some("tab-work"));
 
+        let tab_switch = args_from_iter(["tab", "switch", "tab-work"]).expect("tab switch args");
+        assert_eq!(tab_switch.script_command, Some(ScriptCommand::TabSwitch));
+        assert_eq!(tab_switch.target_tab_id.as_deref(), Some("tab-work"));
+        assert!(tab_switch.no_input);
+        assert!(tab_switch.no_scrollback);
+
         let pane_ls = args_from_iter(["pane", "ls", "--json"]).expect("pane ls args");
         assert_eq!(pane_ls.script_command, Some(ScriptCommand::PaneList));
         assert!(pane_ls.no_input);
@@ -6172,6 +8585,14 @@ mod tests {
         let session_ls = args_from_iter(["ls"]).expect("session ls args");
         assert_eq!(session_ls.script_command, Some(ScriptCommand::SessionList));
         assert!(session_ls.no_input);
+
+        let session_new = args_from_iter(["session", "new", "work", "--title", "Work"])
+            .expect("session new args");
+        assert_eq!(session_new.script_command, Some(ScriptCommand::SessionNew));
+        assert_eq!(session_new.target_session_id.as_deref(), Some("work"));
+        assert_eq!(session_new.script_title.as_deref(), Some("Work"));
+        assert!(session_new.no_input);
+        assert!(session_new.no_scrollback);
 
         let attach_named = args_from_iter(["attach", "work"]).expect("attach args");
         assert_eq!(attach_named.target_session_id.as_deref(), Some("work"));
@@ -6205,6 +8626,15 @@ mod tests {
             Err(err) => err.to_string(),
         };
         assert_eq!(err, "--session cannot be combined with kill SESSION");
+
+        let err = match args_from_iter(["--session", "work", "session", "new", "other"]) {
+            Ok(_) => panic!("duplicated session target should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(
+            err,
+            "--session cannot be combined with the session subcommand"
+        );
     }
 
     #[test]
@@ -6401,6 +8831,7 @@ mod tests {
                 rows: 24,
                 resize_policy: protocol::ResizePolicy::ActiveClient,
                 pane_tree: None,
+                tabs: Vec::new(),
             },
             status: local::AttachStatusSummary {
                 pane_id: "pane-1".to_owned(),
@@ -6556,6 +8987,7 @@ mod tests {
             rows: 24,
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
+            tabs: Vec::new(),
         };
         let rendered = local::RenderedAttach {
             workspace: workspace.clone(),
@@ -7012,10 +9444,11 @@ mod tests {
             rows: 24,
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
+            tabs: Vec::new(),
         };
 
         let initial = state.render_initial_text(&ws, "pane output\nsecond line");
-        // Status bar is in inverse video on the first terminal row.
+        // Status bar is in inverse video on the final terminal row.
         assert!(
             initial.contains("\x1b[7m") && initial.contains("nmux"),
             "initial frame should contain status bar: {initial:?}"
@@ -7024,26 +9457,26 @@ mod tests {
             initial.contains("pane-1") && initial.contains("80x24"),
             "status bar should show pane id and size: {initial:?}"
         );
-        // Content follows the status bar.
+        // Content starts on the first terminal row so ratatui chrome can own row 1.
         assert!(
             initial.contains("pane output"),
             "initial frame should contain content: {initial:?}"
         );
         assert!(
-            initial.contains("\x1b[2;1Hpane output"),
-            "initial frame should position content below the full-width status bar: {initial:?}"
+            initial.contains("\x1b[1;1Hpane output"),
+            "initial frame should position content at the top of the terminal: {initial:?}"
         );
 
         let update = state.render_diff_text(&ws, "pane output\nsecond line changed");
-        // Row 1 is the status bar (always redrawn).
+        // The status bar is always redrawn on the final row.
         assert!(
-            update.contains("\x1b[1;1H"),
-            "diff should redraw status bar on row 1: {update:?}"
+            update.contains("nmux"),
+            "diff should redraw status bar: {update:?}"
         );
-        // Content row 2 (terminal row 3) changed.
+        // Content row 2 changed on terminal row 2.
         assert!(
-            update.contains("\x1b[3;1H\x1b[2Ksecond line changed"),
-            "diff should update changed content row at terminal row 3: {update:?}"
+            update.contains("\x1b[2;1H\x1b[2Ksecond line changed"),
+            "diff should update changed content row at terminal row 2: {update:?}"
         );
         // Status bar should show stats.
         assert!(
@@ -7067,6 +9500,73 @@ mod tests {
     }
 
     #[test]
+    fn redraw_status_bar_avoids_bottom_row_autowrap() {
+        let mut state = RedrawState::new();
+        state.terminal_cols = 32;
+        state.last_stats = FrameStats {
+            decode_time: std::time::Duration::from_micros(123),
+            render_time: std::time::Duration::from_micros(456),
+            rows_changed: 12,
+            rows_total: 34,
+            rtt: Some(std::time::Duration::from_millis(9)),
+            client_count: Some(2),
+            rendered_fps: Some(8),
+            idle: false,
+        };
+
+        let ws = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-with-a-long-name".to_owned(),
+            cols: 155,
+            rows: 50,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+
+        let status = state.format_status_bar(&ws);
+        let visible = strip_csi_for_test(&status);
+        assert!(
+            visible.chars().count() <= 31,
+            "bottom-row status must not reach the final terminal column: {status:?}"
+        );
+    }
+
+    #[test]
+    fn status_stats_use_fixed_fields_and_idle_fps() {
+        let active = FrameStats {
+            decode_time: std::time::Duration::from_micros(123),
+            render_time: std::time::Duration::from_micros(456),
+            rows_changed: 1,
+            rows_total: 2,
+            rtt: Some(std::time::Duration::from_millis(3)),
+            client_count: Some(5),
+            rendered_fps: Some(12),
+            idle: false,
+        };
+        let idle = FrameStats {
+            decode_time: std::time::Duration::from_micros(9),
+            render_time: std::time::Duration::from_micros(10),
+            rows_changed: 0,
+            rows_total: 2,
+            rtt: None,
+            client_count: None,
+            rendered_fps: Some(12),
+            idle: true,
+        };
+
+        let active_text = format_stats_right(&active);
+        let idle_text = format_stats_right(&idle);
+
+        assert_eq!(active_text.chars().count(), idle_text.chars().count());
+        assert!(active_text.contains("rtt:3ms"));
+        assert!(active_text.contains("clients:5"));
+        assert!(active_text.contains("fps: 12fps"));
+        assert!(idle_text.contains("fps:idle"));
+    }
+
+    #[test]
     fn redraw_state_fast_paints_speculative_append_for_single_pane() {
         let mut state = RedrawState::new();
         state.terminal_cols = 120;
@@ -7079,6 +9579,7 @@ mod tests {
             rows: 24,
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
+            tabs: Vec::new(),
         };
 
         let _ = state.render_initial_text(&ws, "ready");
@@ -7096,10 +9597,10 @@ mod tests {
             .expect("fast speculative render");
 
         assert!(
-            update.contains("\x1b[2;6H\x1b[4mx\x1b[24m"),
+            update.contains("\x1b[1;6H\x1b[4mx\x1b[24m"),
             "fast path should only paint predicted cell at cursor: {update:?}"
         );
-        assert_eq!(state.previous_rows[1], "ready\x1b[4mx\x1b[24m");
+        assert_eq!(state.previous_rows[0], "ready\x1b[4mx\x1b[24m");
     }
 
     #[test]
@@ -7112,6 +9613,7 @@ mod tests {
             rows: 24,
             resize_policy: protocol::ResizePolicy::Fixed,
             pane_tree: None,
+            tabs: Vec::new(),
         };
         let metadata = local::TerminalMetadataSummary {
             title: "shell title".to_owned(),
@@ -7119,19 +9621,73 @@ mod tests {
         };
 
         let status_bar_text =
-            redraw_text_with_context(&ws, &metadata, "pane output", None, true, None);
+            redraw_text_with_context(&ws, &metadata, "pane output", None, true, None, None);
         assert!(
             !status_bar_text.contains("title=") && !status_bar_text.contains("working-directory="),
             "status-bar redraw should not inject metadata rows: {status_bar_text:?}"
         );
+        assert!(
+            status_bar_text
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains("Sessions")),
+            "ratatui menu should remain visible on row 1: {status_bar_text:?}"
+        );
         assert!(status_bar_text.contains("pane output"));
 
         let fallback_text =
-            redraw_text_with_context(&ws, &metadata, "pane output", None, false, None);
+            redraw_text_with_context(&ws, &metadata, "pane output", None, false, None, None);
         assert!(
             fallback_text.contains("title=shell title")
                 && fallback_text.contains("working-directory=file://localhost/tmp/nmux"),
             "non-status redraw should keep metadata rows: {fallback_text:?}"
+        );
+    }
+
+    #[test]
+    fn frontend_resize_uses_ratatui_pane_content_size() {
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-2".to_owned(),
+            cols: 40,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: Some(local::WorkspacePaneSummary {
+                pane_id: "pane-root".to_owned(),
+                cols: 80,
+                rows: 24,
+                resize_policy: protocol::ResizePolicy::Fixed,
+                split_axis: protocol::SplitAxis::Vertical,
+                children: vec![
+                    local::WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 40,
+                        rows: 24,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                    local::WorkspacePaneSummary {
+                        pane_id: "pane-2".to_owned(),
+                        cols: 40,
+                        rows: 24,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                ],
+            }),
+            tabs: Vec::new(),
+        };
+
+        assert_eq!(
+            frontend_resize_pane_size(&workspace, "pane-2", 100, 20, true),
+            (35, 16)
+        );
+        assert_eq!(
+            frontend_resize_pane_size(&workspace, "pane-2", 100, 20, false),
+            (100, 20)
         );
     }
 
@@ -7169,6 +9725,7 @@ mod tests {
                     },
                 ],
             }),
+            tabs: Vec::new(),
         };
         let mut surfaces = BTreeMap::new();
         surfaces.insert("pane-1".to_owned(), "left cached".to_owned());
@@ -7241,7 +9798,7 @@ mod tests {
                 mouse_format: protocol::MouseFormat::X10,
                 ..local::TerminalModeSummary::default()
             }),
-            ""
+            "\x1b[?1000h\x1b[?1006h"
         );
         assert_eq!(
             host_mouse_mode_enable_sequence(local::TerminalModeSummary {
@@ -8183,6 +10740,7 @@ mod tests {
         assert!(usage.contains("pane split AXIS [PANE_ID]"));
         assert!(usage.contains("tab new [TAB_ID]"));
         assert!(usage.contains("tab ls [--json]"));
+        assert!(usage.contains("tab switch TAB_ID"));
         assert!(usage.contains("tab close [TAB_ID]"));
         assert!(usage.contains("send-keys [-t PANE_ID] KEYS..."));
         assert!(usage.contains("version [--json]"));
@@ -8209,6 +10767,46 @@ mod tests {
     }
 
     #[test]
+    fn scrollback_view_summary_preserves_runs_and_styles() {
+        let mut scrollback = scrollback_summary(4, 9, &[(4, "four"), (5, "five")]);
+        scrollback.styles.push(local::StyleSummary {
+            fg_rgba: 0xff0000ff,
+            bg_rgba: 0,
+            underline_rgba: 0,
+            flags: 1,
+        });
+        scrollback.lines[0].runs = vec![local::CellRunSummary {
+            text: "four".to_owned(),
+            cell_widths: vec![1, 1, 1, 1],
+            style_id: 0,
+            flags: 0,
+            hyperlink_id: 0,
+            semantic_content: protocol::CellSemanticContent::Output,
+        }];
+        scrollback.lines[0].dirty_hash = 12;
+        scrollback.lines[0].row_state_hash = 13;
+        scrollback.lines[0].semantic_prompt = protocol::RowSemanticPrompt::Prompt;
+        scrollback.lines[0].dirty = true;
+
+        let summary = render_scrollback_view_summary(&scrollback);
+
+        assert_eq!(summary.pane_id, "pane-1");
+        assert_eq!(summary.version, 1);
+        assert_eq!(summary.rows, 2);
+        assert_eq!(summary.styles, scrollback.styles);
+        assert_eq!(summary.row_updates[0].row, 0);
+        assert_eq!(summary.row_updates[0].text, "four");
+        assert_eq!(summary.row_updates[0].runs, scrollback.lines[0].runs);
+        assert_eq!(summary.row_updates[0].dirty_hash, 12);
+        assert_eq!(summary.row_updates[0].row_state_hash, 13);
+        assert_eq!(
+            summary.row_updates[0].semantic_prompt,
+            protocol::RowSemanticPrompt::Prompt
+        );
+        assert!(summary.row_updates[0].dirty);
+    }
+
+    #[test]
     fn stdin_bytes_detach_splits_before_ctrl_right_bracket() {
         assert_eq!(
             split_stdin_bytes_for_detach(b"ping\n", Some(STDIN_BYTES_DETACH)),
@@ -8225,6 +10823,492 @@ mod tests {
         assert_eq!(
             split_stdin_bytes_for_detach(b"ping\n\x1d", None),
             (Some(b"ping\n\x1d".to_vec()), false)
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_decode_bracketed_paste_for_forwarding() {
+        let input = [
+            b"before".as_slice(),
+            BRACKETED_PASTE_START,
+            b"pasted\ntext".as_slice(),
+            BRACKETED_PASTE_END,
+            b"after".as_slice(),
+        ]
+        .concat();
+
+        assert_eq!(
+            stdin_byte_forwards(&input),
+            vec![
+                StdinByteForward::Raw(b"before".to_vec()),
+                StdinByteForward::Paste("pasted\ntext".to_owned()),
+                StdinByteForward::Raw(b"after".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_keep_incomplete_or_non_utf8_bracketed_paste_raw() {
+        assert_eq!(
+            stdin_byte_forwards(b"\x1b[200~unterminated"),
+            vec![StdinByteForward::Raw(b"\x1b[200~unterminated".to_vec())]
+        );
+
+        let input = [BRACKETED_PASTE_START, &[0xff, b'a'], BRACKETED_PASTE_END].concat();
+        assert_eq!(
+            stdin_byte_forwards(&input),
+            vec![StdinByteForward::Raw(b"\x1b[200~\xffa\x1b[201~".to_vec())]
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_decode_sgr_mouse_for_forwarding() {
+        assert_eq!(
+            stdin_byte_forwards(b"before\x1b[<64;12;5Mafter"),
+            vec![
+                StdinByteForward::Raw(b"before".to_vec()),
+                StdinByteForward::Mouse(SgrMouseInput {
+                    row: 4,
+                    col: 11,
+                    button: protocol::MouseButton::WheelUp,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                }),
+                StdinByteForward::Raw(b"after".to_vec()),
+            ]
+        );
+
+        assert_eq!(
+            stdin_byte_forwards(b"\x1b[<21;3;2m"),
+            vec![StdinByteForward::Mouse(SgrMouseInput {
+                row: 1,
+                col: 2,
+                button: protocol::MouseButton::Middle,
+                action: protocol::MouseAction::Release,
+                modifiers: 3,
+            })]
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_decode_tui_keyboard_navigation_for_forwarding() {
+        assert_eq!(
+            stdin_byte_forwards(b"before\x1b[A\x1bw\rafter"),
+            vec![
+                StdinByteForward::Raw(b"before".to_vec()),
+                StdinByteForward::Key(StdinKeyInput {
+                    key: StdinKey::Up,
+                    bytes: b"\x1b[A".to_vec(),
+                }),
+                StdinByteForward::Key(StdinKeyInput {
+                    key: StdinKey::OpenMenu(tui::MenuAction::Windows),
+                    bytes: b"\x1bw".to_vec(),
+                }),
+                StdinByteForward::Key(StdinKeyInput {
+                    key: StdinKey::Enter,
+                    bytes: b"\r".to_vec(),
+                }),
+                StdinByteForward::Raw(b"after".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn live_mouse_routing_targets_active_pane_content() {
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 20,
+            rows: 8,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+        let modes = local::TerminalModeSummary {
+            mouse_tracking: true,
+            mouse_tracking_mode: protocol::MouseTrackingMode::Normal,
+            mouse_format: protocol::MouseFormat::Sgr,
+            ..local::TerminalModeSummary::default()
+        };
+        let Some(LiveMouseDispatch::PaneMouse(pane_id, mouse)) =
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 2,
+                    col: 2,
+                    button: protocol::MouseButton::WheelDown,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                modes,
+                None,
+                80,
+                24,
+            )
+        else {
+            panic!("pane content should receive wheel input");
+        };
+
+        assert_eq!(pane_id, "pane-1");
+        assert_eq!(mouse.row, 0);
+        assert_eq!(mouse.col, 1);
+        assert_eq!(mouse.button, protocol::MouseButton::WheelDown);
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 2,
+                    col: 2,
+                    button: protocol::MouseButton::WheelUp,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                local::TerminalModeSummary::default(),
+                None,
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::PaneScroll {
+                pane_id: "pane-1".to_owned(),
+                direction: LiveScrollDirection::Up,
+                visible_rows: 20,
+            }),
+            "pane content wheel scrolls nmux-owned scrollback when the pane app has not enabled mouse tracking"
+        );
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 1,
+                    col: 0,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                modes,
+                None,
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::FocusPane("pane-1".to_owned())),
+            "pane chrome clicks select the pane"
+        );
+    }
+
+    #[test]
+    fn live_mouse_routing_focuses_inactive_tree_pane() {
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-2".to_owned(),
+            cols: 40,
+            rows: 10,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: Some(local::WorkspacePaneSummary {
+                pane_id: "pane-root".to_owned(),
+                cols: 80,
+                rows: 10,
+                resize_policy: protocol::ResizePolicy::Fixed,
+                split_axis: protocol::SplitAxis::Vertical,
+                children: vec![
+                    local::WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 40,
+                        rows: 10,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                    local::WorkspacePaneSummary {
+                        pane_id: "pane-2".to_owned(),
+                        cols: 40,
+                        rows: 10,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                ],
+            }),
+            tabs: Vec::new(),
+        };
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 4,
+                    col: 2,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "right active",
+                None,
+                None,
+                local::TerminalModeSummary::default(),
+                None,
+                100,
+                20,
+            ),
+            Some(LiveMouseDispatch::FocusPane("pane-1".to_owned()))
+        );
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 4,
+                    col: 2,
+                    button: protocol::MouseButton::WheelDown,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "right active",
+                None,
+                None,
+                local::TerminalModeSummary::default(),
+                None,
+                100,
+                20,
+            ),
+            None,
+            "wheel over the tree is consumed until nmux-owned scrolling exists"
+        );
+    }
+
+    #[test]
+    fn live_mouse_menu_click_opens_menu_overlay() {
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 20,
+            rows: 8,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 0,
+                    col: 1,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                local::TerminalModeSummary::default(),
+                None,
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::Menu(tui::MenuAction::Sessions))
+        );
+
+        let overlay = menu_overlay_for_action(
+            tui::MenuAction::Windows,
+            &workspace,
+            &LiveSurfaceState {
+                current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_modes: local::TerminalModeSummary::default(),
+                current_surface_text: String::new(),
+                current_pane_surfaces: BTreeMap::new(),
+                current_pane_surface_summaries: BTreeMap::new(),
+                current_pane_modes: BTreeMap::new(),
+                scrollback_views: BTreeMap::new(),
+            },
+        );
+        assert_eq!(overlay.title, "windows");
+        assert!(
+            overlay
+                .lines
+                .iter()
+                .any(|line| line.text.contains("* pane-1"))
+        );
+
+        let new_session_overlay = menu_overlay_for_action(
+            tui::MenuAction::NewSession,
+            &workspace,
+            &LiveSurfaceState {
+                current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_modes: local::TerminalModeSummary::default(),
+                current_surface_text: String::new(),
+                current_pane_surfaces: BTreeMap::new(),
+                current_pane_surface_summaries: BTreeMap::new(),
+                current_pane_modes: BTreeMap::new(),
+                scrollback_views: BTreeMap::new(),
+            },
+        );
+        assert_eq!(new_session_overlay.title, "new session");
+        assert!(
+            new_session_overlay
+                .lines
+                .iter()
+                .any(|line| line.text.contains("new named session"))
+        );
+    }
+
+    #[test]
+    fn live_new_session_fallback_is_limited_to_single_actor_rejection() {
+        let fallback = local::ServerError {
+            error: local::ErrorSummary {
+                code: protocol::ErrorCode::Unknown,
+                message: "session new requires daemon registry routing".to_owned(),
+                retryable: false,
+                pane_id: None,
+                input_seq: 1,
+            },
+        };
+        assert!(live_session_new_should_fallback(&fallback));
+
+        let duplicate = local::ServerError {
+            error: local::ErrorSummary {
+                code: protocol::ErrorCode::Unknown,
+                message: "session already exists: work".to_owned(),
+                retryable: false,
+                pane_id: None,
+                input_seq: 1,
+            },
+        };
+        assert!(!live_session_new_should_fallback(&duplicate));
+        assert!(!live_session_new_should_fallback(&io::Error::other(
+            "transport failed"
+        )));
+    }
+
+    #[test]
+    fn live_mouse_sessions_overlay_click_switches_session() {
+        let root = local::WorkspacePaneSummary {
+            pane_id: "pane-1".to_owned(),
+            cols: 20,
+            rows: 8,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            split_axis: protocol::SplitAxis::None,
+            children: Vec::new(),
+        };
+        let workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 20,
+            rows: 8,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: Some(root.clone()),
+            tabs: vec![
+                local::WorkspaceTabSummary {
+                    tab_id: "tab-1".to_owned(),
+                    title: "main".to_owned(),
+                    active_pane_id: "pane-1".to_owned(),
+                    root: root.clone(),
+                },
+                local::WorkspaceTabSummary {
+                    tab_id: "tab-2".to_owned(),
+                    title: "work".to_owned(),
+                    active_pane_id: "tab-2-pane-1".to_owned(),
+                    root: local::WorkspacePaneSummary {
+                        pane_id: "tab-2-pane-1".to_owned(),
+                        cols: 20,
+                        rows: 8,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                },
+            ],
+        };
+        let overlay = menu_overlay_for_action(
+            tui::MenuAction::Sessions,
+            &workspace,
+            &LiveSurfaceState {
+                current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_modes: local::TerminalModeSummary::default(),
+                current_surface_text: String::new(),
+                current_pane_surfaces: BTreeMap::new(),
+                current_pane_surface_summaries: BTreeMap::new(),
+                current_pane_modes: BTreeMap::new(),
+                scrollback_views: BTreeMap::new(),
+            },
+        );
+        assert!(
+            overlay
+                .lines
+                .iter()
+                .any(|line| line.text.contains("session local"))
+        );
+
+        let inventory = local::SessionInventorySummary {
+            active_session_id: "local".to_owned(),
+            sessions: vec![
+                local::SessionInventoryItemSummary {
+                    session_id: "local".to_owned(),
+                    title: "main".to_owned(),
+                },
+                local::SessionInventoryItemSummary {
+                    session_id: "work".to_owned(),
+                    title: "Work".to_owned(),
+                },
+            ],
+        };
+        let overlay = menu_overlay_for_action_with_session_inventory(
+            tui::MenuAction::Sessions,
+            &workspace,
+            &LiveSurfaceState {
+                current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_modes: local::TerminalModeSummary::default(),
+                current_surface_text: String::new(),
+                current_pane_surfaces: BTreeMap::new(),
+                current_pane_surface_summaries: BTreeMap::new(),
+                current_pane_modes: BTreeMap::new(),
+                scrollback_views: BTreeMap::new(),
+            },
+            Some(&inventory),
+        );
+        assert!(
+            overlay
+                .lines
+                .iter()
+                .any(|line| line.text.contains("work Work")
+                    && line.action == Some(tui::OverlayAction::SwitchSession("work".to_owned())))
+        );
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 10,
+                    col: 39,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                local::TerminalModeSummary::default(),
+                Some(&overlay),
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::Overlay(
+                tui::OverlayAction::SwitchSession("work".to_owned())
+            ))
         );
     }
 

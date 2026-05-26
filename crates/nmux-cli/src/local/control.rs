@@ -22,6 +22,12 @@ pub(super) fn serve_control_command(
     host: Option<&mut dyn ProcessHost>,
 ) -> Result<ControlCommandOutcome, ServeError> {
     let mut seq = 1;
+    if command.kind == protocol::ControlCommandKind::SessionList {
+        let inventory = session_inventory_for_session(session);
+        let frame = super::session_inventory_frame(&inventory, "local-client", seq);
+        wire::write_default_frame(stream, &frame)?;
+        return Ok(ControlCommandOutcome::Continue);
+    }
     match apply_control_command(session, host, &command) {
         Ok(outcome) => {
             let workspace_frame = session.workspace_tree_frame("local-client", seq);
@@ -50,6 +56,12 @@ pub(super) fn serve_control_command_with_session_actor(
     host: Option<&mut dyn ProcessHost>,
 ) -> Result<ControlCommandOutcome, ServeError> {
     let mut seq = 1;
+    if command.kind == protocol::ControlCommandKind::SessionList {
+        let inventory = session_inventory_for_session(actor.session());
+        let frame = super::session_inventory_frame(&inventory, "local-client", seq);
+        wire::write_default_frame(stream, &frame)?;
+        return Ok(ControlCommandOutcome::Continue);
+    }
     match apply_control_command_with_session_actor(actor, host, &command) {
         Ok(outcome) => {
             let workspace_frame = actor.session().workspace_tree_frame("local-client", seq);
@@ -69,6 +81,25 @@ pub(super) fn serve_control_command_with_session_actor(
             Ok(ControlCommandOutcome::Continue)
         }
     }
+}
+
+fn session_inventory_for_session(session: &Session) -> super::SessionInventorySummary {
+    super::SessionInventorySummary {
+        active_session_id: session.id.clone(),
+        sessions: vec![super::SessionInventoryItemSummary {
+            session_id: session.id.clone(),
+            title: session_title(session),
+        }],
+    }
+}
+
+fn session_title(session: &Session) -> String {
+    session
+        .tabs
+        .iter()
+        .find(|tab| tab.id == session.active_tab_id)
+        .map(|tab| tab.title.clone())
+        .unwrap_or_else(|| session.id.clone())
 }
 
 fn apply_control_command(
@@ -101,6 +132,14 @@ fn apply_control_command(
             apply_tab_close_command(session, host, command)?;
             Ok(ControlCommandOutcome::Continue)
         }
+        protocol::ControlCommandKind::TabSwitch => {
+            apply_tab_switch_command(session, command)?;
+            Ok(ControlCommandOutcome::Continue)
+        }
+        protocol::ControlCommandKind::SessionNew => Err(ControlCommandError::unknown(
+            "session new requires daemon registry routing",
+            None,
+        )),
         protocol::ControlCommandKind::SessionKill => {
             apply_session_kill_command(session, command)?;
             Ok(ControlCommandOutcome::Shutdown)
@@ -142,6 +181,14 @@ fn apply_control_command_with_session_actor(
             apply_tab_close_command_with_session_actor(actor, host, command)?;
             Ok(ControlCommandOutcome::Continue)
         }
+        protocol::ControlCommandKind::TabSwitch => {
+            apply_tab_switch_command_with_session_actor(actor, command)?;
+            Ok(ControlCommandOutcome::Continue)
+        }
+        protocol::ControlCommandKind::SessionNew => Err(ControlCommandError::unknown(
+            "session new requires daemon registry routing",
+            None,
+        )),
         protocol::ControlCommandKind::SessionKill => {
             apply_session_kill_command(actor.session(), command)?;
             enqueue_lifecycle_session_event(
@@ -233,7 +280,7 @@ fn apply_pane_split_command(
         .ok_or_else(|| ControlCommandError::pane_not_found(&target_pane_id))?
         .clone();
     let new_pane_id = next_pane_id(session);
-    let new_host = host_with_pane_environment(template, &new_pane_id);
+    let new_host = host_with_pane_environment(template, &session.id, &new_pane_id);
     host.start_pane(&new_pane_id, &new_host)
         .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(new_pane_id.clone())))?;
     if !session.split_pane(
@@ -278,7 +325,7 @@ fn apply_pane_split_command_with_session_actor(
         .ok_or_else(|| ControlCommandError::pane_not_found(&target_pane_id))?
         .clone();
     let new_pane_id = next_pane_id(session);
-    let new_host = host_with_pane_environment(template, &new_pane_id);
+    let new_host = host_with_pane_environment(template, &session.id, &new_pane_id);
     host.start_pane(&new_pane_id, &new_host)
         .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(new_pane_id.clone())))?;
     if !enqueue_control_session_event(
@@ -325,7 +372,7 @@ fn apply_tab_new_command(
     }
     let pane_id = format!("{tab_id}-pane-1");
     let title = command.title.clone().unwrap_or_else(|| tab_id.clone());
-    let new_host = host_with_pane_environment(template, &pane_id);
+    let new_host = host_with_pane_environment(template, &session.id, &pane_id);
     host.start_pane(&pane_id, &new_host)
         .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(pane_id.clone())))?;
     if !session.add_tab(tab_id.clone(), title, pane_id.clone(), new_host)
@@ -366,7 +413,7 @@ fn apply_tab_new_command_with_session_actor(
     }
     let pane_id = format!("{tab_id}-pane-1");
     let title = command.title.clone().unwrap_or_else(|| tab_id.clone());
-    let new_host = host_with_pane_environment(template, &pane_id);
+    let new_host = host_with_pane_environment(template, &session.id, &pane_id);
     host.start_pane(&pane_id, &new_host)
         .map_err(|err| ControlCommandError::unknown(err.to_string(), Some(pane_id.clone())))?;
     let added = enqueue_control_session_event(
@@ -463,6 +510,61 @@ fn apply_tab_close_command_with_session_actor(
     Ok(())
 }
 
+fn apply_tab_switch_command(
+    session: &mut Session,
+    command: &ControlCommandSummary,
+) -> Result<(), ControlCommandError> {
+    let tab_id = required_control_tab_id(command)?;
+    if !session.tabs.iter().any(|tab| tab.id == tab_id) {
+        return Err(ControlCommandError::unknown(
+            format!("tab not found: {tab_id}"),
+            None,
+        ));
+    }
+    if !session.switch_tab(&tab_id) && session.active_tab_id != tab_id {
+        return Err(ControlCommandError::unknown(
+            format!("failed to switch tab: {tab_id}"),
+            None,
+        ));
+    }
+    Ok(())
+}
+
+fn apply_tab_switch_command_with_session_actor(
+    actor: &mut SessionActor,
+    command: &ControlCommandSummary,
+) -> Result<(), ControlCommandError> {
+    let tab_id = required_control_tab_id(command)?;
+    if !actor.session().tabs.iter().any(|tab| tab.id == tab_id) {
+        return Err(ControlCommandError::unknown(
+            format!("tab not found: {tab_id}"),
+            None,
+        ));
+    }
+    if !enqueue_control_session_event(
+        actor,
+        command,
+        SessionEvent::SwitchTab {
+            tab_id: tab_id.clone(),
+        },
+    ) && actor.session().active_tab_id != tab_id
+    {
+        return Err(ControlCommandError::unknown(
+            format!("failed to switch tab: {tab_id}"),
+            None,
+        ));
+    }
+    Ok(())
+}
+
+fn required_control_tab_id(command: &ControlCommandSummary) -> Result<String, ControlCommandError> {
+    command
+        .tab_id
+        .clone()
+        .filter(|tab_id| !tab_id.is_empty())
+        .ok_or_else(|| ControlCommandError::unknown("tab switch requires a tab ID", None))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ControlCommandError {
     code: protocol::ErrorCode,
@@ -510,7 +612,7 @@ fn next_tab_id(session: &Session) -> String {
     }
 }
 
-fn host_with_pane_environment(mut host: HostSpec, pane_id: &str) -> HostSpec {
+fn host_with_pane_environment(mut host: HostSpec, session_id: &str, pane_id: &str) -> HostSpec {
     let socket = host
         .command
         .env
@@ -533,7 +635,7 @@ fn host_with_pane_environment(mut host: HostSpec, pane_id: &str) -> HostSpec {
     });
     host.command.env.extend([
         ("NMUX".to_owned(), "1".to_owned()),
-        ("NMUX_SESSION_ID".to_owned(), "local".to_owned()),
+        ("NMUX_SESSION_ID".to_owned(), session_id.to_owned()),
         ("NMUX_PANE_ID".to_owned(), pane_id.to_owned()),
         ("NMUX_SOCKET".to_owned(), socket),
         ("NMUX_ORIGIN".to_owned(), previous_origin),

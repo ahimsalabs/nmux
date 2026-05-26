@@ -998,6 +998,29 @@ fn scriptable_cli_splits_panes_and_manages_tabs() {
         "tab new should focus the new tab pane:\n{tab_new_stdout}"
     );
 
+    let tab_switch = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "tab",
+            "switch",
+            "tab-1",
+        ])
+        .output()
+        .expect("run nmux tab switch");
+    assert!(
+        tab_switch.status.success(),
+        "nmux tab switch failed: {}",
+        String::from_utf8_lossy(&tab_switch.stderr)
+    );
+    let tab_switch_stdout = String::from_utf8_lossy(&tab_switch.stdout);
+    assert!(
+        tab_switch_stdout.contains("\"tab_id\":\"tab-1\"")
+            && tab_switch_stdout.contains("\"pane_id\":\"pane-2\""),
+        "tab switch should focus tab-1 pane:\n{tab_switch_stdout}"
+    );
+
     let tab_close = Command::new(env!("CARGO_BIN_EXE_nmux"))
         .args([
             "--socket",
@@ -1045,6 +1068,206 @@ fn scriptable_cli_splits_panes_and_manages_tabs() {
     assert!(
         attach_stdout.contains("\"pane_id\":\"pane-2\"") && attach_stdout.contains("ready:pane-2"),
         "attach should see the runtime split pane output:\n{attach_stdout}"
+    );
+}
+
+#[test]
+fn scriptable_cli_creates_and_attaches_named_session() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--command",
+            "printf 'ready:%s:%s\\n' \"$NMUX_SESSION_ID\" \"$NMUX_PANE_ID\"; cat >/dev/null",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+
+    wait_for_socket(&socket_path);
+
+    let session_new = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "session",
+            "new",
+            "work",
+            "--title",
+            "Work",
+        ])
+        .output()
+        .expect("run nmux session new");
+    assert!(
+        session_new.status.success(),
+        "nmux session new failed: {}",
+        String::from_utf8_lossy(&session_new.stderr)
+    );
+    let session_new_stdout = String::from_utf8_lossy(&session_new.stdout);
+    assert!(
+        session_new_stdout.contains("\"session_id\":\"work\"")
+            && session_new_stdout.contains("\"pane_id\":\"pane-1\""),
+        "session new should return the new workspace:\n{session_new_stdout}"
+    );
+
+    let session_list = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+            "ls",
+        ])
+        .output()
+        .expect("list sessions");
+    assert!(
+        session_list.status.success(),
+        "nmux ls failed: {}",
+        String::from_utf8_lossy(&session_list.stderr)
+    );
+    let session_list_stdout = String::from_utf8_lossy(&session_list.stdout);
+    assert!(
+        session_list_stdout.contains("\"session_id\":\"local\"")
+            && session_list_stdout.contains("\"session_id\":\"work\"")
+            && session_list_stdout.contains("\"title\":\"Work\""),
+        "session list should include default and named sessions:\n{session_list_stdout}"
+    );
+
+    let attach_work = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--json",
+        ])
+        .output()
+        .expect("attach work session");
+    assert!(
+        attach_work.status.success(),
+        "nmux attach work failed: {}",
+        String::from_utf8_lossy(&attach_work.stderr)
+    );
+    let attach_work_stdout = String::from_utf8_lossy(&attach_work.stdout);
+    assert!(
+        attach_work_stdout.contains("\"session_id\":\"work\"")
+            && attach_work_stdout.contains("ready:work:pane-1"),
+        "attach should target the new named session:\n{attach_work_stdout}"
+    );
+
+    let attach_default = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--json",
+        ])
+        .output()
+        .expect("attach default session");
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        attach_default.status.success(),
+        "nmux attach default failed: {}",
+        String::from_utf8_lossy(&attach_default.stderr)
+    );
+    let attach_default_stdout = String::from_utf8_lossy(&attach_default.stdout);
+    assert!(
+        attach_default_stdout.contains("\"session_id\":\"local\"")
+            && attach_default_stdout.contains("ready:local:pane-1"),
+        "untargeted attach should keep using the default session:\n{attach_default_stdout}"
+    );
+}
+
+#[test]
+fn scriptable_named_session_panes_inherit_session_environment() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--command",
+            "printf 'ready:%s:%s\\n' \"$NMUX_SESSION_ID\" \"$NMUX_PANE_ID\"; cat >/dev/null",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+
+    wait_for_socket(&socket_path);
+
+    let split = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--json",
+            "pane",
+            "split",
+            "vertical",
+            "pane-1",
+        ])
+        .output()
+        .expect("run nmux pane split");
+    assert!(
+        split.status.success(),
+        "nmux pane split failed: {}",
+        String::from_utf8_lossy(&split.stderr)
+    );
+
+    let tab_new = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--json",
+            "tab",
+            "new",
+            "tab-script",
+        ])
+        .output()
+        .expect("run nmux tab new");
+    assert!(
+        tab_new.status.success(),
+        "nmux tab new failed: {}",
+        String::from_utf8_lossy(&tab_new.stderr)
+    );
+    thread::sleep(Duration::from_millis(100));
+
+    let attach = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--session",
+            "work",
+            "--json",
+        ])
+        .output()
+        .expect("run nmux attach");
+
+    let _ = server.kill();
+    let _ = server.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        attach.status.success(),
+        "nmux attach failed: {}",
+        String::from_utf8_lossy(&attach.stderr)
+    );
+    let attach_stdout = String::from_utf8_lossy(&attach.stdout);
+    assert!(
+        attach_stdout.contains("\"session_id\":\"work\"")
+            && attach_stdout.contains("\"pane_id\":\"tab-script-pane-1\"")
+            && attach_stdout.contains("ready:work:tab-script-pane-1"),
+        "runtime-created panes should inherit the named session:\n{attach_stdout}"
     );
 }
 
@@ -2455,7 +2678,7 @@ fn live_tty_client_resize_updates_daemon_pane_size() {
     );
     let stdout = String::from_utf8_lossy(&observe.stdout);
     assert!(
-        stdout.contains("session=local tab=tab-1 pane=pane-1 size=72x19 resize=fixed"),
+        stdout.contains("session=local tab=tab-1 pane=pane-1 size=51x15 resize=fixed"),
         "daemon did not commit tty resize:\n{stdout}"
     );
 }
@@ -2550,7 +2773,7 @@ fn live_tty_client_records_resize_without_followup_input() {
     while Instant::now() < deadline {
         record_contents = fs::read_to_string(&record_path).unwrap_or_default();
         if record_contents.contains(
-            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":72,\"rows\":19,\"resize_policy\":\"fixed\"}",
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":51,\"rows\":15,\"resize_policy\":\"fixed\"}",
         ) {
             break;
         }
@@ -2571,7 +2794,7 @@ fn live_tty_client_records_resize_without_followup_input() {
     );
     assert!(
         record_contents.contains(
-            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":72,\"rows\":19,\"resize_policy\":\"fixed\"}"
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":51,\"rows\":15,\"resize_policy\":\"fixed\"}"
         ),
         "client did not record resize before follow-up input:\nrecord:\n{record_contents}\noutput:\n{}",
         client_output.output
@@ -2716,7 +2939,7 @@ fn live_tty_client_initial_size_renders_before_input() {
     while Instant::now() < deadline {
         record = fs::read_to_string(&record_path).unwrap_or_default();
         if record.contains(
-            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":100,\"rows\":24,\"resize_policy\":\"fixed\"}",
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":72,\"rows\":20,\"resize_policy\":\"fixed\"}",
         ) {
             break;
         }
@@ -2731,7 +2954,7 @@ fn live_tty_client_initial_size_renders_before_input() {
 
     assert!(
         record.contains(
-            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":100,\"rows\":24,\"resize_policy\":\"fixed\"}"
+            "\"event\":\"workspace\",\"workspace\":{\"session_id\":\"local\",\"tab_id\":\"tab-1\",\"pane_id\":\"pane-1\",\"cols\":72,\"rows\":20,\"resize_policy\":\"fixed\"}"
         ),
         "client did not render initial tty resize before input:\nrecord:\n{record}\noutput:\n{}",
         client_output.output
@@ -7490,6 +7713,68 @@ fn live_cli_can_drive_input_chunks_from_stdin_bytes() {
 }
 
 #[test]
+fn live_cli_stdin_bytes_forwards_bracketed_paste_as_paste_input() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--command",
+            "printf 'ready\n'; while IFS= read -r line; do printf 'paste:%s\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+
+    wait_for_socket(&socket_path);
+
+    let mut client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--stdin-bytes",
+            "--interval-ms",
+            "1000",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn nmux");
+
+    let mut stdin = client.stdin.take().expect("client stdin");
+    stdin
+        .write_all(b"\x1b[200~clip\n\x1b[201~")
+        .expect("write bracketed paste");
+    stdin.flush().expect("flush bracketed paste");
+    drop(stdin);
+
+    let client = client.wait_with_output().expect("wait for nmux");
+    let server_status = server.wait().expect("wait for daemon");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "daemon failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("paste:clip"),
+        "missing decoded paste output:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("[200~clip"),
+        "bracketed paste control bytes leaked to pane:\n{stdout}"
+    );
+}
+
+#[test]
 fn live_stdin_bytes_keeps_polling_before_input_arrives() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
@@ -8073,11 +8358,20 @@ fn live_redraw_tty_uses_alternate_screen_and_logical_lines() {
         "missing redraw stats overlay:\n{}",
         output.output
     );
-    assert!(
-        output.output.contains("abc"),
-        "missing split-write logical line:\n{}",
-        output.output
-    );
+    let ready_output = output
+        .output
+        .split_once("ready")
+        .map(|(_, trailing)| trailing)
+        .unwrap_or_else(|| panic!("missing initial split-write line:\n{}", output.output));
+    // Ratatui may paint later cells as cursor-addressed diffs, so the raw PTY
+    // stream is not required to contain the complete logical line contiguously.
+    for fragment in ["a", "b", "c"] {
+        assert!(
+            ready_output.contains(fragment),
+            "missing split-write fragment {fragment:?} after initial line:\n{}",
+            output.output
+        );
+    }
     assert!(
         !output.output.contains("\na\nb\nc\n") && !output.output.contains("\r\na\r\nb\r\nc\r\n"),
         "split writes rendered as separate rows:\n{}",

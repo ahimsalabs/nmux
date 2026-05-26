@@ -333,6 +333,27 @@ impl ServeConfig {
         self.serve_stream_with_engines(stream, session, host, engines)
     }
 
+    /// Serve a single pre-accepted stream after the caller has already read
+    /// the first client frame for routing.
+    pub(crate) fn serve_stream_with_initial_frame_and_session_core<
+        H: ProcessHost + ProcessOutput,
+    >(
+        &self,
+        stream: UnixStream,
+        initial: ClientInitialFrame,
+        actor: &mut nmux_core::session::SessionActor,
+        host: &mut H,
+    ) -> Result<(), ServeError> {
+        serve_stream_impl_with_session_actor_initial(
+            stream,
+            initial,
+            actor,
+            host,
+            self.live,
+            self.cycles_per_client,
+        )
+    }
+
     /// Serve clients without a host (snapshot mode only, no input forwarding).
     ///
     /// Used by tests that don't need a process host.
@@ -380,8 +401,11 @@ fn serve_stream_impl<H: ProcessHost + ProcessOutput>(
     live: bool,
     cycles: usize,
 ) -> Result<(), ServeError> {
-    let request = match read_client_initial_frame(&mut stream)? {
-        ClientInitialFrame::Attach(request) => request,
+    let (target_session_id, request) = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach {
+            target_session_id,
+            request,
+        } => (target_session_id, request),
         ClientInitialFrame::Control(command) => {
             return match serve_control_command(&mut stream, command, session, Some(host))? {
                 ControlCommandOutcome::Continue => Ok(()),
@@ -392,6 +416,11 @@ fn serve_stream_impl<H: ProcessHost + ProcessOutput>(
             return serve_health_probe(&mut stream, probe, session, Some(host), Some(engines));
         }
     };
+    if let Some(target) = attach_target_session_mismatch(session, target_session_id.as_deref()) {
+        let mut seq = 1;
+        write_attach_session_not_found_error(&mut stream, session, &mut seq, target)?;
+        return Ok(());
+    }
     let Some(pane_id) = attach_target_pane_id(session, &request) else {
         let mut seq = 1;
         write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
@@ -419,8 +448,23 @@ fn serve_stream_impl_with_session_actor<H: ProcessHost + ProcessOutput>(
     live: bool,
     cycles: usize,
 ) -> Result<(), ServeError> {
-    let request = match read_client_initial_frame(&mut stream)? {
-        ClientInitialFrame::Attach(request) => request,
+    let initial = read_client_initial_frame(&mut stream)?;
+    serve_stream_impl_with_session_actor_initial(stream, initial, actor, host, live, cycles)
+}
+
+fn serve_stream_impl_with_session_actor_initial<H: ProcessHost + ProcessOutput>(
+    mut stream: UnixStream,
+    initial: ClientInitialFrame,
+    actor: &mut SessionActor,
+    host: &mut H,
+    live: bool,
+    cycles: usize,
+) -> Result<(), ServeError> {
+    let (target_session_id, request) = match initial {
+        ClientInitialFrame::Attach {
+            target_session_id,
+            request,
+        } => (target_session_id, request),
         ClientInitialFrame::Control(command) => {
             return match serve_control_command_with_session_actor(
                 &mut stream,
@@ -436,6 +480,13 @@ fn serve_stream_impl_with_session_actor<H: ProcessHost + ProcessOutput>(
             return serve_health_probe_with_session_actor(&mut stream, probe, actor, host);
         }
     };
+    if let Some(target) =
+        attach_target_session_mismatch(actor.session(), target_session_id.as_deref())
+    {
+        let mut seq = 1;
+        write_attach_session_not_found_error(&mut stream, actor.session(), &mut seq, target)?;
+        return Ok(());
+    }
     let pane_id = {
         let (session, _) = actor.session_and_engines_mut();
         attach_target_pane_id(session, &request)
@@ -1956,8 +2007,11 @@ fn accept_live_client(
         Err(err) => return Err(err.into()),
     };
     stream.set_nonblocking(false)?;
-    let request = match read_client_initial_frame(&mut stream)? {
-        ClientInitialFrame::Attach(request) => request,
+    let (target_session_id, request) = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach {
+            target_session_id,
+            request,
+        } => (target_session_id, request),
         ClientInitialFrame::Control(command) => {
             return match serve_control_command(&mut stream, command, session, Some(host))? {
                 ControlCommandOutcome::Continue => Ok(Some(LiveClientAccept::Command)),
@@ -1969,6 +2023,11 @@ fn accept_live_client(
             return Ok(Some(LiveClientAccept::Command));
         }
     };
+    if let Some(target) = attach_target_session_mismatch(session, target_session_id.as_deref()) {
+        let mut seq = 1;
+        write_attach_session_not_found_error(&mut stream, session, &mut seq, target)?;
+        return Ok(Some(LiveClientAccept::Command));
+    }
     let leaf_pane_ids = session.leaf_pane_ids();
     if let Some(pane_id) = attach_target_pane_id(session, &request) {
         let actor = request_actor_for_pane(&request, &pane_id);
@@ -2054,8 +2113,11 @@ fn accept_live_client_with_session_actor(
         Err(err) => return Err(err.into()),
     };
     stream.set_nonblocking(false)?;
-    let request = match read_client_initial_frame(&mut stream)? {
-        ClientInitialFrame::Attach(request) => request,
+    let (target_session_id, request) = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach {
+            target_session_id,
+            request,
+        } => (target_session_id, request),
         ClientInitialFrame::Control(command) => {
             return match serve_control_command_with_session_actor(
                 &mut stream,
@@ -2072,6 +2134,13 @@ fn accept_live_client_with_session_actor(
             return Ok(Some(LiveClientAccept::Command));
         }
     };
+    if let Some(target) =
+        attach_target_session_mismatch(actor.session(), target_session_id.as_deref())
+    {
+        let mut seq = 1;
+        write_attach_session_not_found_error(&mut stream, actor.session(), &mut seq, target)?;
+        return Ok(Some(LiveClientAccept::Command));
+    }
     let leaf_pane_ids = actor.session().leaf_pane_ids();
     let pane_id = {
         let (session, _) = actor.session_and_engines_mut();
@@ -2872,7 +2941,17 @@ fn serve_next(
 ) -> Result<(), ServeError> {
     let (mut stream, _) = listener.accept()?;
     match read_client_initial_frame(&mut stream)? {
-        ClientInitialFrame::Attach(request) => {
+        ClientInitialFrame::Attach {
+            target_session_id,
+            request,
+        } => {
+            if let Some(target) =
+                attach_target_session_mismatch(session, target_session_id.as_deref())
+            {
+                let mut seq = 1;
+                write_attach_session_not_found_error(&mut stream, session, &mut seq, target)?;
+                return Ok(());
+            }
             serve_attached_client(&mut stream, request, session, None, engines)
         }
         ClientInitialFrame::Control(command) => {
@@ -2894,8 +2973,11 @@ fn serve_next_with_output(
     engines: &mut PaneTerminalEngines,
 ) -> Result<(), ServeError> {
     let (mut stream, _) = listener.accept()?;
-    let request = match read_client_initial_frame(&mut stream)? {
-        ClientInitialFrame::Attach(request) => request,
+    let (target_session_id, request) = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach {
+            target_session_id,
+            request,
+        } => (target_session_id, request),
         ClientInitialFrame::Control(command) => {
             return match serve_control_command(&mut stream, command, session, None)? {
                 ControlCommandOutcome::Continue => Ok(()),
@@ -2906,6 +2988,11 @@ fn serve_next_with_output(
             return serve_health_probe(&mut stream, probe, session, None, Some(engines));
         }
     };
+    if let Some(target) = attach_target_session_mismatch(session, target_session_id.as_deref()) {
+        let mut seq = 1;
+        write_attach_session_not_found_error(&mut stream, session, &mut seq, target)?;
+        return Ok(());
+    }
     if let Some(output) = output {
         let Some(pane_id) = attach_target_pane_id(session, &request) else {
             let mut seq = 1;
@@ -3881,13 +3968,16 @@ fn socket_closed_error(err: &io::Error) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ClientInitialFrame {
-    Attach(AttachRequest),
+pub(crate) enum ClientInitialFrame {
+    Attach {
+        target_session_id: Option<String>,
+        request: AttachRequest,
+    },
     Control(ControlCommandSummary),
     HealthProbe(PresenceSummary),
 }
 
-fn read_client_initial_frame<R: Read>(reader: &mut R) -> io::Result<ClientInitialFrame> {
+pub(crate) fn read_client_initial_frame<R: Read>(reader: &mut R) -> io::Result<ClientInitialFrame> {
     let frame = wire::read_frame(reader, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)?;
     let envelope = protocol::size_prefixed_root_as_envelope(&frame).map_err(|err| {
         io::Error::new(
@@ -3897,7 +3987,13 @@ fn read_client_initial_frame<R: Read>(reader: &mut R) -> io::Result<ClientInitia
     })?;
     match envelope.body_type() {
         protocol::EnvelopeBody::AttachRequest => {
-            attach_request_from_frame(&frame).map(ClientInitialFrame::Attach)
+            let target_session_id =
+                optional_io_string(envelope.session_id(), "envelope session_id")?;
+            let request = attach_request_from_frame(&frame)?;
+            Ok(ClientInitialFrame::Attach {
+                target_session_id,
+                request,
+            })
         }
         protocol::EnvelopeBody::ControlCommand => {
             control_command_from_frame(&frame).map(ClientInitialFrame::Control)
@@ -4198,6 +4294,33 @@ fn attach_target_pane_id(session: &mut Session, request: &AttachRequest) -> Opti
     }
 }
 
+fn attach_target_session_mismatch<'a>(
+    session: &Session,
+    target_session_id: Option<&'a str>,
+) -> Option<&'a str> {
+    match target_session_id {
+        Some(target) if target != session.id => Some(target),
+        _ => None,
+    }
+}
+
+fn write_attach_session_not_found_error(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    target_session_id: &str,
+) -> Result<(), ServeError> {
+    write_protocol_error(
+        stream,
+        session,
+        seq,
+        protocol::ErrorCode::SessionNotFound,
+        &format!("session not found: {target_session_id}"),
+        None,
+        0,
+    )
+}
+
 fn write_attach_target_not_found_error(
     stream: &mut UnixStream,
     session: &Session,
@@ -4398,7 +4521,7 @@ fn write_host_output_error(
     )
 }
 
-fn write_protocol_error(
+pub(crate) fn write_protocol_error(
     stream: &mut UnixStream,
     session: &Session,
     seq: &mut u64,
@@ -5039,6 +5162,7 @@ pub(crate) fn attach_with_known_surfaces(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachOptions {
     pub request: AttachRequest,
+    pub target_session_id: Option<String>,
     pub input_text: Option<String>,
     pub key_name: Option<String>,
     pub key_names: Vec<String>,
@@ -5088,6 +5212,7 @@ impl Default for AttachOptions {
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
             },
+            target_session_id: None,
             input_text: Some("a".to_owned()),
             key_name: None,
             key_names: Vec::new(),
@@ -5135,7 +5260,11 @@ pub(crate) fn attach_with_client_options_from_stream(
     options: AttachOptions,
 ) -> Result<AttachSnapshot, ServeError> {
     let mode = options.request.mode;
-    write_attach_request(&mut stream, &options.request)?;
+    write_attach_request_for_session(
+        &mut stream,
+        &options.request,
+        options.target_session_id.as_deref(),
+    )?;
     let mut sequence = ClientFrameSequence::default();
     let snapshot = attach_from_stream(&mut stream)?;
     let attached_pane_id = snapshot.status.pane_id.clone();
@@ -5246,6 +5375,14 @@ pub fn run_control_command_on_stream(
 ) -> Result<WorkspaceSummary, Box<dyn std::error::Error>> {
     write_control_command(&mut stream, &command)?;
     Ok(read_control_command_response(&mut stream)?)
+}
+
+pub fn run_session_inventory_command_on_stream(
+    mut stream: UnixStream,
+    command: ControlCommandSummary,
+) -> Result<SessionInventorySummary, Box<dyn std::error::Error>> {
+    write_control_command(&mut stream, &command)?;
+    Ok(read_session_inventory_command_response(&mut stream)?)
 }
 
 impl AttachOptions {
@@ -5733,12 +5870,20 @@ pub(crate) fn workspace_summary_from_frame(frame: &[u8]) -> Result<WorkspaceSumm
     let tabs = snapshot.tabs().ok_or("workspace tree has no tabs")?;
     required_string(snapshot.session_id(), "workspace session_id")?;
     required_string(snapshot.active_tab_id(), "workspace active_tab_id")?;
+    let mut tab_summaries = Vec::with_capacity(tabs.len());
     for index in 0..tabs.len() {
         let tab = tabs.get(index);
         required_string(tab.tab_id(), "workspace tab_id")?;
+        required_string(tab.title(), "workspace tab title")?;
         required_string(tab.active_pane_id(), "workspace active_pane_id")?;
         let root = tab.root().ok_or("workspace tab has no root pane")?;
         validate_pane_node(root)?;
+        tab_summaries.push(WorkspaceTabSummary {
+            tab_id: required_string(tab.tab_id(), "workspace tab_id")?,
+            title: required_string(tab.title(), "workspace tab title")?,
+            active_pane_id: required_string(tab.active_pane_id(), "workspace active_pane_id")?,
+            root: workspace_pane_summary_from_node(root)?,
+        });
     }
     let active_tab_id = required_string(snapshot.active_tab_id(), "workspace active_tab_id")?;
     let tab = (0..tabs.len())
@@ -5759,7 +5904,86 @@ pub(crate) fn workspace_summary_from_frame(frame: &[u8]) -> Result<WorkspaceSumm
         rows: pane.rows(),
         resize_policy: validate_resize_policy(pane.resize_policy())?,
         pane_tree: Some(pane_tree),
+        tabs: tab_summaries,
     })
+}
+
+pub(crate) fn session_inventory_from_frame(
+    frame: &[u8],
+) -> Result<SessionInventorySummary, ServeError> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::SessionInventorySnapshot {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let snapshot = envelope
+        .body_as_session_inventory_snapshot()
+        .ok_or("missing session inventory body")?;
+    let active_session_id =
+        required_string(snapshot.active_session_id(), "session inventory active_session_id")?;
+    let sessions = snapshot
+        .sessions()
+        .ok_or("session inventory has no sessions")?;
+    let mut session_summaries = Vec::with_capacity(sessions.len());
+    for index in 0..sessions.len() {
+        let item = sessions.get(index);
+        session_summaries.push(SessionInventoryItemSummary {
+            session_id: required_string(item.session_id(), "session inventory session_id")?,
+            title: required_string(item.title(), "session inventory title")?,
+        });
+    }
+
+    Ok(SessionInventorySummary {
+        active_session_id,
+        sessions: session_summaries,
+    })
+}
+
+pub(crate) fn session_inventory_frame(
+    inventory: &SessionInventorySummary,
+    connection_id: &str,
+    seq: u64,
+) -> Vec<u8> {
+    let mut builder = FlatBufferBuilder::new();
+    let mut session_offsets = Vec::with_capacity(inventory.sessions.len());
+    for session in &inventory.sessions {
+        let session_id = builder.create_string(&session.session_id);
+        let title = builder.create_string(&session.title);
+        let item = protocol::SessionInventoryItem::create(
+            &mut builder,
+            &protocol::SessionInventoryItemArgs {
+                session_id: Some(session_id),
+                title: Some(title),
+            },
+        );
+        session_offsets.push(item);
+    }
+    let sessions = builder.create_vector(&session_offsets);
+    let active_session_id = builder.create_string(&inventory.active_session_id);
+    let snapshot = protocol::SessionInventorySnapshot::create(
+        &mut builder,
+        &protocol::SessionInventorySnapshotArgs {
+            active_session_id: Some(active_session_id),
+            sessions: Some(sessions),
+        },
+    );
+    let envelope_session_id = builder.create_string(&inventory.active_session_id);
+    let connection_id = builder.create_string(connection_id);
+    let envelope = protocol::Envelope::create(
+        &mut builder,
+        &protocol::EnvelopeArgs {
+            protocol_version: PROTOCOL_VERSION,
+            session_id: Some(envelope_session_id),
+            connection_id: Some(connection_id),
+            seq,
+            ack: 0,
+            sent_at_mono_ms: 0,
+            body_type: protocol::EnvelopeBody::SessionInventorySnapshot,
+            body: Some(snapshot.as_union_value()),
+        },
+    );
+    protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+    builder.finished_data().to_vec()
 }
 
 pub(crate) fn surface_text_from_frame(frame: &[u8]) -> Result<String, ServeError> {
@@ -6295,6 +6519,25 @@ fn read_control_command_response(stream: &mut UnixStream) -> Result<WorkspaceSum
     }
 }
 
+fn read_session_inventory_command_response(
+    stream: &mut UnixStream,
+) -> Result<SessionInventorySummary, ServeError> {
+    loop {
+        let frame = wire::read_default_frame(stream)?;
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
+        match envelope.body_type() {
+            protocol::EnvelopeBody::SessionInventorySnapshot => {
+                return session_inventory_from_frame(&frame);
+            }
+            protocol::EnvelopeBody::Error => {
+                return Err(server_error(error_summary_from_frame(&frame)?).into());
+            }
+            protocol::EnvelopeBody::PresenceUpdate => {}
+            other => return Err(format!("unexpected session inventory response: {other:?}").into()),
+        }
+    }
+}
+
 pub fn read_live_surface_update_from_stream(
     stream: &mut UnixStream,
 ) -> Result<LiveSurfaceRead, Box<dyn std::error::Error>> {
@@ -6788,7 +7031,15 @@ pub(crate) fn scrollback_chunk_from_frame(
 }
 
 pub fn write_attach_request<W: Write>(writer: &mut W, request: &AttachRequest) -> io::Result<()> {
-    let frame = request.frame();
+    write_attach_request_for_session(writer, request, None)
+}
+
+pub fn write_attach_request_for_session<W: Write>(
+    writer: &mut W,
+    request: &AttachRequest,
+    session_id: Option<&str>,
+) -> io::Result<()> {
+    let frame = request.frame_for_session(session_id);
     wire::write_frame(writer, &frame, ATTACH_MAX_FRAME_LEN).map_err(wire_error_to_io)
 }
 
@@ -7054,7 +7305,7 @@ impl ControlCommandSummary {
 }
 
 impl AttachRequest {
-    fn frame(&self) -> Vec<u8> {
+    fn frame_for_session(&self, session_id: Option<&str>) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
         let mut known_surface_offsets = Vec::with_capacity(self.known_surfaces.len());
         for surface in &self.known_surfaces {
@@ -7094,13 +7345,13 @@ impl AttachRequest {
             },
         );
 
-        let session_id = builder.create_string("local");
+        let session_id = session_id.map(|session_id| builder.create_string(session_id));
         let connection_id = builder.create_string("local-client");
         let envelope = protocol::Envelope::create(
             &mut builder,
             &protocol::EnvelopeArgs {
                 protocol_version: PROTOCOL_VERSION,
-                session_id: Some(session_id),
+                session_id,
                 connection_id: Some(connection_id),
                 seq: 0,
                 ack: 0,
@@ -7921,6 +8172,19 @@ pub struct WorkspaceSummary {
     pub rows: u32,
     pub resize_policy: protocol::ResizePolicy,
     pub pane_tree: Option<WorkspacePaneSummary>,
+    pub tabs: Vec<WorkspaceTabSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionInventorySummary {
+    pub active_session_id: String,
+    pub sessions: Vec<SessionInventoryItemSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionInventoryItemSummary {
+    pub session_id: String,
+    pub title: String,
 }
 
 impl WorkspaceSummary {
@@ -7935,6 +8199,14 @@ impl WorkspaceSummary {
             resize_policy_label(self.resize_policy)
         )
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceTabSummary {
+    pub tab_id: String,
+    pub title: String,
+    pub active_pane_id: String,
+    pub root: WorkspacePaneSummary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9458,6 +9730,7 @@ mod tests {
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
             },
+            target_session_id: None,
             input_text: None,
             key_name: None,
             key_names: Vec::new(),
@@ -9506,6 +9779,19 @@ mod tests {
                     split_axis: protocol::SplitAxis::None,
                     children: Vec::new(),
                 }),
+                tabs: vec![WorkspaceTabSummary {
+                    tab_id: "tab-1".to_owned(),
+                    title: "local".to_owned(),
+                    active_pane_id: "pane-1".to_owned(),
+                    root: WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 80,
+                        rows: 24,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                }],
             }
         );
         assert_eq!(
@@ -11218,6 +11504,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 2),
@@ -11290,6 +11577,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -11312,6 +11600,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -11342,6 +11631,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -11380,6 +11670,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -11402,6 +11693,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: AttachStatusSummary {
@@ -11435,6 +11727,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 7),
@@ -11470,6 +11763,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary_with_state(
@@ -11509,6 +11803,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 8),
@@ -11609,6 +11904,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 7),
@@ -11900,6 +12196,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 2),
@@ -12256,6 +12553,7 @@ mod tests {
                     mode: AttachMode::ReadOnly,
                     ..AttachOptions::default().request
                 },
+                target_session_id: None,
                 input_text: None,
                 known_scrollback_versions: vec![KnownScrollbackVersion {
                     pane_id: "pane-2".to_owned(),
@@ -13164,6 +13462,61 @@ mod tests {
     }
 
     #[test]
+    fn actor_live_control_tab_switch_routes_commit_through_actor() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let second_host = session.tabs[0].root.host.clone();
+        assert!(session.add_tab("tab-2", "Second", "tab-2-pane-1", second_host.clone()));
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start first pane");
+        host.start_pane("tab-2-pane-1", &second_host)
+            .expect("start second pane");
+
+        let (trace_tx, trace_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(1, usize::MAX)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor live control");
+            trace_tx
+                .send(actor.trace().accepted_events())
+                .expect("send actor trace")
+        });
+
+        let stream = UnixStream::connect(&socket_path).expect("connect control client");
+        let workspace = run_control_command_on_stream(
+            stream,
+            ControlCommandSummary {
+                actor_id: "controller".to_owned(),
+                command_seq: 8,
+                kind: protocol::ControlCommandKind::TabSwitch,
+                pane_id: None,
+                tab_id: Some("tab-2".to_owned()),
+                split_axis: protocol::SplitAxis::None,
+                title: None,
+                session_id: None,
+            },
+        )
+        .expect("run tab switch");
+
+        assert_eq!(workspace.tab_id, "tab-2");
+        assert_eq!(workspace.pane_id, "tab-2-pane-1");
+        assert_eq!(workspace.tabs.len(), 2);
+        server.join().expect("server thread");
+        let accepted_events = trace_rx.recv().expect("actor trace");
+        assert!(accepted_events.iter().any(|accepted| matches!(
+            &accepted.event,
+            SessionEvent::SwitchTab { tab_id } if tab_id == "tab-2"
+        ) && accepted.metadata.source_id
+            == "controller"
+            && accepted.metadata.lane == SessionEventLane::Control));
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn actor_live_control_session_kill_routes_lifecycle_event_through_actor() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -13261,6 +13614,48 @@ mod tests {
             &accepted.event,
             SessionEvent::RequestSessionShutdown { .. }
         )));
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn actor_live_control_session_new_requires_registry_routing() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start pane");
+
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(1, usize::MAX)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor live control");
+        });
+
+        let stream = UnixStream::connect(&socket_path).expect("connect control client");
+        let err = run_control_command_on_stream(
+            stream,
+            ControlCommandSummary {
+                actor_id: "controller".to_owned(),
+                command_seq: 11,
+                kind: protocol::ControlCommandKind::SessionNew,
+                pane_id: None,
+                tab_id: None,
+                split_axis: protocol::SplitAxis::None,
+                title: Some("Work".to_owned()),
+                session_id: Some("work".to_owned()),
+            },
+        )
+        .expect_err("single-session actor should reject session new");
+
+        assert!(
+            err.to_string()
+                .contains("session new requires daemon registry routing"),
+            "unexpected error: {err}"
+        );
+        server.join().expect("server thread");
         let _ = fs::remove_file(socket_path);
     }
 
@@ -14571,6 +14966,19 @@ mod tests {
                     split_axis: protocol::SplitAxis::None,
                     children: Vec::new(),
                 }),
+                tabs: vec![WorkspaceTabSummary {
+                    tab_id: "tab-1".to_owned(),
+                    title: "local".to_owned(),
+                    active_pane_id: "pane-1".to_owned(),
+                    root: WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 100,
+                        rows: 30,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                }],
             })
         );
         let update =
@@ -14655,6 +15063,19 @@ mod tests {
                     split_axis: protocol::SplitAxis::None,
                     children: Vec::new(),
                 }),
+                tabs: vec![WorkspaceTabSummary {
+                    tab_id: "tab-1".to_owned(),
+                    title: "local".to_owned(),
+                    active_pane_id: "pane-1".to_owned(),
+                    root: WorkspacePaneSummary {
+                        pane_id: "pane-1".to_owned(),
+                        cols: 100,
+                        rows: 30,
+                        resize_policy: protocol::ResizePolicy::Fixed,
+                        split_axis: protocol::SplitAxis::None,
+                        children: Vec::new(),
+                    },
+                }],
             })
         );
 
@@ -16525,6 +16946,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-2", 2),
@@ -16655,6 +17077,7 @@ mod tests {
                     rows: 24,
                     resize_policy: protocol::ResizePolicy::Fixed,
                     pane_tree: None,
+                    tabs: Vec::new(),
                 },
                 presence: presence_summary(AttachMode::ReadWrite),
                 status: attach_status_summary("pane-1", 2),
@@ -16734,6 +17157,7 @@ mod tests {
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
                 },
+                target_session_id: None,
                 input_text: Some("current-input".to_owned()),
                 key_name: None,
                 key_names: Vec::new(),
@@ -16796,6 +17220,7 @@ mod tests {
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
                 },
+                target_session_id: None,
                 input_text: None,
                 key_name: None,
                 key_names: Vec::new(),
@@ -16857,6 +17282,7 @@ mod tests {
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
                 },
+                target_session_id: None,
                 input_text: None,
                 key_name: Some("delete".to_owned()),
                 key_names: Vec::new(),
@@ -16918,6 +17344,7 @@ mod tests {
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
                 },
+                target_session_id: None,
                 input_text: None,
                 key_name: None,
                 key_names: vec!["escape".to_owned(), "enter".to_owned()],
@@ -16985,6 +17412,7 @@ mod tests {
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
                 },
+                target_session_id: None,
                 input_text: None,
                 key_name: None,
                 key_names: Vec::new(),
@@ -17046,6 +17474,7 @@ mod tests {
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
                 },
+                target_session_id: None,
                 input_text: None,
                 key_name: None,
                 key_names: Vec::new(),
@@ -17118,6 +17547,7 @@ mod tests {
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
                 },
+                target_session_id: None,
                 input_text: None,
                 key_name: None,
                 key_names: Vec::new(),
@@ -17194,6 +17624,7 @@ mod tests {
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
                 },
+                target_session_id: None,
                 input_text: None,
                 key_name: None,
                 key_names: Vec::new(),
@@ -17232,6 +17663,40 @@ mod tests {
     }
 
     #[test]
+    fn attach_rejects_explicit_mismatched_session_target() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+
+        let server = thread::spawn(move || {
+            ServeConfig::one()
+                .serve_without_host(&listener, &mut session)
+                .expect("serve one")
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect daemon");
+        write_attach_request_for_session(
+            &mut stream,
+            &AttachOptions::default().request,
+            Some("other"),
+        )
+        .expect("write attach request");
+        let err = attach_from_stream(&mut stream).expect_err("wrong session should fail");
+        server.join().expect("server thread");
+
+        assert!(
+            err.to_string()
+                .contains("server error: session not found: other"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("code=SessionNotFound"),
+            "missing SessionNotFound code: {err}"
+        );
+
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn attach_request_round_trips_read_only_mode() {
         let request = AttachRequest {
             actor_id: "spectator".to_owned(),
@@ -17252,6 +17717,7 @@ mod tests {
         write_attach_request(&mut buffer, &request).expect("write attach request");
         let envelope = protocol::size_prefixed_root_as_envelope(&buffer).expect("attach envelope");
         assert_eq!(envelope.body_type(), protocol::EnvelopeBody::AttachRequest);
+        assert_eq!(envelope.session_id(), None);
         let body = envelope.body_as_attach_request().expect("attach body");
         assert_eq!(body.actor_id(), Some("spectator"));
         assert_eq!(body.user_id(), Some("user-2"));
@@ -17265,6 +17731,24 @@ mod tests {
         let decoded = read_attach_request(&mut buffer.as_slice()).expect("read attach request");
 
         assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn attach_request_can_carry_explicit_session_target() {
+        let request = AttachOptions::default().request;
+        let mut buffer = Vec::new();
+        write_attach_request_for_session(&mut buffer, &request, Some("work"))
+            .expect("write targeted attach request");
+        let initial =
+            read_client_initial_frame(&mut buffer.as_slice()).expect("read initial attach frame");
+
+        assert_eq!(
+            initial,
+            ClientInitialFrame::Attach {
+                target_session_id: Some("work".to_owned()),
+                request,
+            }
+        );
     }
 
     #[test]

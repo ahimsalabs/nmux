@@ -8,10 +8,13 @@ use std::time::{Duration, Instant};
 use crate::error::ServeError;
 use crate::local;
 use clap::{ArgAction, Parser, ValueEnum};
-use nmux_core::host::{CommandSpec, HostKind, HostSpec, LocalPtyHost, ProcessHost};
+use nmux_core::host::{
+    CommandSpec, HostError, HostKind, HostSpec, LocalPtyHost, PaneProcess, ProcessHost,
+    ProcessOutput,
+};
 use nmux_core::session::{Session, SessionActor, SessionCore, SessionEvent, SessionRegistry};
 use nmux_core::terminal::TerminalEngineKind;
-use nmux_proto::protocol;
+use nmux_proto::{protocol, wire};
 
 const RESIZE_POLICY_NAMES: &[&str] = &["fixed", "leader", "active-client", "manual"];
 const SPLIT_AXIS_NAMES: &[&str] = &["horizontal", "vertical"];
@@ -88,9 +91,321 @@ where
         None
     };
 
+    let mut pty_host = LocalPtyHost::default();
+    let session_id = args.session_id.clone();
+    let session_actor =
+        match create_daemon_session_actor(&args, &session_id, None, &mut pty_host) {
+            Ok(actor) => actor,
+            Err(err) => {
+                report_ready_json_error(&args, err.as_ref())?;
+                return Err(err);
+            }
+        };
+    let mut session_registry = SessionRegistry::new();
+    if !session_registry.insert(session_actor) {
+        return Err(format!("duplicate daemon session id {session_id}").into());
+    }
+    let session_actor = session_registry
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("daemon session {session_id} missing from registry"))?;
+    if let Some(ready_json) = ready_json {
+        println!("{ready_json}");
+        io::stdout().flush()?;
+    }
+
+    if args.live || args.live_forever || args.live_cycles.is_some() || args.live_clients.is_some() {
+        let config = if args.live_forever {
+            local::ServeConfig::live_forever()
+        } else {
+            let cycles = args.live_cycles.unwrap_or(usize::MAX);
+            let clients = args.live_clients.unwrap_or(1);
+            local::ServeConfig::live(clients, cycles)
+        };
+        let config = config.terminal_engine_kind(args.terminal_engine_kind);
+        let serve_result = {
+            let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+            match &listener {
+                DaemonListener::Unix { listener, .. } => {
+                    config.serve_with_session_core(listener, session_actor, &mut scoped_host)
+                }
+                DaemonListener::Tcp(listener) => {
+                    serve_tcp(&config, listener, &args, session_actor, &mut scoped_host)
+                }
+            }
+        };
+        let stop_result = {
+            let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+            stop_panes(&mut scoped_host, &session_actor.session().leaf_pane_ids())
+        };
+        if let Err(err) = serve_result
+            && !local::is_session_shutdown(&err)
+        {
+            return Err(err.into());
+        }
+        stop_result?;
+        return Ok(());
+    }
+
+    if args.one_shot {
+        let config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
+        let serve_result = {
+            let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+            match &listener {
+                DaemonListener::Unix { listener, .. } => {
+                    config.serve_with_session_core(listener, session_actor, &mut scoped_host)
+                }
+                DaemonListener::Tcp(listener) => {
+                    serve_tcp(&config, listener, &args, session_actor, &mut scoped_host)
+                }
+            }
+        };
+        let stop_result = {
+            let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+            stop_panes(&mut scoped_host, &session_actor.session().leaf_pane_ids())
+        };
+        if let Err(err) = serve_result
+            && !local::is_session_shutdown(&err)
+        {
+            return Err(err.into());
+        }
+        stop_result?;
+        return Ok(());
+    }
+
+    let default_config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
+    loop {
+        let serve_result = match &listener {
+            DaemonListener::Unix { listener, .. } => serve_unix_registry_once(
+                &default_config,
+                listener,
+                &args,
+                &mut session_registry,
+                &session_id,
+                &mut pty_host,
+            ),
+            DaemonListener::Tcp(listener) => {
+                let session_actor = session_registry
+                    .get_mut(&session_id)
+                    .ok_or_else(|| format!("daemon session {session_id} missing from registry"))?;
+                let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+                serve_tcp(
+                    &default_config,
+                    listener,
+                    &args,
+                    session_actor,
+                    &mut scoped_host,
+                )
+            }
+        };
+        if let Err(err) = serve_result {
+            if local::is_session_shutdown(&err) {
+                if let Some(session_actor) = session_registry.get(&session_id) {
+                    let mut scoped_host = ScopedLocalPtyHost::new(&session_id, &mut pty_host);
+                    stop_panes(&mut scoped_host, &session_actor.session().leaf_pane_ids())?;
+                }
+                return Ok(());
+            }
+            return Err(err.into());
+        }
+    }
+}
+
+fn serve_tcp(
+    config: &local::ServeConfig,
+    listener: &std::net::TcpListener,
+    args: &Args,
+    session_actor: &mut SessionActor,
+    host: &mut (impl ProcessHost + ProcessOutput),
+) -> Result<(), ServeError> {
+    let token = args
+        .tcp_token
+        .as_deref()
+        .ok_or("--listen requires --token, --tcp-token, or NMUX_TOKEN")?;
+    let mut accepted_connections = 0_usize;
+    while config.connection_limit.accepts_more(accepted_connections) {
+        let stream = local::accept_authenticated_tcp_client(listener, token)?;
+        accepted_connections = accepted_connections.saturating_add(1);
+        config.serve_stream_with_session_core(stream, session_actor, host)?;
+    }
+    Ok(())
+}
+
+fn serve_unix_registry_once(
+    config: &local::ServeConfig,
+    listener: &std::os::unix::net::UnixListener,
+    args: &Args,
+    registry: &mut SessionRegistry,
+    default_session_id: &str,
+    pty_host: &mut LocalPtyHost,
+) -> Result<(), ServeError> {
+    let (mut stream, _) = listener.accept()?;
+    let initial = local::read_client_initial_frame(&mut stream)?;
+    if let local::ClientInitialFrame::Control(command) = &initial
+        && command.kind == protocol::ControlCommandKind::SessionNew
+    {
+        return serve_session_new_command(stream, command, args, registry, pty_host);
+    }
+    if let local::ClientInitialFrame::Control(command) = &initial
+        && command.kind == protocol::ControlCommandKind::SessionList
+    {
+        return serve_session_list_command(stream, default_session_id, registry);
+    }
+
+    let target_session_id = initial_target_session_id(&initial)
+        .unwrap_or(default_session_id)
+        .to_owned();
+    let Some(actor) = registry.get_mut(&target_session_id) else {
+        let fallback = registry
+            .get(default_session_id)
+            .ok_or_else(|| format!("daemon session {default_session_id} missing from registry"))?;
+        let mut seq = 1;
+        local::write_protocol_error(
+            &mut stream,
+            fallback.session(),
+            &mut seq,
+            protocol::ErrorCode::SessionNotFound,
+            &format!("session not found: {}", target_session_id),
+            None,
+            0,
+        )?;
+        return Ok(());
+    };
+    let mut scoped_host = ScopedLocalPtyHost::new(&target_session_id, pty_host);
+    config.serve_stream_with_initial_frame_and_session_core(
+        stream,
+        initial,
+        actor,
+        &mut scoped_host,
+    )
+}
+
+fn serve_session_new_command(
+    mut stream: std::os::unix::net::UnixStream,
+    command: &local::ControlCommandSummary,
+    args: &Args,
+    registry: &mut SessionRegistry,
+    pty_host: &mut LocalPtyHost,
+) -> Result<(), ServeError> {
+    let Some(session_id) = command.session_id.as_deref().filter(|value| !value.is_empty()) else {
+        let fallback = registry
+            .get(&args.session_id)
+            .ok_or_else(|| format!("daemon session {} missing from registry", args.session_id))?;
+        let mut seq = 1;
+        local::write_protocol_error(
+            &mut stream,
+            fallback.session(),
+            &mut seq,
+            protocol::ErrorCode::SessionNotFound,
+            "session new requires a non-empty session id",
+            None,
+            command.command_seq,
+        )?;
+        return Ok(());
+    };
+    if registry.get(session_id).is_some() {
+        let fallback = registry
+            .get(&args.session_id)
+            .ok_or_else(|| format!("daemon session {} missing from registry", args.session_id))?;
+        let mut seq = 1;
+        local::write_protocol_error(
+            &mut stream,
+            fallback.session(),
+            &mut seq,
+            protocol::ErrorCode::Unknown,
+            &format!("session already exists: {session_id}"),
+            None,
+            command.command_seq,
+        )?;
+        return Ok(());
+    }
+
+    let actor = create_daemon_session_actor(args, session_id, command.title.as_deref(), pty_host)
+        .map_err(ServeError::from)?;
+    let workspace_frame = actor.session().workspace_tree_frame("local-client", 1);
+    if !registry.insert(actor) {
+        return Err(format!("duplicate daemon session id {session_id}").into());
+    }
+    wire::write_default_frame(&mut stream, &workspace_frame)?;
+    Ok(())
+}
+
+fn serve_session_list_command(
+    mut stream: std::os::unix::net::UnixStream,
+    active_session_id: &str,
+    registry: &SessionRegistry,
+) -> Result<(), ServeError> {
+    let inventory = local::SessionInventorySummary {
+        active_session_id: active_session_id.to_owned(),
+        sessions: registry
+            .iter()
+            .map(|(session_id, actor)| local::SessionInventoryItemSummary {
+                session_id: session_id.to_owned(),
+                title: session_title(actor.session()),
+            })
+            .collect(),
+    };
+    let frame = local::session_inventory_frame(&inventory, "local-client", 1);
+    wire::write_default_frame(&mut stream, &frame)?;
+    Ok(())
+}
+
+fn session_title(session: &Session) -> String {
+    session
+        .tabs
+        .iter()
+        .find(|tab| tab.id == session.active_tab_id)
+        .map(|tab| tab.title.clone())
+        .unwrap_or_else(|| session.id.clone())
+}
+
+fn initial_target_session_id(initial: &local::ClientInitialFrame) -> Option<&str> {
+    match initial {
+        local::ClientInitialFrame::Attach {
+            target_session_id, ..
+        } => target_session_id.as_deref(),
+        local::ClientInitialFrame::Control(command) => command.session_id.as_deref(),
+        local::ClientInitialFrame::HealthProbe(_) => None,
+    }
+}
+
+fn create_daemon_session_actor(
+    args: &Args,
+    session_id: &str,
+    title: Option<&str>,
+    pty_host: &mut LocalPtyHost,
+) -> Result<SessionActor, Box<dyn std::error::Error>> {
+    let session_core = build_daemon_session_core(args, session_id, title)?;
+    let pane_ids = session_core.session().leaf_pane_ids();
+    {
+        let mut scoped_host = ScopedLocalPtyHost::new(session_id, pty_host);
+        for pane_id in &pane_ids {
+            let host_spec = session_core
+                .session()
+                .pane_host(pane_id)
+                .ok_or_else(|| format!("pane {pane_id} missing host"))?
+                .clone();
+            scoped_host.start_pane(pane_id, &host_spec)?;
+        }
+    }
+    let mut actor = SessionActor::new(session_core, DAEMON_TRACE_RING_CAP);
+    {
+        let mut scoped_host = ScopedLocalPtyHost::new(session_id, pty_host);
+        wait_for_panes_output(&mut actor, &mut scoped_host, &pane_ids)?;
+    }
+    Ok(actor)
+}
+
+fn build_daemon_session_core(
+    args: &Args,
+    session_id: &str,
+    title: Option<&str>,
+) -> Result<SessionCore, Box<dyn std::error::Error>> {
     let mut session_core =
         SessionCore::with_terminal_engine_kind(Session::initial(), args.terminal_engine_kind);
-    session_core.session_mut().id.clone_from(&args.session_id);
+    session_core.session_mut().id = session_id.to_owned();
+    if let Some(title) = title {
+        session_core.session_mut().tabs[0].title = title.to_owned();
+    }
     if let Some(command) = args.command.as_deref() {
         session_core.session_mut().tabs[0].root.host.command =
             CommandSpec::new("sh").with_args(["-lc", command]);
@@ -119,7 +434,7 @@ where
             .env
             .extend(args.env.iter().cloned());
     }
-    apply_initial_host_kind(&mut session_core.session_mut().tabs[0].root.host, &args)?;
+    apply_initial_host_kind(&mut session_core.session_mut().tabs[0].root.host, args)?;
     for tab_number in 2..=args.initial_tabs {
         let pane_id = format!("tab-{tab_number}-pane-1");
         let tab_id = format!("tab-{tab_number}");
@@ -186,124 +501,7 @@ where
             inherited_origin.as_deref(),
         );
     }
-    let mut pty_host = LocalPtyHost::default();
-    for pane_id in &pane_ids {
-        let host_spec = session_core
-            .session()
-            .pane_host(pane_id)
-            .ok_or_else(|| format!("pane {pane_id} missing host"))?
-            .clone();
-        if let Err(err) = pty_host.start_pane(pane_id, &host_spec) {
-            report_ready_json_error(&args, &err)?;
-            return Err(Box::new(err));
-        }
-    }
-    let session_id = session_core.session().id.clone();
-    let mut session_registry = SessionRegistry::new();
-    if !session_registry.insert(SessionActor::new(session_core, DAEMON_TRACE_RING_CAP)) {
-        return Err(format!("duplicate daemon session id {session_id}").into());
-    }
-    let session_actor = session_registry
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("daemon session {session_id} missing from registry"))?;
-    if let Err(err) = wait_for_panes_output(session_actor, &mut pty_host, &pane_ids) {
-        report_ready_json_error(&args, err.as_ref())?;
-        return Err(err);
-    }
-    if let Some(ready_json) = ready_json {
-        println!("{ready_json}");
-        io::stdout().flush()?;
-    }
-
-    if args.live || args.live_forever || args.live_cycles.is_some() || args.live_clients.is_some() {
-        let config = if args.live_forever {
-            local::ServeConfig::live_forever()
-        } else {
-            let cycles = args.live_cycles.unwrap_or(usize::MAX);
-            let clients = args.live_clients.unwrap_or(1);
-            local::ServeConfig::live(clients, cycles)
-        };
-        let config = config.terminal_engine_kind(args.terminal_engine_kind);
-        let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => {
-                config.serve_with_session_core(listener, session_actor, &mut pty_host)
-            }
-            DaemonListener::Tcp(listener) => {
-                serve_tcp(&config, listener, &args, session_actor, &mut pty_host)
-            }
-        };
-        let stop_result = stop_panes(&mut pty_host, &session_actor.session().leaf_pane_ids());
-        if let Err(err) = serve_result
-            && !local::is_session_shutdown(&err)
-        {
-            return Err(err.into());
-        }
-        stop_result?;
-        return Ok(());
-    }
-
-    if args.one_shot {
-        let config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
-        let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => {
-                config.serve_with_session_core(listener, session_actor, &mut pty_host)
-            }
-            DaemonListener::Tcp(listener) => {
-                serve_tcp(&config, listener, &args, session_actor, &mut pty_host)
-            }
-        };
-        let stop_result = stop_panes(&mut pty_host, &session_actor.session().leaf_pane_ids());
-        if let Err(err) = serve_result
-            && !local::is_session_shutdown(&err)
-        {
-            return Err(err.into());
-        }
-        stop_result?;
-        return Ok(());
-    }
-
-    let default_config = local::ServeConfig::one().terminal_engine_kind(args.terminal_engine_kind);
-    loop {
-        let serve_result = match &listener {
-            DaemonListener::Unix { listener, .. } => {
-                default_config.serve_with_session_core(listener, session_actor, &mut pty_host)
-            }
-            DaemonListener::Tcp(listener) => serve_tcp(
-                &default_config,
-                listener,
-                &args,
-                session_actor,
-                &mut pty_host,
-            ),
-        };
-        if let Err(err) = serve_result {
-            if local::is_session_shutdown(&err) {
-                stop_panes(&mut pty_host, &session_actor.session().leaf_pane_ids())?;
-                return Ok(());
-            }
-            return Err(err.into());
-        }
-    }
-}
-
-fn serve_tcp(
-    config: &local::ServeConfig,
-    listener: &std::net::TcpListener,
-    args: &Args,
-    session_actor: &mut SessionActor,
-    host: &mut LocalPtyHost,
-) -> Result<(), ServeError> {
-    let token = args
-        .tcp_token
-        .as_deref()
-        .ok_or("--listen requires --token, --tcp-token, or NMUX_TOKEN")?;
-    let mut accepted_connections = 0_usize;
-    while config.connection_limit.accepts_more(accepted_connections) {
-        let stream = local::accept_authenticated_tcp_client(listener, token)?;
-        accepted_connections = accepted_connections.saturating_add(1);
-        config.serve_stream_with_session_core(stream, session_actor, host)?;
-    }
-    Ok(())
+    Ok(session_core)
 }
 
 fn inherited_nmux_origin() -> Option<String> {
@@ -330,6 +528,113 @@ enum DaemonListener {
     Tcp(std::net::TcpListener),
 }
 
+struct ScopedLocalPtyHost<'a> {
+    session_id: &'a str,
+    inner: &'a mut LocalPtyHost,
+}
+
+impl<'a> ScopedLocalPtyHost<'a> {
+    fn new(session_id: &'a str, inner: &'a mut LocalPtyHost) -> Self {
+        Self { session_id, inner }
+    }
+
+    fn host_pane_id(&self, pane_id: &str) -> String {
+        format!("{}:{pane_id}", self.session_id)
+    }
+
+    fn client_pane_id(&self, host_pane_id: &str) -> String {
+        host_pane_id
+            .strip_prefix(self.session_id)
+            .and_then(|suffix| suffix.strip_prefix(':'))
+            .unwrap_or(host_pane_id)
+            .to_owned()
+    }
+
+    fn client_process(&self, mut process: PaneProcess) -> PaneProcess {
+        process.pane_id = self.client_pane_id(&process.pane_id);
+        process
+    }
+
+    fn client_error(&self, error: HostError) -> HostError {
+        match error {
+            HostError::UnsupportedHostKind { .. } => error,
+            HostError::UnsupportedOperation { pane_id, operation } => {
+                HostError::UnsupportedOperation {
+                    pane_id: self.client_pane_id(&pane_id),
+                    operation,
+                }
+            }
+            HostError::AlreadyRunning { pane_id } => HostError::AlreadyRunning {
+                pane_id: self.client_pane_id(&pane_id),
+            },
+            HostError::NotRunning { pane_id } => HostError::NotRunning {
+                pane_id: self.client_pane_id(&pane_id),
+            },
+            HostError::Io {
+                pane_id,
+                operation,
+                message,
+            } => HostError::Io {
+                pane_id: self.client_pane_id(&pane_id),
+                operation,
+                message,
+            },
+        }
+    }
+}
+
+impl ProcessHost for ScopedLocalPtyHost<'_> {
+    fn start_pane(&mut self, pane_id: &str, spec: &HostSpec) -> Result<PaneProcess, HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .start_pane(&host_pane_id, spec)
+            .map(|process| self.client_process(process))
+            .map_err(|error| self.client_error(error))
+    }
+
+    fn check_pane(&mut self, pane_id: &str) -> Result<(), HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .check_pane(&host_pane_id)
+            .map_err(|error| self.client_error(error))
+    }
+
+    fn write_input(&mut self, pane_id: &str, bytes: &[u8]) -> Result<(), HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .write_input(&host_pane_id, bytes)
+            .map_err(|error| self.client_error(error))
+    }
+
+    fn resize_pane(&mut self, pane_id: &str, cols: u32, rows: u32) -> Result<(), HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .resize_pane(&host_pane_id, cols, rows)
+            .map_err(|error| self.client_error(error))
+    }
+
+    fn stop_pane(&mut self, pane_id: &str) -> Result<PaneProcess, HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .stop_pane(&host_pane_id)
+            .map(|process| self.client_process(process))
+            .map_err(|error| self.client_error(error))
+    }
+}
+
+impl ProcessOutput for ScopedLocalPtyHost<'_> {
+    fn try_read_output(&mut self, pane_id: &str, bytes: &mut [u8]) -> Result<usize, HostError> {
+        let host_pane_id = self.host_pane_id(pane_id);
+        self.inner
+            .try_read_output(&host_pane_id, bytes)
+            .map_err(|error| self.client_error(error))
+    }
+
+    fn notify_fd(&self) -> Option<std::os::fd::RawFd> {
+        self.inner.notify_fd()
+    }
+}
+
 impl SocketCleanup {
     fn new(path: PathBuf) -> Self {
         let identity = local::socket_identity(&path).ok();
@@ -347,7 +652,7 @@ impl Drop for SocketCleanup {
 
 fn wait_for_panes_output(
     session_actor: &mut SessionActor,
-    output: &mut LocalPtyHost,
+    output: &mut dyn local::ProcessHostOutput,
     pane_ids: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let deadline = Instant::now() + Duration::from_millis(200);
@@ -365,10 +670,7 @@ fn wait_for_panes_output(
     Ok(())
 }
 
-fn stop_panes(
-    host: &mut LocalPtyHost,
-    pane_ids: &[String],
-) -> Result<(), nmux_core::host::HostError> {
+fn stop_panes(host: &mut dyn ProcessHost, pane_ids: &[String]) -> Result<(), HostError> {
     for pane_id in pane_ids {
         host.stop_pane(pane_id)?;
     }

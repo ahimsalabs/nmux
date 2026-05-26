@@ -10,7 +10,7 @@ over FlatBuffers — not client-side PTY replay.
 - Split panes, switch tabs, route input to the focused pane, and send commands
 - Live attach, reconnect, persisted client state, split redraw, scrollback fetches
 - Concurrent live clients with shared surface updates and presence identity
-- Scriptable control: `nmux pane split`, `nmux pane send`, `nmux tab new`, `nmux kill`
+- Scriptable control: `nmux pane split`, `nmux pane send`, `nmux tab new`, `nmux tab switch`, `nmux kill`
 - Token-authenticated TCP transport for non-Unix-socket experiments
 - Experimental container/sandbox host selection for daemon-started pane commands
 - Default `libghostty-vt` engine for VT-correct terminal state extraction
