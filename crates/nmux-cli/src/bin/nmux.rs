@@ -2864,7 +2864,7 @@ fn menu_overlay_for_action(
         tui::MenuAction::Sessions => ("sessions".to_owned(), session_overlay_lines(workspace)),
         tui::MenuAction::NewSession => (
             "new session".to_owned(),
-            vec![overlay_text("creates a new tab in this session")],
+            vec![overlay_text("new named session")],
         ),
         tui::MenuAction::Windows => {
             let mut lines = vec![overlay_text(format!("tab {}", workspace.tab_id))];
@@ -2919,6 +2919,30 @@ fn session_overlay_lines(workspace: &local::WorkspaceSummary) -> Vec<tui::TuiOve
 fn run_live_new_session_menu_command(
     args: &Args,
 ) -> Result<local::WorkspaceSummary, Box<dyn std::error::Error>> {
+    let session_id = live_menu_new_session_id();
+    let session_command = local::ControlCommandSummary {
+        actor_id: args.actor_id.clone(),
+        command_seq: 1,
+        kind: protocol::ControlCommandKind::SessionNew,
+        pane_id: None,
+        tab_id: None,
+        split_axis: protocol::SplitAxis::None,
+        title: Some("new session".to_owned()),
+        session_id: Some(session_id),
+    };
+    let stream = connect_to_daemon(args)?;
+    match local::run_control_command_on_stream(stream, session_command) {
+        Ok(workspace) => return Ok(workspace),
+        Err(err) if live_session_new_should_fallback(err.as_ref()) => {}
+        Err(err) => return Err(err),
+    }
+
+    run_live_new_tab_menu_command(args)
+}
+
+fn run_live_new_tab_menu_command(
+    args: &Args,
+) -> Result<local::WorkspaceSummary, Box<dyn std::error::Error>> {
     let command = local::ControlCommandSummary {
         actor_id: args.actor_id.clone(),
         command_seq: 1,
@@ -2931,6 +2955,25 @@ fn run_live_new_session_menu_command(
     };
     let stream = connect_to_daemon(args)?;
     local::run_control_command_on_stream(stream, command)
+}
+
+fn live_session_new_should_fallback(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<local::ServerError>()
+        .is_some_and(|error| {
+            error
+                .error
+                .message
+                .contains("session new requires daemon registry routing")
+        })
+}
+
+fn live_menu_new_session_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("session-{millis}")
 }
 
 fn run_live_tab_switch_menu_command(
@@ -7055,7 +7098,8 @@ mod tests {
         format_rendered_attach_json, format_scrollback, format_state_info_json,
         format_state_info_text, host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
         host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
-        live_mouse_dispatch_for_workspace_size, live_update_print_kind,
+        live_mouse_dispatch_for_workspace_size, live_session_new_should_fallback,
+        live_update_print_kind,
         managed_ready_error_message, menu_overlay_for_action, parse_detach_key,
         parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
         parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
@@ -9643,6 +9687,54 @@ mod tests {
                 .iter()
                 .any(|line| line.text.contains("* pane-1"))
         );
+
+        let new_session_overlay = menu_overlay_for_action(
+            tui::MenuAction::NewSession,
+            &workspace,
+            &LiveSurfaceState {
+                current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_modes: local::TerminalModeSummary::default(),
+                current_surface_text: String::new(),
+                current_pane_surfaces: BTreeMap::new(),
+                current_pane_modes: BTreeMap::new(),
+                scrollback_views: BTreeMap::new(),
+            },
+        );
+        assert_eq!(new_session_overlay.title, "new session");
+        assert!(
+            new_session_overlay
+                .lines
+                .iter()
+                .any(|line| line.text.contains("new named session"))
+        );
+    }
+
+    #[test]
+    fn live_new_session_fallback_is_limited_to_single_actor_rejection() {
+        let fallback = local::ServerError {
+            error: local::ErrorSummary {
+                code: protocol::ErrorCode::Unknown,
+                message: "session new requires daemon registry routing".to_owned(),
+                retryable: false,
+                pane_id: None,
+                input_seq: 1,
+            },
+        };
+        assert!(live_session_new_should_fallback(&fallback));
+
+        let duplicate = local::ServerError {
+            error: local::ErrorSummary {
+                code: protocol::ErrorCode::Unknown,
+                message: "session already exists: work".to_owned(),
+                retryable: false,
+                pane_id: None,
+                input_seq: 1,
+            },
+        };
+        assert!(!live_session_new_should_fallback(&duplicate));
+        assert!(!live_session_new_should_fallback(&io::Error::other(
+            "transport failed"
+        )));
     }
 
     #[test]
