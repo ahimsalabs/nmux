@@ -250,6 +250,15 @@ impl ServeConfig {
         actor: &mut nmux_core::session::SessionActor,
         host: &mut H,
     ) -> Result<(), ServeError> {
+        if self.live && self.connection_limit.uses_concurrent_live_loop() {
+            return serve_live_concurrent_n_with_session_actor(
+                listener,
+                actor,
+                host,
+                self.connection_limit,
+                self.cycles_per_client,
+            );
+        }
         if self.live && !self.connection_limit.uses_concurrent_live_loop() {
             for _ in 0..self.connection_limit.bounded_count().unwrap_or(0) {
                 let (stream, _) = listener.accept()?;
@@ -900,6 +909,475 @@ where
     Ok(())
 }
 
+fn serve_live_concurrent_n_with_session_actor<H>(
+    listener: &UnixListener,
+    actor: &mut SessionActor,
+    host: &mut H,
+    connection_limit: ConnectionLimit,
+    cycles_per_client: usize,
+) -> Result<(), ServeError>
+where
+    H: ProcessHost + ProcessOutput,
+{
+    let _guard = NonblockingGuard::set(listener)?;
+    let mut accepted_clients = 0_usize;
+    let mut clients = Vec::new();
+    let inventory_started_at = Instant::now();
+    let mut inventory_version = 0_u64;
+    let mut next_connection_id = 1_u64;
+
+    while connection_limit.accepts_more(accepted_clients) || !clients.is_empty() {
+        let readiness = poll_live_concurrent_sources(
+            listener,
+            &clients,
+            host.notify_fd(),
+            LIVE_IDLE_POLL_TIMEOUT,
+        )?;
+        if let Some(notify_fd) = host.notify_fd()
+            && readiness.host_output
+        {
+            drain_notify_fd(notify_fd)?;
+        }
+
+        if readiness.listener && connection_limit.accepts_more(accepted_clients) {
+            loop {
+                let connection_id = format!("conn-{next_connection_id}");
+                match accept_live_client_with_session_actor(
+                    listener,
+                    actor,
+                    host,
+                    connection_id,
+                    inventory_elapsed_ms(inventory_started_at),
+                ) {
+                    Ok(Some(LiveClientAccept::Attached(mut client))) => {
+                        accepted_clients += 1;
+                        next_connection_id += 1;
+                        let existing_actors = clients
+                            .iter()
+                            .map(|client: &LiveAttachedClient| client.actor.clone())
+                            .collect::<Vec<_>>();
+                        let joined = client.inventory_entry();
+                        let base_version = inventory_version;
+                        inventory_version += 1;
+                        {
+                            let (session, _) = actor.session_and_engines_mut();
+                            for existing in &mut clients {
+                                let _ =
+                                    write_presence_to_live_client(existing, session, &client.actor);
+                            }
+                            write_client_inventory_patch_to_subscribers(
+                                &mut clients,
+                                session,
+                                base_version,
+                                inventory_version,
+                                vec![joined],
+                                Vec::new(),
+                                Vec::new(),
+                            )?;
+                            for existing_actor in existing_actors {
+                                let _ = write_presence_to_live_client(
+                                    &mut client,
+                                    session,
+                                    &existing_actor,
+                                );
+                            }
+                            clients.push(client);
+                            let client_index = clients.len() - 1;
+                            let snapshot_clients = clients
+                                .iter()
+                                .map(LiveAttachedClient::inventory_entry)
+                                .collect();
+                            write_client_inventory_snapshot_to_client(
+                                &mut clients[client_index],
+                                session,
+                                inventory_version,
+                                snapshot_clients,
+                            )?;
+                        }
+                        if !connection_limit.accepts_more(accepted_clients) {
+                            break;
+                        }
+                    }
+                    Ok(Some(LiveClientAccept::Command)) => {
+                        accepted_clients += 1;
+                        if !connection_limit.accepts_more(accepted_clients) {
+                            break;
+                        }
+                    }
+                    Ok(Some(LiveClientAccept::Shutdown)) => {
+                        return Err(ServeError::SessionShutdown);
+                    }
+                    Ok(None) => break,
+                    Err(err) => return Err(err),
+                }
+            }
+        }
+
+        let mut had_input = false;
+        let mut input_pane_ids = Vec::new();
+        let mut frontend_resize_pane_ids = Vec::new();
+        let mut changed_workspace = false;
+        let mut closed_clients = Vec::new();
+        let mut inventory_updates = Vec::new();
+        let mut readable_client_indices = readiness.client_indices;
+        for client_index in 0..clients.len() {
+            if readable_client_indices.binary_search(&client_index).is_ok() {
+                continue;
+            }
+            if let Some(stream) = clients[client_index].legacy_stream()
+                && stream_readable_within(stream, Duration::ZERO)?
+            {
+                readable_client_indices.push(client_index);
+            }
+        }
+        readable_client_indices.sort_unstable();
+        readable_client_indices.dedup();
+        {
+            let (session, engines) = actor.session_and_engines_mut();
+            for client_index in readable_client_indices {
+                let Some(client) = clients.get_mut(client_index) else {
+                    continue;
+                };
+                if let Some(wake_reader) = client.wake_reader() {
+                    drain_wake_reader(wake_reader)?;
+                }
+                match drain_live_client_frames(
+                    client,
+                    session,
+                    host,
+                    engines,
+                    inventory_elapsed_ms(inventory_started_at),
+                ) {
+                    Ok(ClientDrainStatus::Open {
+                        had_input: client_had_input,
+                        input_pane_ids: client_input_pane_ids,
+                        frontend_resize_pane_ids: client_frontend_resize_pane_ids,
+                        changed_workspace: client_changed_workspace,
+                        close_after_drain,
+                    }) => {
+                        had_input |= client_had_input;
+                        input_pane_ids.extend(client_input_pane_ids);
+                        frontend_resize_pane_ids.extend(client_frontend_resize_pane_ids);
+                        changed_workspace |= client_changed_workspace;
+                        if client_had_input {
+                            inventory_updates.push(client.inventory_entry());
+                        }
+                        if close_after_drain {
+                            closed_clients.push(client_index);
+                        }
+                    }
+                    Ok(ClientDrainStatus::Closed) => {
+                        frontend_resize_pane_ids
+                            .extend(client.frontend_resize_constraints.keys().cloned());
+                        closed_clients.push(client_index);
+                    }
+                    Err(err) if is_socket_closed(&err) => {
+                        frontend_resize_pane_ids
+                            .extend(client.frontend_resize_constraints.keys().cloned());
+                        closed_clients.push(client_index);
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+        }
+        closed_clients.sort_unstable();
+        closed_clients.dedup();
+        let left_connection_ids = closed_clients
+            .iter()
+            .filter_map(|index| clients.get(*index))
+            .map(|client| client.connection_id.clone())
+            .collect::<Vec<_>>();
+        frontend_resize_pane_ids.sort();
+        frontend_resize_pane_ids.dedup();
+        {
+            let (session, engines) = actor.session_and_engines_mut();
+            for pane_id in frontend_resize_pane_ids {
+                let changed =
+                    apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
+                changed_workspace |= changed;
+            }
+        }
+        let closing_frontend_resize_pane_ids = closed_clients
+            .iter()
+            .filter_map(|index| clients.get(*index))
+            .flat_map(|client| client.frontend_resize_constraints.keys().cloned())
+            .collect::<Vec<_>>();
+        for index in closed_clients.iter().rev() {
+            if *index < clients.len() {
+                clients.remove(*index);
+            }
+        }
+        if !left_connection_ids.is_empty() {
+            let base_version = inventory_version;
+            inventory_version += 1;
+            let (session, _) = actor.session_and_engines_mut();
+            write_client_inventory_patch_to_subscribers(
+                &mut clients,
+                session,
+                base_version,
+                inventory_version,
+                Vec::new(),
+                Vec::new(),
+                left_connection_ids,
+            )?;
+        }
+        closed_clients.clear();
+        {
+            let (session, engines) = actor.session_and_engines_mut();
+            for pane_id in closing_frontend_resize_pane_ids {
+                changed_workspace |=
+                    apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
+            }
+        }
+
+        inventory_updates.retain(|updated| {
+            clients
+                .iter()
+                .any(|client| client.connection_id == updated.connection_id)
+        });
+        if !inventory_updates.is_empty() {
+            let base_version = inventory_version;
+            inventory_version += 1;
+            let (session, _) = actor.session_and_engines_mut();
+            write_client_inventory_patch_to_subscribers(
+                &mut clients,
+                session,
+                base_version,
+                inventory_version,
+                Vec::new(),
+                inventory_updates,
+                Vec::new(),
+            )?;
+        }
+
+        if had_input
+            && !readiness.host_output
+            && let Some(notify_fd) = host.notify_fd()
+        {
+            let readiness = poll_live_concurrent_sources(
+                listener,
+                &clients,
+                Some(notify_fd),
+                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+            )?;
+            if readiness.host_output {
+                drain_notify_fd(notify_fd)?;
+            }
+        }
+
+        let leaf_pane_ids = actor.session().leaf_pane_ids();
+        let attempted_fast_output = had_input || readiness.host_output;
+        let coalesce_after_input = cycles_per_client != usize::MAX;
+        let hold_first_surface_for_coalesce =
+            had_input && coalesce_after_input && host.notify_fd().is_some();
+        let mut fast_changed = false;
+        if attempted_fast_output {
+            let output_result = {
+                let poll_span = tracing::trace_span!(
+                    "host.output.first_poll",
+                    reason = if had_input {
+                        "post_input"
+                    } else {
+                        "host_ready"
+                    },
+                    panes = leaf_pane_ids.len(),
+                    priority_panes = input_pane_ids.len()
+                );
+                poll_span.in_scope(|| {
+                    poll_panes_output_with_session_actor_once(
+                        actor,
+                        host,
+                        &leaf_pane_ids,
+                        &input_pane_ids,
+                        inventory_elapsed_ms(inventory_started_at),
+                    )
+                })
+            };
+            let first_changed = match output_result {
+                Ok(changed) => changed,
+                Err(err) => {
+                    let error_pane_id = host_error_pane_id(&err).to_owned();
+                    let (session, _) = actor.session_and_engines_mut();
+                    for client in &mut clients {
+                        let _ = queue_host_output_error_to_live_client(
+                            client,
+                            session,
+                            &error_pane_id,
+                            err.clone(),
+                        );
+                    }
+                    return Ok(());
+                }
+            };
+
+            if first_changed {
+                fast_changed = true;
+                if !hold_first_surface_for_coalesce {
+                    let surface_span = tracing::trace_span!(
+                        "surface.write_first_changed",
+                        reason = if had_input {
+                            "post_input"
+                        } else {
+                            "host_ready"
+                        },
+                        panes = leaf_pane_ids.len()
+                    );
+                    let write_result = surface_span.in_scope(|| {
+                        let (session, _) = actor.session_and_engines_mut();
+                        for (index, client) in clients.iter_mut().enumerate() {
+                            if changed_workspace {
+                                let workspace_frame =
+                                    session.workspace_tree_frame("local-client", client.seq);
+                                if let Err(err) =
+                                    queue_reliable_frame_to_live_client(client, workspace_frame)
+                                {
+                                    if is_socket_closed(&err) {
+                                        closed_clients.push(index);
+                                        continue;
+                                    }
+                                    return Err(err);
+                                }
+                            }
+                            if let Err(err) = signal_changed_surface_frames_to_live_client(
+                                client,
+                                session,
+                                &leaf_pane_ids,
+                            ) {
+                                if is_socket_closed(&err) {
+                                    closed_clients.push(index);
+                                    continue;
+                                }
+                                return Err(err);
+                            }
+                        }
+                        Ok::<(), ServeError>(())
+                    });
+                    if let Err(err) = write_result {
+                        return Err(err);
+                    }
+                    changed_workspace = false;
+                }
+            }
+        }
+
+        let quiet_timeout = if had_input {
+            LIVE_POST_INPUT_POLL_TIMEOUT
+        } else {
+            LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
+        };
+        let output_result = if had_input && coalesce_after_input && host.notify_fd().is_some() {
+            poll_panes_output_with_session_actor_until_poll_quiet_state(
+                actor,
+                host,
+                &leaf_pane_ids,
+                quiet_timeout,
+                false,
+                inventory_elapsed_ms(inventory_started_at),
+            )
+        } else if attempted_fast_output && host.notify_fd().is_some() {
+            Ok(false)
+        } else if host.notify_fd().is_some() {
+            Ok(false)
+        } else {
+            poll_panes_output_with_session_actor_until_quiet(
+                actor,
+                host,
+                &leaf_pane_ids,
+                inventory_elapsed_ms(inventory_started_at),
+            )
+        };
+        let output_changed = match output_result {
+            Ok(changed) => fast_changed || changed,
+            Err(err) => {
+                let error_pane_id = host_error_pane_id(&err).to_owned();
+                let (session, _) = actor.session_and_engines_mut();
+                for client in &mut clients {
+                    let _ = queue_host_output_error_to_live_client(
+                        client,
+                        session,
+                        &error_pane_id,
+                        err.clone(),
+                    );
+                }
+                return Ok(());
+            }
+        };
+
+        {
+            let (session, _) = actor.session_and_engines_mut();
+            for (index, client) in clients.iter_mut().enumerate() {
+                if changed_workspace {
+                    let workspace_frame = session.workspace_tree_frame("local-client", client.seq);
+                    if let Err(err) = queue_reliable_frame_to_live_client(client, workspace_frame) {
+                        if is_socket_closed(&err) {
+                            closed_clients.push(index);
+                            continue;
+                        }
+                        return Err(err);
+                    }
+                }
+                if let Err(err) =
+                    signal_changed_surface_frames_to_live_client(client, session, &leaf_pane_ids)
+                {
+                    if is_socket_closed(&err) {
+                        closed_clients.push(index);
+                        continue;
+                    }
+                    return Err(err);
+                }
+                let host_completion =
+                    readiness.host_output && client.actor.mode == AttachMode::ReadOnly;
+                if had_input || output_changed || changed_workspace || host_completion {
+                    client.completed_cycles = client.completed_cycles.saturating_add(1);
+                }
+                if client.completed_cycles >= cycles_per_client {
+                    closed_clients.push(index);
+                }
+            }
+        }
+
+        closed_clients.sort_unstable();
+        closed_clients.dedup();
+        let left_connection_ids = closed_clients
+            .iter()
+            .filter_map(|index| clients.get(*index))
+            .map(|client| client.connection_id.clone())
+            .collect::<Vec<_>>();
+        let closing_frontend_resize_pane_ids = closed_clients
+            .iter()
+            .filter_map(|index| clients.get(*index))
+            .flat_map(|client| client.frontend_resize_constraints.keys().cloned())
+            .collect::<Vec<_>>();
+        for index in closed_clients.into_iter().rev() {
+            if index < clients.len() {
+                clients.remove(index);
+            }
+        }
+        {
+            let (session, engines) = actor.session_and_engines_mut();
+            for pane_id in closing_frontend_resize_pane_ids {
+                apply_concurrent_frontend_resize(session, host, engines, &clients, &pane_id)?;
+            }
+            if !left_connection_ids.is_empty() {
+                let base_version = inventory_version;
+                inventory_version += 1;
+                write_client_inventory_patch_to_subscribers(
+                    &mut clients,
+                    session,
+                    base_version,
+                    inventory_version,
+                    Vec::new(),
+                    Vec::new(),
+                    left_connection_ids,
+                )?;
+            }
+        }
+    }
+
+    drop(_guard);
+    Ok(())
+}
+
 enum LiveClientTransport {
     Legacy {
         stream: UnixStream,
@@ -1337,6 +1815,116 @@ fn accept_live_client(
 
     let mut seq = 1;
     write_attach_target_not_found_error(&mut stream, session, &mut seq, &request)?;
+    Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
+        transport: LiveClientTransport::Legacy { stream },
+        connection_id,
+        actor: request.actor(),
+        hostname: request.hostname,
+        client_kind: request.client_kind,
+        inventory_subscribed: request.subscribe_client_inventory,
+        connected_at_mono_ms: now_mono_ms,
+        last_seen_mono_ms: now_mono_ms,
+        last_input_mono_ms: None,
+        seq,
+        known_surface_versions: BTreeMap::new(),
+        frontend_resize_constraints: BTreeMap::new(),
+        completed_cycles: usize::MAX,
+    })))
+}
+
+fn accept_live_client_with_session_actor(
+    listener: &UnixListener,
+    actor: &mut SessionActor,
+    host: &mut dyn ProcessHostOutput,
+    connection_id: String,
+    now_mono_ms: u64,
+) -> Result<Option<LiveClientAccept>, ServeError> {
+    let (mut stream, _) = match listener.accept() {
+        Ok(accepted) => accepted,
+        Err(err) if matches!(err.kind(), io::ErrorKind::WouldBlock) => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    stream.set_nonblocking(false)?;
+    let request = match read_client_initial_frame(&mut stream)? {
+        ClientInitialFrame::Attach(request) => request,
+        ClientInitialFrame::Control(command) => {
+            let (session, _) = actor.session_and_engines_mut();
+            return match serve_control_command(&mut stream, command, session, Some(host))? {
+                ControlCommandOutcome::Continue => Ok(Some(LiveClientAccept::Command)),
+                ControlCommandOutcome::Shutdown => Ok(Some(LiveClientAccept::Shutdown)),
+            };
+        }
+        ClientInitialFrame::HealthProbe(probe) => {
+            let (session, engines) = actor.session_and_engines_mut();
+            serve_health_probe(&mut stream, probe, session, Some(host), Some(engines))?;
+            return Ok(Some(LiveClientAccept::Command));
+        }
+    };
+    let leaf_pane_ids = actor.session().leaf_pane_ids();
+    let pane_id = {
+        let (session, _) = actor.session_and_engines_mut();
+        attach_target_pane_id(session, &request)
+    };
+    if let Some(pane_id) = pane_id {
+        let client_actor = request_actor_for_pane(&request, &pane_id);
+        if let Err(err) = poll_panes_output_with_session_actor_until_quiet(
+            actor,
+            host,
+            &leaf_pane_ids,
+            now_mono_ms,
+        ) {
+            let mut seq = 1;
+            let error_pane_id = host_error_pane_id(&err).to_owned();
+            let (session, _) = actor.session_and_engines_mut();
+            write_host_output_error(&mut stream, session, &mut seq, &error_pane_id, err)?;
+            return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
+                transport: LiveClientTransport::Legacy { stream },
+                connection_id,
+                actor: client_actor,
+                hostname: request.hostname,
+                client_kind: request.client_kind,
+                inventory_subscribed: request.subscribe_client_inventory,
+                connected_at_mono_ms: now_mono_ms,
+                last_seen_mono_ms: now_mono_ms,
+                last_input_mono_ms: None,
+                seq,
+                known_surface_versions: BTreeMap::new(),
+                frontend_resize_constraints: BTreeMap::new(),
+                completed_cycles: usize::MAX,
+            })));
+        }
+        if let Some(notify_fd) = host.notify_fd() {
+            drain_notify_fd(notify_fd)?;
+        }
+        let mut seq = 1;
+        let mut known_surface_versions = known_surface_versions_from_request(&request);
+        {
+            let (session, _) = actor.session_and_engines_mut();
+            write_live_attach_initial(&mut stream, session, &request, &pane_id, &mut seq)?;
+            if let Some(current) = session.surface_version(&pane_id) {
+                known_surface_versions.insert(pane_id, current);
+            }
+        }
+        let transport = async_live_client_transport(stream, seq, known_surface_versions.clone())?;
+        return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
+            transport,
+            connection_id,
+            actor: client_actor,
+            hostname: request.hostname,
+            client_kind: request.client_kind,
+            inventory_subscribed: request.subscribe_client_inventory,
+            connected_at_mono_ms: now_mono_ms,
+            last_seen_mono_ms: now_mono_ms,
+            last_input_mono_ms: None,
+            seq,
+            known_surface_versions,
+            frontend_resize_constraints: BTreeMap::new(),
+            completed_cycles: 0,
+        })));
+    }
+
+    let mut seq = 1;
+    write_attach_target_not_found_error(&mut stream, actor.session(), &mut seq, &request)?;
     Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
         transport: LiveClientTransport::Legacy { stream },
         connection_id,
@@ -11459,6 +12047,89 @@ mod tests {
         drop(reader);
         drop(writer);
         server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn actor_concurrent_live_clients_route_output_through_actor() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+        let mut host = EchoHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start echo pane");
+
+        let (trace_tx, trace_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(2, 1)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor concurrent live");
+            trace_tx
+                .send(actor.trace().accepted_events())
+                .expect("send actor trace")
+        });
+
+        let mut reader = UnixStream::connect(&socket_path).expect("connect reader");
+        write_attach_request(
+            &mut reader,
+            &AttachRequest {
+                actor_id: "reader".to_owned(),
+                user_id: "reader-user".to_owned(),
+                display_name: "Reader".to_owned(),
+                mode: AttachMode::ReadOnly,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
+            },
+        )
+        .expect("write reader attach");
+        attach_from_stream(&mut reader).expect("reader attach");
+
+        let mut writer = UnixStream::connect(&socket_path).expect("connect writer");
+        write_attach_request(
+            &mut writer,
+            &AttachRequest {
+                actor_id: "writer".to_owned(),
+                user_id: "writer-user".to_owned(),
+                display_name: "Writer".to_owned(),
+                mode: AttachMode::ReadWrite,
+                focused_pane_id: Some("pane-1".to_owned()),
+                known_surfaces: Vec::new(),
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
+            },
+        )
+        .expect("write writer attach");
+        attach_from_stream(&mut writer).expect("writer attach");
+        assert!(matches!(
+            read_live_surface_update_from_stream(&mut reader).expect("reader presence"),
+            LiveSurfaceRead::Presence(_)
+        ));
+
+        send_key_input(&mut writer, "pane-1", "z").expect("send writer input");
+        let update = loop {
+            match read_live_surface_update_from_stream(&mut reader).expect("reader output") {
+                LiveSurfaceRead::Update(update) if update.text.contains('z') => break update,
+                LiveSurfaceRead::Presence(_) => continue,
+                other => panic!("expected actor-routed surface update, got {other:?}"),
+            }
+        };
+        assert_eq!(update.pane_id, "pane-1");
+
+        drop(reader);
+        drop(writer);
+        server.join().expect("server thread");
+        let accepted_events = trace_rx.recv().expect("actor trace");
+        assert!(accepted_events.iter().any(|accepted| matches!(
+            &accepted.event,
+            SessionEvent::PaneOutput { pane_id, bytes }
+                if pane_id == "pane-1" && bytes.windows(2).any(|window| window == b"z\n")
+        )));
         let _ = fs::remove_file(socket_path);
     }
 
