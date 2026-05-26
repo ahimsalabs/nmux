@@ -210,6 +210,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             | ScriptCommand::TabNew
             | ScriptCommand::TabSwitch
             | ScriptCommand::TabClose
+            | ScriptCommand::SessionNew
             | ScriptCommand::SessionKill,
         ) => return run_control_command(&args),
         Some(ScriptCommand::TabList) => return run_tab_list(&args),
@@ -583,6 +584,7 @@ fn run_control_command(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         Some(ScriptCommand::TabNew) => protocol::ControlCommandKind::TabNew,
         Some(ScriptCommand::TabSwitch) => protocol::ControlCommandKind::TabSwitch,
         Some(ScriptCommand::TabClose) => protocol::ControlCommandKind::TabClose,
+        Some(ScriptCommand::SessionNew) => protocol::ControlCommandKind::SessionNew,
         Some(ScriptCommand::SessionKill) => protocol::ControlCommandKind::SessionKill,
         _ => return Err("missing control command".into()),
     };
@@ -4832,6 +4834,7 @@ enum ScriptCommand {
     TabNew,
     TabSwitch,
     TabClose,
+    SessionNew,
     SessionKill,
     Replay,
 }
@@ -4845,6 +4848,10 @@ enum RawCommand {
     Tab {
         #[command(subcommand)]
         command: RawTabCommand,
+    },
+    Session {
+        #[command(subcommand)]
+        command: RawSessionCommand,
     },
     Replay {
         #[arg(value_name = "PATH")]
@@ -4917,6 +4924,16 @@ enum RawTabCommand {
     Switch {
         #[arg(value_name = "TAB_ID", allow_hyphen_values = true)]
         tab_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RawSessionCommand {
+    New {
+        #[arg(value_name = "SESSION", allow_hyphen_values = true)]
+        session: String,
+        #[arg(long = "title", value_name = "TITLE", allow_hyphen_values = true)]
+        title: Option<String>,
     },
 }
 
@@ -5247,7 +5264,7 @@ where
 fn known_command(value: &str) -> bool {
     matches!(
         value,
-        "pane" | "tab" | "replay" | "attach" | "new" | "ls" | "kill" | "send-keys"
+        "pane" | "tab" | "session" | "replay" | "attach" | "new" | "ls" | "kill" | "send-keys"
     )
 }
 
@@ -5519,6 +5536,28 @@ fn normalize_script_command(
                 }
             }
         }
+        RawCommand::Session { command } => match command {
+            RawSessionCommand::New { session, title } => {
+                if raw.target_session_id.is_some() {
+                    return Err("--session cannot be combined with the session subcommand".into());
+                }
+                if session.is_empty() {
+                    return Err("session new requires a non-empty session name".into());
+                }
+                if title.as_deref().is_some_and(str::is_empty) {
+                    return Err("session new --title requires a non-empty title".into());
+                }
+                raw.target_session_id = Some(session);
+                raw.no_input = true;
+                raw.no_scrollback = true;
+                Ok(NormalizedScriptCommand {
+                    command: Some(ScriptCommand::SessionNew),
+                    split_axis: protocol::SplitAxis::None,
+                    title,
+                    replay_path: None,
+                })
+            }
+        },
     }
 }
 
@@ -7233,6 +7272,14 @@ mod tests {
         assert_eq!(session_ls.script_command, Some(ScriptCommand::SessionList));
         assert!(session_ls.no_input);
 
+        let session_new = args_from_iter(["session", "new", "work", "--title", "Work"])
+            .expect("session new args");
+        assert_eq!(session_new.script_command, Some(ScriptCommand::SessionNew));
+        assert_eq!(session_new.target_session_id.as_deref(), Some("work"));
+        assert_eq!(session_new.script_title.as_deref(), Some("Work"));
+        assert!(session_new.no_input);
+        assert!(session_new.no_scrollback);
+
         let attach_named = args_from_iter(["attach", "work"]).expect("attach args");
         assert_eq!(attach_named.target_session_id.as_deref(), Some("work"));
 
@@ -7265,6 +7312,15 @@ mod tests {
             Err(err) => err.to_string(),
         };
         assert_eq!(err, "--session cannot be combined with kill SESSION");
+
+        let err = match args_from_iter(["--session", "work", "session", "new", "other"]) {
+            Ok(_) => panic!("duplicated session target should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(
+            err,
+            "--session cannot be combined with the session subcommand"
+        );
     }
 
     #[test]

@@ -105,6 +105,10 @@ fn apply_control_command(
             apply_tab_switch_command(session, command)?;
             Ok(ControlCommandOutcome::Continue)
         }
+        protocol::ControlCommandKind::SessionNew => Err(ControlCommandError::unknown(
+            "session new requires daemon registry routing",
+            None,
+        )),
         protocol::ControlCommandKind::SessionKill => {
             apply_session_kill_command(session, command)?;
             Ok(ControlCommandOutcome::Shutdown)
@@ -150,6 +154,10 @@ fn apply_control_command_with_session_actor(
             apply_tab_switch_command_with_session_actor(actor, command)?;
             Ok(ControlCommandOutcome::Continue)
         }
+        protocol::ControlCommandKind::SessionNew => Err(ControlCommandError::unknown(
+            "session new requires daemon registry routing",
+            None,
+        )),
         protocol::ControlCommandKind::SessionKill => {
             apply_session_kill_command(actor.session(), command)?;
             enqueue_lifecycle_session_event(

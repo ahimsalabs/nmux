@@ -925,15 +925,16 @@ impl ::flatbuffers::SimpleToVerifyInSlice for ResizeReason {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_CONTROL_COMMAND_KIND: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_CONTROL_COMMAND_KIND: i8 = 4;
+pub const ENUM_MAX_CONTROL_COMMAND_KIND: i8 = 5;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_CONTROL_COMMAND_KIND: [ControlCommandKind; 5] = [
+pub const ENUM_VALUES_CONTROL_COMMAND_KIND: [ControlCommandKind; 6] = [
   ControlCommandKind::PaneSplit,
   ControlCommandKind::TabNew,
   ControlCommandKind::TabClose,
   ControlCommandKind::SessionKill,
   ControlCommandKind::TabSwitch,
+  ControlCommandKind::SessionNew,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -946,15 +947,17 @@ impl ControlCommandKind {
   pub const TabClose: Self = Self(2);
   pub const SessionKill: Self = Self(3);
   pub const TabSwitch: Self = Self(4);
+  pub const SessionNew: Self = Self(5);
 
   pub const ENUM_MIN: i8 = 0;
-  pub const ENUM_MAX: i8 = 4;
+  pub const ENUM_MAX: i8 = 5;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::PaneSplit,
     Self::TabNew,
     Self::TabClose,
     Self::SessionKill,
     Self::TabSwitch,
+    Self::SessionNew,
   ];
   /// Returns the variant's name or "" if unknown.
   pub fn variant_name(self) -> Option<&'static str> {
@@ -964,6 +967,7 @@ impl ControlCommandKind {
       Self::TabClose => Some("TabClose"),
       Self::SessionKill => Some("SessionKill"),
       Self::TabSwitch => Some("TabSwitch"),
+      Self::SessionNew => Some("SessionNew"),
       _ => None,
     }
   }

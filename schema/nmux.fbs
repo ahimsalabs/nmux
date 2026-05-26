@@ -74,6 +74,7 @@ enum ControlCommandKind : byte {
   TabClose = 2,
   SessionKill = 3,
   TabSwitch = 4,
+  SessionNew = 5,
 }
 
 enum ResizePolicy : byte {

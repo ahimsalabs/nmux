@@ -13468,6 +13468,48 @@ mod tests {
     }
 
     #[test]
+    fn actor_live_control_session_new_requires_registry_routing() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start pane");
+
+        let server = thread::spawn(move || {
+            let core = nmux_core::session::SessionCore::new(session);
+            let mut actor = SessionActor::new(core, 16);
+            ServeConfig::live(1, usize::MAX)
+                .serve_with_session_core(&listener, &mut actor, &mut host)
+                .expect("serve actor live control");
+        });
+
+        let stream = UnixStream::connect(&socket_path).expect("connect control client");
+        let err = run_control_command_on_stream(
+            stream,
+            ControlCommandSummary {
+                actor_id: "controller".to_owned(),
+                command_seq: 11,
+                kind: protocol::ControlCommandKind::SessionNew,
+                pane_id: None,
+                tab_id: None,
+                split_axis: protocol::SplitAxis::None,
+                title: Some("Work".to_owned()),
+                session_id: Some("work".to_owned()),
+            },
+        )
+        .expect_err("single-session actor should reject session new");
+
+        assert!(
+            err.to_string()
+                .contains("session new requires daemon registry routing"),
+            "unexpected error: {err}"
+        );
+        server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn concurrent_live_clients_use_smallest_read_write_frontend_resize() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");

@@ -232,8 +232,8 @@ behavior.
 `ControlCommand` carries `actor_id`, a client-local `command_seq`, the command
 kind, and optional target fields. Pane split uses `pane_id` and `split_axis`;
 tab new uses `tab_id` and optional `title`; tab switch/close use `tab_id`;
-session kill uses `session_id`. Successful mutating commands return
-`WorkspaceTreeSnapshot`.
+session new uses `session_id` and optional `title`; session kill uses
+`session_id`. Successful mutating commands return `WorkspaceTreeSnapshot`.
 `SessionKill` also asks the daemon to stop the targeted session after sending
 that acknowledgement. A non-empty `session_id` must match the daemon-owned
 session or the daemon returns `ErrorCode::SessionNotFound`.
