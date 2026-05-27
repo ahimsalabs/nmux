@@ -81,7 +81,7 @@ fn nmux_help_lists_live_client_flags() {
     assert!(stdout.contains("--record PATH"));
     assert!(stdout.contains("timestamped live JSON events"));
     assert!(stdout.contains("--bug-report-dir DIR"));
-    assert!(stdout.contains("Opt-in raw crash/decode reports"));
+    assert!(stdout.contains("Opt-in raw terminal/crash/decode reports"));
     assert!(stdout.contains("--cols COUNT"));
     assert!(stdout.contains("Live ResizeIntent columns; both dimensions required"));
     assert!(stdout.contains("--mouse-modifiers MODS"));

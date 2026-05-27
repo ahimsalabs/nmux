@@ -8710,7 +8710,7 @@ Options:
   --no-scrollback            Skip the post-attach scrollback fetch
   --state PATH               Persist client-side pane surface cache
   --record PATH              Write timestamped live JSON events to PATH
-  --bug-report-dir DIR       Opt-in raw crash/decode reports for debugging
+  --bug-report-dir DIR       Opt-in raw terminal/crash/decode reports
   --follow                   Reconnect in a polling loop
   --live                     Keep one attach connection open
   --start                    Start a private local daemon before attaching

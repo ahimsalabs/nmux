@@ -4724,6 +4724,7 @@ fn apply_pumped_pane_output(
         bytes = pumped.len()
     );
     Ok(apply_span.in_scope(|| {
+        bug_report::record_terminal_output(pane_id, pumped);
         session.apply_pane_output_with_engine(pane_id, &pumped, engines.engine_mut(pane_id))
     }))
 }
