@@ -1123,6 +1123,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             redraw_state.as_mut(),
             Some(&surface_state.current_pane_surfaces),
             Some(&surface_state.current_pane_surface_summaries),
+            None,
         );
     }
     flush_stdout()?;
@@ -1213,6 +1214,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         redraw_state.as_mut(),
                         Some(&surface_state.current_pane_surfaces),
                         Some(&surface_state.current_pane_surface_summaries),
+                        Some(&live_pane_chrome_state(&surface_state)),
                         active_overlay.as_ref(),
                     );
                 } else {
@@ -1428,6 +1430,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                 &surface_state
                                                                     .current_pane_surface_summaries,
                                                             ),
+                                                            Some(&live_pane_chrome_state(
+                                                                &surface_state,
+                                                            )),
                                                         );
                                                         flush_stdout()?;
                                                     }
@@ -1470,6 +1475,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                 &surface_state
                                                                     .current_pane_surface_summaries,
                                                             ),
+                                                            Some(&live_pane_chrome_state(
+                                                                &surface_state,
+                                                            )),
                                                             active_overlay.as_ref(),
                                                         );
                                                         flush_stdout()?;
@@ -1511,6 +1519,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                     &surface_state
                                                                         .current_pane_surface_summaries,
                                                                 ),
+                                                                Some(&live_pane_chrome_state(
+                                                                    &surface_state,
+                                                                )),
                                                             );
                                                             flush_stdout()?;
                                                         }
@@ -1584,6 +1595,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                             &surface_state
                                                                 .current_pane_surface_summaries,
                                                         ),
+                                                        Some(&live_pane_chrome_state(
+                                                            &surface_state,
+                                                        )),
                                                     );
                                                     flush_stdout()?;
                                                 }
@@ -1745,6 +1759,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             redraw_state.as_mut(),
                             Some(&surface_state.current_pane_surfaces),
                             Some(&surface_state.current_pane_surface_summaries),
+                            Some(&live_pane_chrome_state(&surface_state)),
                             active_overlay.as_ref(),
                         );
                     } else {
@@ -1772,6 +1787,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
                             Some(&surface_state.current_pane_surface_summaries),
+                            Some(&live_pane_chrome_state(&surface_state)),
                             active_overlay.as_ref(),
                         );
                         flush_stdout()?;
@@ -1790,6 +1806,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
                             Some(&surface_state.current_pane_surface_summaries),
+                            Some(&live_pane_chrome_state(&surface_state)),
                             active_overlay.as_ref(),
                         );
                         flush_stdout()?;
@@ -1809,6 +1826,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                 Some(state),
                                 Some(&surface_state.current_pane_surfaces),
                                 Some(&surface_state.current_pane_surface_summaries),
+                                Some(&live_pane_chrome_state(&surface_state)),
                                 active_overlay.as_ref(),
                             );
                             flush_stdout()?;
@@ -1897,6 +1915,24 @@ struct LiveScrollbackView {
     total_lines: u64,
 }
 
+fn live_pane_chrome_state(
+    surface_state: &LiveSurfaceState,
+) -> BTreeMap<String, tui::PaneChromeState> {
+    surface_state
+        .scrollback_views
+        .keys()
+        .map(|pane_id| {
+            (
+                pane_id.clone(),
+                tui::PaneChromeState {
+                    scrollback: true,
+                    ..tui::PaneChromeState::default()
+                },
+            )
+        })
+        .collect()
+}
+
 /// Process a single surface update: reconcile speculative echo, render the
 /// styled text, update pane surface state, and emit output (JSON or redraw).
 ///
@@ -1973,6 +2009,7 @@ fn process_surface_update(
             redraw_state.as_mut(),
             Some(&state.current_pane_surfaces),
             Some(&state.current_pane_surface_summaries),
+            Some(&live_pane_chrome_state(state)),
         );
     }
     flush_stdout()?;
@@ -2527,6 +2564,7 @@ fn repaint_speculative_echo(
                     Some(state),
                     None,
                     None,
+                    None,
                 );
             } else if let Some(prediction) = prediction.as_ref()
                 && let Some(text) = state.render_speculative_append_text(
@@ -2545,6 +2583,7 @@ fn repaint_speculative_echo(
                     Some(state),
                     None,
                     None,
+                    None,
                 );
             }
         }
@@ -2554,6 +2593,7 @@ fn repaint_speculative_echo(
                 metadata,
                 current_surface_text,
                 true,
+                None,
                 None,
                 None,
                 None,
@@ -3132,6 +3172,7 @@ fn handle_live_tui_key(
                 redraw_state.as_mut(),
                 Some(&surface_state.current_pane_surfaces),
                 Some(&surface_state.current_pane_surface_summaries),
+                Some(&live_pane_chrome_state(surface_state)),
             );
             return Ok(LiveKeyHandling::Handled);
         }
@@ -3448,6 +3489,7 @@ fn repaint_live_overlay(
         redraw_state.as_mut(),
         Some(&surface_state.current_pane_surfaces),
         Some(&surface_state.current_pane_surface_summaries),
+        Some(&live_pane_chrome_state(surface_state)),
         active_overlay,
     );
 }
@@ -3863,6 +3905,7 @@ fn switch_live_session(
             redraw_state.as_mut(),
             Some(&surface_state.current_pane_surfaces),
             Some(&surface_state.current_pane_surface_summaries),
+            None,
         );
     }
     recorder.record(&format_live_workspace_json(&workspace))?;
@@ -3937,6 +3980,7 @@ fn scroll_live_pane_view(
                     redraw_state.as_deref_mut(),
                     Some(&surface_state.current_pane_surfaces),
                     Some(&surface_state.current_pane_surface_summaries),
+                    Some(&live_pane_chrome_state(surface_state)),
                 );
                 return Ok(true);
             }
@@ -4049,6 +4093,7 @@ fn scroll_live_pane_view(
         redraw_state.as_deref_mut(),
         Some(&surface_state.current_pane_surfaces),
         Some(&surface_state.current_pane_surface_summaries),
+        Some(&live_pane_chrome_state(surface_state)),
     );
     Ok(true)
 }
@@ -4216,6 +4261,7 @@ fn focus_live_client_pane(
             redraw_state,
             Some(&surface_state.current_pane_surfaces),
             Some(&surface_state.current_pane_surface_summaries),
+            Some(&live_pane_chrome_state(surface_state)),
         );
     } else {
         println!("{}", workspace.display_line());
@@ -4701,6 +4747,7 @@ fn print_live_rendered(
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
 ) {
     if redraw {
         let surface_text = rendered
@@ -4712,6 +4759,7 @@ fn print_live_rendered(
                 &surface_text,
                 pane_surfaces,
                 pane_surface_summaries,
+                pane_chrome,
                 None,
             ) {
                 return;
@@ -4723,6 +4771,7 @@ fn print_live_rendered(
                 initial_scrollback,
                 false,
                 pane_surfaces,
+                pane_chrome,
                 None,
             );
             state.render_initial(&rendered.workspace, &redraw_text);
@@ -4734,6 +4783,7 @@ fn print_live_rendered(
                 initial_scrollback,
                 false,
                 pane_surfaces,
+                pane_chrome,
                 None,
             );
             redraw_terminal(&redraw_text);
@@ -4755,6 +4805,7 @@ fn print_live_surface(
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
 ) {
     print_live_surface_with_overlay(
         workspace,
@@ -4764,6 +4815,7 @@ fn print_live_surface(
         redraw_state,
         pane_surfaces,
         pane_surface_summaries,
+        pane_chrome,
         None,
     )
 }
@@ -4777,6 +4829,7 @@ fn print_live_surface_with_overlay(
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
     overlay: Option<&tui::TuiOverlay>,
 ) {
     if redraw {
@@ -4786,6 +4839,7 @@ fn print_live_surface_with_overlay(
                 surface_text,
                 pane_surfaces,
                 pane_surface_summaries,
+                pane_chrome,
                 overlay,
             ) {
                 return;
@@ -4797,6 +4851,7 @@ fn print_live_surface_with_overlay(
                 None,
                 false,
                 pane_surfaces,
+                pane_chrome,
                 overlay,
             );
             state.render_diff(workspace, &text);
@@ -4808,6 +4863,7 @@ fn print_live_surface_with_overlay(
                 None,
                 false,
                 pane_surfaces,
+                pane_chrome,
                 overlay,
             );
             redraw_terminal(&text);
@@ -4829,6 +4885,7 @@ fn print_live_update(
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
 ) {
     match live_update_print_kind(previous_metadata, metadata, update, redraw) {
         LiveUpdatePrintKind::Surface => print_live_surface(
@@ -4839,6 +4896,7 @@ fn print_live_update(
             redraw_state,
             pane_surfaces,
             pane_surface_summaries,
+            pane_chrome,
         ),
         LiveUpdatePrintKind::Metadata => {
             if redraw {
@@ -4848,6 +4906,7 @@ fn print_live_update(
                         surface_text,
                         pane_surfaces,
                         pane_surface_summaries,
+                        pane_chrome,
                         None,
                     );
                 }
@@ -5130,6 +5189,7 @@ impl RedrawState {
         surface_text: &str,
         pane_surfaces: Option<&BTreeMap<String, String>>,
         pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+        pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
         overlay: Option<&tui::TuiOverlay>,
     ) -> bool {
         let render_start = Instant::now();
@@ -5143,7 +5203,7 @@ impl RedrawState {
                 active_surface_text: surface_text,
                 pane_surfaces,
                 pane_surface_summaries,
-                pane_chrome: None,
+                pane_chrome,
                 overlay,
             },
             area.width.max(1),
@@ -5200,7 +5260,7 @@ impl RedrawState {
                     active_surface_text: surface_text,
                     pane_surfaces,
                     pane_surface_summaries,
-                    pane_chrome: None,
+                    pane_chrome,
                     overlay,
                 },
             );
@@ -5545,6 +5605,7 @@ fn redraw_text_with_context(
     scrollback: Option<local::ScrollbackChunkSummary>,
     has_status_bar: bool,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
     overlay: Option<&tui::TuiOverlay>,
 ) -> String {
     if has_status_bar {
@@ -5557,7 +5618,7 @@ fn redraw_text_with_context(
                 active_surface_text: surface_text,
                 pane_surfaces,
                 pane_surface_summaries: None,
-                pane_chrome: None,
+                pane_chrome,
                 overlay,
             },
             cols,
@@ -8336,20 +8397,21 @@ mod tests {
         AttachMode, BRACKETED_PASTE_END, BRACKETED_PASTE_START, ClientModeArgs,
         DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs, FocusEvent, FrameStats,
         HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
-        LiveDetachReason, LiveMouseDispatch, LiveScrollDirection, LiveSurfaceState,
-        LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
-        RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
-        SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags, SgrMouseInput,
-        SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward, StdinKey, StdinKeyInput,
-        args_from_iter, configure_default_live_args, default_attach_error_needs_restart,
-        format_cli_error_json, format_context_json, format_input_choices_json,
-        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
-        format_live_detach_json, format_live_error_json, format_live_presence_json,
-        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
-        format_scrollback, format_state_info_json, format_state_info_text, format_stats_right,
-        frontend_resize_pane_size, host_mouse_mode_disable_sequence,
-        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
-        interim_surface_fidelity_warning_needed, live_mouse_dispatch_for_workspace_size,
+        LiveDetachReason, LiveMouseDispatch, LiveScrollDirection, LiveScrollbackView,
+        LiveSurfaceState, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
+        PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
+        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags,
+        SgrMouseInput, SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward, StdinKey,
+        StdinKeyInput, args_from_iter, configure_default_live_args,
+        default_attach_error_needs_restart, format_cli_error_json, format_context_json,
+        format_input_choices_json, format_key_names_json, format_live_attach_json,
+        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
+        format_live_presence_json, format_live_surface_update_json, format_live_workspace_json,
+        format_rendered_attach_json, format_scrollback, format_state_info_json,
+        format_state_info_text, format_stats_right, frontend_resize_pane_size,
+        host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
+        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
+        live_mouse_dispatch_for_workspace_size, live_pane_chrome_state,
         live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
         menu_overlay_for_action, menu_overlay_for_action_with_session_inventory, parse_detach_key,
         parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
@@ -9621,7 +9683,7 @@ mod tests {
         };
 
         let status_bar_text =
-            redraw_text_with_context(&ws, &metadata, "pane output", None, true, None, None);
+            redraw_text_with_context(&ws, &metadata, "pane output", None, true, None, None, None);
         assert!(
             !status_bar_text.contains("title=") && !status_bar_text.contains("working-directory="),
             "status-bar redraw should not inject metadata rows: {status_bar_text:?}"
@@ -9636,7 +9698,7 @@ mod tests {
         assert!(status_bar_text.contains("pane output"));
 
         let fallback_text =
-            redraw_text_with_context(&ws, &metadata, "pane output", None, false, None, None);
+            redraw_text_with_context(&ws, &metadata, "pane output", None, false, None, None, None);
         assert!(
             fallback_text.contains("title=shell title")
                 && fallback_text.contains("working-directory=file://localhost/tmp/nmux"),
@@ -10804,6 +10866,38 @@ mod tests {
             protocol::RowSemanticPrompt::Prompt
         );
         assert!(summary.row_updates[0].dirty);
+    }
+
+    #[test]
+    fn live_pane_chrome_marks_scrollback_views() {
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: String::new(),
+            current_pane_surfaces: BTreeMap::new(),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            scrollback_views: BTreeMap::new(),
+        };
+        surface_state.scrollback_views.insert(
+            "pane-1".to_owned(),
+            LiveScrollbackView {
+                start_line: 4,
+                line_count: 2,
+                total_lines: 9,
+            },
+        );
+
+        let chrome = live_pane_chrome_state(&surface_state);
+
+        assert_eq!(
+            chrome.get("pane-1"),
+            Some(&tui::PaneChromeState {
+                read_only: false,
+                scrollback: true,
+            })
+        );
+        assert!(!chrome.contains_key("pane-2"));
     }
 
     #[test]
