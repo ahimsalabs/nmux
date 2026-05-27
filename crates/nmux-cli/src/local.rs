@@ -59,11 +59,10 @@ use surface::{
     render_run_summaries, required_string, row_runs_for_text, terminal_colors_have_palette_diff,
     validate_attach_surface_update, validate_cached_row_hyperlink_ids,
     validate_cached_row_style_ids, validate_cell_run_hyperlink_ids,
-    validate_cell_run_semantic_content, validate_cell_run_style_ids, validate_cursor_summary,
-    validate_hyperlink_table, validate_no_row_patch_payload, validate_palette_diff_scope,
-    validate_patch_kind, validate_row_semantic_prompt, validate_row_update_hyperlink_ids,
-    validate_row_update_style_ids, validate_row_update_terminal_enums, validate_surface_kind,
-    validate_terminal_mode_summary,
+    validate_cell_run_semantic_content, validate_cursor_summary, validate_hyperlink_table,
+    validate_no_row_patch_payload, validate_palette_diff_scope, validate_patch_kind,
+    validate_row_semantic_prompt, validate_row_update_hyperlink_ids, validate_row_update_style_ids,
+    validate_row_update_terminal_enums, validate_surface_kind, validate_terminal_mode_summary,
 };
 
 const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
@@ -5919,8 +5918,10 @@ pub(crate) fn session_inventory_from_frame(
     let snapshot = envelope
         .body_as_session_inventory_snapshot()
         .ok_or("missing session inventory body")?;
-    let active_session_id =
-        required_string(snapshot.active_session_id(), "session inventory active_session_id")?;
+    let active_session_id = required_string(
+        snapshot.active_session_id(),
+        "session inventory active_session_id",
+    )?;
     let sessions = snapshot
         .sessions()
         .ok_or("session inventory has no sessions")?;
@@ -6994,10 +6995,10 @@ pub(crate) fn scrollback_chunk_from_frame(
     let mut lines = Vec::with_capacity(rows.len());
     for index in 0..rows.len() {
         let row = rows.get(index);
-        let runs = row.runs().map(decoded_cell_runs).unwrap_or_default();
+        let mut runs = row.runs().map(decoded_cell_runs).unwrap_or_default();
         validate_row_semantic_prompt(row.semantic_prompt())?;
         validate_cell_run_semantic_content(&runs)?;
-        validate_cell_run_style_ids(&runs, &styles)?;
+        normalize_scrollback_run_style_ids(&mut runs, &styles);
         validate_cell_run_hyperlink_ids(&runs, &hyperlinks)?;
         validate_scrollback_row_line(row.line())?;
         validate_scrollback_row_public_range(
@@ -7028,6 +7029,19 @@ pub(crate) fn scrollback_chunk_from_frame(
         colors,
         lines,
     })
+}
+
+fn normalize_scrollback_run_style_ids(runs: &mut [CellRunSummary], styles: &[StyleSummary]) {
+    let style_count = styles.len().max(1);
+    for run in runs {
+        let Ok(style_id) = usize::try_from(run.style_id) else {
+            run.style_id = 0;
+            continue;
+        };
+        if style_id >= style_count {
+            run.style_id = 0;
+        }
+    }
 }
 
 pub fn write_attach_request<W: Write>(writer: &mut W, request: &AttachRequest) -> io::Result<()> {
@@ -10315,6 +10329,21 @@ mod tests {
         );
         assert_eq!(chunk.lines[0].runs[0].hyperlink_id, 7);
         assert_eq!(chunk.lines[0].text, "linked");
+    }
+
+    #[test]
+    fn decodes_scrollback_chunk_with_unknown_style_id_as_default_style() {
+        let frame = scrollback_chunk_with_run_metadata_frame(
+            RowMetadataFixture::default(),
+            RunMetadataFixture {
+                style_id: 15,
+                ..RunMetadataFixture::default()
+            },
+        );
+        let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
+
+        assert_eq!(chunk.lines[0].text, "linked");
+        assert_eq!(chunk.lines[0].runs[0].style_id, 0);
     }
 
     #[test]

@@ -93,14 +93,13 @@ where
 
     let mut pty_host = LocalPtyHost::default();
     let session_id = args.session_id.clone();
-    let session_actor =
-        match create_daemon_session_actor(&args, &session_id, None, &mut pty_host) {
-            Ok(actor) => actor,
-            Err(err) => {
-                report_ready_json_error(&args, err.as_ref())?;
-                return Err(err);
-            }
-        };
+    let session_actor = match create_daemon_session_actor(&args, &session_id, None, &mut pty_host) {
+        Ok(actor) => actor,
+        Err(err) => {
+            report_ready_json_error(&args, err.as_ref())?;
+            return Err(err);
+        }
+    };
     let mut session_registry = SessionRegistry::new();
     if !session_registry.insert(session_actor) {
         return Err(format!("duplicate daemon session id {session_id}").into());
@@ -286,7 +285,11 @@ fn serve_session_new_command(
     registry: &mut SessionRegistry,
     pty_host: &mut LocalPtyHost,
 ) -> Result<(), ServeError> {
-    let Some(session_id) = command.session_id.as_deref().filter(|value| !value.is_empty()) else {
+    let Some(session_id) = command
+        .session_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    else {
         let fallback = registry
             .get(&args.session_id)
             .ok_or_else(|| format!("daemon session {} missing from registry", args.session_id))?;
