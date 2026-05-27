@@ -10887,7 +10887,7 @@ mod tests {
         assert_eq!(predicted, "abc");
         assert_eq!(
             overlay.render_underlined(&surface).as_deref(),
-            Some("ab\x1b[4mc\x1b[24m")
+            Some("ab\x1b[0m\x1b[4mc\x1b[0m")
         );
         assert_eq!(surface.render_text(), "ab");
         assert_eq!(
@@ -11111,7 +11111,7 @@ mod tests {
             .expect("apply mode-only patch");
         assert_eq!(
             overlay.render_underlined(&surface).as_deref(),
-            Some("ab\x1b[4mc\x1b[24m")
+            Some("ab\x1b[0m\x1b[4mc\x1b[0m")
         );
         assert_eq!(
             overlay

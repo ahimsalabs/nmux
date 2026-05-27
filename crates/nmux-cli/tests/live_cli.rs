@@ -6326,7 +6326,7 @@ fn live_cli_speculative_echo_repaints_before_server_confirmation() {
         "missing redraw sequence:\n{stdout:?}"
     );
     assert!(
-        stdout.contains("ready\x1b[4mx\x1b[24m"),
+        stdout.contains("ready\x1b[0m\x1b[4mx\x1b[0m"),
         "missing underlined speculative echo repaint before server confirmation:\n{stdout:?}"
     );
 }
@@ -6387,7 +6387,7 @@ fn live_cli_stdin_bytes_speculative_echo_repaints_before_server_confirmation() {
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stdout.contains("ready\x1b[4mx\x1b[24m"),
+        stdout.contains("ready\x1b[0m\x1b[4mx\x1b[0m"),
         "missing stdin-byte speculative echo repaint before server confirmation:\n{stdout:?}"
     );
 }
