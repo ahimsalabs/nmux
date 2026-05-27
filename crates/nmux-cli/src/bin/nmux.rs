@@ -125,6 +125,7 @@ const DEFAULT_REMOTE_PORT: u16 = 7007;
 const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
 const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
+const LIVE_SCROLL_ENTRY_ROWS: u64 = 1;
 const LIVE_SCROLL_WHEEL_ROWS: u64 = 3;
 
 fn main() {
@@ -4028,7 +4029,7 @@ fn scroll_live_pane_view(
             let offset = next_scroll_offset(
                 0,
                 LiveScrollDirection::Up,
-                LIVE_SCROLL_WHEEL_ROWS,
+                LIVE_SCROLL_ENTRY_ROWS,
                 probe.total_lines,
                 viewport_rows,
             );
@@ -8587,12 +8588,12 @@ mod tests {
         AttachMode, BRACKETED_PASTE_END, BRACKETED_PASTE_START, ClientModeArgs,
         DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs, FocusEvent, FrameStats,
         HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
-        LiveDetachReason, LiveMouseDispatch, LiveScrollDirection, LiveScrollbackView,
-        LiveSurfaceState, LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs,
-        PositiveNumericArgs, RawTerminalModeContext, RedrawState, RedrawTerminalContext,
-        STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags,
-        SgrMouseInput, SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward, StdinKey,
-        StdinKeyInput, args_from_iter, configure_default_live_args,
+        LIVE_SCROLL_ENTRY_ROWS, LiveDetachReason, LiveMouseDispatch, LiveScrollDirection,
+        LiveScrollbackView, LiveSurfaceState, LiveUpdatePrintKind, LocalEcho, MouseEvent,
+        NoInputResizeArgs, PositiveNumericArgs, RawTerminalModeContext, RedrawState,
+        RedrawTerminalContext, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand,
+        ScrollbackSelectionArgFlags, SgrMouseInput, SigwinchResizeContext, StateInfoSocketSummary,
+        StdinByteForward, StdinKey, StdinKeyInput, args_from_iter, configure_default_live_args,
         default_attach_error_needs_restart, format_cli_error_json, format_context_json,
         format_input_choices_json, format_key_names_json, format_live_attach_json,
         format_live_cli_error_json, format_live_detach_json, format_live_error_json,
@@ -11088,9 +11089,14 @@ mod tests {
     #[test]
     fn scrollback_viewport_math_uses_bottom_offset() {
         assert_eq!(
-            next_scroll_offset(0, LiveScrollDirection::Up, 3, 2, 20),
+            next_scroll_offset(0, LiveScrollDirection::Up, LIVE_SCROLL_ENTRY_ROWS, 2, 20),
             0,
             "short transcript cannot scroll beyond the viewport"
+        );
+        assert_eq!(
+            next_scroll_offset(0, LiveScrollDirection::Up, LIVE_SCROLL_ENTRY_ROWS, 80, 20),
+            1,
+            "first entry into scrollback should move gently"
         );
         assert_eq!(
             next_scroll_offset(2, LiveScrollDirection::Down, 3, 80, 20),
