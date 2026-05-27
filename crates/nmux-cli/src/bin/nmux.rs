@@ -4007,14 +4007,12 @@ fn scroll_live_pane_view(
                 Some(&mut pending_updates),
                 Some(&mut pending_live),
             )?;
-            let max_start = scrollback_max_start(probe.total_lines, line_count);
-            if max_start <= 1 {
+            let Some(initial_start) =
+                initial_scrollback_up_start(probe.total_lines, line_count, LIVE_SCROLL_WHEEL_ROWS)
+            else {
                 return Ok(false);
-            }
-            (
-                max_start.saturating_sub(LIVE_SCROLL_WHEEL_ROWS).max(1),
-                None,
-            )
+            };
+            (initial_start, None)
         }
         (LiveScrollDirection::Up, Some(view)) if view.start_line > 1 => (
             view.start_line
@@ -4169,6 +4167,14 @@ fn scrollback_max_start(total_lines: u64, line_count: u32) -> u64 {
     } else {
         1
     }
+}
+
+fn initial_scrollback_up_start(total_lines: u64, line_count: u32, wheel_rows: u64) -> Option<u64> {
+    if total_lines == 0 {
+        return None;
+    }
+    let max_start = scrollback_max_start(total_lines, line_count);
+    Some(max_start.saturating_sub(wheel_rows).max(1))
 }
 
 fn restore_live_pane_surface(
@@ -8512,16 +8518,17 @@ mod tests {
         format_rendered_attach_json, format_scrollback, format_state_info_json,
         format_state_info_text, format_stats_right, frontend_resize_pane_size,
         host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
-        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
-        live_mouse_dispatch_for_workspace_size, live_pane_chrome_state,
-        live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
-        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory, parse_detach_key,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        render_scrollback_view_summary, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, tui, usage,
+        host_mouse_mode_mirror_needed, initial_scrollback_up_start,
+        interim_surface_fidelity_warning_needed, live_mouse_dispatch_for_workspace_size,
+        live_pane_chrome_state, live_session_new_should_fallback, live_update_print_kind,
+        managed_ready_error_message, menu_overlay_for_action,
+        menu_overlay_for_action_with_session_inventory, parse_detach_key, parse_env_assignment,
+        parse_focus_event, parse_key_modifiers, parse_key_name, parse_local_echo,
+        parse_mouse_event, parse_mouse_pixels, parse_numeric_arg, preprocess_args,
+        raw_terminal_fixup_termios, raw_terminal_mode_needed, redraw_terminal_guard_needed,
+        redraw_text_with_context, redraw_workspace_surface_text, render_scrollback_view_summary,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
+        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -11034,6 +11041,14 @@ mod tests {
             })
         );
         assert!(!chrome.contains_key("pane-2"));
+    }
+
+    #[test]
+    fn initial_wheel_up_enters_short_scrollback() {
+        assert_eq!(initial_scrollback_up_start(0, 20, 3), None);
+        assert_eq!(initial_scrollback_up_start(2, 20, 3), Some(1));
+        assert_eq!(initial_scrollback_up_start(20, 20, 3), Some(1));
+        assert_eq!(initial_scrollback_up_start(80, 20, 3), Some(58));
     }
 
     #[test]
