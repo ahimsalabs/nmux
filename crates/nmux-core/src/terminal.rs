@@ -1130,7 +1130,7 @@ mod ghostty_vt {
             let surface_dirty_rows = surface_rows.dirty_rows.clone();
             let surface_kitty_placeholders = surface_rows.kitty_placeholders.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
-            let mut preserve_scrollback = false;
+            let preserve_scrollback = false;
             let scrollback_rows = if preserve_input_rows && surface == input.surface {
                 ExtractedRows {
                     lines: input.scrollback_lines.to_vec(),
@@ -1162,37 +1162,12 @@ mod ghostty_vt {
                     full_span.in_scope(|| self.scrollback_rows(total_rows, &mut styles))?
                 } else {
                     let full_span = tracing::trace_span!(
-                        "terminal.libghostty.defer_full_scrollback_rows",
+                        "terminal.libghostty.extract_full_scrollback_rows_after_short_cache",
                         total_rows,
                         surface_rows = surface_rows.lines.len(),
                         input_scrollback_rows = input.scrollback_lines.len()
                     );
-                    full_span.in_scope(|| {
-                        preserve_scrollback = true;
-                        ExtractedRows {
-                            lines: input.scrollback_lines.to_vec(),
-                            row_runs: row_runs_prefix_or_plain(
-                                input.scrollback_lines,
-                                input.scrollback_row_runs,
-                                input.scrollback_lines.len(),
-                            ),
-                            semantic_prompts: row_values_prefix_or_default(
-                                input.scrollback_semantic_prompts,
-                                input.scrollback_lines.len(),
-                                protocol::RowSemanticPrompt::None,
-                            ),
-                            dirty_rows: row_values_prefix_or_default(
-                                input.scrollback_dirty_rows,
-                                input.scrollback_lines.len(),
-                                false,
-                            ),
-                            kitty_placeholders: row_values_prefix_or_default(
-                                input.scrollback_kitty_placeholders,
-                                input.scrollback_lines.len(),
-                                false,
-                            ),
-                        }
-                    })
+                    full_span.in_scope(|| self.scrollback_rows(total_rows, &mut styles))?
                 }
             } else {
                 ExtractedRows {
@@ -4899,6 +4874,44 @@ mod tests {
             style.fg_rgba, 0,
             "styled scrollback should reference a resolved style table entry"
         );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_expands_seeded_scrollback_from_backend_history() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let initial_surface = vec!["nmux pane-1".to_owned()];
+        let initial_scrollback = vec![
+            "booting nmux workspace".to_owned(),
+            "nmux pane-1".to_owned(),
+            "server-owned terminal state".to_owned(),
+        ];
+
+        let output = (0..80)
+            .map(|index| format!("line {index:04}\r\n"))
+            .collect::<String>();
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &initial_surface, &initial_scrollback),
+                output.as_bytes(),
+            )
+            .expect("terminal update");
+
+        assert!(
+            update.scrollback_lines.len() > update.surface_lines.len(),
+            "seeded scrollback did not grow from backend history: {:?}",
+            update.scrollback_lines
+        );
+        for expected in ["line 0000", "line 0056", "line 0079"] {
+            assert!(
+                update
+                    .scrollback_lines
+                    .iter()
+                    .any(|line| line.contains(expected)),
+                "scrollback missing {expected}: {:?}",
+                update.scrollback_lines
+            );
+        }
     }
 
     #[cfg(feature = "libghostty-vt")]

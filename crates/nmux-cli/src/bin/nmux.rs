@@ -3664,23 +3664,46 @@ fn live_mouse_dispatch_for_workspace_size(
             }
             None
         }
-        tui::HitTarget::Pane(pane_id) | tui::HitTarget::WindowTreePane(pane_id)
-            if sgr_mouse_is_primary_press(mouse) =>
-        {
+        tui::HitTarget::Pane(pane_id) => {
+            if let Some(direction) = sgr_mouse_scroll_direction(mouse) {
+                return Some(LiveMouseDispatch::PaneScroll {
+                    pane_id: pane_id.clone(),
+                    direction,
+                    visible_rows: hit.rect.height.max(1),
+                });
+            }
+            if sgr_mouse_is_primary_press(mouse) {
+                return Some(LiveMouseDispatch::FocusPane(pane_id.clone()));
+            }
+            None
+        }
+        tui::HitTarget::WindowTreePane(pane_id) if sgr_mouse_is_primary_press(mouse) => {
             Some(LiveMouseDispatch::FocusPane(pane_id.clone()))
         }
         tui::HitTarget::PaneScroll {
             pane_id,
             direction,
             visible_rows,
-        } if sgr_mouse_is_primary_press(mouse) => Some(LiveMouseDispatch::PaneScroll {
-            pane_id: pane_id.clone(),
-            direction: match direction {
-                tui::ScrollDirection::Up => LiveScrollDirection::Up,
-                tui::ScrollDirection::Down => LiveScrollDirection::Down,
-            },
-            visible_rows: *visible_rows,
-        }),
+        } => {
+            if let Some(direction) = sgr_mouse_scroll_direction(mouse) {
+                return Some(LiveMouseDispatch::PaneScroll {
+                    pane_id: pane_id.clone(),
+                    direction,
+                    visible_rows: *visible_rows,
+                });
+            }
+            if sgr_mouse_is_primary_press(mouse) {
+                return Some(LiveMouseDispatch::PaneScroll {
+                    pane_id: pane_id.clone(),
+                    direction: match direction {
+                        tui::ScrollDirection::Up => LiveScrollDirection::Up,
+                        tui::ScrollDirection::Down => LiveScrollDirection::Down,
+                    },
+                    visible_rows: *visible_rows,
+                });
+            }
+            None
+        }
         tui::HitTarget::Menu(action) if sgr_mouse_is_primary_press(mouse) => {
             Some(LiveMouseDispatch::Menu(*action))
         }
