@@ -6426,6 +6426,18 @@ fn read_scrollback_response_from_stream(
                     Err(err) => Err(err),
                 }
             }
+            protocol::EnvelopeBody::Pong if pending_live.is_some() => {
+                match pong_from_frame(&frame) {
+                    Ok(pong) => {
+                        pending_live
+                            .as_deref_mut()
+                            .expect("pending live checked")
+                            .push(LiveSurfaceRead::Pong(pong));
+                        Ok(ScrollbackRead::PendingFrame)
+                    }
+                    Err(err) => Err(err),
+                }
+            }
             protocol::EnvelopeBody::PresenceUpdate
             | protocol::EnvelopeBody::WorkspaceTreeSnapshot => Ok(ScrollbackRead::PendingFrame),
             other => Err(format!("unexpected envelope body: {other:?}").into()),
@@ -18595,6 +18607,41 @@ mod tests {
                 actor_id: "actor-1".to_owned(),
                 ping_seq: 42,
             })
+        );
+    }
+
+    #[test]
+    fn scrollback_response_queues_interleaved_pong_frames() {
+        let (mut client, mut server) = UnixStream::pair().expect("socket pair");
+        let session = Session::initial();
+        let mut seq = 7;
+        write_pong_frame(
+            &mut server,
+            &session,
+            &mut seq,
+            &PingSummary {
+                actor_id: "actor-1".to_owned(),
+                ping_seq: 42,
+            },
+        )
+        .expect("write pong");
+        wire::write_default_frame(
+            &mut server,
+            &session.scrollback_chunk_frame("local-client", 8, 1, 1),
+        )
+        .expect("write scrollback chunk");
+
+        let mut pending_live = Vec::new();
+        let read = read_scrollback_response_from_stream(&mut client, None, Some(&mut pending_live))
+            .expect("read scrollback response");
+
+        assert!(matches!(read, ScrollbackRead::Chunk(_)));
+        assert_eq!(
+            pending_live,
+            vec![LiveSurfaceRead::Pong(PingSummary {
+                actor_id: "actor-1".to_owned(),
+                ping_seq: 42,
+            })]
         );
     }
 
