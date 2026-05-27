@@ -840,12 +840,32 @@ fn draw_box(
             .border_style(border_style)
             .render(area, buffer);
     }
+    if chrome_state.scrollback {
+        draw_right_scroll_badge(buffer, area);
+    }
 }
 
 fn clipped_box_title(title: &str, width: u16) -> String {
     let max = width.saturating_sub(4) as usize;
     let label = truncate_chars(title, max);
     format!(" {label} ")
+}
+
+fn draw_right_scroll_badge(buffer: &mut Buffer, area: Rect) {
+    if area.width == 0 || area.height < 3 {
+        return;
+    }
+    let x = area.x + area.width - 1;
+    let available = area.height.saturating_sub(2) as usize;
+    let label = if available >= 6 { "SCROLL" } else { "S" };
+    let start_y = area.y + 1 + (available.saturating_sub(label.len()) / 2) as u16;
+    let style = Style::default()
+        .fg(Color::Rgb(250, 204, 21))
+        .bg(Color::Rgb(17, 19, 24))
+        .add_modifier(Modifier::BOLD);
+    for (offset, ch) in label.chars().take(available).enumerate() {
+        set_cell(buffer, x, start_y + offset as u16, &ch.to_string(), style);
+    }
 }
 
 fn draw_vertical_rule(buffer: &mut Buffer, x: u16, y: u16, height: u16) {
@@ -1304,6 +1324,14 @@ mod tests {
 
         assert!(frame.text.contains("scroll"), "{:?}", frame.text);
         assert!(frame.text.contains("ro"), "{:?}", frame.text);
+        assert!(
+            frame
+                .text
+                .lines()
+                .any(|line| line.chars().last() == Some('S')),
+            "scroll badge should mark the right border: {:?}",
+            frame.text
+        );
         for line in frame.text.lines() {
             assert!(
                 line.chars().count() <= 72,

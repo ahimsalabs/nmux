@@ -2562,9 +2562,17 @@ fn build_terminal_colors<'a>(
 
 fn apply_terminal_update(
     pane: &mut Pane,
-    update: crate::terminal::TerminalUpdate,
+    mut update: crate::terminal::TerminalUpdate,
     force_surface_version: bool,
 ) -> bool {
+    if update.preserve_scrollback {
+        update.styles = merge_preserved_scrollback_styles(
+            &pane.styles,
+            &update.styles,
+            &mut update.surface_row_runs,
+        );
+    }
+
     let cursor = Cursor::from(update.cursor);
     let surface_row_runs = row_runs_for_lines(&update.surface_lines, &update.surface_row_runs);
     let surface_semantic_prompts =
@@ -2712,6 +2720,36 @@ fn apply_terminal_update(
     }
 
     surface_changed || scrollback_changed
+}
+
+fn merge_preserved_scrollback_styles(
+    existing_styles: &[PaneStyle],
+    update_styles: &[PaneStyle],
+    surface_row_runs: &mut [Vec<CellRun>],
+) -> Vec<PaneStyle> {
+    let mut merged = existing_styles.to_vec();
+    if merged.is_empty() {
+        merged.push(PaneStyle::default());
+    }
+
+    let mut remap = Vec::with_capacity(update_styles.len());
+    for style in update_styles {
+        let index = if let Some(index) = merged.iter().position(|known| known == style) {
+            index
+        } else {
+            merged.push(style.clone());
+            merged.len() - 1
+        };
+        remap.push(index as u32);
+    }
+
+    for row in surface_row_runs {
+        for run in row {
+            run.style_id = remap.get(run.style_id as usize).copied().unwrap_or(0);
+        }
+    }
+
+    merged
 }
 
 fn palette_diff(old: &[u32], new: &[u32]) -> Option<PaletteDiff> {
@@ -6278,6 +6316,84 @@ mod tests {
         assert_eq!(surface.lines, vec!["visible first".to_owned()]);
         assert_eq!(scrollback.version, initial_scrollback.version);
         assert_eq!(scrollback.lines, initial_scrollback.lines);
+    }
+
+    #[test]
+    fn preserving_scrollback_update_keeps_style_table_for_old_history() {
+        struct PreserveScrollbackWithSmallStyleTable;
+
+        impl TerminalEngine for PreserveScrollbackWithSmallStyleTable {
+            fn apply_output(
+                &mut self,
+                input: TerminalInput<'_>,
+                output: &[u8],
+            ) -> Option<TerminalUpdate> {
+                assert_eq!(output, b"alt-screen repaint");
+                let mut update = TerminalUpdate::plain(
+                    protocol::PatchKind::ReplaceRows,
+                    input.surface,
+                    input.cursor,
+                    vec!["visible".to_owned()],
+                    vec!["ignored".to_owned()],
+                );
+                update.styles = vec![PaneStyle::default()];
+                update.surface_row_runs = vec![vec![CellRun::plain("visible")]];
+                update.preserve_scrollback = true;
+                Some(update)
+            }
+
+            fn resize(
+                &mut self,
+                _input: TerminalInput<'_>,
+                _cols: u32,
+                _rows: u32,
+            ) -> Option<TerminalUpdate> {
+                panic!("resize is not used by this test")
+            }
+        }
+
+        let mut session = Session::initial();
+        let pane = session.pane_mut("pane-1").expect("pane");
+        pane.styles = vec![PaneStyle::default()];
+        for index in 1..=5 {
+            pane.styles.push(PaneStyle {
+                fg_rgba: 0x1100_00ff + index,
+                bg_rgba: 0,
+                underline_rgba: 0,
+                flags: index,
+            });
+        }
+        pane.scrollback_lines = vec!["styled history".to_owned()];
+        pane.scrollback_row_runs = vec![vec![CellRun {
+            text: "styled history".to_owned(),
+            cell_widths: vec![1; "styled history".len()],
+            style_id: 5,
+            flags: 0,
+            hyperlink_id: 0,
+            semantic_content: protocol::CellSemanticContent::Output,
+        }]];
+
+        let mut engine = PreserveScrollbackWithSmallStyleTable;
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"alt-screen repaint",
+            &mut engine
+        ));
+
+        let frame = session.scrollback_chunk_frame("conn-1", 11, 1, 1);
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let chunk = envelope
+            .body_as_scrollback_chunk()
+            .expect("scrollback chunk");
+        let styles = chunk.styles().expect("styles");
+        assert!(
+            styles.len() > 5,
+            "preserved scrollback style table must still cover old run ids"
+        );
+        let rows = chunk.rows().expect("rows");
+        let runs = rows.get(0).runs().expect("runs");
+        assert_eq!(runs.get(0).style_id(), 5);
+        assert_eq!(styles.get(5).flags(), 5);
     }
 
     #[test]
