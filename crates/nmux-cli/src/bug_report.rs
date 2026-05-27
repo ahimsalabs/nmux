@@ -38,6 +38,18 @@ pub fn record_process_error(
     }
 }
 
+pub fn record_signal_interrupt(binary: &str, signal: &str, args: &[String]) {
+    let Some(dir) = bug_report_dir_from_env() else {
+        return;
+    };
+    if let Err(write_err) = write_signal_interrupt(&dir, binary, signal, args) {
+        eprintln!(
+            "nmux: failed to write bug report to {}: {write_err}",
+            dir.display()
+        );
+    }
+}
+
 pub fn record_frame_decode_error(context: &str, frame: &[u8], err: &dyn std::error::Error) {
     let Some(dir) = bug_report_dir_from_env() else {
         return;
@@ -143,6 +155,33 @@ fn write_process_error(
             json_string(binary),
             json_string(&cwd_for_report()),
             json_string(&err.to_string()),
+            args.iter()
+                .map(|arg| json_string(arg))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    )?;
+    Ok(metadata_path)
+}
+
+fn write_signal_interrupt(
+    dir: &Path,
+    binary: &str,
+    signal: &str,
+    args: &[String],
+) -> io::Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    let stamp = ReportStamp::now();
+    let metadata_path = dir.join(format!("{}-signal-interrupt.json", stamp.file_prefix()));
+    fs::write(
+        &metadata_path,
+        format!(
+            "{{\"kind\":\"signal-interrupt\",\"timestamp_ms\":{},\"pid\":{},\"binary\":{},\"cwd\":{},\"signal\":{},\"args\":[{}]}}\n",
+            stamp.timestamp_ms,
+            std::process::id(),
+            json_string(binary),
+            json_string(&cwd_for_report()),
+            json_string(signal),
             args.iter()
                 .map(|arg| json_string(arg))
                 .collect::<Vec<_>>()
@@ -287,6 +326,27 @@ mod tests {
             std::process::id(),
             ReportStamp::now().timestamp_ns
         ))
+    }
+
+    #[test]
+    fn signal_interrupt_report_writes_metadata() {
+        let dir = temp_bug_report_dir("signal-interrupt-test");
+        let args = vec![
+            "nmux".to_owned(),
+            "--bug-report-dir".to_owned(),
+            dir.display().to_string(),
+        ];
+
+        let metadata_path =
+            write_signal_interrupt(&dir, "nmux", "SIGINT", &args).expect("write report");
+
+        let metadata = fs::read_to_string(metadata_path).expect("read metadata");
+        assert!(metadata.contains("\"kind\":\"signal-interrupt\""));
+        assert!(metadata.contains("\"binary\":\"nmux\""));
+        assert!(metadata.contains("\"signal\":\"SIGINT\""));
+        assert!(metadata.contains("\"--bug-report-dir\""));
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -34,6 +34,7 @@ mod tui;
 
 const STDIN_BYTES_DETACH: u8 = 0x1d;
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
+static SIGINT_BUG_REPORT_FD: AtomicI32 = AtomicI32::new(-1);
 const SUPPORTED_KEY_NAMES: &[&str] = &[
     "numpad-enter",
     "numpad-0",
@@ -145,6 +146,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = args.bug_report_dir.clone() {
         nmux_cli::bug_report::set_bug_report_dir(path);
     }
+    let _sigint_bug_report = if args.bug_report_dir.is_some() {
+        Some(SigintBugReportGuard::install(
+            std::env::args_os()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect(),
+        )?)
+    } else {
+        None
+    };
     if args.help {
         print!("{}", usage());
         return Ok(());
@@ -1287,6 +1297,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
                 match receiver.try_recv() {
                     Ok(StdinByteRead::Input(input)) => {
+                        record_stdin_ctrl_c_bug_report_if_needed(args, &input);
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
@@ -2921,6 +2932,16 @@ fn initial_live_scrollback(
         Some(&mut pending_live),
     )?;
     Ok((Some(scrollback), pending_updates, pending_live))
+}
+
+fn record_stdin_ctrl_c_bug_report_if_needed(args: &Args, input: &[u8]) {
+    if args.bug_report_dir.is_none() || !input.contains(&0x03) {
+        return;
+    }
+    let process_args = std::env::args_os()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    nmux_cli::bug_report::record_signal_interrupt("nmux", "STDIN_CTRL_C", &process_args);
 }
 
 fn spawn_stdin_line_reader() -> mpsc::Receiver<StdinLineRead> {
@@ -4953,6 +4974,113 @@ impl Drop for RedrawTerminalGuard {
         let mut stdout = io::stdout();
         let _ = execute!(stdout, cursor::Show, LeaveAlternateScreen);
     }
+}
+
+struct SigintBugReportGuard {
+    previous: libc::sighandler_t,
+    write_fd: libc::c_int,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl SigintBugReportGuard {
+    fn install(args: Vec<String>) -> io::Result<Self> {
+        let mut fds = [-1; 2];
+        // SAFETY: fds points to two valid c_int slots for pipe to fill.
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if let Err(err) = set_fd_nonblocking(fds[1]) {
+            close_fd(fds[0]);
+            close_fd(fds[1]);
+            return Err(err);
+        }
+
+        let handler = handle_sigint_bug_report as *const () as libc::sighandler_t;
+        // SAFETY: installing a process signal handler is inherently global.
+        // The handler only writes one byte to a pre-opened nonblocking pipe.
+        let previous = unsafe { libc::signal(libc::SIGINT, handler) };
+        if previous == libc::SIG_ERR {
+            let err = io::Error::last_os_error();
+            close_fd(fds[0]);
+            close_fd(fds[1]);
+            return Err(err);
+        }
+
+        SIGINT_BUG_REPORT_FD.store(fds[1], Ordering::SeqCst);
+        let read_fd = fds[0];
+        let thread = thread::spawn(move || watch_sigint_bug_report(read_fd, args));
+        Ok(Self {
+            previous,
+            write_fd: fds[1],
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for SigintBugReportGuard {
+    fn drop(&mut self) {
+        SIGINT_BUG_REPORT_FD.store(-1, Ordering::SeqCst);
+        // SAFETY: previous was returned by signal during install. Drop must not
+        // panic, so restoration errors are intentionally ignored.
+        let _ = unsafe { libc::signal(libc::SIGINT, self.previous) };
+        close_fd(self.write_fd);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn set_fd_nonblocking(fd: libc::c_int) -> io::Result<()> {
+    // SAFETY: fd is an open file descriptor owned by the caller.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fd is open and flags came from F_GETFL.
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn close_fd(fd: libc::c_int) {
+    if fd >= 0 {
+        // SAFETY: close is safe for any integer fd; errors are ignored.
+        let _ = unsafe { libc::close(fd) };
+    }
+}
+
+fn watch_sigint_bug_report(read_fd: libc::c_int, args: Vec<String>) {
+    let mut byte = [0_u8; 1];
+    loop {
+        // SAFETY: byte is a valid one-byte buffer and read_fd is owned by this thread.
+        let count = unsafe { libc::read(read_fd, byte.as_mut_ptr().cast(), byte.len()) };
+        if count > 0 {
+            close_fd(read_fd);
+            nmux_cli::bug_report::record_signal_interrupt("nmux", "SIGINT", &args);
+            std::process::exit(130);
+        }
+        if count == 0 {
+            close_fd(read_fd);
+            return;
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
+            close_fd(read_fd);
+            return;
+        }
+    }
+}
+
+extern "C" fn handle_sigint_bug_report(_: libc::c_int) {
+    let fd = SIGINT_BUG_REPORT_FD.load(Ordering::SeqCst);
+    if fd < 0 {
+        return;
+    }
+    let byte = [1_u8; 1];
+    // SAFETY: fd is a pre-opened nonblocking pipe write end. write is
+    // async-signal-safe; errors are intentionally ignored.
+    let _ = unsafe { libc::write(fd, byte.as_ptr().cast(), byte.len()) };
 }
 
 struct HostMouseModeMirror {
