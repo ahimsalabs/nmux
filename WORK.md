@@ -12,7 +12,10 @@ see all panes restored.
 
 ## Next features (priority order)
 
-None queued.
+- Rework live scrollback into per-client offset-based viewports. Mouse wheel
+  should move a local viewport a few rows at a time, preserve native app mouse
+  routing when pane mouse tracking is enabled, and render a proportional
+  scrollbar over history plus live screen.
 
 ## Test gaps to close
 
