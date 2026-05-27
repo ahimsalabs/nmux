@@ -128,6 +128,7 @@ const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
 
 fn main() {
     if let Err(err) = run() {
+        nmux_cli::bug_report::record_process_error("nmux", err.as_ref(), std::env::args_os());
         eprintln!("nmux: {err}");
         std::process::exit(1);
     }
@@ -140,6 +141,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return result;
     }
     let args = args()?;
+    if let Some(path) = args.bug_report_dir.clone() {
+        nmux_cli::bug_report::set_bug_report_dir(path);
+    }
     if args.help {
         print!("{}", usage());
         return Ok(());
@@ -5938,6 +5942,7 @@ struct Args {
     no_scrollback: bool,
     state_path: Option<PathBuf>,
     record_path: Option<PathBuf>,
+    bug_report_dir: Option<PathBuf>,
     follow: bool,
     live: bool,
     start: bool,
@@ -6093,6 +6098,8 @@ struct RawArgs {
     state_path: Option<PathBuf>,
     #[arg(long = "record", value_name = "PATH")]
     record_path: Option<PathBuf>,
+    #[arg(long = "bug-report-dir", value_name = "DIR")]
+    bug_report_dir: Option<PathBuf>,
     #[arg(long = "follow", action = ArgAction::SetTrue)]
     follow: bool,
     #[arg(long = "live", action = ArgAction::SetTrue)]
@@ -6296,7 +6303,7 @@ where
     S: Into<std::ffi::OsString>,
 {
     let input_args = args.into_iter().map(Into::into).collect::<Vec<_>>();
-    let auto_default = input_args.is_empty();
+    let auto_default = input_args_are_only_default_safe_flags(&input_args);
     let args = preprocess_args(input_args)?;
     let mut raw =
         RawArgs::try_parse_from(std::iter::once(std::ffi::OsString::from("nmux")).chain(args))
@@ -6362,6 +6369,13 @@ where
         }
         value => value,
     };
+    if raw
+        .bug_report_dir
+        .as_ref()
+        .is_some_and(|path| path.as_os_str().is_empty())
+    {
+        return Err("--bug-report-dir requires a non-empty directory path".into());
+    }
     if raw.target_pane_id.as_deref().is_some_and(str::is_empty) {
         return Err("--pane requires a non-empty pane ID".into());
     }
@@ -6544,6 +6558,7 @@ where
         no_scrollback: raw.no_scrollback,
         state_path: raw.state_path,
         record_path: raw.record_path,
+        bug_report_dir: raw.bug_report_dir,
         follow: raw.follow,
         live,
         start,
@@ -6593,6 +6608,32 @@ where
     )?));
     normalized.extend(raw.into_iter().skip(1));
     Ok(normalized)
+}
+
+fn input_args_are_only_default_safe_flags(args: &[std::ffi::OsString]) -> bool {
+    if args.is_empty() {
+        return true;
+    }
+    let mut index = 0;
+    while index < args.len() {
+        let Some(arg) = args[index].to_str() else {
+            return false;
+        };
+        if arg == "--bug-report-dir" {
+            index += 2;
+            if index > args.len() {
+                return false;
+            }
+        } else if arg
+            .strip_prefix("--bug-report-dir=")
+            .is_some_and(|value| !value.is_empty())
+        {
+            index += 1;
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 fn known_command(value: &str) -> bool {
@@ -8117,6 +8158,7 @@ Options:
   --no-scrollback            Skip the post-attach scrollback fetch
   --state PATH               Persist client-side pane surface cache
   --record PATH              Write timestamped live JSON events to PATH
+  --bug-report-dir DIR       Opt-in raw crash/decode reports for debugging
   --follow                   Reconnect in a polling loop
   --live                     Keep one attach connection open
   --start                    Start a private local daemon before attaching
@@ -10697,6 +10739,35 @@ mod tests {
     }
 
     #[test]
+    fn bug_report_dir_arg_is_explicit_opt_in() {
+        let args = args_from_iter(["--bug-report-dir", "/tmp/nmux-bugs"])
+            .expect("parse bug report dir args");
+        assert_eq!(
+            args.bug_report_dir,
+            Some(std::path::PathBuf::from("/tmp/nmux-bugs"))
+        );
+        assert!(args.auto_default);
+
+        let err = match args_from_iter(["--bug-report-dir", ""]) {
+            Ok(_) => panic!("empty bug report dir should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("--bug-report-dir"));
+    }
+
+    #[test]
+    fn bug_report_dir_flag_does_not_disable_default_attach_mode() {
+        let equals_args =
+            args_from_iter(["--bug-report-dir=/tmp/nmux-bugs"]).expect("parse equals args");
+        assert!(equals_args.auto_default);
+
+        let explicit_mode_args = args_from_iter(["--bug-report-dir", "/tmp/nmux-bugs", "--live"])
+            .expect("parse live args");
+        assert!(!explicit_mode_args.auto_default);
+        assert!(explicit_mode_args.live);
+    }
+
+    #[test]
     fn speculative_echo_arg_is_live_redraw_only() {
         let args = args_from_iter(["--live", "--redraw", "--key", "x", "--speculative-echo"])
             .expect("parse speculative echo args");
@@ -10794,6 +10865,7 @@ mod tests {
         assert!(usage.contains("--mouse-modifiers MODS"));
         assert!(usage.contains("--mouse-pixels X:Y"));
         assert!(usage.contains("--redraw"));
+        assert!(usage.contains("--bug-report-dir DIR"));
         assert!(usage.contains("--cols COUNT"));
         assert!(usage.contains("pane send PANE_ID TEXT"));
         assert!(usage.contains("pane ls [--json]"));

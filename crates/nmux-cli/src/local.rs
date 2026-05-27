@@ -21,6 +21,7 @@ use nmux_core::terminal::{
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 use tracing::{Span, instrument};
 
+use crate::bug_report;
 use crate::error::ServeError;
 
 pub use crate::build_info::BuildInfo;
@@ -61,7 +62,7 @@ use surface::{
     validate_cached_row_style_ids, validate_cell_run_hyperlink_ids,
     validate_cell_run_semantic_content, validate_cursor_summary, validate_hyperlink_table,
     validate_no_row_patch_payload, validate_palette_diff_scope, validate_patch_kind,
-    validate_row_semantic_prompt, validate_row_update_hyperlink_ids, validate_row_update_style_ids,
+    validate_row_semantic_prompt, validate_row_update_hyperlink_ids,
     validate_row_update_terminal_enums, validate_surface_kind, validate_terminal_mode_summary,
 };
 
@@ -6009,7 +6010,7 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
                 .map(decoded_hyperlinks)
                 .transpose()?
                 .unwrap_or_default();
-            let row_updates = decoded_surface_rows(rows.len(), |index| {
+            let mut row_updates = decoded_surface_rows(rows.len(), |index| {
                 let row = rows.get(index);
                 decoded_surface_row(
                     row.row(),
@@ -6022,7 +6023,7 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
                 )
             });
             validate_row_update_terminal_enums(&row_updates)?;
-            validate_row_update_style_ids(&row_updates, &styles)?;
+            normalize_surface_row_style_ids(&mut row_updates, &styles);
             validate_row_update_hyperlink_ids(&row_updates, &hyperlinks)?;
             let cursor = snapshot.cursor().map(CursorSummary::from_protocol);
             validate_cursor_summary(cursor)?;
@@ -6204,6 +6205,7 @@ pub(crate) fn read_scrollback_chunk_from_stream(
     match read_scrollback_response_from_stream(stream, None, None)? {
         ScrollbackRead::Chunk(chunk) => Ok(chunk),
         ScrollbackRead::Error(error) => Err(server_error(error).into()),
+        ScrollbackRead::PendingFrame => Err("unexpected pending scrollback frame".into()),
     }
 }
 
@@ -6250,9 +6252,11 @@ fn read_scrollback_chunk_with_stale_retry_and_pending_updates(
             match read_scrollback_response_from_stream(stream, pending_updates, pending_live)? {
                 ScrollbackRead::Chunk(chunk) => Ok(chunk),
                 ScrollbackRead::Error(error) => Err(server_error(error).into()),
+                ScrollbackRead::PendingFrame => Err("unexpected pending scrollback frame".into()),
             }
         }
         ScrollbackRead::Error(error) => Err(server_error(error).into()),
+        ScrollbackRead::PendingFrame => Err("unexpected pending scrollback frame".into()),
     }
 }
 
@@ -6376,42 +6380,63 @@ fn read_scrollback_response_from_stream(
     loop {
         let frame = wire::read_default_frame(stream)?;
         let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
-        match envelope.body_type() {
+        let read = match envelope.body_type() {
             protocol::EnvelopeBody::ScrollbackChunk => {
-                return Ok(ScrollbackRead::Chunk(scrollback_chunk_from_frame(&frame)?));
+                scrollback_chunk_from_frame(&frame).map(ScrollbackRead::Chunk)
             }
             protocol::EnvelopeBody::Error => {
-                let error = error_summary_from_frame(&frame)?;
-                return Ok(ScrollbackRead::Error(error));
+                error_summary_from_frame(&frame).map(ScrollbackRead::Error)
             }
             protocol::EnvelopeBody::PaneSurfaceSnapshot
             | protocol::EnvelopeBody::PaneSurfacePatch
                 if pending_updates.is_some() =>
             {
-                pending_updates
-                    .as_deref_mut()
-                    .expect("pending updates checked")
-                    .push(surface_update_from_frame(&frame)?);
+                match surface_update_from_frame(&frame) {
+                    Ok(update) => {
+                        pending_updates
+                            .as_deref_mut()
+                            .expect("pending updates checked")
+                            .push(update);
+                        Ok(ScrollbackRead::PendingFrame)
+                    }
+                    Err(err) => Err(err),
+                }
             }
             protocol::EnvelopeBody::ClientInventorySnapshot if pending_live.is_some() => {
-                pending_live
-                    .as_deref_mut()
-                    .expect("pending live checked")
-                    .push(LiveSurfaceRead::ClientInventorySnapshot(
-                        client_inventory_snapshot_from_frame(&frame)?,
-                    ));
+                match client_inventory_snapshot_from_frame(&frame) {
+                    Ok(snapshot) => {
+                        pending_live
+                            .as_deref_mut()
+                            .expect("pending live checked")
+                            .push(LiveSurfaceRead::ClientInventorySnapshot(snapshot));
+                        Ok(ScrollbackRead::PendingFrame)
+                    }
+                    Err(err) => Err(err),
+                }
             }
             protocol::EnvelopeBody::ClientInventoryPatch if pending_live.is_some() => {
-                pending_live
-                    .as_deref_mut()
-                    .expect("pending live checked")
-                    .push(LiveSurfaceRead::ClientInventoryPatch(
-                        client_inventory_patch_from_frame(&frame)?,
-                    ));
+                match client_inventory_patch_from_frame(&frame) {
+                    Ok(patch) => {
+                        pending_live
+                            .as_deref_mut()
+                            .expect("pending live checked")
+                            .push(LiveSurfaceRead::ClientInventoryPatch(patch));
+                        Ok(ScrollbackRead::PendingFrame)
+                    }
+                    Err(err) => Err(err),
+                }
             }
             protocol::EnvelopeBody::PresenceUpdate
-            | protocol::EnvelopeBody::WorkspaceTreeSnapshot => {}
-            other => return Err(format!("unexpected envelope body: {other:?}").into()),
+            | protocol::EnvelopeBody::WorkspaceTreeSnapshot => Ok(ScrollbackRead::PendingFrame),
+            other => Err(format!("unexpected envelope body: {other:?}").into()),
+        };
+        match read {
+            Ok(ScrollbackRead::PendingFrame) => {}
+            Ok(read) => return Ok(read),
+            Err(err) => {
+                bug_report::record_frame_decode_error("scrollback-response", &frame, &err);
+                return Err(err);
+            }
         }
     }
 }
@@ -6420,6 +6445,7 @@ fn read_scrollback_response_from_stream(
 enum ScrollbackRead {
     Chunk(ScrollbackChunkSummary),
     Error(ErrorSummary),
+    PendingFrame,
 }
 
 pub(crate) fn read_surface_update_from_stream(
@@ -6545,33 +6571,35 @@ pub fn read_live_surface_update_from_stream(
     match wire::read_default_frame(stream) {
         Ok(frame) => {
             let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
-            match envelope.body_type() {
-                protocol::EnvelopeBody::WorkspaceTreeSnapshot => Ok(LiveSurfaceRead::Workspace(
-                    workspace_summary_from_frame(&frame)?,
-                )),
+            let read = match envelope.body_type() {
+                protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
+                    workspace_summary_from_frame(&frame).map(LiveSurfaceRead::Workspace)
+                }
                 protocol::EnvelopeBody::PaneSurfaceSnapshot
                 | protocol::EnvelopeBody::PaneSurfacePatch => {
-                    Ok(LiveSurfaceRead::Update(surface_update_from_frame(&frame)?))
+                    surface_update_from_frame(&frame).map(LiveSurfaceRead::Update)
                 }
                 protocol::EnvelopeBody::Error => {
-                    Ok(LiveSurfaceRead::Error(error_summary_from_frame(&frame)?))
+                    error_summary_from_frame(&frame).map(LiveSurfaceRead::Error)
                 }
                 protocol::EnvelopeBody::PresenceUpdate => {
-                    Ok(LiveSurfaceRead::Presence(presence_from_frame(&frame)?))
+                    presence_from_frame(&frame).map(LiveSurfaceRead::Presence)
                 }
                 protocol::EnvelopeBody::ClientInventorySnapshot => {
-                    Ok(LiveSurfaceRead::ClientInventorySnapshot(
-                        client_inventory_snapshot_from_frame(&frame)?,
-                    ))
+                    client_inventory_snapshot_from_frame(&frame)
+                        .map(LiveSurfaceRead::ClientInventorySnapshot)
                 }
                 protocol::EnvelopeBody::ClientInventoryPatch => {
-                    Ok(LiveSurfaceRead::ClientInventoryPatch(
-                        client_inventory_patch_from_frame(&frame)?,
-                    ))
+                    client_inventory_patch_from_frame(&frame)
+                        .map(LiveSurfaceRead::ClientInventoryPatch)
                 }
-                protocol::EnvelopeBody::Pong => Ok(LiveSurfaceRead::Pong(pong_from_frame(&frame)?)),
+                protocol::EnvelopeBody::Pong => pong_from_frame(&frame).map(LiveSurfaceRead::Pong),
                 other => Err(format!("unexpected live server frame: {other:?}").into()),
-            }
+            };
+            read.map_err(|err| {
+                bug_report::record_frame_decode_error("live-server-frame", &frame, &err);
+                err.into_boxed()
+            })
         }
         Err(wire::WireError::Io(err))
             if matches!(
@@ -7041,6 +7069,12 @@ fn normalize_scrollback_run_style_ids(runs: &mut [CellRunSummary], styles: &[Sty
         if style_id >= style_count {
             run.style_id = 0;
         }
+    }
+}
+
+fn normalize_surface_row_style_ids(rows: &mut [SurfaceRowUpdate], styles: &[StyleSummary]) {
+    for row in rows {
+        normalize_scrollback_run_style_ids(&mut row.runs, styles);
     }
 }
 
@@ -9903,15 +9937,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_surface_snapshot_with_unknown_style_id() {
+    fn decodes_surface_snapshot_with_unknown_style_id_as_default_style() {
         let frame = pane_surface_snapshot_with_run_refs_frame(RunMetadataFixture {
             style_id: 1,
             ..RunMetadataFixture::default()
         });
-        let err = surface_update_from_frame(&frame)
-            .expect_err("surface snapshot with unknown style id should be rejected");
+        let update = surface_update_from_frame(&frame).expect("surface update");
 
-        assert!(err.to_string().contains("unknown style_id"));
+        assert_eq!(update.row_updates[0].text, "linked");
+        assert_eq!(update.row_updates[0].runs[0].style_id, 0);
+        let surface = ClientPaneSurface::from_snapshot(&update).expect("client surface");
+        assert_eq!(surface.render_text(), "linked");
     }
 
     #[test]
