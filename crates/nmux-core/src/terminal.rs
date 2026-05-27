@@ -1556,10 +1556,17 @@ mod ghostty_vt {
         let search_window = surface_rows.lines.len().saturating_mul(2).saturating_add(1);
         let first_candidate = input.scrollback_lines.len().saturating_sub(search_window);
         let mut best_overlap = None;
-        for input_start in first_candidate..input.scrollback_lines.len() {
-            let max_overlap = input.scrollback_lines.len() - input_start;
-            let max_overlap = max_overlap.min(surface_rows.lines.len());
-            for overlap_len in (1..=max_overlap).rev() {
+        let max_candidate_overlap = input
+            .scrollback_lines
+            .len()
+            .saturating_sub(first_candidate)
+            .min(surface_rows.lines.len());
+        for overlap_len in (1..=max_candidate_overlap).rev() {
+            for input_start in (first_candidate..input.scrollback_lines.len()).rev() {
+                let max_overlap = input.scrollback_lines.len() - input_start;
+                if overlap_len > max_overlap {
+                    continue;
+                }
                 if input.scrollback_lines[input_start..input_start + overlap_len]
                     == surface_rows.lines[..overlap_len]
                 {
@@ -2100,6 +2107,74 @@ mod ghostty_vt {
             MouseButton::Right => Some(mouse::Button::Right),
             MouseButton::WheelUp => Some(mouse::Button::Four),
             MouseButton::WheelDown => Some(mouse::Button::Five),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn cached_scrollback_overlap_keeps_repeated_blank_rows() {
+            let cached_lines = vec![String::new(); 12];
+            let surface_lines = cached_lines[8..].to_vec();
+            let input = TerminalInput {
+                pane_id: "pane-1",
+                cols: 80,
+                rows: 4,
+                surface: protocol::SurfaceKind::Main,
+                cursor: TerminalCursor {
+                    row: 0,
+                    col: 0,
+                    visible: true,
+                    shape: protocol::CursorShape::Block,
+                    blinking: false,
+                },
+                modes: TerminalModes::default(),
+                title: "",
+                working_directory: "",
+                colors: TerminalColors::default(),
+                styles: &[],
+                surface_lines: &surface_lines,
+                surface_row_runs: &[],
+                surface_semantic_prompts: &[],
+                surface_dirty_rows: &[],
+                surface_kitty_placeholders: &[],
+                scrollback_lines: &cached_lines,
+                scrollback_row_runs: &[],
+                scrollback_semantic_prompts: &[],
+                scrollback_dirty_rows: &[],
+                scrollback_kitty_placeholders: &[],
+            };
+            let surface_rows = ExtractedRows {
+                lines: vec![
+                    String::new(),
+                    String::new(),
+                    "ls".to_owned(),
+                    "alpha".to_owned(),
+                ],
+                row_runs: vec![
+                    Vec::new(),
+                    Vec::new(),
+                    vec![super::super::CellRun::plain("ls")],
+                    vec![super::super::CellRun::plain("alpha")],
+                ],
+                semantic_prompts: vec![protocol::RowSemanticPrompt::None; 4],
+                dirty_rows: vec![false; 4],
+                kitty_placeholders: vec![false; 4],
+            };
+
+            let merged = appended_cached_main_scrollback_rows(&input, &surface_rows)
+                .expect("cached scrollback overlap");
+
+            assert_eq!(
+                merged.lines,
+                cached_lines
+                    .into_iter()
+                    .chain(["ls".to_owned(), "alpha".to_owned()])
+                    .collect::<Vec<_>>(),
+                "ambiguous blank-row overlap should splice at the cached tail"
+            );
         }
     }
 }
@@ -5312,6 +5387,50 @@ mod tests {
         assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 499);
         assert_surface_is_transcript_tail(&update);
         assert_run_style_ids_are_valid(&update);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_repeated_empty_rows_survive_later_output() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let mut update = engine
+            .apply_output(terminal_input_with_size(80, 4, &empty, &empty), b"")
+            .expect("initial prompt");
+
+        for _ in 0..20 {
+            update = engine
+                .apply_output(
+                    terminal_input_from_update_with_size(80, 4, &update),
+                    b"\r\n",
+                )
+                .expect("empty row");
+        }
+
+        update = engine
+            .apply_output(
+                terminal_input_from_update_with_size(80, 4, &update),
+                b"ls\r\nalpha\r\nbeta\r\n",
+            )
+            .expect("ls output");
+
+        let blank_rows = update
+            .scrollback_lines
+            .iter()
+            .filter(|line| line.is_empty())
+            .count();
+        assert_eq!(
+            blank_rows, 21,
+            "repeated blank prompt rows were collapsed: {:?}",
+            update.scrollback_lines
+        );
+        for expected in ["ls", "alpha", "beta"] {
+            assert!(
+                update.scrollback_lines.iter().any(|line| line == expected),
+                "missing {expected:?} after prompt burst: {:?}",
+                update.scrollback_lines
+            );
+        }
     }
 
     #[cfg(feature = "libghostty-vt")]
