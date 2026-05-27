@@ -969,6 +969,13 @@ mod ghostty_vt {
         false
     }
 
+    fn vt_output_may_change_style_colors(output: &[u8]) -> bool {
+        output.windows(4).any(|window| window == b"\x1b]4;")
+            || output
+                .windows(5)
+                .any(|window| matches!(window, b"\x1b]10;" | b"\x1b]11;" | b"\x1b]12;"))
+    }
+
     impl TerminalEngine for LibghosttyVtTerminalEngine {
         fn apply_output(
             &mut self,
@@ -984,7 +991,11 @@ mod ghostty_vt {
             if saw_wraparound_query && state.pty_writes.borrow().len() == pty_write_count {
                 state.pty_writes.borrow_mut().push(b"\x1b[?7;1$y".to_vec());
             }
-            state.extract_update(input, false, !vt_output_may_change_rows(output))
+            state.extract_update(
+                input,
+                false,
+                !vt_output_may_change_rows(output) && !vt_output_may_change_style_colors(output),
+            )
         }
 
         fn resize(
@@ -1095,11 +1106,13 @@ mod ghostty_vt {
             let surface_span = tracing::trace_span!("terminal.libghostty.extract_surface_rows");
             let surface_guard = surface_span.enter();
             let snapshot = self.render_state.update(&self.terminal).ok()?;
+            let colors = terminal_colors(&snapshot)?;
             let mut surface_rows = extract_rows(
                 &snapshot,
                 &mut self.row_iterator,
                 &mut self.cell_iterator,
                 &mut styles,
+                &colors,
             )?;
             drop(surface_guard);
             if preserve_input_rows && surface == input.surface {
@@ -1117,7 +1130,6 @@ mod ghostty_vt {
             let surface_dirty_rows = surface_rows.dirty_rows.clone();
             let surface_kitty_placeholders = surface_rows.kitty_placeholders.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
-            let colors = terminal_colors(&snapshot)?;
             let mut preserve_scrollback = false;
             let scrollback_rows = if preserve_input_rows && surface == input.surface {
                 ExtractedRows {
@@ -1280,22 +1292,26 @@ mod ghostty_vt {
 
             self.terminal.scroll_viewport(ScrollViewport::Top);
             let snapshot = self.render_state.update(&self.terminal).ok()?;
+            let colors = terminal_colors(&snapshot)?;
             let mut rows = extract_rows(
                 &snapshot,
                 &mut self.row_iterator,
                 &mut self.cell_iterator,
                 styles,
+                &colors,
             )?;
             rows.truncate(total_rows);
 
             while rows.lines.len() < total_rows {
                 self.terminal.scroll_viewport(ScrollViewport::Delta(1));
                 let snapshot = self.render_state.update(&self.terminal).ok()?;
+                let colors = terminal_colors(&snapshot)?;
                 let viewport_lines = extract_rows(
                     &snapshot,
                     &mut self.row_iterator,
                     &mut self.cell_iterator,
                     styles,
+                    &colors,
                 )?;
                 let Some(next_line) = viewport_lines.lines.last() else {
                     break;
@@ -1417,6 +1433,7 @@ mod ghostty_vt {
         row_iterator: &mut RowIterator<'alloc>,
         cell_iterator: &mut CellIterator<'alloc>,
         styles: &mut Vec<PaneStyle>,
+        colors: &TerminalColors,
     ) -> Option<ExtractedRows> {
         let mut rows = row_iterator.update(snapshot).ok()?;
         let mut row_runs = Vec::new();
@@ -1440,7 +1457,7 @@ mod ghostty_vt {
                 };
 
                 let text = cell_text(&cells)?;
-                let style_id = style_id(styles, pane_style(&cells)?);
+                let style_id = style_id(styles, pane_style(&cells, colors)?);
                 let semantic_content = cell_semantic_content(raw_cell.semantic_content().ok()?);
                 let flags = cell_run_flags(raw_cell)?;
                 if let Some(last) = runs.last_mut()
@@ -1515,12 +1532,15 @@ mod ghostty_vt {
         }
     }
 
-    fn pane_style(cells: &libghostty_vt::render::CellIteration<'_, '_>) -> Option<PaneStyle> {
+    fn pane_style(
+        cells: &libghostty_vt::render::CellIteration<'_, '_>,
+        colors: &TerminalColors,
+    ) -> Option<PaneStyle> {
         let style = cells.style().ok()?;
         Some(PaneStyle {
-            fg_rgba: cells.fg_color().ok().flatten().map_or(0, rgba),
-            bg_rgba: cells.bg_color().ok().flatten().map_or(0, rgba),
-            underline_rgba: style_color_rgba(style.underline_color),
+            fg_rgba: style_color_rgba(style.fg_color, colors),
+            bg_rgba: style_color_rgba(style.bg_color, colors),
+            underline_rgba: style_color_rgba(style.underline_color, colors),
             flags: style_flags(style),
         })
     }
@@ -1538,9 +1558,14 @@ mod ghostty_vt {
         u32::from_be_bytes([color.r, color.g, color.b, 0xff])
     }
 
-    fn style_color_rgba(color: StyleColor) -> u32 {
+    fn style_color_rgba(color: StyleColor, colors: &TerminalColors) -> u32 {
         match color {
             StyleColor::Rgb(rgb) => rgba(rgb),
+            StyleColor::Palette(index) => colors
+                .palette_rgba
+                .get(usize::from(index.0))
+                .copied()
+                .unwrap_or(0),
             _ => 0,
         }
     }

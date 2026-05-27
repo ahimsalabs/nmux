@@ -4568,10 +4568,10 @@ fn host_mouse_mode_enable_sequence(modes: local::TerminalModeSummary) -> &'stati
         (protocol::MouseTrackingMode::Any, protocol::MouseFormat::SgrPixels) => {
             "\x1b[?1003h\x1b[?1006h\x1b[?1016h"
         }
-        (protocol::MouseTrackingMode::X10, _) => "\x1b[?1000h",
-        (protocol::MouseTrackingMode::Normal, _) => "\x1b[?1000h",
-        (protocol::MouseTrackingMode::Button, _) => "\x1b[?1002h",
-        (protocol::MouseTrackingMode::Any, _) => "\x1b[?1003h",
+        (protocol::MouseTrackingMode::X10, _) => "\x1b[?1000h\x1b[?1006h",
+        (protocol::MouseTrackingMode::Normal, _) => "\x1b[?1000h\x1b[?1006h",
+        (protocol::MouseTrackingMode::Button, _) => "\x1b[?1002h\x1b[?1006h",
+        (protocol::MouseTrackingMode::Any, _) => "\x1b[?1003h\x1b[?1006h",
         _ => "",
     }
 }
@@ -10057,10 +10057,19 @@ mod tests {
             host_mouse_mode_enable_sequence(local::TerminalModeSummary {
                 mouse_tracking: true,
                 mouse_tracking_mode: protocol::MouseTrackingMode::Normal,
-                mouse_format: protocol::MouseFormat::Sgr,
+                mouse_format: protocol::MouseFormat::X10,
                 ..local::TerminalModeSummary::default()
             }),
             "\x1b[?1000h\x1b[?1006h"
+        );
+        assert_eq!(
+            host_mouse_mode_enable_sequence(local::TerminalModeSummary {
+                mouse_tracking: true,
+                mouse_tracking_mode: protocol::MouseTrackingMode::Button,
+                mouse_format: protocol::MouseFormat::X10,
+                ..local::TerminalModeSummary::default()
+            }),
+            "\x1b[?1002h\x1b[?1006h"
         );
         assert_eq!(
             host_mouse_mode_enable_sequence(local::TerminalModeSummary {
