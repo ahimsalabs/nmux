@@ -653,7 +653,7 @@ fn render_structured_surface(
         };
         if let Some(runs) = runs {
             for run in runs {
-                x = render_cell_run(buffer, x, y, area, run, &surface.styles);
+                x = render_cell_run(buffer, x, y, area, run, &surface.styles, &surface.colors);
                 if x >= area.x.saturating_add(area.width) {
                     break;
                 }
@@ -678,9 +678,10 @@ fn render_cell_run(
     area: Rect,
     run: &local::CellRunSummary,
     styles: &[local::StyleSummary],
+    colors: &local::TerminalColorSummary,
 ) -> u16 {
     let max_x = area.x.saturating_add(area.width);
-    let style = run_style(run, styles);
+    let style = run_style(run, styles, colors);
     for (index, ch) in run.text.chars().enumerate() {
         if x >= max_x {
             break;
@@ -697,11 +698,15 @@ fn render_cell_run(
     x
 }
 
-fn run_style(run: &local::CellRunSummary, styles: &[local::StyleSummary]) -> Style {
+fn run_style(
+    run: &local::CellRunSummary,
+    styles: &[local::StyleSummary],
+    colors: &local::TerminalColorSummary,
+) -> Style {
     let Some(style) = styles.get(run.style_id as usize) else {
-        return Style::default();
+        return terminal_default_style(colors);
     };
-    let mut rendered = Style::default();
+    let mut rendered = terminal_default_style(colors);
     if style.fg_rgba != 0 {
         rendered = rendered.fg(rgba_color(style.fg_rgba));
     }
@@ -734,6 +739,17 @@ fn run_style(run: &local::CellRunSummary, styles: &[local::StyleSummary]) -> Sty
         rendered = rendered.add_modifier(Modifier::UNDERLINED);
     }
     rendered
+}
+
+fn terminal_default_style(colors: &local::TerminalColorSummary) -> Style {
+    let mut style = Style::default();
+    if colors.default_fg_rgba != 0 {
+        style = style.fg(rgba_color(colors.default_fg_rgba));
+    }
+    if colors.default_bg_rgba != 0 {
+        style = style.bg(rgba_color(colors.default_bg_rgba));
+    }
+    style
 }
 
 fn rgba_color(rgba: u32) -> Color {
@@ -1275,7 +1291,7 @@ mod tests {
     }
 
     #[test]
-    fn structured_default_style_preserves_terminal_palette() {
+    fn structured_default_style_uses_terminal_default_colors() {
         let default_run = local::CellRunSummary {
             text: "default".to_owned(),
             cell_widths: vec![1; 7],
@@ -1283,6 +1299,15 @@ mod tests {
             flags: 0,
             hyperlink_id: 0,
             semantic_content: protocol::CellSemanticContent::Output,
+        };
+        let colors = local::TerminalColorSummary {
+            default_fg_rgba: 0xced5e1ff,
+            default_bg_rgba: 0x111318ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: Vec::new(),
+            palette_diff_start: None,
+            palette_diff_rgba: Vec::new(),
         };
         let default_style = run_style(
             &default_run,
@@ -1292,9 +1317,10 @@ mod tests {
                 underline_rgba: 0,
                 flags: 0,
             }],
+            &colors,
         );
-        assert_eq!(default_style.fg, None);
-        assert_eq!(default_style.bg, None);
+        assert_eq!(default_style.fg, Some(Color::Rgb(0xce, 0xd5, 0xe1)));
+        assert_eq!(default_style.bg, Some(Color::Rgb(0x11, 0x13, 0x18)));
 
         let colored_style = run_style(
             &default_run,
@@ -1304,6 +1330,7 @@ mod tests {
                 underline_rgba: 0,
                 flags: 1 << 0,
             }],
+            &colors,
         );
         assert_eq!(colored_style.fg, Some(Color::Rgb(0x11, 0x22, 0x33)));
         assert_eq!(colored_style.bg, Some(Color::Rgb(0x44, 0x55, 0x66)));
