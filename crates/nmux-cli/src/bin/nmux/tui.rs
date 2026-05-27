@@ -946,7 +946,7 @@ fn draw_right_scrollbar(buffer: &mut Buffer, area: Rect, scroll: PaneScrollChrom
         ((u64::from(available) * progress_from_top) / range) as u16
     };
     for offset in 0..thumb_height {
-        set_cell(buffer, x, track_y + thumb_offset + offset, "█", thumb_style);
+        set_cell(buffer, x, track_y + thumb_offset + offset, "▐", thumb_style);
     }
 }
 
@@ -1465,7 +1465,7 @@ mod tests {
             frame
                 .text
                 .lines()
-                .any(|line| line.chars().last() == Some('█')),
+                .any(|line| line.chars().last() == Some('▐')),
             "scrollbar thumb should mark the right border: {:?}",
             frame.text
         );

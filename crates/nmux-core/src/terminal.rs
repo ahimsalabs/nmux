@@ -1081,7 +1081,7 @@ mod ghostty_vt {
             preserve_input_rows: bool,
         ) -> Option<TerminalUpdate> {
             let surface = surface_kind(&self.terminal)?;
-            let mut styles = if surface == protocol::SurfaceKind::Main || input.styles.is_empty() {
+            let mut styles = if input.styles.is_empty() {
                 vec![PaneStyle::default()]
             } else {
                 input.styles.to_vec()
@@ -4873,6 +4873,46 @@ mod tests {
         assert_ne!(
             style.fg_rgba, 0,
             "styled scrollback should reference a resolved style table entry"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_cached_scrollback_keeps_existing_style_table() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let first = engine
+            .apply_output(
+                terminal_input_with_size(20, 2, &empty, &empty),
+                b"\x1b[36mcolored-history\x1b[0m\r\nplain\r\nlive",
+            )
+            .expect("initial styled update");
+        let history_run = first
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("colored-history"))
+            .expect("styled history run");
+        assert_ne!(history_run.style_id, 0);
+
+        let second = engine
+            .apply_output(terminal_input_from_update(&first), b"\r\nnext")
+            .expect("cached scrollback update");
+        let preserved_run = second
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("colored-history"))
+            .expect("preserved styled history run");
+        let preserved_style = second
+            .styles
+            .get(preserved_run.style_id as usize)
+            .expect("preserved style table entry");
+
+        assert_ne!(
+            preserved_style.fg_rgba, 0,
+            "cached scrollback should keep style IDs backed by the carried style table"
         );
     }
 }
