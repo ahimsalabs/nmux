@@ -126,9 +126,9 @@ pub struct PaneChromeState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PaneScrollChrome {
-    pub start_line: u64,
-    pub line_count: u32,
-    pub total_lines: u64,
+    pub offset_from_bottom: u64,
+    pub viewport_rows: u16,
+    pub total_history_lines: u64,
 }
 
 pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u16) -> TuiFrame {
@@ -915,23 +915,27 @@ fn draw_right_scrollbar(buffer: &mut Buffer, area: Rect, scroll: PaneScrollChrom
     for offset in 0..track_height {
         set_cell(buffer, x, track_y + offset, "│", track_style);
     }
-    let max_start = scroll_max_start(scroll.total_lines, scroll.line_count);
-    let range = max_start.saturating_sub(1);
-    let progress = scroll.start_line.saturating_sub(1).min(range);
-    let thumb_offset = if range == 0 || track_height <= 1 {
+    let total_content_rows = scroll
+        .total_history_lines
+        .saturating_add(u64::from(scroll.viewport_rows.max(1)));
+    let viewport_rows = u64::from(scroll.viewport_rows.max(1)).min(total_content_rows);
+    let thumb_height = if total_content_rows == 0 {
+        1
+    } else {
+        ((u64::from(track_height) * viewport_rows) / total_content_rows)
+            .max(1)
+            .min(u64::from(track_height)) as u16
+    };
+    let range = scroll.total_history_lines;
+    let progress_from_top = range.saturating_sub(scroll.offset_from_bottom.min(range));
+    let available = track_height.saturating_sub(thumb_height);
+    let thumb_offset = if range == 0 || available == 0 {
         0
     } else {
-        ((u64::from(track_height - 1) * progress) / range) as u16
+        ((u64::from(available) * progress_from_top) / range) as u16
     };
-    set_cell(buffer, x, track_y + thumb_offset, "█", thumb_style);
-}
-
-fn scroll_max_start(total_lines: u64, line_count: u32) -> u64 {
-    let line_count = u64::from(line_count.max(1));
-    if total_lines > line_count {
-        total_lines - line_count + 1
-    } else {
-        1
+    for offset in 0..thumb_height {
+        set_cell(buffer, x, track_y + thumb_offset + offset, "█", thumb_style);
     }
 }
 
@@ -1373,9 +1377,9 @@ mod tests {
             PaneChromeState {
                 read_only: true,
                 scrollback: Some(PaneScrollChrome {
-                    start_line: 4,
-                    line_count: 2,
-                    total_lines: 9,
+                    offset_from_bottom: 3,
+                    viewport_rows: 2,
+                    total_history_lines: 9,
                 }),
             },
         );
