@@ -956,13 +956,22 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut initial_pane_modes = BTreeMap::new();
     initial_pane_modes.insert(attached_pane_id.clone(), rendered.modes);
     seed_cached_pane_modes(&mut initial_pane_modes, &current_workspace, &client_state);
+    let mut initial_pane_surface_kinds = BTreeMap::new();
+    initial_pane_surface_kinds.insert(attached_pane_id.clone(), rendered.surface_kind);
+    seed_cached_pane_surface_kinds(
+        &mut initial_pane_surface_kinds,
+        &current_workspace,
+        &client_state,
+    );
     let mut surface_state = LiveSurfaceState {
         current_surface_metadata: rendered.surface_metadata.clone(),
+        current_surface_kind: rendered.surface_kind,
         current_modes: rendered.modes,
         current_surface_text: initial_surface_text,
         current_pane_surfaces: initial_pane_surfaces,
         current_pane_surface_summaries: initial_pane_surface_summaries,
         current_pane_modes: initial_pane_modes,
+        current_pane_surface_kinds: initial_pane_surface_kinds,
         scrollback_views: BTreeMap::new(),
     };
     let (scrollback, pending_surface_updates, pending_live_reads) = match initial_live_scrollback(
@@ -1058,9 +1067,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     surface_state
                         .current_pane_modes
                         .insert(update.pane_id.clone(), update.modes);
+                    if let Some(surface_kind) = update.surface {
+                        surface_state
+                            .current_pane_surface_kinds
+                            .insert(update.pane_id.clone(), surface_kind);
+                    }
                     surface_state.scrollback_views.remove(&update.pane_id);
                     if update.pane_id == current_workspace.pane_id {
                         surface_state.current_surface_metadata = update_metadata;
+                        if let Some(surface_kind) = update.surface {
+                            surface_state.current_surface_kind = surface_kind;
+                        }
                         surface_state.current_modes = update.modes;
                         surface_state.current_surface_text = update_surface_text;
                     }
@@ -1346,8 +1363,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                             &surface_state.current_surface_text,
                                             Some(&surface_state.current_pane_surfaces),
                                             Some(&surface_state.current_pane_modes),
+                                            Some(&surface_state.current_pane_surface_kinds),
                                             Some(&pane_chrome),
                                             surface_state.current_modes,
+                                            surface_state.current_surface_kind,
                                             active_overlay.as_ref(),
                                         ) {
                                             Some(LiveMouseDispatch::FocusPane(pane_id)) => {
@@ -1899,11 +1918,13 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 /// helpers that process surface updates.
 struct LiveSurfaceState {
     current_surface_metadata: local::TerminalMetadataSummary,
+    current_surface_kind: protocol::SurfaceKind,
     current_modes: local::TerminalModeSummary,
     current_surface_text: String,
     current_pane_surfaces: BTreeMap<String, String>,
     current_pane_surface_summaries: BTreeMap<String, local::RenderedSurfaceSummary>,
     current_pane_modes: BTreeMap<String, local::TerminalModeSummary>,
+    current_pane_surface_kinds: BTreeMap<String, protocol::SurfaceKind>,
     scrollback_views: BTreeMap<String, LiveScrollbackView>,
 }
 
@@ -1983,8 +2004,16 @@ fn process_surface_update(
     state
         .current_pane_modes
         .insert(update.pane_id.clone(), update.modes);
+    if let Some(surface_kind) = update.surface {
+        state
+            .current_pane_surface_kinds
+            .insert(update.pane_id.clone(), surface_kind);
+    }
     if update.pane_id == current_workspace.pane_id {
         state.current_surface_metadata = update_metadata.clone();
+        if let Some(surface_kind) = update.surface {
+            state.current_surface_kind = surface_kind;
+        }
         state.current_modes = update.modes;
         if let Some(mouse_modes) = host_mouse_modes.as_mut() {
             mouse_modes.sync(state.current_modes)?;
@@ -3528,8 +3557,10 @@ fn live_mouse_dispatch_for_workspace(
     active_surface_text: &str,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_modes: Option<&BTreeMap<String, local::TerminalModeSummary>>,
+    pane_surface_kinds: Option<&BTreeMap<String, protocol::SurfaceKind>>,
     pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
     active_modes: local::TerminalModeSummary,
+    active_surface_kind: protocol::SurfaceKind,
     overlay: Option<&tui::TuiOverlay>,
 ) -> Option<LiveMouseDispatch> {
     let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
@@ -3539,8 +3570,10 @@ fn live_mouse_dispatch_for_workspace(
         active_surface_text,
         pane_surfaces,
         pane_modes,
+        pane_surface_kinds,
         pane_chrome,
         active_modes,
+        active_surface_kind,
         overlay,
         cols.max(1).min(u16::MAX as u32) as u16,
         rows.max(1).min(u16::MAX as u32) as u16,
@@ -3554,8 +3587,10 @@ fn live_mouse_dispatch_for_workspace_size(
     active_surface_text: &str,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_modes: Option<&BTreeMap<String, local::TerminalModeSummary>>,
+    pane_surface_kinds: Option<&BTreeMap<String, protocol::SurfaceKind>>,
     pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
     active_modes: local::TerminalModeSummary,
+    active_surface_kind: protocol::SurfaceKind,
     overlay: Option<&tui::TuiOverlay>,
     cols: u16,
     rows: u16,
@@ -3589,7 +3624,21 @@ fn live_mouse_dispatch_for_workspace_size(
                         local::TerminalModeSummary::default()
                     }
                 });
-            if target_modes.mouse_tracking {
+            let target_surface_kind = pane_surface_kinds
+                .and_then(|surface_kinds| surface_kinds.get(pane_id))
+                .copied()
+                .unwrap_or_else(|| {
+                    if pane_id == &workspace.pane_id {
+                        active_surface_kind
+                    } else {
+                        protocol::SurfaceKind::Main
+                    }
+                });
+            let scroll_direction = sgr_mouse_scroll_direction(mouse);
+            if target_modes.mouse_tracking
+                && (scroll_direction.is_none()
+                    || target_surface_kind == protocol::SurfaceKind::Alternate)
+            {
                 return Some(LiveMouseDispatch::PaneMouse(
                     pane_id.clone(),
                     local::AttachMouseInput {
@@ -3603,7 +3652,7 @@ fn live_mouse_dispatch_for_workspace_size(
                     },
                 ));
             }
-            if let Some(direction) = sgr_mouse_scroll_direction(mouse) {
+            if let Some(direction) = scroll_direction {
                 return Some(LiveMouseDispatch::PaneScroll {
                     pane_id: pane_id.clone(),
                     direction,
@@ -3898,13 +3947,18 @@ fn switch_live_session(
     let mut pane_modes = BTreeMap::new();
     pane_modes.insert(attached_pane_id.clone(), rendered.modes);
     seed_cached_pane_modes(&mut pane_modes, &workspace, client_state);
+    let mut pane_surface_kinds = BTreeMap::new();
+    pane_surface_kinds.insert(attached_pane_id.clone(), rendered.surface_kind);
+    seed_cached_pane_surface_kinds(&mut pane_surface_kinds, &workspace, client_state);
     let mut surface_state = LiveSurfaceState {
         current_surface_metadata: rendered.surface_metadata.clone(),
+        current_surface_kind: rendered.surface_kind,
         current_modes: rendered.modes,
         current_surface_text: initial_surface_text,
         current_pane_surfaces: pane_surfaces,
         current_pane_surface_summaries: pane_surface_summaries,
         current_pane_modes: pane_modes,
+        current_pane_surface_kinds: pane_surface_kinds,
         scrollback_views: BTreeMap::new(),
     };
 
@@ -4143,9 +4197,17 @@ fn scroll_live_pane_view(
         surface_state
             .current_pane_modes
             .insert(update.pane_id.clone(), update.modes);
+        if let Some(surface_kind) = update.surface {
+            surface_state
+                .current_pane_surface_kinds
+                .insert(update.pane_id.clone(), surface_kind);
+        }
         surface_state.scrollback_views.remove(&update.pane_id);
         if update.pane_id == workspace.pane_id {
             surface_state.current_surface_metadata = update_metadata.clone();
+            if let Some(surface_kind) = update.surface {
+                surface_state.current_surface_kind = surface_kind;
+            }
             surface_state.current_modes = update.modes;
             if let Some(mouse_modes) = host_mouse_modes.as_mut() {
                 mouse_modes.sync(surface_state.current_modes)?;
@@ -4354,12 +4416,20 @@ fn switch_live_surface_to_workspace_pane(
         .cached_surface_metadata(pane_id)
         .unwrap_or_default();
     if let Some(surface) = client_state.cached_surface_summary(pane_id) {
+        surface_state.current_surface_kind = surface.surface_kind;
         surface_state.current_modes = surface.modes;
+        surface_state
+            .current_pane_surface_kinds
+            .insert(pane_id.clone(), surface.surface_kind);
         surface_state
             .current_pane_modes
             .insert(pane_id.clone(), surface.modes);
     } else {
+        surface_state.current_surface_kind = protocol::SurfaceKind::Main;
         surface_state.current_modes = local::TerminalModeSummary::default();
+        surface_state
+            .current_pane_surface_kinds
+            .insert(pane_id.clone(), protocol::SurfaceKind::Main);
         surface_state
             .current_pane_modes
             .insert(pane_id.clone(), local::TerminalModeSummary::default());
@@ -6007,6 +6077,39 @@ fn seed_cached_pane_modes_from_node(
 
     for child in &pane.children {
         seed_cached_pane_modes_from_node(modes, child, client_state);
+    }
+}
+
+fn seed_cached_pane_surface_kinds(
+    surface_kinds: &mut BTreeMap<String, protocol::SurfaceKind>,
+    workspace: &local::WorkspaceSummary,
+    client_state: &local::ClientAttachState,
+) {
+    if let Some(root) = workspace.pane_tree.as_ref() {
+        seed_cached_pane_surface_kinds_from_node(surface_kinds, root, client_state);
+    } else if !surface_kinds.contains_key(&workspace.pane_id)
+        && let Some(summary) = client_state.cached_surface_summary(&workspace.pane_id)
+    {
+        surface_kinds.insert(workspace.pane_id.clone(), summary.surface_kind);
+    }
+}
+
+fn seed_cached_pane_surface_kinds_from_node(
+    surface_kinds: &mut BTreeMap<String, protocol::SurfaceKind>,
+    pane: &local::WorkspacePaneSummary,
+    client_state: &local::ClientAttachState,
+) {
+    if pane.children.is_empty() {
+        if !surface_kinds.contains_key(&pane.pane_id)
+            && let Some(summary) = client_state.cached_surface_summary(&pane.pane_id)
+        {
+            surface_kinds.insert(pane.pane_id.clone(), summary.surface_kind);
+        }
+        return;
+    }
+
+    for child in &pane.children {
+        seed_cached_pane_surface_kinds_from_node(surface_kinds, child, client_state);
     }
 }
 
@@ -11062,11 +11165,13 @@ mod tests {
     fn live_pane_chrome_marks_scrollback_views() {
         let mut surface_state = LiveSurfaceState {
             current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
             current_modes: local::TerminalModeSummary::default(),
             current_surface_text: String::new(),
             current_pane_surfaces: BTreeMap::new(),
             current_pane_surface_summaries: BTreeMap::new(),
             current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
             scrollback_views: BTreeMap::new(),
         };
         surface_state.scrollback_views.insert(
@@ -11393,7 +11498,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 modes,
+                protocol::SurfaceKind::Alternate,
                 None,
                 80,
                 24,
@@ -11421,7 +11528,38 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                modes,
+                protocol::SurfaceKind::Main,
+                None,
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::PaneScroll {
+                pane_id: "pane-1".to_owned(),
+                direction: LiveScrollDirection::Up,
+                visible_rows: 20,
+            }),
+            "pane content wheel scrolls nmux-owned scrollback on the main surface even when stale app mouse tracking remains enabled"
+        );
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 2,
+                    col: 2,
+                    button: protocol::MouseButton::WheelUp,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                None,
+                None,
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 None,
                 80,
                 24,
@@ -11448,7 +11586,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 modes,
+                protocol::SurfaceKind::Main,
                 None,
                 80,
                 24,
@@ -11482,8 +11622,10 @@ mod tests {
                 "ready",
                 None,
                 None,
+                None,
                 Some(&pane_chrome),
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 None,
                 80,
                 24,
@@ -11548,7 +11690,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 None,
                 100,
                 20,
@@ -11570,7 +11714,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 None,
                 100,
                 20,
@@ -11607,7 +11753,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 None,
                 80,
                 24,
@@ -11620,11 +11768,13 @@ mod tests {
             &workspace,
             &LiveSurfaceState {
                 current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_surface_kind: protocol::SurfaceKind::Main,
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
+                current_pane_surface_kinds: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
         );
@@ -11641,11 +11791,13 @@ mod tests {
             &workspace,
             &LiveSurfaceState {
                 current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_surface_kind: protocol::SurfaceKind::Main,
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
+                current_pane_surface_kinds: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
         );
@@ -11731,11 +11883,13 @@ mod tests {
             &workspace,
             &LiveSurfaceState {
                 current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_surface_kind: protocol::SurfaceKind::Main,
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
+                current_pane_surface_kinds: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
         );
@@ -11764,11 +11918,13 @@ mod tests {
             &workspace,
             &LiveSurfaceState {
                 current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_surface_kind: protocol::SurfaceKind::Main,
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
+                current_pane_surface_kinds: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
             Some(&inventory),
@@ -11795,7 +11951,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 Some(&overlay),
                 80,
                 24,
