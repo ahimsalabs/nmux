@@ -4003,10 +4003,6 @@ fn scroll_live_pane_view(
     let existing = surface_state.scrollback_views.get(pane_id).copied();
     let mut pending_updates = Vec::new();
     let mut pending_live = Vec::new();
-    let live_surface_text = client_state
-        .cached_surface_text_styled(pane_id, use_styled)
-        .or_else(|| surface_state.current_pane_surfaces.get(pane_id).cloned())
-        .unwrap_or_default();
     let (offset_from_bottom, total_history_lines) = match (direction, existing) {
         (LiveScrollDirection::Up, None) => {
             let probe = local::fetch_scrollback_chunk_with_selection_and_pending_live(
@@ -4029,18 +4025,16 @@ fn scroll_live_pane_view(
                 Some(&mut pending_updates),
                 Some(&mut pending_live),
             )?;
-            let total_history_lines =
-                normalized_history_line_count(&probe, &live_surface_text, viewport_rows);
             let offset = next_scroll_offset(
                 0,
                 LiveScrollDirection::Up,
                 LIVE_SCROLL_WHEEL_ROWS,
-                total_history_lines,
+                probe.total_lines,
             );
             if offset == 0 {
                 return Ok(false);
             }
-            (offset, total_history_lines)
+            (offset, probe.total_lines)
         }
         (LiveScrollDirection::Up, Some(view)) => {
             let offset = next_scroll_offset(
@@ -4175,14 +4169,8 @@ fn scroll_live_pane_view(
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
     }
-    let live_surface_summary = client_state.cached_rendered_surface_summary(pane_id);
-    let rendered = render_scrollback_view_text(scrollback.as_ref(), &live_surface_text, viewport);
-    let rendered_summary = render_scrollback_view_summary(
-        pane_id,
-        scrollback.as_ref(),
-        live_surface_summary.as_ref(),
-        viewport,
-    );
+    let rendered = render_scrollback_view_text(scrollback.as_ref());
+    let rendered_summary = scrollback.as_ref().map(render_scrollback_view_summary);
     surface_state
         .current_pane_surfaces
         .insert(pane_id.to_owned(), rendered.clone());
@@ -4221,8 +4209,6 @@ fn scroll_live_pane_view(
 struct ScrollbackViewportRange {
     history_start_line: u64,
     history_line_count: u32,
-    live_start_row: u16,
-    live_row_count: u16,
 }
 
 fn next_scroll_offset(
@@ -4238,62 +4224,31 @@ fn next_scroll_offset(
 }
 
 fn scrollback_viewport_range(
-    total_history_lines: u64,
+    total_lines: u64,
     viewport_rows: u16,
     offset_from_bottom: u64,
 ) -> ScrollbackViewportRange {
     let viewport_rows_u64 = u64::from(viewport_rows.max(1));
-    let offset = offset_from_bottom.min(total_history_lines);
-    let combined_rows = total_history_lines.saturating_add(viewport_rows_u64);
-    let end = combined_rows.saturating_sub(offset);
-    let start = end.saturating_sub(viewport_rows_u64);
-    let history_start = start.min(total_history_lines);
-    let history_end = end.min(total_history_lines);
-    let live_start = start
-        .saturating_sub(total_history_lines)
-        .min(viewport_rows_u64);
-    let live_end = end
-        .saturating_sub(total_history_lines)
-        .min(viewport_rows_u64);
-    let history_line_count = history_end
-        .saturating_sub(history_start)
+    if total_lines == 0 {
+        return ScrollbackViewportRange {
+            history_start_line: 1,
+            history_line_count: 0,
+        };
+    }
+    let offset = offset_from_bottom.min(total_lines);
+    let end = total_lines.saturating_sub(offset).max(1);
+    let start = end
+        .saturating_sub(viewport_rows_u64.saturating_sub(1))
+        .max(1);
+    let history_line_count = end
+        .saturating_sub(start)
+        .saturating_add(1)
         .min(u64::from(u32::MAX));
-    let live_row_count = live_end.saturating_sub(live_start).min(u64::from(u16::MAX));
 
     ScrollbackViewportRange {
-        history_start_line: history_start.saturating_add(1),
+        history_start_line: start,
         history_line_count: history_line_count as u32,
-        live_start_row: live_start as u16,
-        live_row_count: live_row_count as u16,
     }
-}
-
-fn normalized_history_line_count(
-    tail_probe: &local::ScrollbackChunkSummary,
-    live_surface_text: &str,
-    viewport_rows: u16,
-) -> u64 {
-    let live_rows = live_surface_rows(live_surface_text, 0, viewport_rows);
-    let overlap = scrollback_live_tail_overlap(&tail_probe.lines, &live_rows);
-    tail_probe.total_lines.saturating_sub(overlap as u64)
-}
-
-fn scrollback_live_tail_overlap(
-    scrollback: &[local::ScrollbackLine],
-    live_rows: &[String],
-) -> usize {
-    let max = scrollback.len().min(live_rows.len());
-    (1..=max)
-        .rev()
-        .find(|count| {
-            let scroll_start = scrollback.len() - count;
-            let live_start = live_rows.len() - count;
-            scrollback[scroll_start..]
-                .iter()
-                .map(|line| line.text.as_str())
-                .eq(live_rows[live_start..].iter().map(String::as_str))
-        })
-        .unwrap_or(0)
 }
 
 fn restore_live_pane_surface(
@@ -4320,132 +4275,48 @@ fn restore_live_pane_surface(
     }
 }
 
-fn render_scrollback_view_text(
-    scrollback: Option<&local::ScrollbackChunkSummary>,
-    live_surface_text: &str,
-    viewport: ScrollbackViewportRange,
-) -> String {
-    let mut lines = Vec::new();
-    if let Some(scrollback) = scrollback {
-        lines.extend(scrollback.lines.iter().map(|line| line.text.clone()));
-    }
-    let live_rows = live_surface_rows(
-        live_surface_text,
-        viewport.live_start_row,
-        viewport.live_row_count,
-    );
-    lines.extend(live_rows);
-    lines.join("\n")
-}
-
-fn live_surface_rows(live_surface_text: &str, start_row: u16, row_count: u16) -> Vec<String> {
-    let rows: Vec<&str> = live_surface_text.lines().collect();
-    (0..row_count)
-        .map(|offset| {
-            rows.get(usize::from(start_row.saturating_add(offset)))
-                .copied()
-                .unwrap_or("")
-                .to_owned()
-        })
-        .collect()
+fn render_scrollback_view_text(scrollback: Option<&local::ScrollbackChunkSummary>) -> String {
+    scrollback
+        .into_iter()
+        .flat_map(|scrollback| scrollback.lines.iter())
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn render_scrollback_view_summary(
-    pane_id: &str,
-    scrollback: Option<&local::ScrollbackChunkSummary>,
-    live_surface: Option<&local::RenderedSurfaceSummary>,
-    viewport: ScrollbackViewportRange,
-) -> Option<local::RenderedSurfaceSummary> {
-    if scrollback.is_none() && live_surface.is_none() {
-        return None;
-    }
-
-    let history_rows = scrollback
-        .map(|scrollback| scrollback.lines.len())
-        .unwrap_or(0);
-    let mut styles = Vec::new();
-    let mut hyperlinks = Vec::new();
-    let mut row_updates = Vec::new();
-
-    if let Some(scrollback) = scrollback {
-        styles.extend(scrollback.styles.clone());
-        hyperlinks.extend(scrollback.hyperlinks.clone());
-        for (index, line) in scrollback.lines.iter().enumerate() {
-            row_updates.push(local::SurfaceRowUpdate {
-                row: u32::try_from(index).unwrap_or(u32::MAX),
-                text: line.text.clone(),
-                runs: line.runs.clone(),
-                dirty_hash: line.dirty_hash,
-                row_state_hash: line.row_state_hash,
-                semantic_prompt: line.semantic_prompt,
-                dirty: line.dirty,
-                kitty_virtual_placeholder: line.kitty_virtual_placeholder,
-            });
-        }
-    }
-
-    let mut version = scrollback
-        .map(|scrollback| scrollback.scrollback_version)
-        .or_else(|| live_surface.map(|surface| surface.version))
-        .unwrap_or(0);
-    let mut colors = scrollback
-        .map(|scrollback| scrollback.colors.clone())
-        .or_else(|| live_surface.map(|surface| surface.colors.clone()))
-        .unwrap_or_default();
-
-    if let Some(live_surface) = live_surface {
-        version = version.max(live_surface.version);
-        colors = live_surface.colors.clone();
-        let style_offset = styles.len() as u32;
-        let hyperlink_offset = hyperlinks.len() as u32;
-        styles.extend(live_surface.styles.clone());
-        hyperlinks.extend(live_surface.hyperlinks.clone());
-
-        let live_start = u32::from(viewport.live_start_row);
-        let live_end = live_start.saturating_add(u32::from(viewport.live_row_count));
-        for row in &live_surface.row_updates {
-            if row.row < live_start || row.row >= live_end {
-                continue;
-            }
-            let mut row = row.clone();
-            row.row = u32::try_from(history_rows)
-                .unwrap_or(u32::MAX)
-                .saturating_add(row.row.saturating_sub(live_start));
-            remap_row_run_tables(&mut row.runs, style_offset, hyperlink_offset);
-            row_updates.push(row);
-        }
-    }
-
-    let rows = u32::from(viewport.live_row_count)
-        .saturating_add(u32::try_from(history_rows).unwrap_or(u32::MAX));
+    scrollback: &local::ScrollbackChunkSummary,
+) -> local::RenderedSurfaceSummary {
+    let row_updates = scrollback
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| local::SurfaceRowUpdate {
+            row: u32::try_from(index).unwrap_or(u32::MAX),
+            text: line.text.clone(),
+            runs: line.runs.clone(),
+            dirty_hash: line.dirty_hash,
+            row_state_hash: line.row_state_hash,
+            semantic_prompt: line.semantic_prompt,
+            dirty: line.dirty,
+            kitty_virtual_placeholder: line.kitty_virtual_placeholder,
+        })
+        .collect::<Vec<_>>();
     let cols = row_updates
         .iter()
         .map(|row| row.text.chars().count())
         .max()
         .unwrap_or(0);
 
-    Some(local::RenderedSurfaceSummary {
-        pane_id: pane_id.to_owned(),
-        version,
+    local::RenderedSurfaceSummary {
+        pane_id: scrollback.pane_id.clone(),
+        version: scrollback.scrollback_version,
         cols: u32::try_from(cols).unwrap_or(u32::MAX),
-        rows,
-        colors,
-        styles,
-        hyperlinks,
+        rows: u32::try_from(scrollback.lines.len()).unwrap_or(u32::MAX),
+        colors: scrollback.colors.clone(),
+        styles: scrollback.styles.clone(),
+        hyperlinks: scrollback.hyperlinks.clone(),
         row_updates,
-    })
-}
-
-fn remap_row_run_tables(
-    runs: &mut [local::CellRunSummary],
-    style_offset: u32,
-    hyperlink_offset: u32,
-) {
-    for run in runs {
-        run.style_id = run.style_id.saturating_add(style_offset);
-        if run.hyperlink_id != 0 {
-            run.hyperlink_id = run.hyperlink_id.saturating_add(hyperlink_offset);
-        }
     }
 }
 
@@ -8722,17 +8593,15 @@ mod tests {
         host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
         host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
         live_mouse_dispatch_for_workspace_size, live_pane_chrome_state,
-        live_session_new_should_fallback, live_surface_rows, live_update_print_kind,
-        managed_ready_error_message, menu_overlay_for_action,
-        menu_overlay_for_action_with_session_inventory, next_scroll_offset,
-        normalized_history_line_count, parse_detach_key, parse_env_assignment, parse_focus_event,
+        live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
+        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory,
+        next_scroll_offset, parse_detach_key, parse_env_assignment, parse_focus_event,
         parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
         parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
         raw_terminal_mode_needed, redraw_terminal_guard_needed, redraw_text_with_context,
         redraw_workspace_surface_text, render_scrollback_view_summary, render_scrollback_view_text,
-        scrollback_live_tail_overlap, scrollback_viewport_range, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, stdin_byte_forwards, terminal_size_from_fds,
-        terminal_size_unavailable, tui, usage,
+        scrollback_viewport_range, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -11220,88 +11089,36 @@ mod tests {
         assert_eq!(
             scrollback_viewport_range(80, 20, 3),
             super::ScrollbackViewportRange {
-                history_start_line: 78,
-                history_line_count: 3,
-                live_start_row: 0,
-                live_row_count: 17,
+                history_start_line: 58,
+                history_line_count: 20,
             }
         );
         assert_eq!(
             scrollback_viewport_range(2, 20, 2),
             super::ScrollbackViewportRange {
                 history_start_line: 1,
-                history_line_count: 2,
-                live_start_row: 0,
-                live_row_count: 18,
+                history_line_count: 1,
             }
         );
         assert_eq!(
             scrollback_viewport_range(80, 20, 0),
             super::ScrollbackViewportRange {
-                history_start_line: 81,
-                history_line_count: 0,
-                live_start_row: 0,
-                live_row_count: 20,
+                history_start_line: 61,
+                history_line_count: 20,
             }
         );
     }
 
     #[test]
-    fn scrollback_view_normalizes_tail_probe_that_contains_live_screen() {
-        let tail_probe = scrollback_summary(
-            76,
-            80,
-            &[
-                (76, "history"),
-                (77, "l0"),
-                (78, "l1"),
-                (79, "l2"),
-                (80, "l3"),
-            ],
-        );
-
-        assert_eq!(
-            scrollback_live_tail_overlap(
-                &tail_probe.lines,
-                &live_surface_rows("l0\nl1\nl2\nl3", 0, 4)
-            ),
-            4
-        );
-        assert_eq!(
-            normalized_history_line_count(&tail_probe, "l0\nl1\nl2\nl3", 4),
-            76
-        );
-
-        let history_only = scrollback_summary(76, 80, &[(76, "h76"), (77, "h77"), (78, "h78")]);
-        assert_eq!(
-            normalized_history_line_count(&history_only, "l0\nl1", 2),
-            80
-        );
-    }
-
-    #[test]
-    fn scrollback_view_renders_history_plus_live_rows() {
+    fn scrollback_view_renders_daemon_range_without_splicing_live_rows() {
         let scrollback = scrollback_summary(78, 80, &[(78, "h78"), (79, "h79"), (80, "h80")]);
-        let rendered = render_scrollback_view_text(
-            Some(&scrollback),
-            "l0\nl1\nl2\nl3",
-            super::ScrollbackViewportRange {
-                history_start_line: 78,
-                history_line_count: 3,
-                live_start_row: 1,
-                live_row_count: 3,
-            },
-        );
+        let rendered = render_scrollback_view_text(Some(&scrollback));
 
-        assert_eq!(rendered, "h78\nh79\nh80\nl1\nl2\nl3");
-        assert_eq!(
-            live_surface_rows("one", 0, 3),
-            vec!["one".to_owned(), String::new(), String::new()]
-        );
+        assert_eq!(rendered, "h78\nh79\nh80");
     }
 
     #[test]
-    fn scrollback_view_summary_preserves_history_and_live_styles() {
+    fn scrollback_view_summary_preserves_daemon_styles() {
         let mut scrollback = scrollback_summary(80, 80, &[(80, "history")]);
         scrollback.styles.push(local::StyleSummary {
             fg_rgba: 0xff0000ff,
@@ -11317,56 +11134,12 @@ mod tests {
             hyperlink_id: 0,
             semantic_content: protocol::CellSemanticContent::Output,
         }];
-        let live = local::RenderedSurfaceSummary {
-            pane_id: "pane-1".to_owned(),
-            version: 3,
-            cols: 10,
-            rows: 2,
-            colors: local::TerminalColorSummary::default(),
-            styles: vec![local::StyleSummary {
-                fg_rgba: 0x00ff00ff,
-                bg_rgba: 0,
-                underline_rgba: 0,
-                flags: 0,
-            }],
-            hyperlinks: Vec::new(),
-            row_updates: vec![local::SurfaceRowUpdate {
-                row: 1,
-                text: "live".to_owned(),
-                runs: vec![local::CellRunSummary {
-                    text: "live".to_owned(),
-                    cell_widths: vec![1; 4],
-                    style_id: 0,
-                    flags: 0,
-                    hyperlink_id: 0,
-                    semantic_content: protocol::CellSemanticContent::Output,
-                }],
-                dirty_hash: 0,
-                row_state_hash: 0,
-                semantic_prompt: protocol::RowSemanticPrompt::None,
-                dirty: false,
-                kitty_virtual_placeholder: false,
-            }],
-        };
 
-        let summary = render_scrollback_view_summary(
-            "pane-1",
-            Some(&scrollback),
-            Some(&live),
-            super::ScrollbackViewportRange {
-                history_start_line: 80,
-                history_line_count: 1,
-                live_start_row: 1,
-                live_row_count: 1,
-            },
-        )
-        .expect("composed summary");
+        let summary = render_scrollback_view_summary(&scrollback);
 
-        assert_eq!(summary.styles.len(), 2);
+        assert_eq!(summary.styles, scrollback.styles);
         assert_eq!(summary.row_updates[0].row, 0);
         assert_eq!(summary.row_updates[0].runs[0].style_id, 0);
-        assert_eq!(summary.row_updates[1].row, 1);
-        assert_eq!(summary.row_updates[1].runs[0].style_id, 1);
     }
 
     #[test]
