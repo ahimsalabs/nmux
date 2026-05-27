@@ -20,7 +20,7 @@ use crossterm::{
 };
 use nmux_cli::{daemon, local};
 use nmux_core::session::AttachMode;
-use nmux_proto::protocol;
+use nmux_proto::{protocol, wire};
 use ratatui::{
     TerminalOptions, Viewport,
     buffer::Buffer,
@@ -381,9 +381,46 @@ fn error_summary_needs_default_restart(error: &local::ErrorSummary) -> bool {
 }
 
 fn default_live_error_needs_restart(error: &(dyn std::error::Error + 'static)) -> bool {
-    error.to_string().contains("pane process is not running")
-        || error.to_string().contains("failed to fill whole buffer")
-        || error.to_string().contains("Broken pipe")
+    let mut current = Some(error);
+    while let Some(err) = current {
+        if err
+            .downcast_ref::<local::ServerError>()
+            .is_some_and(|server| error_summary_needs_default_restart(&server.error))
+        {
+            return true;
+        }
+        if let Some(wire::WireError::Io(io_err)) = err.downcast_ref::<wire::WireError>()
+            && matches!(
+                io_err.kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::TimedOut
+                    | io::ErrorKind::WouldBlock
+            )
+        {
+            return true;
+        }
+        if let Some(io_err) = err.downcast_ref::<io::Error>()
+            && matches!(
+                io_err.kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::TimedOut
+                    | io::ErrorKind::WouldBlock
+            )
+        {
+            return true;
+        }
+        current = err.source();
+    }
+
+    let message = error.to_string();
+    message.contains("pane process is not running")
+        || message.contains("failed to fill whole buffer")
+        || message.contains("Broken pipe")
+        || message.contains("Resource temporarily unavailable")
 }
 
 fn replace_default_daemon_socket(args: &Args) {
@@ -9048,32 +9085,32 @@ mod tests {
         RedrawTerminalContext, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand,
         ScrollbackSelectionArgFlags, SgrMouseInput, SigwinchResizeContext, StateInfoSocketSummary,
         StdinByteForward, StdinKey, StdinKeyInput, args_from_iter, configure_default_live_args,
-        default_attach_error_needs_restart, format_cli_error_json, format_context_json,
-        format_input_choices_json, format_key_names_json, format_live_attach_json,
-        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
-        format_live_presence_json, format_live_surface_update_json, format_live_workspace_json,
-        format_rendered_attach_json, format_scrollback, format_state_info_json,
-        format_state_info_text, format_stats_right, frontend_resize_pane_size,
-        host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
-        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
-        live_mouse_dispatch_for_workspace_size, live_pane_chrome_state,
-        live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
-        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory,
-        next_scroll_offset, parse_detach_key, parse_env_assignment, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
-        raw_terminal_mode_needed, record_live_surface_scrollback_total,
-        record_live_update_scrollback_total, redraw_terminal_guard_needed,
-        redraw_text_with_context, redraw_workspace_surface_text, render_scrollback_view_summary,
-        render_scrollback_view_text, scrollback_viewport_range, scrollbar_offset_from_track,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
-        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
+        default_attach_error_needs_restart, default_live_error_needs_restart,
+        format_cli_error_json, format_context_json, format_input_choices_json,
+        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
+        format_live_detach_json, format_live_error_json, format_live_presence_json,
+        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
+        format_scrollback, format_state_info_json, format_state_info_text, format_stats_right,
+        frontend_resize_pane_size, host_mouse_mode_disable_sequence,
+        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
+        interim_surface_fidelity_warning_needed, live_mouse_dispatch_for_workspace_size,
+        live_pane_chrome_state, live_session_new_should_fallback, live_update_print_kind,
+        managed_ready_error_message, menu_overlay_for_action,
+        menu_overlay_for_action_with_session_inventory, next_scroll_offset, parse_detach_key,
+        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
+        record_live_surface_scrollback_total, record_live_update_scrollback_total,
+        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
+        render_scrollback_view_summary, render_scrollback_view_text, scrollback_viewport_range,
+        scrollbar_offset_from_track, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
     };
     use nmux_cli::local;
-    use nmux_proto::protocol;
+    use nmux_proto::{protocol, wire};
     use std::collections::BTreeMap;
     use std::io;
     use std::path::Path;
@@ -11386,6 +11423,13 @@ mod tests {
             .expect("parse live args");
         assert!(!explicit_mode_args.auto_default);
         assert!(explicit_mode_args.live);
+    }
+
+    #[test]
+    fn default_live_restart_covers_setup_wire_would_block() {
+        let error = wire::WireError::Io(io::Error::from(io::ErrorKind::WouldBlock));
+
+        assert!(default_live_error_needs_restart(&error));
     }
 
     #[test]
