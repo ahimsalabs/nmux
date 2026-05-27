@@ -125,7 +125,6 @@ const DEFAULT_REMOTE_PORT: u16 = 7007;
 const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
 const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
-const LIVE_SCROLL_ENTRY_ROWS: u64 = 1;
 const LIVE_SCROLL_WHEEL_ROWS: u64 = 3;
 
 fn main() {
@@ -4029,7 +4028,7 @@ fn scroll_live_pane_view(
             let offset = next_scroll_offset(
                 0,
                 LiveScrollDirection::Up,
-                LIVE_SCROLL_ENTRY_ROWS,
+                LIVE_SCROLL_WHEEL_ROWS,
                 probe.total_lines,
                 viewport_rows,
             );
@@ -8588,7 +8587,7 @@ mod tests {
         AttachMode, BRACKETED_PASTE_END, BRACKETED_PASTE_START, ClientModeArgs,
         DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs, FocusEvent, FrameStats,
         HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
-        LIVE_SCROLL_ENTRY_ROWS, LiveDetachReason, LiveMouseDispatch, LiveScrollDirection,
+        LIVE_SCROLL_WHEEL_ROWS, LiveDetachReason, LiveMouseDispatch, LiveScrollDirection,
         LiveScrollbackView, LiveSurfaceState, LiveUpdatePrintKind, LocalEcho, MouseEvent,
         NoInputResizeArgs, PositiveNumericArgs, RawTerminalModeContext, RedrawState,
         RedrawTerminalContext, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand,
@@ -11089,14 +11088,14 @@ mod tests {
     #[test]
     fn scrollback_viewport_math_uses_bottom_offset() {
         assert_eq!(
-            next_scroll_offset(0, LiveScrollDirection::Up, LIVE_SCROLL_ENTRY_ROWS, 2, 20),
+            next_scroll_offset(0, LiveScrollDirection::Up, LIVE_SCROLL_WHEEL_ROWS, 2, 20),
             0,
             "short transcript cannot scroll beyond the viewport"
         );
         assert_eq!(
-            next_scroll_offset(0, LiveScrollDirection::Up, LIVE_SCROLL_ENTRY_ROWS, 80, 20),
-            1,
-            "first entry into scrollback should move gently"
+            next_scroll_offset(0, LiveScrollDirection::Up, LIVE_SCROLL_WHEEL_ROWS, 80, 20),
+            3,
+            "first entry into scrollback should use one normal wheel step"
         );
         assert_eq!(
             next_scroll_offset(2, LiveScrollDirection::Down, 3, 80, 20),
@@ -11127,6 +11126,89 @@ mod tests {
                 history_start_line: 61,
                 history_line_count: 20,
             }
+        );
+    }
+
+    #[test]
+    fn first_wheel_scroll_on_large_scrollback_starts_three_rows_above_live_bottom() {
+        const TOTAL_LINES: u64 = 1000;
+        const TERMINAL_ROWS: u16 = 24;
+
+        let offset = next_scroll_offset(
+            0,
+            LiveScrollDirection::Up,
+            LIVE_SCROLL_WHEEL_ROWS,
+            TOTAL_LINES,
+            TERMINAL_ROWS,
+        );
+        assert_eq!(offset, LIVE_SCROLL_WHEEL_ROWS);
+
+        let viewport = scrollback_viewport_range(TOTAL_LINES, TERMINAL_ROWS, offset);
+        let expected_top_line_number = TOTAL_LINES - u64::from(TERMINAL_ROWS) - offset;
+        assert_eq!(expected_top_line_number, 973);
+        assert_eq!(
+            viewport,
+            super::ScrollbackViewportRange {
+                history_start_line: expected_top_line_number + 1,
+                history_line_count: u32::from(TERMINAL_ROWS),
+            }
+        );
+
+        let transcript = (1..=TOTAL_LINES)
+            .map(|public_line| {
+                let printed_line_number = public_line - 1;
+                (
+                    public_line,
+                    format!("line {printed_line_number:04}").into_boxed_str(),
+                    deterministic_scrollback_bg(
+                        u32::try_from(printed_line_number).expect("line number fits u32"),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        let line_refs = transcript
+            .iter()
+            .skip(usize::try_from(viewport.history_start_line - 1).expect("start fits usize"))
+            .take(usize::try_from(viewport.history_line_count).expect("count fits usize"))
+            .map(|(line, text, _bg)| (*line, text.as_ref()))
+            .collect::<Vec<_>>();
+        let mut scrollback =
+            scrollback_summary(viewport.history_start_line, TOTAL_LINES, &line_refs);
+        scrollback.styles = transcript
+            .iter()
+            .skip(usize::try_from(viewport.history_start_line - 1).expect("start fits usize"))
+            .take(usize::try_from(viewport.history_line_count).expect("count fits usize"))
+            .map(|(_line, _text, bg)| local::StyleSummary {
+                fg_rgba: 0xffffffff,
+                bg_rgba: *bg,
+                underline_rgba: 0,
+                flags: 0,
+            })
+            .collect();
+        for (index, line) in scrollback.lines.iter_mut().enumerate() {
+            line.runs = vec![local::CellRunSummary {
+                text: line.text.clone(),
+                cell_widths: vec![1; line.text.chars().count()],
+                style_id: u32::try_from(index).expect("style index fits u32"),
+                flags: 0,
+                hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Output,
+            }];
+        }
+
+        let rendered = render_scrollback_view_summary(&scrollback);
+
+        assert_eq!(rendered.rows, u32::from(TERMINAL_ROWS));
+        assert_eq!(rendered.row_updates[0].text, "line 0973");
+        assert_eq!(
+            rendered.row_updates[0].runs[0].style_id, 0,
+            "first visible row should keep its deterministic background style"
+        );
+        assert_eq!(rendered.styles[0].bg_rgba, deterministic_scrollback_bg(973));
+        assert_eq!(rendered.row_updates[23].text, "line 0996");
+        assert_eq!(
+            rendered.styles[23].bg_rgba,
+            deterministic_scrollback_bg(996)
         );
     }
 
@@ -11742,5 +11824,9 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    fn deterministic_scrollback_bg(index: u32) -> u32 {
+        0xff000000 | ((index.wrapping_mul(37) & 0xff) << 16) | 0x00102030
     }
 }

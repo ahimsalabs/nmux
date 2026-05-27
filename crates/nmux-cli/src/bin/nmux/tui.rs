@@ -699,13 +699,11 @@ fn render_cell_run(
 
 fn run_style(run: &local::CellRunSummary, styles: &[local::StyleSummary]) -> Style {
     let Some(style) = styles.get(run.style_id as usize) else {
-        return Style::default().fg(Color::White);
+        return Style::default();
     };
     let mut rendered = Style::default();
     if style.fg_rgba != 0 {
         rendered = rendered.fg(rgba_color(style.fg_rgba));
-    } else {
-        rendered = rendered.fg(Color::White);
     }
     if style.bg_rgba != 0 {
         rendered = rendered.bg(rgba_color(style.bg_rgba));
@@ -1274,6 +1272,42 @@ mod tests {
         assert!(frame.text.contains("red link done"));
         assert!(!frame.text.contains('\x1b'));
         assert!(!frame.text.contains("ignored"));
+    }
+
+    #[test]
+    fn structured_default_style_preserves_terminal_palette() {
+        let default_run = local::CellRunSummary {
+            text: "default".to_owned(),
+            cell_widths: vec![1; 7],
+            style_id: 0,
+            flags: 0,
+            hyperlink_id: 0,
+            semantic_content: protocol::CellSemanticContent::Output,
+        };
+        let default_style = run_style(
+            &default_run,
+            &[local::StyleSummary {
+                fg_rgba: 0,
+                bg_rgba: 0,
+                underline_rgba: 0,
+                flags: 0,
+            }],
+        );
+        assert_eq!(default_style.fg, None);
+        assert_eq!(default_style.bg, None);
+
+        let colored_style = run_style(
+            &default_run,
+            &[local::StyleSummary {
+                fg_rgba: 0x112233ff,
+                bg_rgba: 0x445566ff,
+                underline_rgba: 0,
+                flags: 1 << 0,
+            }],
+        );
+        assert_eq!(colored_style.fg, Some(Color::Rgb(0x11, 0x22, 0x33)));
+        assert_eq!(colored_style.bg, Some(Color::Rgb(0x44, 0x55, 0x66)));
+        assert!(colored_style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
