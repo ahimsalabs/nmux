@@ -1420,11 +1420,18 @@ impl Session {
             build_terminal_metadata(&mut builder, &surface.title, &surface.working_directory);
         let colors = build_terminal_colors(&mut builder, &surface.colors, None, true);
         let pane_id = builder.create_string(&surface.pane_id);
+        let scrollback = self.pane_scrollback(&surface.pane_id);
         let snapshot = protocol::PaneSurfaceSnapshot::create(
             &mut builder,
             &protocol::PaneSurfaceSnapshotArgs {
                 pane_id: Some(pane_id),
                 version: surface.version,
+                scrollback_version: scrollback
+                    .as_ref()
+                    .map_or(0, |scrollback| scrollback.version),
+                scrollback_total_lines: scrollback
+                    .as_ref()
+                    .map_or(0, |scrollback| scrollback.lines.len() as u64),
                 surface: surface.surface,
                 cols: surface.cols,
                 rows: surface.rows,
@@ -1555,12 +1562,19 @@ impl Session {
             include_full_palette,
         );
         let pane_id = builder.create_string(&surface.pane_id);
+        let scrollback = self.pane_scrollback(&surface.pane_id);
         let patch = protocol::PaneSurfacePatch::create(
             &mut builder,
             &protocol::PaneSurfacePatchArgs {
                 pane_id: Some(pane_id),
                 base_version,
                 version: surface.version,
+                scrollback_version: scrollback
+                    .as_ref()
+                    .map_or(0, |scrollback| scrollback.version),
+                scrollback_total_lines: scrollback
+                    .as_ref()
+                    .map_or(0, |scrollback| scrollback.lines.len() as u64),
                 kind: patch_kind,
                 row_updates: Some(row_updates),
                 cursor: Some(cursor),
@@ -3989,6 +4003,8 @@ mod tests {
             .expect("pane surface body");
         assert_eq!(snapshot.pane_id(), Some("pane-1"));
         assert_eq!(snapshot.version(), 2);
+        assert_eq!(snapshot.scrollback_version(), 1);
+        assert_eq!(snapshot.scrollback_total_lines(), 3);
         assert_eq!(snapshot.surface(), protocol::SurfaceKind::Main);
         assert_eq!(snapshot.cols(), 80);
         assert_eq!(snapshot.rows(), 24);
@@ -4223,6 +4239,8 @@ mod tests {
         assert_eq!(patch.pane_id(), Some("pane-1"));
         assert_eq!(patch.base_version(), 1);
         assert_eq!(patch.version(), 2);
+        assert_eq!(patch.scrollback_version(), 1);
+        assert_eq!(patch.scrollback_total_lines(), 3);
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
         let metadata = patch.metadata().expect("metadata");
         assert_eq!(metadata.title(), Some(""));

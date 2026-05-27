@@ -2661,16 +2661,18 @@ impl<'a> ::flatbuffers::Follow<'a> for PaneSurfaceSnapshot<'a> {
 impl<'a> PaneSurfaceSnapshot<'a> {
   pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
   pub const VT_VERSION: ::flatbuffers::VOffsetT = 6;
-  pub const VT_SURFACE: ::flatbuffers::VOffsetT = 8;
-  pub const VT_COLS: ::flatbuffers::VOffsetT = 10;
-  pub const VT_ROWS: ::flatbuffers::VOffsetT = 12;
-  pub const VT_CURSOR: ::flatbuffers::VOffsetT = 14;
-  pub const VT_MODES: ::flatbuffers::VOffsetT = 16;
-  pub const VT_METADATA: ::flatbuffers::VOffsetT = 18;
-  pub const VT_STYLES: ::flatbuffers::VOffsetT = 20;
-  pub const VT_ROWS_DATA: ::flatbuffers::VOffsetT = 22;
-  pub const VT_COLORS: ::flatbuffers::VOffsetT = 24;
-  pub const VT_HYPERLINKS: ::flatbuffers::VOffsetT = 26;
+  pub const VT_SCROLLBACK_VERSION: ::flatbuffers::VOffsetT = 8;
+  pub const VT_SCROLLBACK_TOTAL_LINES: ::flatbuffers::VOffsetT = 10;
+  pub const VT_SURFACE: ::flatbuffers::VOffsetT = 12;
+  pub const VT_COLS: ::flatbuffers::VOffsetT = 14;
+  pub const VT_ROWS: ::flatbuffers::VOffsetT = 16;
+  pub const VT_CURSOR: ::flatbuffers::VOffsetT = 18;
+  pub const VT_MODES: ::flatbuffers::VOffsetT = 20;
+  pub const VT_METADATA: ::flatbuffers::VOffsetT = 22;
+  pub const VT_STYLES: ::flatbuffers::VOffsetT = 24;
+  pub const VT_ROWS_DATA: ::flatbuffers::VOffsetT = 26;
+  pub const VT_COLORS: ::flatbuffers::VOffsetT = 28;
+  pub const VT_HYPERLINKS: ::flatbuffers::VOffsetT = 30;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2682,6 +2684,8 @@ impl<'a> PaneSurfaceSnapshot<'a> {
     args: &'args PaneSurfaceSnapshotArgs<'args>
   ) -> ::flatbuffers::WIPOffset<PaneSurfaceSnapshot<'bldr>> {
     let mut builder = PaneSurfaceSnapshotBuilder::new(_fbb);
+    builder.add_scrollback_total_lines(args.scrollback_total_lines);
+    builder.add_scrollback_version(args.scrollback_version);
     builder.add_version(args.version);
     if let Some(x) = args.hyperlinks { builder.add_hyperlinks(x); }
     if let Some(x) = args.colors { builder.add_colors(x); }
@@ -2711,6 +2715,20 @@ impl<'a> PaneSurfaceSnapshot<'a> {
     // Created from valid Table for this object
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(PaneSurfaceSnapshot::VT_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn scrollback_version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneSurfaceSnapshot::VT_SCROLLBACK_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn scrollback_total_lines(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneSurfaceSnapshot::VT_SCROLLBACK_TOTAL_LINES, Some(0)).unwrap()}
   }
   #[inline]
   pub fn surface(&self) -> SurfaceKind {
@@ -2792,6 +2810,8 @@ impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
     v.visit_table(pos)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
      .visit_field::<u64>("version", Self::VT_VERSION, false)?
+     .visit_field::<u64>("scrollback_version", Self::VT_SCROLLBACK_VERSION, false)?
+     .visit_field::<u64>("scrollback_total_lines", Self::VT_SCROLLBACK_TOTAL_LINES, false)?
      .visit_field::<SurfaceKind>("surface", Self::VT_SURFACE, false)?
      .visit_field::<u32>("cols", Self::VT_COLS, false)?
      .visit_field::<u32>("rows", Self::VT_ROWS, false)?
@@ -2809,6 +2829,8 @@ impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
 pub struct PaneSurfaceSnapshotArgs<'a> {
     pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub version: u64,
+    pub scrollback_version: u64,
+    pub scrollback_total_lines: u64,
     pub surface: SurfaceKind,
     pub cols: u32,
     pub rows: u32,
@@ -2826,6 +2848,8 @@ impl<'a> Default for PaneSurfaceSnapshotArgs<'a> {
     PaneSurfaceSnapshotArgs {
       pane_id: None,
       version: 0,
+      scrollback_version: 0,
+      scrollback_total_lines: 0,
       surface: SurfaceKind::Main,
       cols: 0,
       rows: 0,
@@ -2852,6 +2876,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfaceSnapshotBuilder<'a
   #[inline]
   pub fn add_version(&mut self, version: u64) {
     self.fbb_.push_slot::<u64>(PaneSurfaceSnapshot::VT_VERSION, version, 0);
+  }
+  #[inline]
+  pub fn add_scrollback_version(&mut self, scrollback_version: u64) {
+    self.fbb_.push_slot::<u64>(PaneSurfaceSnapshot::VT_SCROLLBACK_VERSION, scrollback_version, 0);
+  }
+  #[inline]
+  pub fn add_scrollback_total_lines(&mut self, scrollback_total_lines: u64) {
+    self.fbb_.push_slot::<u64>(PaneSurfaceSnapshot::VT_SCROLLBACK_TOTAL_LINES, scrollback_total_lines, 0);
   }
   #[inline]
   pub fn add_surface(&mut self, surface: SurfaceKind) {
@@ -2913,6 +2945,8 @@ impl ::core::fmt::Debug for PaneSurfaceSnapshot<'_> {
     let mut ds = f.debug_struct("PaneSurfaceSnapshot");
       ds.field("pane_id", &self.pane_id());
       ds.field("version", &self.version());
+      ds.field("scrollback_version", &self.scrollback_version());
+      ds.field("scrollback_total_lines", &self.scrollback_total_lines());
       ds.field("surface", &self.surface());
       ds.field("cols", &self.cols());
       ds.field("rows", &self.rows());
@@ -2945,12 +2979,14 @@ impl<'a> PaneSurfacePatch<'a> {
   pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
   pub const VT_BASE_VERSION: ::flatbuffers::VOffsetT = 6;
   pub const VT_VERSION: ::flatbuffers::VOffsetT = 8;
-  pub const VT_KIND: ::flatbuffers::VOffsetT = 10;
-  pub const VT_ROW_UPDATES: ::flatbuffers::VOffsetT = 12;
-  pub const VT_CURSOR: ::flatbuffers::VOffsetT = 14;
-  pub const VT_MODES: ::flatbuffers::VOffsetT = 16;
-  pub const VT_METADATA: ::flatbuffers::VOffsetT = 18;
-  pub const VT_COLORS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_SCROLLBACK_VERSION: ::flatbuffers::VOffsetT = 10;
+  pub const VT_SCROLLBACK_TOTAL_LINES: ::flatbuffers::VOffsetT = 12;
+  pub const VT_KIND: ::flatbuffers::VOffsetT = 14;
+  pub const VT_ROW_UPDATES: ::flatbuffers::VOffsetT = 16;
+  pub const VT_CURSOR: ::flatbuffers::VOffsetT = 18;
+  pub const VT_MODES: ::flatbuffers::VOffsetT = 20;
+  pub const VT_METADATA: ::flatbuffers::VOffsetT = 22;
+  pub const VT_COLORS: ::flatbuffers::VOffsetT = 24;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2962,6 +2998,8 @@ impl<'a> PaneSurfacePatch<'a> {
     args: &'args PaneSurfacePatchArgs<'args>
   ) -> ::flatbuffers::WIPOffset<PaneSurfacePatch<'bldr>> {
     let mut builder = PaneSurfacePatchBuilder::new(_fbb);
+    builder.add_scrollback_total_lines(args.scrollback_total_lines);
+    builder.add_scrollback_version(args.scrollback_version);
     builder.add_version(args.version);
     builder.add_base_version(args.base_version);
     if let Some(x) = args.colors { builder.add_colors(x); }
@@ -2995,6 +3033,20 @@ impl<'a> PaneSurfacePatch<'a> {
     // Created from valid Table for this object
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(PaneSurfacePatch::VT_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn scrollback_version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneSurfacePatch::VT_SCROLLBACK_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn scrollback_total_lines(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneSurfacePatch::VT_SCROLLBACK_TOTAL_LINES, Some(0)).unwrap()}
   }
   #[inline]
   pub fn kind(&self) -> PatchKind {
@@ -3049,6 +3101,8 @@ impl ::flatbuffers::Verifiable for PaneSurfacePatch<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
      .visit_field::<u64>("base_version", Self::VT_BASE_VERSION, false)?
      .visit_field::<u64>("version", Self::VT_VERSION, false)?
+     .visit_field::<u64>("scrollback_version", Self::VT_SCROLLBACK_VERSION, false)?
+     .visit_field::<u64>("scrollback_total_lines", Self::VT_SCROLLBACK_TOTAL_LINES, false)?
      .visit_field::<PatchKind>("kind", Self::VT_KIND, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<RowUpdate>>>>("row_updates", Self::VT_ROW_UPDATES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<CursorState>>("cursor", Self::VT_CURSOR, false)?
@@ -3063,6 +3117,8 @@ pub struct PaneSurfacePatchArgs<'a> {
     pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub base_version: u64,
     pub version: u64,
+    pub scrollback_version: u64,
+    pub scrollback_total_lines: u64,
     pub kind: PatchKind,
     pub row_updates: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<RowUpdate<'a>>>>>,
     pub cursor: Option<::flatbuffers::WIPOffset<CursorState<'a>>>,
@@ -3077,6 +3133,8 @@ impl<'a> Default for PaneSurfacePatchArgs<'a> {
       pane_id: None,
       base_version: 0,
       version: 0,
+      scrollback_version: 0,
+      scrollback_total_lines: 0,
       kind: PatchKind::ReplaceRows,
       row_updates: None,
       cursor: None,
@@ -3103,6 +3161,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfacePatchBuilder<'a, '
   #[inline]
   pub fn add_version(&mut self, version: u64) {
     self.fbb_.push_slot::<u64>(PaneSurfacePatch::VT_VERSION, version, 0);
+  }
+  #[inline]
+  pub fn add_scrollback_version(&mut self, scrollback_version: u64) {
+    self.fbb_.push_slot::<u64>(PaneSurfacePatch::VT_SCROLLBACK_VERSION, scrollback_version, 0);
+  }
+  #[inline]
+  pub fn add_scrollback_total_lines(&mut self, scrollback_total_lines: u64) {
+    self.fbb_.push_slot::<u64>(PaneSurfacePatch::VT_SCROLLBACK_TOTAL_LINES, scrollback_total_lines, 0);
   }
   #[inline]
   pub fn add_kind(&mut self, kind: PatchKind) {
@@ -3149,6 +3215,8 @@ impl ::core::fmt::Debug for PaneSurfacePatch<'_> {
       ds.field("pane_id", &self.pane_id());
       ds.field("base_version", &self.base_version());
       ds.field("version", &self.version());
+      ds.field("scrollback_version", &self.scrollback_version());
+      ds.field("scrollback_total_lines", &self.scrollback_total_lines());
       ds.field("kind", &self.kind());
       ds.field("row_updates", &self.row_updates());
       ds.field("cursor", &self.cursor());

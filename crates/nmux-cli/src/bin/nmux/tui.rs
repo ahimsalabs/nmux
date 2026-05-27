@@ -1380,6 +1380,8 @@ mod tests {
             local::RenderedSurfaceSummary {
                 pane_id: "pane-2".to_owned(),
                 version: 1,
+                scrollback_version: 1,
+                scrollback_total_lines: 24,
                 cols: 40,
                 rows: 24,
                 colors: local::TerminalColorSummary::default(),

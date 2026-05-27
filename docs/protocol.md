@@ -54,6 +54,10 @@ This keeps frontend behavior consistent across native, web, mobile, and automati
 
 Pane surfaces and scrollback chunks are encoded as rows of runs:
 
+- `PaneSurfaceSnapshot` and `PaneSurfacePatch` carry `scrollback_version` and
+  `scrollback_total_lines` for the same pane. Clients use these as lightweight
+  scrollbar/cache metadata; row contents still come from explicit
+  `ScrollbackFetch` requests and `ScrollbackChunk` replies.
 - `SurfaceRow` and `RowUpdate` identify rows by index and include both a
   stable text-only `dirty_hash`, a `row_state_hash` covering runs and row
   metadata, the backend row `dirty` flag, and Kitty virtual placeholder

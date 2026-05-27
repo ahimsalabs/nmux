@@ -258,6 +258,8 @@ pub(super) fn style_to_sgr(style: &StyleSummary) -> String {
 pub struct RenderedSurfaceSummary {
     pub pane_id: String,
     pub version: u64,
+    pub scrollback_version: u64,
+    pub scrollback_total_lines: u64,
     pub cols: u32,
     pub rows: u32,
     pub colors: TerminalColorSummary,
@@ -324,6 +326,8 @@ pub struct SurfaceUpdate {
     pub kind: SurfaceUpdateKind,
     pub pane_id: String,
     pub version: u64,
+    pub scrollback_version: u64,
+    pub scrollback_total_lines: u64,
     pub base_version: Option<u64>,
     pub patch_kind: Option<protocol::PatchKind>,
     pub cols: Option<u32>,
@@ -490,6 +494,8 @@ pub struct HyperlinkSummary {
 pub struct ClientPaneSurface {
     pub pane_id: String,
     pub version: u64,
+    pub scrollback_version: u64,
+    pub scrollback_total_lines: u64,
     pub cols: u32,
     pub rows: u32,
     pub surface: protocol::SurfaceKind,
@@ -515,6 +521,8 @@ impl ClientPaneSurface {
         let mut surface = Self {
             pane_id: update.pane_id.clone(),
             version: update.version,
+            scrollback_version: update.scrollback_version,
+            scrollback_total_lines: update.scrollback_total_lines,
             cols: update.cols.ok_or("surface snapshot missing cols")?,
             rows: update.rows.ok_or("surface snapshot missing rows")?,
             surface: update.surface.unwrap_or(protocol::SurfaceKind::Main),
@@ -615,6 +623,8 @@ impl ClientPaneSurface {
             self.title = update.title.clone();
             self.working_directory = update.working_directory.clone();
             self.version = update.version;
+            self.scrollback_version = update.scrollback_version;
+            self.scrollback_total_lines = update.scrollback_total_lines;
             return Ok(());
         }
         if update.patch_kind == Some(protocol::PatchKind::ModeOnly) {
@@ -628,6 +638,8 @@ impl ClientPaneSurface {
             self.title = update.title.clone();
             self.working_directory = update.working_directory.clone();
             self.version = update.version;
+            self.scrollback_version = update.scrollback_version;
+            self.scrollback_total_lines = update.scrollback_total_lines;
             return Ok(());
         }
         if update.patch_kind == Some(protocol::PatchKind::ColorOnly) {
@@ -641,6 +653,8 @@ impl ClientPaneSurface {
             self.title = update.title.clone();
             self.working_directory = update.working_directory.clone();
             self.version = update.version;
+            self.scrollback_version = update.scrollback_version;
+            self.scrollback_total_lines = update.scrollback_total_lines;
             return Ok(());
         }
         if update.patch_kind != Some(protocol::PatchKind::ReplaceRows) {
@@ -661,6 +675,8 @@ impl ClientPaneSurface {
         self.title = update.title.clone();
         self.working_directory = update.working_directory.clone();
         self.version = update.version;
+        self.scrollback_version = update.scrollback_version;
+        self.scrollback_total_lines = update.scrollback_total_lines;
         Ok(())
     }
 
@@ -742,6 +758,8 @@ impl ClientPaneSurface {
         RenderedSurfaceSummary {
             pane_id: self.pane_id.clone(),
             version: self.version,
+            scrollback_version: self.scrollback_version,
+            scrollback_total_lines: self.scrollback_total_lines,
             cols: self.cols,
             rows: self.rows,
             colors: self.colors.clone(),

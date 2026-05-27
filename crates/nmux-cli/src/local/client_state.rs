@@ -1104,6 +1104,8 @@ impl ClientAttachState {
             surfaces.push(ClientPaneSurface {
                 pane_id,
                 version,
+                scrollback_version: 0,
+                scrollback_total_lines: 0,
                 cols,
                 rows,
                 surface,

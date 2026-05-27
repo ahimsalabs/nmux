@@ -6040,6 +6040,8 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
                 kind: SurfaceUpdateKind::Snapshot,
                 pane_id: required_string(snapshot.pane_id(), "surface snapshot pane_id")?,
                 version: snapshot.version(),
+                scrollback_version: snapshot.scrollback_version(),
+                scrollback_total_lines: snapshot.scrollback_total_lines(),
                 base_version: None,
                 patch_kind: None,
                 cols: Some(snapshot.cols()),
@@ -6104,6 +6106,8 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
                 kind: SurfaceUpdateKind::Patch,
                 pane_id: required_string(patch.pane_id(), "surface patch pane_id")?,
                 version: patch.version(),
+                scrollback_version: patch.scrollback_version(),
+                scrollback_total_lines: patch.scrollback_total_lines(),
                 base_version: Some(patch.base_version()),
                 patch_kind: Some(patch.kind()),
                 cols: None,
@@ -8379,6 +8383,8 @@ mod tests {
             kind,
             pane_id: "pane-1".to_owned(),
             version,
+            scrollback_version: 1,
+            scrollback_total_lines: 3,
             base_version,
             patch_kind: match kind {
                 SurfaceUpdateKind::Snapshot => None,
@@ -9159,6 +9165,8 @@ mod tests {
             &protocol::PaneSurfaceSnapshotArgs {
                 pane_id: Some(pane_id),
                 version: 1,
+                scrollback_version: 1,
+                scrollback_total_lines: 3,
                 surface,
                 cols: 80,
                 rows: 1,
@@ -9210,6 +9218,8 @@ mod tests {
             &protocol::PaneSurfaceSnapshotArgs {
                 pane_id: Some(pane_id),
                 version: 1,
+                scrollback_version: 1,
+                scrollback_total_lines: 3,
                 surface: protocol::SurfaceKind::Main,
                 cols: 80,
                 rows: 1,
@@ -9254,6 +9264,8 @@ mod tests {
             &protocol::PaneSurfaceSnapshotArgs {
                 pane_id: Some(pane_id),
                 version: 1,
+                scrollback_version: 1,
+                scrollback_total_lines: 3,
                 surface: protocol::SurfaceKind::Main,
                 cols: 80,
                 rows: 1,
@@ -9298,6 +9310,8 @@ mod tests {
             &protocol::PaneSurfaceSnapshotArgs {
                 pane_id,
                 version: 1,
+                scrollback_version: 1,
+                scrollback_total_lines: 3,
                 surface: protocol::SurfaceKind::Main,
                 cols: 80,
                 rows: 1,
@@ -9469,6 +9483,8 @@ mod tests {
                 pane_id: Some(pane_id),
                 base_version: 1,
                 version: 2,
+                scrollback_version: 2,
+                scrollback_total_lines: 4,
                 kind: protocol::PatchKind::CursorOnly,
                 row_updates: Some(rows),
                 cursor: Some(cursor),
@@ -9520,6 +9536,8 @@ mod tests {
                 pane_id: Some(pane_id),
                 base_version: 1,
                 version: 2,
+                scrollback_version: 2,
+                scrollback_total_lines: 4,
                 kind,
                 row_updates: Some(rows),
                 cursor: None,
@@ -9546,6 +9564,8 @@ mod tests {
                 pane_id: Some(pane_id),
                 base_version: 1,
                 version: 2,
+                scrollback_version: 2,
+                scrollback_total_lines: 4,
                 kind,
                 row_updates: Some(rows),
                 cursor: None,
@@ -9571,6 +9591,8 @@ mod tests {
                 pane_id,
                 base_version: 1,
                 version: 2,
+                scrollback_version: 2,
+                scrollback_total_lines: 4,
                 kind: protocol::PatchKind::CursorOnly,
                 row_updates: Some(rows),
                 cursor: None,
@@ -9874,6 +9896,8 @@ mod tests {
         assert_eq!(surface.kind, SurfaceUpdateKind::Snapshot);
         assert_eq!(surface.pane_id, "pane-1");
         assert_eq!(surface.version, 2);
+        assert_eq!(surface.scrollback_version, 1);
+        assert_eq!(surface.scrollback_total_lines, 3);
         assert_eq!(surface.cols, Some(80));
         assert_eq!(surface.rows, Some(24));
         assert_eq!(surface.surface, Some(protocol::SurfaceKind::Main));

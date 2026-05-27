@@ -171,6 +171,8 @@ table PaneNode {
 table PaneSurfaceSnapshot {
   pane_id:string;
   version:ulong;
+  scrollback_version:ulong;
+  scrollback_total_lines:ulong;
   surface:SurfaceKind = Main;
   cols:uint;
   rows:uint;
@@ -187,6 +189,8 @@ table PaneSurfacePatch {
   pane_id:string;
   base_version:ulong;
   version:ulong;
+  scrollback_version:ulong;
+  scrollback_total_lines:ulong;
   kind:PatchKind = ReplaceRows;
   row_updates:[RowUpdate];
   cursor:CursorState;

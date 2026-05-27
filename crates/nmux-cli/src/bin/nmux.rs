@@ -975,6 +975,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         current_pane_scrollback_totals: BTreeMap::new(),
         scrollback_views: BTreeMap::new(),
     };
+    record_live_surface_scrollback_total(&mut surface_state, &rendered.surface);
     let (scrollback, pending_surface_updates, pending_live_reads) = match initial_live_scrollback(
         args,
         &mut stream,
@@ -2054,6 +2055,30 @@ fn record_live_scrollback_total(
         .insert(scrollback.pane_id.clone(), scrollback.total_lines);
 }
 
+fn record_live_surface_scrollback_total(
+    surface_state: &mut LiveSurfaceState,
+    surface: &local::RenderedSurfaceSummary,
+) {
+    if surface.scrollback_total_lines == 0 {
+        return;
+    }
+    surface_state
+        .current_pane_scrollback_totals
+        .insert(surface.pane_id.clone(), surface.scrollback_total_lines);
+}
+
+fn record_live_update_scrollback_total(
+    surface_state: &mut LiveSurfaceState,
+    update: &local::SurfaceUpdate,
+) {
+    if update.scrollback_total_lines == 0 {
+        return;
+    }
+    surface_state
+        .current_pane_scrollback_totals
+        .insert(update.pane_id.clone(), update.scrollback_total_lines);
+}
+
 fn collect_workspace_pane_ids(
     root: Option<&local::WorkspacePaneSummary>,
     pane_ids: &mut Vec<String>,
@@ -2095,6 +2120,7 @@ fn process_surface_update(
         working_directory: update.working_directory.clone(),
     };
     let update_surface_text = client_state.render_surface_update_styled(update, use_styled)?;
+    record_live_update_scrollback_total(state, update);
     let pane_is_scrolled = state.scrollback_views.contains_key(&update.pane_id);
     if !pane_is_scrolled {
         state
@@ -4123,6 +4149,7 @@ fn switch_live_session(
         current_pane_scrollback_totals: BTreeMap::new(),
         scrollback_views: BTreeMap::new(),
     };
+    record_live_surface_scrollback_total(&mut surface_state, &rendered.surface);
 
     let mut client_sequence = local::ClientFrameSequence::default();
     let (scrollback, pending_surface_updates, pending_live_reads) = initial_live_scrollback(
@@ -4704,6 +4731,8 @@ fn render_scrollback_view_summary(
     local::RenderedSurfaceSummary {
         pane_id: scrollback.pane_id.clone(),
         version: scrollback.scrollback_version,
+        scrollback_version: scrollback.scrollback_version,
+        scrollback_total_lines: scrollback.total_lines,
         cols: u32::try_from(cols).unwrap_or(u32::MAX),
         rows: u32::try_from(scrollback.lines.len()).unwrap_or(u32::MAX),
         colors: scrollback.colors.clone(),
@@ -9033,11 +9062,12 @@ mod tests {
         next_scroll_offset, parse_detach_key, parse_env_assignment, parse_focus_event,
         parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
         parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
-        raw_terminal_mode_needed, redraw_terminal_guard_needed, redraw_text_with_context,
-        redraw_workspace_surface_text, render_scrollback_view_summary, render_scrollback_view_text,
-        scrollback_viewport_range, scrollbar_offset_from_track, sigwinch_resize_needed,
-        split_stdin_bytes_for_detach, stdin_byte_forwards, terminal_size_from_fds,
-        terminal_size_unavailable, tui, usage,
+        raw_terminal_mode_needed, record_live_surface_scrollback_total,
+        record_live_update_scrollback_total, redraw_terminal_guard_needed,
+        redraw_text_with_context, redraw_workspace_surface_text, render_scrollback_view_summary,
+        render_scrollback_view_text, scrollback_viewport_range, scrollbar_offset_from_track,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
+        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -9081,6 +9111,8 @@ mod tests {
             kind,
             pane_id: "pane-1".to_owned(),
             version: 7,
+            scrollback_version: 2,
+            scrollback_total_lines: 24,
             base_version: (kind == local::SurfaceUpdateKind::Patch).then_some(6),
             patch_kind,
             cols: (kind == local::SurfaceUpdateKind::Snapshot).then_some(80),
@@ -9544,6 +9576,8 @@ mod tests {
             surface: local::RenderedSurfaceSummary {
                 pane_id: "pane-1".to_owned(),
                 version: 17,
+                scrollback_version: 9,
+                scrollback_total_lines: 42,
                 cols: 80,
                 rows: 24,
                 colors: local::TerminalColorSummary {
@@ -9683,6 +9717,8 @@ mod tests {
             surface: local::RenderedSurfaceSummary {
                 pane_id: "pane-1".to_owned(),
                 version: 7,
+                scrollback_version: 1,
+                scrollback_total_lines: 24,
                 cols: 80,
                 rows: 24,
                 colors: local::TerminalColorSummary::default(),
@@ -11620,6 +11656,82 @@ mod tests {
                     total_history_lines: 100,
                 }),
             })
+        );
+    }
+
+    #[test]
+    fn live_pane_chrome_updates_scrollback_total_from_surface_update_trace_before_scroll() {
+        let current_workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: "one\ntwo\nthree".to_owned(),
+            current_pane_surfaces: BTreeMap::new(),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
+            scrollback_views: BTreeMap::new(),
+        };
+        surface_state
+            .current_pane_surfaces
+            .insert("pane-1".to_owned(), "one\ntwo\nthree".to_owned());
+
+        let mut initial = local::RenderedSurfaceSummary {
+            pane_id: "pane-1".to_owned(),
+            version: 1,
+            scrollback_version: 1,
+            scrollback_total_lines: 3,
+            cols: 80,
+            rows: 24,
+            colors: local::TerminalColorSummary::default(),
+            styles: Vec::new(),
+            hyperlinks: Vec::new(),
+            row_updates: Vec::new(),
+        };
+        record_live_surface_scrollback_total(&mut surface_state, &initial);
+        assert_eq!(
+            live_pane_chrome_state(&surface_state, &current_workspace)
+                .get("pane-1")
+                .and_then(|chrome| chrome.scrollback)
+                .map(|scroll| scroll.total_history_lines),
+            Some(3)
+        );
+
+        let mut update = test_surface_update(
+            local::SurfaceUpdateKind::Patch,
+            Some(protocol::PatchKind::ReplaceRows),
+        );
+        update.scrollback_version = 2;
+        update.scrollback_total_lines = 803;
+        record_live_update_scrollback_total(&mut surface_state, &update);
+        assert_eq!(
+            live_pane_chrome_state(&surface_state, &current_workspace)
+                .get("pane-1")
+                .and_then(|chrome| chrome.scrollback)
+                .map(|scroll| scroll.total_history_lines),
+            Some(803),
+            "surface updates must refresh scrollbar proportions before any user scroll"
+        );
+
+        initial.scrollback_total_lines = 1200;
+        record_live_surface_scrollback_total(&mut surface_state, &initial);
+        assert_eq!(
+            live_pane_chrome_state(&surface_state, &current_workspace)
+                .get("pane-1")
+                .and_then(|chrome| chrome.scrollback)
+                .map(|scroll| scroll.total_history_lines),
+            Some(1200)
         );
     }
 
