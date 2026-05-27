@@ -125,6 +125,7 @@ const DEFAULT_REMOTE_PORT: u16 = 7007;
 const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
 const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
+const LIVE_SCROLL_WHEEL_ROWS: u64 = 3;
 
 fn main() {
     if let Err(err) = run() {
@@ -1338,12 +1339,14 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                     StdinByteForward::Mouse(mouse) => {
+                                        let pane_chrome = live_pane_chrome_state(&surface_state);
                                         match live_mouse_dispatch_for_workspace(
                                             mouse,
                                             &current_workspace,
                                             &surface_state.current_surface_text,
                                             Some(&surface_state.current_pane_surfaces),
                                             Some(&surface_state.current_pane_modes),
+                                            Some(&pane_chrome),
                                             surface_state.current_modes,
                                             active_overlay.as_ref(),
                                         ) {
@@ -1924,12 +1927,16 @@ fn live_pane_chrome_state(
 ) -> BTreeMap<String, tui::PaneChromeState> {
     surface_state
         .scrollback_views
-        .keys()
-        .map(|pane_id| {
+        .iter()
+        .map(|(pane_id, view)| {
             (
                 pane_id.clone(),
                 tui::PaneChromeState {
-                    scrollback: true,
+                    scrollback: Some(tui::PaneScrollChrome {
+                        start_line: view.start_line,
+                        line_count: view.line_count,
+                        total_lines: view.total_lines,
+                    }),
                     ..tui::PaneChromeState::default()
                 },
             )
@@ -3504,6 +3511,7 @@ fn live_mouse_dispatch_for_workspace(
     active_surface_text: &str,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_modes: Option<&BTreeMap<String, local::TerminalModeSummary>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
     active_modes: local::TerminalModeSummary,
     overlay: Option<&tui::TuiOverlay>,
 ) -> Option<LiveMouseDispatch> {
@@ -3514,6 +3522,7 @@ fn live_mouse_dispatch_for_workspace(
         active_surface_text,
         pane_surfaces,
         pane_modes,
+        pane_chrome,
         active_modes,
         overlay,
         cols.max(1).min(u16::MAX as u32) as u16,
@@ -3528,6 +3537,7 @@ fn live_mouse_dispatch_for_workspace_size(
     active_surface_text: &str,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_modes: Option<&BTreeMap<String, local::TerminalModeSummary>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
     active_modes: local::TerminalModeSummary,
     overlay: Option<&tui::TuiOverlay>,
     cols: u16,
@@ -3540,7 +3550,7 @@ fn live_mouse_dispatch_for_workspace_size(
             active_surface_text,
             pane_surfaces,
             pane_surface_summaries: None,
-            pane_chrome: None,
+            pane_chrome,
             overlay,
         },
         cols.max(1),
@@ -3593,6 +3603,18 @@ fn live_mouse_dispatch_for_workspace_size(
         {
             Some(LiveMouseDispatch::FocusPane(pane_id.clone()))
         }
+        tui::HitTarget::PaneScroll {
+            pane_id,
+            direction,
+            visible_rows,
+        } if sgr_mouse_is_primary_press(mouse) => Some(LiveMouseDispatch::PaneScroll {
+            pane_id: pane_id.clone(),
+            direction: match direction {
+                tui::ScrollDirection::Up => LiveScrollDirection::Up,
+                tui::ScrollDirection::Down => LiveScrollDirection::Down,
+            },
+            visible_rows: *visible_rows,
+        }),
         tui::HitTarget::Menu(action) if sgr_mouse_is_primary_press(mouse) => {
             Some(LiveMouseDispatch::Menu(*action))
         }
@@ -3961,14 +3983,54 @@ fn scroll_live_pane_view(
     }
     let line_count = u32::from(visible_rows.max(1));
     let existing = surface_state.scrollback_views.get(pane_id).copied();
+    let mut pending_updates = Vec::new();
+    let mut pending_live = Vec::new();
     let (start_line, tail_count) = match (direction, existing) {
-        (LiveScrollDirection::Up, None) => (1, Some(line_count)),
-        (LiveScrollDirection::Up, Some(view)) if view.start_line > 1 => (view.start_line - 1, None),
+        (LiveScrollDirection::Up, None) => {
+            let probe = local::fetch_scrollback_chunk_with_selection_and_pending_live(
+                stream,
+                sequence,
+                pane_id,
+                1,
+                line_count,
+                Some(line_count),
+                |range_start, range_count| {
+                    client_state
+                        .cached_scrollback_version_for_scope(
+                            socket_scope,
+                            pane_id,
+                            range_start,
+                            range_count,
+                        )
+                        .unwrap_or(0)
+                },
+                Some(&mut pending_updates),
+                Some(&mut pending_live),
+            )?;
+            let max_start = scrollback_max_start(probe.total_lines, line_count);
+            if max_start <= 1 {
+                return Ok(false);
+            }
+            (
+                max_start.saturating_sub(LIVE_SCROLL_WHEEL_ROWS).max(1),
+                None,
+            )
+        }
+        (LiveScrollDirection::Up, Some(view)) if view.start_line > 1 => (
+            view.start_line
+                .saturating_sub(LIVE_SCROLL_WHEEL_ROWS)
+                .max(1),
+            None,
+        ),
         (LiveScrollDirection::Up, Some(_)) => return Ok(false),
         (LiveScrollDirection::Down, None) => return Ok(false),
         (LiveScrollDirection::Down, Some(view)) => {
             let max_start = scrollback_max_start(view.total_lines, view.line_count);
-            if view.start_line >= max_start {
+            let next_start = view
+                .start_line
+                .saturating_add(LIVE_SCROLL_WHEEL_ROWS)
+                .min(max_start);
+            if next_start >= max_start {
                 restore_live_pane_surface(
                     pane_id,
                     surface_state,
@@ -3988,12 +4050,10 @@ fn scroll_live_pane_view(
                 );
                 return Ok(true);
             }
-            (view.start_line + 1, None)
+            (next_start, None)
         }
     };
 
-    let mut pending_updates = Vec::new();
-    let mut pending_live = Vec::new();
     let scrollback = local::fetch_scrollback_chunk_with_selection_and_pending_live(
         stream,
         sequence,
@@ -10966,7 +11026,11 @@ mod tests {
             chrome.get("pane-1"),
             Some(&tui::PaneChromeState {
                 read_only: false,
-                scrollback: true,
+                scrollback: Some(tui::PaneScrollChrome {
+                    start_line: 4,
+                    line_count: 2,
+                    total_lines: 9,
+                }),
             })
         );
         assert!(!chrome.contains_key("pane-2"));
@@ -11110,6 +11174,7 @@ mod tests {
                 "ready",
                 None,
                 None,
+                None,
                 modes,
                 None,
                 80,
@@ -11135,6 +11200,7 @@ mod tests {
                 },
                 &workspace,
                 "ready",
+                None,
                 None,
                 None,
                 local::TerminalModeSummary::default(),
@@ -11163,6 +11229,7 @@ mod tests {
                 "ready",
                 None,
                 None,
+                None,
                 modes,
                 None,
                 80,
@@ -11170,6 +11237,45 @@ mod tests {
             ),
             Some(LiveMouseDispatch::FocusPane("pane-1".to_owned())),
             "pane chrome clicks select the pane"
+        );
+
+        let mut pane_chrome = BTreeMap::new();
+        pane_chrome.insert(
+            "pane-1".to_owned(),
+            tui::PaneChromeState {
+                read_only: false,
+                scrollback: Some(tui::PaneScrollChrome {
+                    start_line: 4,
+                    line_count: 20,
+                    total_lines: 80,
+                }),
+            },
+        );
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 2,
+                    col: 79,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                Some(&pane_chrome),
+                local::TerminalModeSummary::default(),
+                None,
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::PaneScroll {
+                pane_id: "pane-1".to_owned(),
+                direction: LiveScrollDirection::Up,
+                visible_rows: 20,
+            }),
+            "scrollbar arrow clicks scroll the pane"
         );
     }
 
@@ -11223,6 +11329,7 @@ mod tests {
                 "right active",
                 None,
                 None,
+                None,
                 local::TerminalModeSummary::default(),
                 None,
                 100,
@@ -11242,6 +11349,7 @@ mod tests {
                 },
                 &workspace,
                 "right active",
+                None,
                 None,
                 None,
                 local::TerminalModeSummary::default(),
@@ -11278,6 +11386,7 @@ mod tests {
                 },
                 &workspace,
                 "ready",
+                None,
                 None,
                 None,
                 local::TerminalModeSummary::default(),
@@ -11465,6 +11574,7 @@ mod tests {
                 },
                 &workspace,
                 "ready",
+                None,
                 None,
                 None,
                 local::TerminalModeSummary::default(),

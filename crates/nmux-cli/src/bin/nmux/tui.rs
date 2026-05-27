@@ -48,9 +48,20 @@ pub enum HitTarget {
     Menu(MenuAction),
     Pane(String),
     PaneContent(String),
+    PaneScroll {
+        pane_id: String,
+        direction: ScrollDirection,
+        visible_rows: u16,
+    },
     WindowTreePane(String),
     Overlay(OverlayAction),
     Background,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollDirection {
+    Up,
+    Down,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +121,14 @@ pub struct WorkspaceFrameInput<'a> {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PaneChromeState {
     pub read_only: bool,
-    pub scrollback: bool,
+    pub scrollback: Option<PaneScrollChrome>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneScrollChrome {
+    pub start_line: u64,
+    pub line_count: u32,
+    pub total_lines: u64,
 }
 
 pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u16) -> TuiFrame {
@@ -576,6 +594,25 @@ fn render_leaf_pane(
         rect: inner,
         target: HitTarget::PaneContent(pane_id.to_owned()),
     });
+    if chrome_state.scrollback.is_some() && chrome.height >= 4 {
+        let x = chrome.x + chrome.width.saturating_sub(1);
+        hits.push(HitRegion {
+            rect: Rect::new(x, chrome.y + 1, 1, 1),
+            target: HitTarget::PaneScroll {
+                pane_id: pane_id.to_owned(),
+                direction: ScrollDirection::Up,
+                visible_rows: inner.height.max(1),
+            },
+        });
+        hits.push(HitRegion {
+            rect: Rect::new(x, chrome.y + chrome.height - 2, 1, 1),
+            target: HitTarget::PaneScroll {
+                pane_id: pane_id.to_owned(),
+                direction: ScrollDirection::Down,
+                visible_rows: inner.height.max(1),
+            },
+        });
+    }
     if let Some(surface) = surface_summary {
         render_structured_surface(buffer, inner, surface);
         return;
@@ -814,7 +851,7 @@ fn draw_box(
         if active {
             badges.push("active");
         }
-        if chrome_state.scrollback {
+        if chrome_state.scrollback.is_some() {
             badges.push("scroll");
         }
         if chrome_state.read_only {
@@ -840,8 +877,8 @@ fn draw_box(
             .border_style(border_style)
             .render(area, buffer);
     }
-    if chrome_state.scrollback {
-        draw_right_scroll_badge(buffer, area);
+    if let Some(scroll) = chrome_state.scrollback {
+        draw_right_scrollbar(buffer, area, scroll);
     }
 }
 
@@ -851,20 +888,50 @@ fn clipped_box_title(title: &str, width: u16) -> String {
     format!(" {label} ")
 }
 
-fn draw_right_scroll_badge(buffer: &mut Buffer, area: Rect) {
-    if area.width == 0 || area.height < 3 {
+fn draw_right_scrollbar(buffer: &mut Buffer, area: Rect, scroll: PaneScrollChrome) {
+    if area.width == 0 || area.height < 4 {
         return;
     }
     let x = area.x + area.width - 1;
-    let available = area.height.saturating_sub(2) as usize;
-    let label = if available >= 6 { "SCROLL" } else { "S" };
-    let start_y = area.y + 1 + (available.saturating_sub(label.len()) / 2) as u16;
-    let style = Style::default()
+    let control_style = Style::default()
         .fg(Color::Rgb(250, 204, 21))
         .bg(Color::Rgb(17, 19, 24))
         .add_modifier(Modifier::BOLD);
-    for (offset, ch) in label.chars().take(available).enumerate() {
-        set_cell(buffer, x, start_y + offset as u16, &ch.to_string(), style);
+    let track_style = Style::default()
+        .fg(Color::Rgb(100, 116, 139))
+        .bg(Color::Rgb(17, 19, 24));
+    let thumb_style = Style::default()
+        .fg(Color::Rgb(250, 204, 21))
+        .bg(Color::Rgb(17, 19, 24));
+
+    set_cell(buffer, x, area.y + 1, "▲", control_style);
+    set_cell(buffer, x, area.y + area.height - 2, "▼", control_style);
+    if area.height < 5 {
+        return;
+    }
+
+    let track_y = area.y + 2;
+    let track_height = area.height.saturating_sub(4);
+    for offset in 0..track_height {
+        set_cell(buffer, x, track_y + offset, "│", track_style);
+    }
+    let max_start = scroll_max_start(scroll.total_lines, scroll.line_count);
+    let range = max_start.saturating_sub(1);
+    let progress = scroll.start_line.saturating_sub(1).min(range);
+    let thumb_offset = if range == 0 || track_height <= 1 {
+        0
+    } else {
+        ((u64::from(track_height - 1) * progress) / range) as u16
+    };
+    set_cell(buffer, x, track_y + thumb_offset, "█", thumb_style);
+}
+
+fn scroll_max_start(total_lines: u64, line_count: u32) -> u64 {
+    let line_count = u64::from(line_count.max(1));
+    if total_lines > line_count {
+        total_lines - line_count + 1
+    } else {
+        1
     }
 }
 
@@ -1305,7 +1372,11 @@ mod tests {
             workspace.pane_id.clone(),
             PaneChromeState {
                 read_only: true,
-                scrollback: true,
+                scrollback: Some(PaneScrollChrome {
+                    start_line: 4,
+                    line_count: 2,
+                    total_lines: 9,
+                }),
             },
         );
 
@@ -1328,10 +1399,12 @@ mod tests {
             frame
                 .text
                 .lines()
-                .any(|line| line.chars().last() == Some('S')),
-            "scroll badge should mark the right border: {:?}",
+                .any(|line| line.chars().last() == Some('█')),
+            "scrollbar thumb should mark the right border: {:?}",
             frame.text
         );
+        assert!(frame.text.contains('▲'), "{:?}", frame.text);
+        assert!(frame.text.contains('▼'), "{:?}", frame.text);
         for line in frame.text.lines() {
             assert!(
                 line.chars().count() <= 72,
