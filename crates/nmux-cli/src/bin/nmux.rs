@@ -4003,6 +4003,10 @@ fn scroll_live_pane_view(
     let existing = surface_state.scrollback_views.get(pane_id).copied();
     let mut pending_updates = Vec::new();
     let mut pending_live = Vec::new();
+    let live_surface_text = client_state
+        .cached_surface_text_styled(pane_id, use_styled)
+        .or_else(|| surface_state.current_pane_surfaces.get(pane_id).cloned())
+        .unwrap_or_default();
     let (offset_from_bottom, total_history_lines) = match (direction, existing) {
         (LiveScrollDirection::Up, None) => {
             let probe = local::fetch_scrollback_chunk_with_selection_and_pending_live(
@@ -4025,16 +4029,18 @@ fn scroll_live_pane_view(
                 Some(&mut pending_updates),
                 Some(&mut pending_live),
             )?;
+            let total_history_lines =
+                normalized_history_line_count(&probe, &live_surface_text, viewport_rows);
             let offset = next_scroll_offset(
                 0,
                 LiveScrollDirection::Up,
                 LIVE_SCROLL_WHEEL_ROWS,
-                probe.total_lines,
+                total_history_lines,
             );
             if offset == 0 {
                 return Ok(false);
             }
-            (offset, probe.total_lines)
+            (offset, total_history_lines)
         }
         (LiveScrollDirection::Up, Some(view)) => {
             let offset = next_scroll_offset(
@@ -4170,20 +4176,7 @@ fn scroll_live_pane_view(
         client_state.cache_scrollback_chunk(scrollback);
     }
     let live_surface_summary = client_state.cached_rendered_surface_summary(pane_id);
-    let rendered = render_scrollback_view_text(
-        scrollback.as_ref(),
-        client_state
-            .cached_surface_text_styled(pane_id, use_styled)
-            .as_deref()
-            .or_else(|| {
-                surface_state
-                    .current_pane_surfaces
-                    .get(pane_id)
-                    .map(String::as_str)
-            })
-            .unwrap_or(""),
-        viewport,
-    );
+    let rendered = render_scrollback_view_text(scrollback.as_ref(), &live_surface_text, viewport);
     let rendered_summary = render_scrollback_view_summary(
         pane_id,
         scrollback.as_ref(),
@@ -4273,6 +4266,34 @@ fn scrollback_viewport_range(
         live_start_row: live_start as u16,
         live_row_count: live_row_count as u16,
     }
+}
+
+fn normalized_history_line_count(
+    tail_probe: &local::ScrollbackChunkSummary,
+    live_surface_text: &str,
+    viewport_rows: u16,
+) -> u64 {
+    let live_rows = live_surface_rows(live_surface_text, 0, viewport_rows);
+    let overlap = scrollback_live_tail_overlap(&tail_probe.lines, &live_rows);
+    tail_probe.total_lines.saturating_sub(overlap as u64)
+}
+
+fn scrollback_live_tail_overlap(
+    scrollback: &[local::ScrollbackLine],
+    live_rows: &[String],
+) -> usize {
+    let max = scrollback.len().min(live_rows.len());
+    (1..=max)
+        .rev()
+        .find(|count| {
+            let scroll_start = scrollback.len() - count;
+            let live_start = live_rows.len() - count;
+            scrollback[scroll_start..]
+                .iter()
+                .map(|line| line.text.as_str())
+                .eq(live_rows[live_start..].iter().map(String::as_str))
+        })
+        .unwrap_or(0)
 }
 
 fn restore_live_pane_surface(
@@ -8703,14 +8724,15 @@ mod tests {
         live_mouse_dispatch_for_workspace_size, live_pane_chrome_state,
         live_session_new_should_fallback, live_surface_rows, live_update_print_kind,
         managed_ready_error_message, menu_overlay_for_action,
-        menu_overlay_for_action_with_session_inventory, next_scroll_offset, parse_detach_key,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        render_scrollback_view_summary, render_scrollback_view_text, scrollback_viewport_range,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
-        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
+        menu_overlay_for_action_with_session_inventory, next_scroll_offset,
+        normalized_history_line_count, parse_detach_key, parse_env_assignment, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
+        raw_terminal_mode_needed, redraw_terminal_guard_needed, redraw_text_with_context,
+        redraw_workspace_surface_text, render_scrollback_view_summary, render_scrollback_view_text,
+        scrollback_live_tail_overlap, scrollback_viewport_range, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, stdin_byte_forwards, terminal_size_from_fds,
+        terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -11221,6 +11243,39 @@ mod tests {
                 live_start_row: 0,
                 live_row_count: 20,
             }
+        );
+    }
+
+    #[test]
+    fn scrollback_view_normalizes_tail_probe_that_contains_live_screen() {
+        let tail_probe = scrollback_summary(
+            76,
+            80,
+            &[
+                (76, "history"),
+                (77, "l0"),
+                (78, "l1"),
+                (79, "l2"),
+                (80, "l3"),
+            ],
+        );
+
+        assert_eq!(
+            scrollback_live_tail_overlap(
+                &tail_probe.lines,
+                &live_surface_rows("l0\nl1\nl2\nl3", 0, 4)
+            ),
+            4
+        );
+        assert_eq!(
+            normalized_history_line_count(&tail_probe, "l0\nl1\nl2\nl3", 4),
+            76
+        );
+
+        let history_only = scrollback_summary(76, 80, &[(76, "h76"), (77, "h77"), (78, "h78")]);
+        assert_eq!(
+            normalized_history_line_count(&history_only, "l0\nl1", 2),
+            80
         );
     }
 
