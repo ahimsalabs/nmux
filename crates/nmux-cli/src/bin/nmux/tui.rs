@@ -1099,6 +1099,19 @@ fn buffer_to_string(buffer: &Buffer, area: Rect) -> String {
 mod tests {
     use super::*;
 
+    fn single_pane_workspace() -> local::WorkspaceSummary {
+        local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        }
+    }
+
     fn split_workspace() -> local::WorkspaceSummary {
         local::WorkspaceSummary {
             session_id: "local".to_owned(),
@@ -1498,5 +1511,58 @@ mod tests {
                 "pane labels must stay within the frame: {line:?}"
             );
         }
+    }
+
+    #[test]
+    fn live_bottom_scrollbar_thumb_is_proportional_and_bottom_anchored() {
+        let workspace = single_pane_workspace();
+        let mut chrome = BTreeMap::new();
+        chrome.insert(
+            workspace.pane_id.clone(),
+            PaneChromeState {
+                read_only: false,
+                scrollback: Some(PaneScrollChrome {
+                    offset_from_bottom: 0,
+                    viewport_rows: 4,
+                    total_history_lines: 100,
+                }),
+            },
+        );
+
+        let frame = render_workspace_frame(
+            WorkspaceFrameInput {
+                workspace: &workspace,
+                active_surface_text: "one\ntwo\nthree\nfour",
+                pane_surfaces: None,
+                pane_surface_summaries: None,
+                pane_chrome: Some(&chrome),
+                overlay: None,
+            },
+            60,
+            12,
+        );
+        let right_edge: Vec<char> = frame
+            .text
+            .lines()
+            .filter_map(|line| line.chars().last())
+            .collect();
+
+        assert!(
+            right_edge.iter().any(|ch| *ch == '│'),
+            "track should remain visible when scrollback exceeds viewport: {:?}",
+            frame.text
+        );
+        assert_eq!(
+            right_edge.get(9),
+            Some(&'▐'),
+            "thumb should be anchored at the bottom of the track at live bottom: {:?}",
+            frame.text
+        );
+        assert_eq!(
+            right_edge.iter().filter(|ch| **ch == '▐').count(),
+            1,
+            "thumb should be proportional, not the whole track: {:?}",
+            frame.text
+        );
     }
 }

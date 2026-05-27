@@ -972,6 +972,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         current_pane_surface_summaries: initial_pane_surface_summaries,
         current_pane_modes: initial_pane_modes,
         current_pane_surface_kinds: initial_pane_surface_kinds,
+        current_pane_scrollback_totals: BTreeMap::new(),
         scrollback_views: BTreeMap::new(),
     };
     let (scrollback, pending_surface_updates, pending_live_reads) = match initial_live_scrollback(
@@ -1001,6 +1002,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
+        record_live_scrollback_total(&mut surface_state, scrollback);
     }
     if args.live_resize.is_none()
         && let Some((cols, rows)) = sigwinch_resize.current_resize()?
@@ -1962,6 +1964,7 @@ struct LiveSurfaceState {
     current_pane_surface_summaries: BTreeMap<String, local::RenderedSurfaceSummary>,
     current_pane_modes: BTreeMap<String, local::TerminalModeSummary>,
     current_pane_surface_kinds: BTreeMap<String, protocol::SurfaceKind>,
+    current_pane_scrollback_totals: BTreeMap<String, u64>,
     scrollback_views: BTreeMap<String, LiveScrollbackView>,
 }
 
@@ -2019,10 +2022,16 @@ fn live_pane_chrome_state(
                         })
                         .unwrap_or(1)
                         .max(1);
+                    let total_history_lines = surface_state
+                        .current_pane_scrollback_totals
+                        .get(&pane_id)
+                        .copied()
+                        .unwrap_or_else(|| u64::from(viewport_rows))
+                        .max(u64::from(viewport_rows));
                     tui::PaneScrollChrome {
                         offset_from_bottom: 0,
                         viewport_rows,
-                        total_history_lines: u64::from(viewport_rows),
+                        total_history_lines,
                     }
                 });
             (
@@ -2034,6 +2043,15 @@ fn live_pane_chrome_state(
             )
         })
         .collect()
+}
+
+fn record_live_scrollback_total(
+    surface_state: &mut LiveSurfaceState,
+    scrollback: &local::ScrollbackChunkSummary,
+) {
+    surface_state
+        .current_pane_scrollback_totals
+        .insert(scrollback.pane_id.clone(), scrollback.total_lines);
 }
 
 fn collect_workspace_pane_ids(
@@ -4102,6 +4120,7 @@ fn switch_live_session(
         current_pane_surface_summaries: pane_surface_summaries,
         current_pane_modes: pane_modes,
         current_pane_surface_kinds: pane_surface_kinds,
+        current_pane_scrollback_totals: BTreeMap::new(),
         scrollback_views: BTreeMap::new(),
     };
 
@@ -4127,6 +4146,7 @@ fn switch_live_session(
     }
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
+        record_live_scrollback_total(&mut surface_state, scrollback);
     }
     if let Some(mouse_modes) = host_mouse_modes.as_mut() {
         mouse_modes.sync(surface_state.current_modes)?;
@@ -4518,6 +4538,7 @@ fn scroll_live_pane_with_intent(
     }
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
+        record_live_scrollback_total(surface_state, scrollback);
     }
     let rendered = render_scrollback_view_text(scrollback.as_ref());
     let rendered_summary = scrollback.as_ref().map(render_scrollback_view_summary);
@@ -11485,6 +11506,7 @@ mod tests {
             current_pane_surface_summaries: BTreeMap::new(),
             current_pane_modes: BTreeMap::new(),
             current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
             scrollback_views: BTreeMap::new(),
         };
         surface_state.scrollback_views.insert(
@@ -11533,6 +11555,7 @@ mod tests {
             current_pane_surface_summaries: BTreeMap::new(),
             current_pane_modes: BTreeMap::new(),
             current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
             scrollback_views: BTreeMap::new(),
         };
         surface_state
@@ -11549,6 +11572,52 @@ mod tests {
                     offset_from_bottom: 0,
                     viewport_rows: 3,
                     total_history_lines: 3,
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn live_pane_chrome_uses_known_scrollback_total_at_live_bottom() {
+        let current_workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: "one\ntwo\nthree".to_owned(),
+            current_pane_surfaces: BTreeMap::new(),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
+            scrollback_views: BTreeMap::new(),
+        };
+        surface_state
+            .current_pane_surfaces
+            .insert("pane-1".to_owned(), "one\ntwo\nthree".to_owned());
+        surface_state
+            .current_pane_scrollback_totals
+            .insert("pane-1".to_owned(), 100);
+
+        let chrome = live_pane_chrome_state(&surface_state, &current_workspace);
+
+        assert_eq!(
+            chrome.get("pane-1"),
+            Some(&tui::PaneChromeState {
+                read_only: false,
+                scrollback: Some(tui::PaneScrollChrome {
+                    offset_from_bottom: 0,
+                    viewport_rows: 3,
+                    total_history_lines: 100,
                 }),
             })
         );
@@ -12161,6 +12230,7 @@ mod tests {
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
                 current_pane_surface_kinds: BTreeMap::new(),
+                current_pane_scrollback_totals: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
         );
@@ -12184,6 +12254,7 @@ mod tests {
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
                 current_pane_surface_kinds: BTreeMap::new(),
+                current_pane_scrollback_totals: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
         );
@@ -12276,6 +12347,7 @@ mod tests {
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
                 current_pane_surface_kinds: BTreeMap::new(),
+                current_pane_scrollback_totals: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
         );
@@ -12311,6 +12383,7 @@ mod tests {
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
                 current_pane_surface_kinds: BTreeMap::new(),
+                current_pane_scrollback_totals: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
             Some(&inventory),
