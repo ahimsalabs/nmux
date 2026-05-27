@@ -1145,7 +1145,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             redraw_state.as_mut(),
             Some(&surface_state.current_pane_surfaces),
             Some(&surface_state.current_pane_surface_summaries),
-            None,
+            Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
         );
     }
     flush_stdout()?;
@@ -1236,7 +1236,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         redraw_state.as_mut(),
                         Some(&surface_state.current_pane_surfaces),
                         Some(&surface_state.current_pane_surface_summaries),
-                        Some(&live_pane_chrome_state(&surface_state)),
+                        Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
                         active_overlay.as_ref(),
                     );
                 } else {
@@ -1356,7 +1356,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                     StdinByteForward::Mouse(mouse) => {
-                                        let pane_chrome = live_pane_chrome_state(&surface_state);
+                                        let pane_chrome = live_pane_chrome_state(
+                                            &surface_state,
+                                            &current_workspace,
+                                        );
                                         match live_mouse_dispatch_for_workspace(
                                             mouse,
                                             &current_workspace,
@@ -1424,6 +1427,36 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                     flush_stdout()?;
                                                 }
                                             }
+                                            Some(LiveMouseDispatch::PaneScrollTo {
+                                                pane_id,
+                                                track_position,
+                                                track_len,
+                                                visible_rows,
+                                            }) => {
+                                                active_overlay = None;
+                                                active_menu_index = None;
+                                                if scroll_live_pane_to_track(
+                                                    &mut stream,
+                                                    &mut client_sequence,
+                                                    &pane_id,
+                                                    track_position,
+                                                    track_len,
+                                                    visible_rows,
+                                                    &mut surface_state,
+                                                    &mut client_state,
+                                                    &mut speculative_echo,
+                                                    &mut host_mouse_modes,
+                                                    &mut client_inventory,
+                                                    &mut recorder,
+                                                    socket_scope,
+                                                    &current_workspace,
+                                                    args,
+                                                    redraw_state.as_mut(),
+                                                    use_styled,
+                                                )? {
+                                                    flush_stdout()?;
+                                                }
+                                            }
                                             Some(LiveMouseDispatch::Menu(action)) => {
                                                 active_menu_index = menu_index(action);
                                                 if action == tui::MenuAction::NewSession {
@@ -1458,6 +1491,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                             ),
                                                             Some(&live_pane_chrome_state(
                                                                 &surface_state,
+                                                                &current_workspace,
                                                             )),
                                                         );
                                                         flush_stdout()?;
@@ -1503,6 +1537,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                             ),
                                                             Some(&live_pane_chrome_state(
                                                                 &surface_state,
+                                                                &current_workspace,
                                                             )),
                                                             active_overlay.as_ref(),
                                                         );
@@ -1547,6 +1582,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                 ),
                                                                 Some(&live_pane_chrome_state(
                                                                     &surface_state,
+                                                                    &current_workspace,
                                                                 )),
                                                             );
                                                             flush_stdout()?;
@@ -1623,6 +1659,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                         ),
                                                         Some(&live_pane_chrome_state(
                                                             &surface_state,
+                                                            &current_workspace,
                                                         )),
                                                     );
                                                     flush_stdout()?;
@@ -1785,7 +1822,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             redraw_state.as_mut(),
                             Some(&surface_state.current_pane_surfaces),
                             Some(&surface_state.current_pane_surface_summaries),
-                            Some(&live_pane_chrome_state(&surface_state)),
+                            Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
                             active_overlay.as_ref(),
                         );
                     } else {
@@ -1813,7 +1850,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
                             Some(&surface_state.current_pane_surface_summaries),
-                            Some(&live_pane_chrome_state(&surface_state)),
+                            Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
                             active_overlay.as_ref(),
                         );
                         flush_stdout()?;
@@ -1832,7 +1869,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
                             Some(&surface_state.current_pane_surface_summaries),
-                            Some(&live_pane_chrome_state(&surface_state)),
+                            Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
                             active_overlay.as_ref(),
                         );
                         flush_stdout()?;
@@ -1852,7 +1889,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                 Some(state),
                                 Some(&surface_state.current_pane_surfaces),
                                 Some(&surface_state.current_pane_surface_summaries),
-                                Some(&live_pane_chrome_state(&surface_state)),
+                                Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
                                 active_overlay.as_ref(),
                             );
                             flush_stdout()?;
@@ -1945,24 +1982,74 @@ struct LiveScrollbackView {
 
 fn live_pane_chrome_state(
     surface_state: &LiveSurfaceState,
+    workspace: &local::WorkspaceSummary,
 ) -> BTreeMap<String, tui::PaneChromeState> {
-    surface_state
-        .scrollback_views
-        .iter()
-        .map(|(pane_id, view)| {
+    let mut pane_ids = Vec::new();
+    collect_workspace_pane_ids(workspace.pane_tree.as_ref(), &mut pane_ids);
+    if pane_ids.is_empty() {
+        pane_ids.push(workspace.pane_id.clone());
+    }
+    for pane_id in surface_state.current_pane_surfaces.keys() {
+        if !pane_ids.iter().any(|existing| existing == pane_id) {
+            pane_ids.push(pane_id.clone());
+        }
+    }
+
+    pane_ids
+        .into_iter()
+        .map(|pane_id| {
+            let scrollback = surface_state
+                .scrollback_views
+                .get(&pane_id)
+                .map(|view| tui::PaneScrollChrome {
+                    offset_from_bottom: view.offset_from_bottom,
+                    viewport_rows: view.viewport_rows,
+                    total_history_lines: view.total_history_lines,
+                })
+                .unwrap_or_else(|| {
+                    let viewport_rows = surface_state
+                        .current_pane_surface_summaries
+                        .get(&pane_id)
+                        .and_then(|summary| u16::try_from(summary.rows).ok())
+                        .or_else(|| {
+                            surface_state
+                                .current_pane_surfaces
+                                .get(&pane_id)
+                                .and_then(|text| u16::try_from(text.lines().count()).ok())
+                        })
+                        .unwrap_or(1)
+                        .max(1);
+                    tui::PaneScrollChrome {
+                        offset_from_bottom: 0,
+                        viewport_rows,
+                        total_history_lines: u64::from(viewport_rows),
+                    }
+                });
             (
-                pane_id.clone(),
+                pane_id,
                 tui::PaneChromeState {
-                    scrollback: Some(tui::PaneScrollChrome {
-                        offset_from_bottom: view.offset_from_bottom,
-                        viewport_rows: view.viewport_rows,
-                        total_history_lines: view.total_history_lines,
-                    }),
+                    scrollback: Some(scrollback),
                     ..tui::PaneChromeState::default()
                 },
             )
         })
         .collect()
+}
+
+fn collect_workspace_pane_ids(
+    root: Option<&local::WorkspacePaneSummary>,
+    pane_ids: &mut Vec<String>,
+) {
+    let Some(root) = root else {
+        return;
+    };
+    if root.children.is_empty() {
+        pane_ids.push(root.pane_id.clone());
+        return;
+    }
+    for child in &root.children {
+        collect_workspace_pane_ids(Some(child), pane_ids);
+    }
 }
 
 /// Process a single surface update: reconcile speculative echo, render the
@@ -2052,7 +2139,7 @@ fn process_surface_update(
                 redraw_state.as_mut(),
                 Some(&state.current_pane_surfaces),
                 Some(&state.current_pane_surface_summaries),
-                Some(&live_pane_chrome_state(state)),
+                Some(&live_pane_chrome_state(state, current_workspace)),
             );
         } else {
             print_live_update(
@@ -2065,7 +2152,7 @@ fn process_surface_update(
                 redraw_state.as_mut(),
                 Some(&state.current_pane_surfaces),
                 Some(&state.current_pane_surface_summaries),
-                Some(&live_pane_chrome_state(state)),
+                Some(&live_pane_chrome_state(state, current_workspace)),
             );
         }
     }
@@ -3177,6 +3264,12 @@ enum LiveMouseDispatch {
         direction: LiveScrollDirection,
         visible_rows: u16,
     },
+    PaneScrollTo {
+        pane_id: String,
+        track_position: u16,
+        track_len: u16,
+        visible_rows: u16,
+    },
     ClearOverlay,
 }
 
@@ -3184,6 +3277,12 @@ enum LiveMouseDispatch {
 enum LiveScrollDirection {
     Up,
     Down,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveScrollIntent {
+    Wheel(LiveScrollDirection),
+    Track { track_position: u16, track_len: u16 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3229,7 +3328,7 @@ fn handle_live_tui_key(
                 redraw_state.as_mut(),
                 Some(&surface_state.current_pane_surfaces),
                 Some(&surface_state.current_pane_surface_summaries),
-                Some(&live_pane_chrome_state(surface_state)),
+                Some(&live_pane_chrome_state(surface_state, current_workspace)),
             );
             return Ok(LiveKeyHandling::Handled);
         }
@@ -3546,7 +3645,7 @@ fn repaint_live_overlay(
         redraw_state.as_mut(),
         Some(&surface_state.current_pane_surfaces),
         Some(&surface_state.current_pane_surface_summaries),
-        Some(&live_pane_chrome_state(surface_state)),
+        Some(&live_pane_chrome_state(surface_state, current_workspace)),
         active_overlay,
     );
 }
@@ -3699,6 +3798,27 @@ fn live_mouse_dispatch_for_workspace_size(
                         tui::ScrollDirection::Up => LiveScrollDirection::Up,
                         tui::ScrollDirection::Down => LiveScrollDirection::Down,
                     },
+                    visible_rows: *visible_rows,
+                });
+            }
+            None
+        }
+        tui::HitTarget::PaneScrollTrack {
+            pane_id,
+            visible_rows,
+            track_position,
+            track_len,
+        } => {
+            if mouse.button == protocol::MouseButton::Left
+                && matches!(
+                    mouse.action,
+                    protocol::MouseAction::Press | protocol::MouseAction::Motion
+                )
+            {
+                return Some(LiveMouseDispatch::PaneScrollTo {
+                    pane_id: pane_id.clone(),
+                    track_position: *track_position,
+                    track_len: *track_len,
                     visible_rows: *visible_rows,
                 });
             }
@@ -4025,7 +4145,7 @@ fn switch_live_session(
             redraw_state.as_mut(),
             Some(&surface_state.current_pane_surfaces),
             Some(&surface_state.current_pane_surface_summaries),
-            None,
+            Some(&live_pane_chrome_state(&surface_state, &workspace)),
         );
     }
     recorder.record(&format_live_workspace_json(&workspace))?;
@@ -4069,6 +4189,88 @@ fn scroll_live_pane_view(
     socket_scope: Option<local::SocketIdentity>,
     workspace: &local::WorkspaceSummary,
     args: &Args,
+    redraw_state: Option<&mut RedrawState>,
+    use_styled: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    scroll_live_pane_with_intent(
+        stream,
+        sequence,
+        pane_id,
+        LiveScrollIntent::Wheel(direction),
+        visible_rows,
+        surface_state,
+        client_state,
+        speculative_echo,
+        host_mouse_modes,
+        client_inventory,
+        recorder,
+        socket_scope,
+        workspace,
+        args,
+        redraw_state,
+        use_styled,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scroll_live_pane_to_track(
+    stream: &mut UnixStream,
+    sequence: &mut local::ClientFrameSequence,
+    pane_id: &str,
+    track_position: u16,
+    track_len: u16,
+    visible_rows: u16,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &mut local::ClientAttachState,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    workspace: &local::WorkspaceSummary,
+    args: &Args,
+    redraw_state: Option<&mut RedrawState>,
+    use_styled: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    scroll_live_pane_with_intent(
+        stream,
+        sequence,
+        pane_id,
+        LiveScrollIntent::Track {
+            track_position,
+            track_len,
+        },
+        visible_rows,
+        surface_state,
+        client_state,
+        speculative_echo,
+        host_mouse_modes,
+        client_inventory,
+        recorder,
+        socket_scope,
+        workspace,
+        args,
+        redraw_state,
+        use_styled,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scroll_live_pane_with_intent(
+    stream: &mut UnixStream,
+    sequence: &mut local::ClientFrameSequence,
+    pane_id: &str,
+    intent: LiveScrollIntent,
+    visible_rows: u16,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &mut local::ClientAttachState,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    workspace: &local::WorkspaceSummary,
+    args: &Args,
     mut redraw_state: Option<&mut RedrawState>,
     use_styled: bool,
 ) -> Result<bool, Box<dyn std::error::Error>> {
@@ -4080,8 +4282,8 @@ fn scroll_live_pane_view(
     let existing = surface_state.scrollback_views.get(pane_id).copied();
     let mut pending_updates = Vec::new();
     let mut pending_live = Vec::new();
-    let (offset_from_bottom, total_history_lines) = match (direction, existing) {
-        (LiveScrollDirection::Up, None) => {
+    let (offset_from_bottom, total_history_lines) = match (intent, existing) {
+        (LiveScrollIntent::Wheel(LiveScrollDirection::Up), None) => {
             let probe = local::fetch_scrollback_chunk_with_selection_and_pending_live(
                 stream,
                 sequence,
@@ -4114,7 +4316,7 @@ fn scroll_live_pane_view(
             }
             (offset, probe.total_lines)
         }
-        (LiveScrollDirection::Up, Some(view)) => {
+        (LiveScrollIntent::Wheel(LiveScrollDirection::Up), Some(view)) => {
             let offset = next_scroll_offset(
                 view.offset_from_bottom,
                 LiveScrollDirection::Up,
@@ -4127,8 +4329,8 @@ fn scroll_live_pane_view(
             }
             (offset, view.total_history_lines)
         }
-        (LiveScrollDirection::Down, None) => return Ok(false),
-        (LiveScrollDirection::Down, Some(view)) => {
+        (LiveScrollIntent::Wheel(LiveScrollDirection::Down), None) => return Ok(false),
+        (LiveScrollIntent::Wheel(LiveScrollDirection::Down), Some(view)) => {
             let offset = next_scroll_offset(
                 view.offset_from_bottom,
                 LiveScrollDirection::Down,
@@ -4152,11 +4354,71 @@ fn scroll_live_pane_view(
                     redraw_state.as_deref_mut(),
                     Some(&surface_state.current_pane_surfaces),
                     Some(&surface_state.current_pane_surface_summaries),
-                    Some(&live_pane_chrome_state(surface_state)),
+                    Some(&live_pane_chrome_state(surface_state, workspace)),
                 );
                 return Ok(true);
             }
             (offset, view.total_history_lines)
+        }
+        (
+            LiveScrollIntent::Track {
+                track_position,
+                track_len,
+            },
+            existing,
+        ) => {
+            let total_history_lines = if let Some(view) = existing {
+                view.total_history_lines
+            } else {
+                let probe = local::fetch_scrollback_chunk_with_selection_and_pending_live(
+                    stream,
+                    sequence,
+                    pane_id,
+                    1,
+                    line_count,
+                    Some(line_count),
+                    |range_start, range_count| {
+                        client_state
+                            .cached_scrollback_version_for_scope(
+                                socket_scope,
+                                pane_id,
+                                range_start,
+                                range_count,
+                            )
+                            .unwrap_or(0)
+                    },
+                    Some(&mut pending_updates),
+                    Some(&mut pending_live),
+                )?;
+                probe.total_lines
+            };
+            let offset = scrollbar_offset_from_track(
+                track_position,
+                track_len,
+                total_history_lines,
+                viewport_rows,
+            );
+            if offset == 0 {
+                restore_live_pane_surface(
+                    pane_id,
+                    surface_state,
+                    client_state,
+                    workspace,
+                    use_styled,
+                );
+                print_live_surface(
+                    workspace,
+                    &surface_state.current_surface_metadata,
+                    &surface_state.current_surface_text,
+                    args.redraw,
+                    redraw_state.as_deref_mut(),
+                    Some(&surface_state.current_pane_surfaces),
+                    Some(&surface_state.current_pane_surface_summaries),
+                    Some(&live_pane_chrome_state(surface_state, workspace)),
+                );
+                return Ok(true);
+            }
+            (offset, total_history_lines)
         }
     };
 
@@ -4288,7 +4550,7 @@ fn scroll_live_pane_view(
         redraw_state.as_deref_mut(),
         Some(&surface_state.current_pane_surfaces),
         Some(&surface_state.current_pane_surface_summaries),
-        Some(&live_pane_chrome_state(surface_state)),
+        Some(&live_pane_chrome_state(surface_state, workspace)),
     );
     Ok(true)
 }
@@ -4315,6 +4577,22 @@ fn next_scroll_offset(
 
 fn max_scroll_offset(total_lines: u64, viewport_rows: u16) -> u64 {
     total_lines.saturating_sub(u64::from(viewport_rows.max(1)))
+}
+
+fn scrollbar_offset_from_track(
+    track_position: u16,
+    track_len: u16,
+    total_lines: u64,
+    viewport_rows: u16,
+) -> u64 {
+    let max_offset = max_scroll_offset(total_lines, viewport_rows);
+    if max_offset == 0 {
+        return 0;
+    }
+    let track_max = u64::from(track_len.saturating_sub(1).max(1));
+    let progress_from_top =
+        (u64::from(track_position.min(track_len.saturating_sub(1))) * max_offset) / track_max;
+    max_offset.saturating_sub(progress_from_top.min(max_offset))
 }
 
 fn scrollback_viewport_range(
@@ -4506,7 +4784,7 @@ fn focus_live_client_pane(
             redraw_state,
             Some(&surface_state.current_pane_surfaces),
             Some(&surface_state.current_pane_surface_summaries),
-            Some(&live_pane_chrome_state(surface_state)),
+            Some(&live_pane_chrome_state(surface_state, workspace)),
         );
     } else {
         println!("{}", workspace.display_line());
@@ -4638,7 +4916,7 @@ fn host_mouse_mode_disable_sequence() -> &'static str {
 
 fn host_mouse_mode_enable_sequence(modes: local::TerminalModeSummary) -> &'static str {
     if !modes.mouse_tracking {
-        return "\x1b[?1000h\x1b[?1006h";
+        return "\x1b[?1002h\x1b[?1006h";
     }
     match (modes.mouse_tracking_mode, modes.mouse_format) {
         (protocol::MouseTrackingMode::X10, protocol::MouseFormat::Sgr) => "\x1b[?1000h\x1b[?1006h",
@@ -8735,8 +9013,9 @@ mod tests {
         parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
         raw_terminal_mode_needed, redraw_terminal_guard_needed, redraw_text_with_context,
         redraw_workspace_surface_text, render_scrollback_view_summary, render_scrollback_view_text,
-        scrollback_viewport_range, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, tui, usage,
+        scrollback_viewport_range, scrollbar_offset_from_track, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, stdin_byte_forwards, terminal_size_from_fds,
+        terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -10177,7 +10456,7 @@ mod tests {
                 mouse_format: protocol::MouseFormat::X10,
                 ..local::TerminalModeSummary::default()
             }),
-            "\x1b[?1000h\x1b[?1006h"
+            "\x1b[?1002h\x1b[?1006h"
         );
         assert_eq!(
             host_mouse_mode_enable_sequence(local::TerminalModeSummary {
@@ -11186,6 +11465,16 @@ mod tests {
 
     #[test]
     fn live_pane_chrome_marks_scrollback_views() {
+        let current_workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
         let mut surface_state = LiveSurfaceState {
             current_surface_metadata: local::TerminalMetadataSummary::default(),
             current_surface_kind: protocol::SurfaceKind::Main,
@@ -11206,7 +11495,7 @@ mod tests {
             },
         );
 
-        let chrome = live_pane_chrome_state(&surface_state);
+        let chrome = live_pane_chrome_state(&surface_state, &current_workspace);
 
         assert_eq!(
             chrome.get("pane-1"),
@@ -11220,6 +11509,48 @@ mod tests {
             })
         );
         assert!(!chrome.contains_key("pane-2"));
+    }
+
+    #[test]
+    fn live_pane_chrome_shows_scrollbar_for_live_panes() {
+        let current_workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: "one\ntwo\nthree".to_owned(),
+            current_pane_surfaces: BTreeMap::new(),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            scrollback_views: BTreeMap::new(),
+        };
+        surface_state
+            .current_pane_surfaces
+            .insert("pane-1".to_owned(), "one\ntwo\nthree".to_owned());
+
+        let chrome = live_pane_chrome_state(&surface_state, &current_workspace);
+
+        assert_eq!(
+            chrome.get("pane-1"),
+            Some(&tui::PaneChromeState {
+                read_only: false,
+                scrollback: Some(tui::PaneScrollChrome {
+                    offset_from_bottom: 0,
+                    viewport_rows: 3,
+                    total_history_lines: 3,
+                }),
+            })
+        );
     }
 
     #[test]
@@ -11264,6 +11595,8 @@ mod tests {
                 history_line_count: 20,
             }
         );
+        assert_eq!(scrollbar_offset_from_track(0, 10, 80, 20), 60);
+        assert_eq!(scrollbar_offset_from_track(9, 10, 80, 20), 0);
     }
 
     #[test]
@@ -11659,6 +11992,35 @@ mod tests {
                 visible_rows: 20,
             }),
             "scrollbar arrow clicks scroll the pane"
+        );
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 10,
+                    col: 79,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Motion,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                None,
+                Some(&pane_chrome),
+                local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
+                None,
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::PaneScrollTo {
+                pane_id: "pane-1".to_owned(),
+                track_position: 7,
+                track_len: 18,
+                visible_rows: 20,
+            }),
+            "scrollbar track drag jumps to the requested pane position"
         );
     }
 

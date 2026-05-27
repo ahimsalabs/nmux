@@ -53,6 +53,12 @@ pub enum HitTarget {
         direction: ScrollDirection,
         visible_rows: u16,
     },
+    PaneScrollTrack {
+        pane_id: String,
+        visible_rows: u16,
+        track_position: u16,
+        track_len: u16,
+    },
     WindowTreePane(String),
     Overlay(OverlayAction),
     Background,
@@ -612,6 +618,21 @@ fn render_leaf_pane(
                 visible_rows: inner.height.max(1),
             },
         });
+        if chrome.height >= 5 {
+            let track_y = chrome.y + 2;
+            let track_height = chrome.height.saturating_sub(4);
+            for offset in 0..track_height {
+                hits.push(HitRegion {
+                    rect: Rect::new(x, track_y + offset, 1, 1),
+                    target: HitTarget::PaneScrollTrack {
+                        pane_id: pane_id.to_owned(),
+                        visible_rows: inner.height.max(1),
+                        track_position: offset,
+                        track_len: track_height.max(1),
+                    },
+                });
+            }
+        }
     }
     if let Some(surface) = surface_summary {
         render_structured_surface(buffer, inner, surface);
