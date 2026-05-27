@@ -5953,11 +5953,12 @@ impl RedrawState {
         let status_row = self.status_row();
         let mut output = String::new();
         output.push_str(&format!(
-            "{}{}{}{}",
+            "{}{}{}{}{}",
             cursor::MoveTo(terminal_col, terminal_row_index),
+            SetAttribute(Attribute::Reset),
             SetAttribute(Attribute::Underlined),
             prediction.text,
-            SetAttribute(Attribute::NoUnderline)
+            SetAttribute(Attribute::Reset)
         ));
         output.push_str(&format!("{}", cursor::MoveTo(0, status_row)));
         Some(output)
@@ -10255,8 +10256,8 @@ mod tests {
             .expect("fast speculative render");
 
         assert!(
-            update.contains("\x1b[1;6H\x1b[4mx\x1b[24m"),
-            "fast path should only paint predicted cell at cursor: {update:?}"
+            update.contains("\x1b[1;6H\x1b[0m\x1b[4mx\x1b[0m"),
+            "fast path should reset terminal style before painting predicted input: {update:?}"
         );
         assert_eq!(state.previous_rows[0], "ready\x1b[4mx\x1b[24m");
     }

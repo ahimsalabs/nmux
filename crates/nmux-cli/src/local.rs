@@ -11260,7 +11260,7 @@ mod tests {
 
         assert_eq!(
             overlay.render_underlined_styled(&surface).as_deref(),
-            Some("\x1b[3;38;2;255;0;0mred\x1b[0m plain\x1b[4m!\x1b[24m")
+            Some("\x1b[3;38;2;255;0;0mred\x1b[0m plain\x1b[0m\x1b[4m!\x1b[0m")
         );
         assert_eq!(surface.render_text(), "red plain");
     }
