@@ -11873,6 +11873,15 @@ mod tests {
     }
 
     #[test]
+    fn scrollback_view_renders_repeated_blank_daemon_rows() {
+        let scrollback =
+            scrollback_summary(10, 13, &[(10, "before"), (11, ""), (12, ""), (13, "after")]);
+        let rendered = render_scrollback_view_text(Some(&scrollback));
+
+        assert_eq!(rendered, "before\n\n\nafter");
+    }
+
+    #[test]
     fn scrollback_view_summary_preserves_daemon_styles() {
         let mut scrollback = scrollback_summary(80, 80, &[(80, "history")]);
         scrollback.styles.push(local::StyleSummary {

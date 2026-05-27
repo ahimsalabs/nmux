@@ -20068,6 +20068,41 @@ mod tests {
         assert_eq!(chunk.lines[1].runs[0].text, "server-owned terminal state");
     }
 
+    #[test]
+    fn decodes_scrollback_chunk_with_repeated_blank_rows_from_server_frame() {
+        let mut session = Session::initial();
+        let pane = &mut session.tabs[0].root;
+        pane.scrollback_lines = vec![
+            "before".to_owned(),
+            String::new(),
+            String::new(),
+            "after".to_owned(),
+        ];
+        pane.scrollback_row_runs = pane
+            .scrollback_lines
+            .iter()
+            .map(|line| vec![CellRun::plain(line.clone())])
+            .collect();
+        pane.scrollback_semantic_prompts =
+            vec![protocol::RowSemanticPrompt::None; pane.scrollback_lines.len()];
+        pane.scrollback_dirty_rows = vec![false; pane.scrollback_lines.len()];
+        pane.scrollback_kitty_placeholders = vec![false; pane.scrollback_lines.len()];
+
+        let frame = session.scrollback_chunk_frame("local-client", 4, 1, 4);
+        let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
+
+        assert_eq!(chunk.start_line, 1);
+        assert_eq!(chunk.total_lines, 4);
+        assert_eq!(
+            chunk
+                .lines
+                .iter()
+                .map(|line| (line.line, line.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(1, "before"), (2, ""), (3, ""), (4, "after")]
+        );
+    }
+
     #[derive(Debug, Default)]
     struct EchoHost {
         running: bool,

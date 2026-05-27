@@ -807,9 +807,9 @@ mod ghostty_vt {
     use libghostty_vt::{
         RenderState, Terminal, TerminalOptions, key, mouse,
         render::{CellIterator, CursorVisualStyle, RowIterator, Snapshot as RenderSnapshot},
-        screen::{CellSemanticContent, CellWide},
+        screen::{CellSemanticContent, CellWide, TrackedGridRef},
         style::{RgbColor, Style, StyleColor, Underline},
-        terminal::{Mode, ScrollViewport},
+        terminal::{Mode, Point, PointCoordinate, PointSpace, ScrollViewport},
     };
     use nmux_proto::protocol;
 
@@ -835,6 +835,7 @@ mod ghostty_vt {
         osc7: Osc7Tracker,
         pending_decrqm: Vec<u8>,
         pty_writes: Rc<RefCell<Vec<Vec<u8>>>>,
+        main_tail_ref: Option<TrackedGridRef>,
     }
 
     #[derive(Default)]
@@ -993,12 +994,7 @@ mod ghostty_vt {
                         |update| terminal_input_from_update(input.cols, input.rows, update),
                     );
                     let chunk_update = self.apply_output_chunk(chunk_input, chunk)?;
-                    update = Some(match update.as_ref() {
-                        Some(previous) => {
-                            merge_chunked_update(input.cols, input.rows, previous, chunk_update)
-                        }
-                        None => chunk_update,
-                    });
+                    update = Some(chunk_update);
                 }
                 return update;
             }
@@ -1014,8 +1010,9 @@ mod ghostty_vt {
             let state = self.state_mut(&input)?;
             let cols = u16::try_from(cols).ok()?;
             let rows = u16::try_from(rows).ok()?;
+            state.main_tail_ref = None;
             state.terminal.resize(cols, rows, 8, 16).ok()?;
-            state.extract_update(input, true, false)
+            state.extract_update(input, true, false, None)
         }
 
         fn encode_mouse_input(&mut self, input: MouseTerminalInput) -> Option<Vec<u8>> {
@@ -1046,10 +1043,15 @@ mod ghostty_vt {
             state.osc7.ingest(output);
             let pty_write_count = state.pty_writes.borrow().len();
             let saw_wraparound_query = state.ingest_decrqm_query(output);
+            let previous_main_tail_ref = state.main_tail_ref.take();
             let vt_write_span = tracing::trace_span!("terminal.libghostty.vt_write");
             vt_write_span.in_scope(|| {
                 state.terminal.vt_write(output);
             });
+            let previous_main_tail_screen_y = previous_main_tail_ref
+                .as_ref()
+                .and_then(|tail_ref| tail_ref.point(PointSpace::Screen).ok().flatten())
+                .and_then(|point| usize::try_from(point.y).ok());
             if saw_wraparound_query && state.pty_writes.borrow().len() == pty_write_count {
                 state.pty_writes.borrow_mut().push(b"\x1b[?7;1$y".to_vec());
             }
@@ -1057,6 +1059,7 @@ mod ghostty_vt {
                 input,
                 false,
                 !vt_output_may_change_rows(output) && !vt_output_may_change_style_colors(output),
+                previous_main_tail_screen_y,
             )
         }
     }
@@ -1090,42 +1093,14 @@ mod ghostty_vt {
         }
     }
 
-    fn merge_chunked_update(
-        cols: u32,
-        rows: u32,
-        previous: &TerminalUpdate,
-        mut update: TerminalUpdate,
-    ) -> TerminalUpdate {
-        if update.surface != protocol::SurfaceKind::Main {
-            return update;
-        }
-
-        let input = terminal_input_from_update(cols, rows, previous);
-        let surface_rows = ExtractedRows {
-            lines: update.surface_lines.clone(),
-            row_runs: update.surface_row_runs.clone(),
-            semantic_prompts: update.surface_semantic_prompts.clone(),
-            dirty_rows: update.surface_dirty_rows.clone(),
-            kitty_placeholders: update.surface_kitty_placeholders.clone(),
-        };
-        if let Some(scrollback_rows) = appended_cached_main_scrollback_rows(&input, &surface_rows) {
-            update.scrollback_lines = scrollback_rows.lines;
-            update.scrollback_row_runs = scrollback_rows.row_runs;
-            update.scrollback_semantic_prompts = scrollback_rows.semantic_prompts;
-            update.scrollback_dirty_rows = scrollback_rows.dirty_rows;
-            update.scrollback_kitty_placeholders = scrollback_rows.kitty_placeholders;
-        }
-        update
-    }
-
     fn vt_write_chunks(output: &[u8], cols: u32, rows: u32) -> Vec<&[u8]> {
         if output.len() <= VT_WRITE_CHUNK_BYTES {
             return vec![output];
         }
 
         // Large PTY reads can outrun the backend's extractable viewport/history
-        // window. Feed them in screen-sized slices so each intermediate tail can
-        // be merged into nmux's pane transcript before the backend advances.
+        // window. Feed them in screen-sized slices so each intermediate state is
+        // extracted from the backend-owned transcript before the backend advances.
         let row_budget = (rows / 2).clamp(1, 12) as usize;
         let col_budget = cols.max(1) as usize;
         let mut chunks = Vec::new();
@@ -1205,6 +1180,7 @@ mod ghostty_vt {
                 osc7: Osc7Tracker::default(),
                 pending_decrqm: Vec::new(),
                 pty_writes,
+                main_tail_ref: None,
             })
         }
 
@@ -1236,6 +1212,7 @@ mod ghostty_vt {
             input: TerminalInput<'_>,
             force_rows: bool,
             preserve_input_rows: bool,
+            previous_main_tail_screen_y: Option<usize>,
         ) -> Option<TerminalUpdate> {
             let surface = surface_kind(&self.terminal)?;
             let mut styles = if input.styles.is_empty() {
@@ -1286,28 +1263,8 @@ mod ghostty_vt {
                     kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
                 }
             } else if let Some(total_rows) = total_main_rows {
-                if let Some(scrollback_rows) =
-                    appended_cached_main_scrollback_rows(&input, &surface_rows)
-                {
-                    let cached_span = tracing::trace_span!(
-                        "terminal.libghostty.appended_cached_scrollback_rows",
-                        total_rows,
-                        surface_rows = surface_rows.lines.len(),
-                        input_scrollback_rows = input.scrollback_lines.len()
-                    );
-                    cached_span.in_scope(|| scrollback_rows)
-                } else if total_rows <= surface_rows.lines.len() {
+                if total_rows <= surface_rows.lines.len() {
                     surface_rows.truncated(total_rows)
-                } else if let Some(scrollback_rows) =
-                    proven_cached_main_scrollback_rows(&input, total_rows, &surface_rows)
-                {
-                    let cached_span = tracing::trace_span!(
-                        "terminal.libghostty.proven_cached_scrollback_rows",
-                        total_rows,
-                        surface_rows = surface_rows.lines.len(),
-                        input_scrollback_rows = input.scrollback_lines.len()
-                    );
-                    cached_span.in_scope(|| scrollback_rows)
                 } else {
                     let full_span = tracing::trace_span!(
                         "terminal.libghostty.extract_full_scrollback_rows",
@@ -1315,7 +1272,13 @@ mod ghostty_vt {
                         surface_rows = surface_rows.lines.len(),
                         input_scrollback_rows = input.scrollback_lines.len()
                     );
-                    full_span.in_scope(|| self.scrollback_rows(total_rows, &mut styles))?
+                    let scrollback_rows =
+                        full_span.in_scope(|| self.scrollback_rows(total_rows, &mut styles))?;
+                    merge_tracked_main_scrollback_rows(
+                        &input,
+                        scrollback_rows,
+                        previous_main_tail_screen_y,
+                    )
                 }
             } else {
                 ExtractedRows {
@@ -1330,6 +1293,7 @@ mod ghostty_vt {
                     kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
                 }
             };
+            self.track_main_tail(surface, !scrollback_rows.lines.is_empty());
             let modes = modes(&self.terminal)?;
             let title = self.terminal.title().ok()?;
             let terminal_working_directory = self.terminal.pwd().ok()?.to_owned();
@@ -1460,6 +1424,26 @@ mod ghostty_vt {
 
             Some(rows)
         }
+
+        fn track_main_tail(&mut self, surface: protocol::SurfaceKind, has_scrollback: bool) {
+            self.main_tail_ref = None;
+            if surface != protocol::SurfaceKind::Main || !has_scrollback {
+                return;
+            }
+            let Some(screen_y) = self
+                .terminal
+                .total_rows()
+                .ok()
+                .and_then(|rows| rows.checked_sub(1))
+                .and_then(|row| u32::try_from(row).ok())
+            else {
+                return;
+            };
+            self.main_tail_ref = self
+                .terminal
+                .track_grid_ref(Point::Screen(PointCoordinate { x: 0, y: screen_y }))
+                .ok();
+        }
     }
 
     #[derive(Clone)]
@@ -1486,153 +1470,63 @@ mod ghostty_vt {
         }
     }
 
-    fn proven_cached_main_scrollback_rows(
+    fn merge_tracked_main_scrollback_rows(
         input: &TerminalInput<'_>,
-        total_rows: usize,
-        surface_rows: &ExtractedRows,
-    ) -> Option<ExtractedRows> {
-        let history_len = total_rows.checked_sub(surface_rows.lines.len())?;
-        if history_len > input.scrollback_lines.len() {
-            return None;
+        backend_rows: ExtractedRows,
+        previous_main_tail_screen_y: Option<usize>,
+    ) -> ExtractedRows {
+        let backend_len = backend_rows.lines.len();
+        if backend_len >= input.scrollback_lines.len() {
+            return backend_rows;
         }
-
-        let old_total = input.scrollback_lines.len().min(total_rows);
-        let overlap_len = old_total.saturating_sub(history_len);
-        if overlap_len == 0 {
-            return None;
-        }
-        let cached_overlap = input.scrollback_lines.get(history_len..old_total)?;
-        let surface_overlap = surface_rows.lines.get(..overlap_len)?;
-        if cached_overlap != surface_overlap {
-            return None;
-        }
-
-        let history_lines = input.scrollback_lines[..history_len].to_vec();
-        let mut rows = ExtractedRows {
-            row_runs: row_runs_prefix_or_plain(
-                &history_lines,
-                input.scrollback_row_runs,
-                history_len,
-            ),
-            semantic_prompts: row_values_prefix_or_default(
-                input.scrollback_semantic_prompts,
-                history_len,
-                protocol::RowSemanticPrompt::None,
-            ),
-            dirty_rows: row_values_prefix_or_default(
-                input.scrollback_dirty_rows,
-                history_len,
-                false,
-            ),
-            kitty_placeholders: row_values_prefix_or_default(
-                input.scrollback_kitty_placeholders,
-                history_len,
-                false,
-            ),
-            lines: history_lines,
+        let Some(suffix_start) = previous_main_tail_screen_y else {
+            return backend_rows;
         };
-        rows.lines.extend(surface_rows.lines.iter().cloned());
-        rows.row_runs.extend(surface_rows.row_runs.iter().cloned());
+        if suffix_start > backend_len {
+            return input_scrollback_rows(input);
+        }
+
+        let prefix_len = input.scrollback_lines.len().saturating_sub(1);
+        let mut rows = input_scrollback_prefix_rows(input, prefix_len);
+        rows.lines
+            .extend(backend_rows.lines.into_iter().skip(suffix_start));
+        rows.row_runs
+            .extend(backend_rows.row_runs.into_iter().skip(suffix_start));
         rows.semantic_prompts
-            .extend(surface_rows.semantic_prompts.iter().copied());
+            .extend(backend_rows.semantic_prompts.into_iter().skip(suffix_start));
         rows.dirty_rows
-            .extend(surface_rows.dirty_rows.iter().copied());
-        rows.kitty_placeholders
-            .extend(surface_rows.kitty_placeholders.iter().copied());
-        Some(rows)
+            .extend(backend_rows.dirty_rows.into_iter().skip(suffix_start));
+        rows.kitty_placeholders.extend(
+            backend_rows
+                .kitty_placeholders
+                .into_iter()
+                .skip(suffix_start),
+        );
+        rows
     }
 
-    fn appended_cached_main_scrollback_rows(
-        input: &TerminalInput<'_>,
-        surface_rows: &ExtractedRows,
-    ) -> Option<ExtractedRows> {
-        if input.scrollback_lines.is_empty() || surface_rows.lines.is_empty() {
-            return None;
-        }
+    fn input_scrollback_rows(input: &TerminalInput<'_>) -> ExtractedRows {
+        input_scrollback_prefix_rows(input, input.scrollback_lines.len())
+    }
 
-        // The fresh viewport may overlap the cached transcript before its
-        // final row, because the previous final blank row can be filled by
-        // later output. Search near the tail and splice after the proven match.
-        let search_window = surface_rows.lines.len().saturating_mul(2).saturating_add(1);
-        let first_candidate = input.scrollback_lines.len().saturating_sub(search_window);
-        let mut best_overlap = None;
-        let max_candidate_overlap = input
-            .scrollback_lines
-            .len()
-            .saturating_sub(first_candidate)
-            .min(surface_rows.lines.len());
-        for overlap_len in (1..=max_candidate_overlap).rev() {
-            for input_start in (first_candidate..input.scrollback_lines.len()).rev() {
-                let max_overlap = input.scrollback_lines.len() - input_start;
-                if overlap_len > max_overlap {
-                    continue;
-                }
-                if input.scrollback_lines[input_start..input_start + overlap_len]
-                    == surface_rows.lines[..overlap_len]
-                {
-                    best_overlap = Some((input_start, overlap_len));
-                    break;
-                }
-            }
-            if best_overlap.is_some() {
-                break;
-            }
-        }
-        let (input_start, overlap_len) = best_overlap?;
-
-        let mut rows = ExtractedRows {
-            lines: input.scrollback_lines.to_vec(),
-            row_runs: row_runs_prefix_or_plain(
-                input.scrollback_lines,
-                input.scrollback_row_runs,
-                input.scrollback_lines.len(),
-            ),
+    fn input_scrollback_prefix_rows(input: &TerminalInput<'_>, len: usize) -> ExtractedRows {
+        let len = len.min(input.scrollback_lines.len());
+        let lines = input.scrollback_lines[..len].to_vec();
+        ExtractedRows {
+            row_runs: row_runs_prefix_or_plain(&lines, input.scrollback_row_runs, len),
             semantic_prompts: row_values_prefix_or_default(
                 input.scrollback_semantic_prompts,
-                input.scrollback_lines.len(),
+                len,
                 protocol::RowSemanticPrompt::None,
             ),
-            dirty_rows: row_values_prefix_or_default(
-                input.scrollback_dirty_rows,
-                input.scrollback_lines.len(),
-                false,
-            ),
+            dirty_rows: row_values_prefix_or_default(input.scrollback_dirty_rows, len, false),
             kitty_placeholders: row_values_prefix_or_default(
                 input.scrollback_kitty_placeholders,
-                input.scrollback_lines.len(),
+                len,
                 false,
             ),
-        };
-        rows.lines.truncate(input_start + overlap_len);
-        rows.row_runs.truncate(input_start + overlap_len);
-        rows.semantic_prompts.truncate(input_start + overlap_len);
-        rows.dirty_rows.truncate(input_start + overlap_len);
-        rows.kitty_placeholders.truncate(input_start + overlap_len);
-        if overlap_len == surface_rows.lines.len() {
-            return Some(rows);
+            lines,
         }
-        rows.lines
-            .extend(surface_rows.lines[overlap_len..].iter().cloned());
-        rows.row_runs
-            .extend(surface_rows.row_runs[overlap_len..].iter().cloned());
-        rows.semantic_prompts
-            .extend(surface_rows.semantic_prompts[overlap_len..].iter().copied());
-        rows.dirty_rows
-            .extend(surface_rows.dirty_rows[overlap_len..].iter().copied());
-        rows.kitty_placeholders.extend(
-            surface_rows.kitty_placeholders[overlap_len..]
-                .iter()
-                .copied(),
-        );
-        if rows.lines.len() > DEFAULT_MAX_SCROLLBACK_LINES {
-            let drop_count = rows.lines.len() - DEFAULT_MAX_SCROLLBACK_LINES;
-            rows.lines.drain(..drop_count);
-            rows.row_runs.drain(..drop_count);
-            rows.semantic_prompts.drain(..drop_count);
-            rows.dirty_rows.drain(..drop_count);
-            rows.kitty_placeholders.drain(..drop_count);
-        }
-        Some(rows)
     }
 
     fn row_runs_prefix_or_plain(
@@ -2107,74 +2001,6 @@ mod ghostty_vt {
             MouseButton::Right => Some(mouse::Button::Right),
             MouseButton::WheelUp => Some(mouse::Button::Four),
             MouseButton::WheelDown => Some(mouse::Button::Five),
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn cached_scrollback_overlap_keeps_repeated_blank_rows() {
-            let cached_lines = vec![String::new(); 12];
-            let surface_lines = cached_lines[8..].to_vec();
-            let input = TerminalInput {
-                pane_id: "pane-1",
-                cols: 80,
-                rows: 4,
-                surface: protocol::SurfaceKind::Main,
-                cursor: TerminalCursor {
-                    row: 0,
-                    col: 0,
-                    visible: true,
-                    shape: protocol::CursorShape::Block,
-                    blinking: false,
-                },
-                modes: TerminalModes::default(),
-                title: "",
-                working_directory: "",
-                colors: TerminalColors::default(),
-                styles: &[],
-                surface_lines: &surface_lines,
-                surface_row_runs: &[],
-                surface_semantic_prompts: &[],
-                surface_dirty_rows: &[],
-                surface_kitty_placeholders: &[],
-                scrollback_lines: &cached_lines,
-                scrollback_row_runs: &[],
-                scrollback_semantic_prompts: &[],
-                scrollback_dirty_rows: &[],
-                scrollback_kitty_placeholders: &[],
-            };
-            let surface_rows = ExtractedRows {
-                lines: vec![
-                    String::new(),
-                    String::new(),
-                    "ls".to_owned(),
-                    "alpha".to_owned(),
-                ],
-                row_runs: vec![
-                    Vec::new(),
-                    Vec::new(),
-                    vec![super::super::CellRun::plain("ls")],
-                    vec![super::super::CellRun::plain("alpha")],
-                ],
-                semantic_prompts: vec![protocol::RowSemanticPrompt::None; 4],
-                dirty_rows: vec![false; 4],
-                kitty_placeholders: vec![false; 4],
-            };
-
-            let merged = appended_cached_main_scrollback_rows(&input, &surface_rows)
-                .expect("cached scrollback overlap");
-
-            assert_eq!(
-                merged.lines,
-                cached_lines
-                    .into_iter()
-                    .chain(["ls".to_owned(), "alpha".to_owned()])
-                    .collect::<Vec<_>>(),
-                "ambiguous blank-row overlap should splice at the cached tail"
-            );
         }
     }
 }

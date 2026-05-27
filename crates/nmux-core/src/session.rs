@@ -4519,6 +4519,48 @@ mod tests {
         assert_eq!(chunk.rows().expect("rows").len(), 0);
     }
 
+    #[test]
+    fn scrollback_chunk_frame_preserves_repeated_blank_rows() {
+        let mut session = Session::initial();
+        let pane = session.pane_mut("pane-1").expect("pane");
+        pane.scrollback_lines = vec![
+            "before".to_owned(),
+            String::new(),
+            String::new(),
+            "after".to_owned(),
+        ];
+        pane.scrollback_row_runs = crate::terminal::plain_row_runs(&pane.scrollback_lines);
+        pane.scrollback_semantic_prompts =
+            vec![protocol::RowSemanticPrompt::None; pane.scrollback_lines.len()];
+        pane.scrollback_dirty_rows = vec![false; pane.scrollback_lines.len()];
+        pane.scrollback_kitty_placeholders = vec![false; pane.scrollback_lines.len()];
+
+        let frame = session
+            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 4)
+            .expect("scrollback chunk");
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+
+        assert_eq!(chunk.start_line(), 1);
+        assert_eq!(chunk.total_lines(), 4);
+        let rows = chunk.rows().expect("rows");
+        assert_eq!(rows.len(), 4);
+        let texts = (0..rows.len())
+            .map(|index| {
+                let row = rows.get(index);
+                assert_eq!(row.line(), index as u64 + 1);
+                row.runs()
+                    .map(|runs| {
+                        (0..runs.len())
+                            .filter_map(|run_index| runs.get(run_index).text_utf8())
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(texts, ["before", "", "", "after"]);
+    }
+
     #[cfg(feature = "libghostty-vt")]
     #[test]
     fn ghostty_vt_scrollback_chunk_uses_backend_history() {
@@ -4585,6 +4627,68 @@ mod tests {
             0,
             "styled Ghostty scrollback should reference a style table entry"
         );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn ghostty_vt_scrollback_chunk_preserves_repeated_empty_rows_after_later_output() {
+        let mut session = Session::initial();
+        if let Some(pane) = session.pane_mut("pane-1") {
+            pane.cols = 80;
+            pane.rows = 4;
+            pane.surface_lines.clear();
+            pane.surface_row_runs.clear();
+            pane.scrollback_lines.clear();
+            pane.scrollback_row_runs.clear();
+        }
+
+        let mut engines = crate::terminal::PaneTerminalEngines::new(
+            crate::terminal::TerminalEngineKind::LibghosttyVt,
+        );
+        assert!(session.apply_pane_output_with_engine("pane-1", b"", engines.engine_mut("pane-1")));
+        for _ in 0..20 {
+            assert!(session.apply_pane_output_with_engine(
+                "pane-1",
+                b"\r\n",
+                engines.engine_mut("pane-1")
+            ));
+        }
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            b"ls\r\nalpha\r\nbeta\r\n",
+            engines.engine_mut("pane-1")
+        ));
+
+        let frame = session
+            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 100)
+            .expect("scrollback chunk");
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+        let rows = chunk.rows().expect("scrollback rows");
+        assert_eq!(chunk.start_line(), 1);
+        assert_eq!(chunk.total_lines() as usize, rows.len());
+
+        let texts = (0..rows.len())
+            .map(|index| {
+                let row = rows.get(index);
+                assert_eq!(row.line(), index as u64 + 1);
+                let runs = row.runs().expect("runs");
+                (0..runs.len())
+                    .filter_map(|run_index| runs.get(run_index).text_utf8())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let blank_rows = texts.iter().filter(|line| line.is_empty()).count();
+        assert_eq!(
+            blank_rows, 21,
+            "daemon scrollback chunk collapsed repeated empty rows: {texts:?}"
+        );
+        for expected in ["ls", "alpha", "beta"] {
+            assert!(
+                texts.iter().any(|line| line == expected),
+                "daemon scrollback chunk missing {expected:?}: {texts:?}"
+            );
+        }
     }
 
     #[cfg(feature = "libghostty-vt")]
