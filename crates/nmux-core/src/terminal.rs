@@ -1143,26 +1143,18 @@ mod ghostty_vt {
                 if total_rows <= surface_rows.lines.len() {
                     surface_rows.truncated(total_rows)
                 } else if let Some(scrollback_rows) =
-                    cached_main_scrollback_rows(&input, total_rows, &surface_rows)
+                    proven_cached_main_scrollback_rows(&input, total_rows, &surface_rows)
                 {
                     let cached_span = tracing::trace_span!(
-                        "terminal.libghostty.cached_scrollback_rows",
+                        "terminal.libghostty.proven_cached_scrollback_rows",
                         total_rows,
                         surface_rows = surface_rows.lines.len(),
                         input_scrollback_rows = input.scrollback_lines.len()
                     );
                     cached_span.in_scope(|| scrollback_rows)
-                } else if input.scrollback_lines.is_empty() {
-                    let full_span = tracing::trace_span!(
-                        "terminal.libghostty.extract_full_scrollback_rows",
-                        total_rows,
-                        surface_rows = surface_rows.lines.len(),
-                        input_scrollback_rows = input.scrollback_lines.len()
-                    );
-                    full_span.in_scope(|| self.scrollback_rows(total_rows, &mut styles))?
                 } else {
                     let full_span = tracing::trace_span!(
-                        "terminal.libghostty.extract_full_scrollback_rows_after_short_cache",
+                        "terminal.libghostty.extract_full_scrollback_rows",
                         total_rows,
                         surface_rows = surface_rows.lines.len(),
                         input_scrollback_rows = input.scrollback_lines.len()
@@ -1338,13 +1330,24 @@ mod ghostty_vt {
         }
     }
 
-    fn cached_main_scrollback_rows(
+    fn proven_cached_main_scrollback_rows(
         input: &TerminalInput<'_>,
         total_rows: usize,
         surface_rows: &ExtractedRows,
     ) -> Option<ExtractedRows> {
         let history_len = total_rows.checked_sub(surface_rows.lines.len())?;
         if history_len > input.scrollback_lines.len() {
+            return None;
+        }
+
+        let old_total = input.scrollback_lines.len().min(total_rows);
+        let overlap_len = old_total.saturating_sub(history_len);
+        if overlap_len == 0 {
+            return None;
+        }
+        let cached_overlap = input.scrollback_lines.get(history_len..old_total)?;
+        let surface_overlap = surface_rows.lines.get(..overlap_len)?;
+        if cached_overlap != surface_overlap {
             return None;
         }
 
@@ -1945,6 +1948,81 @@ mod tests {
             scrollback_semantic_prompts: &update.scrollback_semantic_prompts,
             scrollback_dirty_rows: &update.scrollback_dirty_rows,
             scrollback_kitty_placeholders: &update.scrollback_kitty_placeholders,
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn numbered_output(start: usize, end_exclusive: usize) -> String {
+        (start..end_exclusive)
+            .map(|index| {
+                if index + 1 == end_exclusive {
+                    format!("line {index:04}")
+                } else {
+                    format!("line {index:04}\r\n")
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn numbered_rows(lines: &[String]) -> Vec<usize> {
+        lines
+            .iter()
+            .filter_map(|line| {
+                let start = line.find("line ")?;
+                line.get(start + "line ".len()..start + "line ".len() + 4)?
+                    .parse()
+                    .ok()
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn assert_numbered_rows_are_contiguous(lines: &[String], start: usize, end_inclusive: usize) {
+        let actual = numbered_rows(lines);
+        let expected = (start..=end_inclusive).collect::<Vec<_>>();
+        assert_eq!(
+            actual, expected,
+            "numbered transcript has gaps or duplicates; rows={lines:?}"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn assert_surface_is_transcript_tail(update: &super::TerminalUpdate) {
+        let transcript = numbered_rows(&update.scrollback_lines);
+        let surface = numbered_rows(&update.surface_lines);
+        assert!(
+            !surface.is_empty(),
+            "surface did not contain numbered output: {:?}",
+            update.surface_lines
+        );
+        assert!(
+            surface.len() <= transcript.len(),
+            "surface numbered rows exceeded transcript rows"
+        );
+        let expected_tail = &transcript[transcript.len() - surface.len()..];
+        assert_eq!(
+            surface, expected_tail,
+            "visible main surface must be the tail of canonical scrollback"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn assert_run_style_ids_are_valid(update: &super::TerminalUpdate) {
+        let style_count = update.styles.len().max(1);
+        for (row_index, row) in update
+            .scrollback_row_runs
+            .iter()
+            .chain(update.surface_row_runs.iter())
+            .enumerate()
+        {
+            for run in row {
+                assert!(
+                    (run.style_id as usize) < style_count,
+                    "row {row_index} references unknown style {} of {style_count}",
+                    run.style_id
+                );
+            }
         }
     }
 
@@ -4912,6 +4990,119 @@ mod tests {
                 update.scrollback_lines
             );
         }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_main_transcript_is_contiguous_for_large_output() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let output = numbered_output(0, 1000);
+
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &empty, &empty),
+                output.as_bytes(),
+            )
+            .expect("terminal update");
+
+        assert_eq!(update.surface, protocol::SurfaceKind::Main);
+        assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 999);
+        assert_surface_is_transcript_tail(&update);
+        assert_run_style_ids_are_valid(&update);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_main_transcript_is_contiguous_across_small_chunks_and_resize() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let mut update = engine
+            .apply_output(
+                terminal_input_with_size(80, 12, &empty, &empty),
+                numbered_output(0, 1).as_bytes(),
+            )
+            .expect("initial terminal update");
+
+        for index in 1..250 {
+            let input = terminal_input_from_update_with_size(80, 12, &update);
+            update = engine
+                .apply_output(input, format!("\r\nline {index:04}").as_bytes())
+                .expect("chunked terminal update");
+        }
+
+        update = engine
+            .resize(
+                terminal_input_from_update_with_size(80, 12, &update),
+                100,
+                30,
+            )
+            .expect("resize update");
+
+        for index in 250..500 {
+            let input = terminal_input_from_update_with_size(100, 30, &update);
+            update = engine
+                .apply_output(input, format!("\r\nline {index:04}").as_bytes())
+                .expect("post-resize terminal update");
+        }
+
+        assert_eq!(update.surface, protocol::SurfaceKind::Main);
+        assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 499);
+        assert_surface_is_transcript_tail(&update);
+        assert_run_style_ids_are_valid(&update);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_main_transcript_survives_palette_change_and_alternate_screen() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let mut update = engine
+            .apply_output(
+                terminal_input_with_size(80, 10, &empty, &empty),
+                numbered_output(0, 80).as_bytes(),
+            )
+            .expect("initial main update");
+        update = engine
+            .apply_output(
+                terminal_input_from_update_with_size(80, 10, &update),
+                b"\x1b]4;1;rgb:00/ff/00\x07\x1b[31m\r\nline 0080\x1b[0m",
+            )
+            .expect("palette update");
+        let before_alternate = update.scrollback_lines.clone();
+
+        let alternate = engine
+            .apply_output(
+                terminal_input_from_update_with_size(80, 10, &update),
+                b"\x1b[?1049halt-0\r\nalt-1\r\nalt-2",
+            )
+            .expect("alternate update");
+        assert_eq!(alternate.surface, protocol::SurfaceKind::Alternate);
+        assert_eq!(
+            alternate.scrollback_lines, before_alternate,
+            "alternate output must not mutate main transcript"
+        );
+        assert!(
+            alternate
+                .scrollback_lines
+                .iter()
+                .all(|line| !line.contains("alt-")),
+            "alternate-screen output leaked into main transcript: {:?}",
+            alternate.scrollback_lines
+        );
+
+        update = engine
+            .apply_output(
+                terminal_input_from_update_with_size(80, 10, &alternate),
+                b"\x1b[?1049l\r\nline 0081",
+            )
+            .expect("restored main update");
+
+        assert_eq!(update.surface, protocol::SurfaceKind::Main);
+        assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 81);
+        assert_surface_is_transcript_tail(&update);
+        assert_run_style_ids_are_valid(&update);
     }
 
     #[cfg(feature = "libghostty-vt")]

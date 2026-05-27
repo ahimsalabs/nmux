@@ -1622,10 +1622,37 @@ impl Session {
             .lines
             .get(start..end)
             .map_or(&[][..], |rows| rows);
+        let first_returned_line = selected.first().map(|_| start_line);
+        let last_returned_line = selected
+            .last()
+            .map(|_| start_line + selected.len().saturating_sub(1) as u64);
+        tracing::debug!(
+            pane_id,
+            scrollback_version = scrollback.version,
+            total_lines = scrollback.lines.len(),
+            surface_rows = self
+                .pane(pane_id)
+                .map(|pane| pane.surface_lines.len())
+                .unwrap_or_default(),
+            requested_start_line = start_line,
+            requested_line_count = line_count,
+            first_returned_line,
+            last_returned_line,
+            "pane scrollback fetch"
+        );
+        debug_assert!(
+            selected.is_empty() || start < scrollback.lines.len(),
+            "scrollback fetch selected rows from an out-of-range start"
+        );
 
         let mut row_offsets = Vec::with_capacity(selected.len());
         for (offset, line) in selected.iter().enumerate() {
             let row_index = start.saturating_add(offset);
+            debug_assert_eq!(
+                start_line + offset as u64,
+                row_index as u64 + 1,
+                "scrollback public line numbers must remain contiguous"
+            );
             let runs = build_cell_runs(&mut builder, &scrollback.row_runs[row_index]);
             let row_metadata = RowStateMetadata {
                 semantic_prompt: scrollback
@@ -3475,6 +3502,58 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn replayed_trace_preserves_libghostty_scrollback_continuity() {
+        let mut initial = Session::initial();
+        if let Some(pane) = initial.pane_mut("pane-1") {
+            pane.cols = 80;
+            pane.rows = 24;
+            pane.surface_lines.clear();
+            pane.surface_row_runs.clear();
+            pane.scrollback_lines.clear();
+            pane.scrollback_row_runs.clear();
+        }
+        let mut core = SessionCore::with_terminal_engine_kind(
+            initial.clone(),
+            TerminalEngineKind::LibghosttyVt,
+        );
+        let output = (0..300)
+            .map(|index| {
+                if index == 299 {
+                    format!("line {index:04}")
+                } else {
+                    format!("line {index:04}\r\n")
+                }
+            })
+            .collect::<String>();
+        let record = SessionTraceRecord::from_transition(core.accept(
+            "pane-1",
+            SessionEventLane::Pane,
+            1,
+            SessionEvent::PaneOutput {
+                pane_id: "pane-1".to_owned(),
+                bytes: output.into_bytes(),
+            },
+        ));
+
+        let (replayed, replay_records) = SessionCore::replay_accepted_events(
+            initial,
+            TerminalEngineKind::LibghosttyVt,
+            [record.accepted.clone()],
+        );
+
+        assert_eq!(replay_records.len(), 1);
+        let scrollback = replayed
+            .session()
+            .pane_scrollback("pane-1")
+            .expect("pane scrollback");
+        assert_eq!(scrollback.lines.len(), 300);
+        for (index, line) in scrollback.lines.iter().enumerate() {
+            assert_eq!(line, &format!("line {index:04}"));
+        }
+    }
+
     #[test]
     fn session_actor_drains_scheduler_into_trace_records() {
         let mut actor = SessionActor::initial(8);
@@ -4488,6 +4567,57 @@ mod tests {
             0,
             "styled Ghostty scrollback should reference a style table entry"
         );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn ghostty_vt_scrollback_chunk_serves_contiguous_daemon_transcript() {
+        let mut session = Session::initial();
+        if let Some(pane) = session.pane_mut("pane-1") {
+            pane.cols = 80;
+            pane.rows = 24;
+            pane.surface_lines.clear();
+            pane.surface_row_runs.clear();
+            pane.scrollback_lines.clear();
+            pane.scrollback_row_runs.clear();
+        }
+
+        let output = (0..1000)
+            .map(|index| {
+                if index == 999 {
+                    format!("line {index:04}")
+                } else {
+                    format!("line {index:04}\r\n")
+                }
+            })
+            .collect::<String>();
+        let mut engines = crate::terminal::PaneTerminalEngines::new(
+            crate::terminal::TerminalEngineKind::LibghosttyVt,
+        );
+        assert!(session.apply_pane_output_with_engine(
+            "pane-1",
+            output.as_bytes(),
+            engines.engine_mut("pane-1")
+        ));
+
+        let frame = session
+            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 1000)
+            .expect("scrollback chunk");
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+        assert_eq!(chunk.start_line(), 1);
+        assert_eq!(chunk.total_lines(), 1000);
+        let rows = chunk.rows().expect("scrollback rows");
+        assert_eq!(rows.len(), 1000);
+        for index in 0..rows.len() {
+            let row = rows.get(index);
+            assert_eq!(row.line(), index as u64 + 1);
+            let runs = row.runs().expect("runs");
+            let text = (0..runs.len())
+                .filter_map(|run_index| runs.get(run_index).text_utf8())
+                .collect::<String>();
+            assert_eq!(text, format!("line {index:04}"));
+        }
     }
 
     #[cfg(feature = "libghostty-vt")]
