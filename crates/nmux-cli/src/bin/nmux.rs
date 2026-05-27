@@ -4030,6 +4030,7 @@ fn scroll_live_pane_view(
                 LiveScrollDirection::Up,
                 LIVE_SCROLL_WHEEL_ROWS,
                 probe.total_lines,
+                viewport_rows,
             );
             if offset == 0 {
                 return Ok(false);
@@ -4042,6 +4043,7 @@ fn scroll_live_pane_view(
                 LiveScrollDirection::Up,
                 LIVE_SCROLL_WHEEL_ROWS,
                 view.total_history_lines,
+                view.viewport_rows,
             );
             if offset == view.offset_from_bottom {
                 return Ok(false);
@@ -4055,6 +4057,7 @@ fn scroll_live_pane_view(
                 LiveScrollDirection::Down,
                 LIVE_SCROLL_WHEEL_ROWS,
                 view.total_history_lines,
+                view.viewport_rows,
             );
             if offset == 0 {
                 restore_live_pane_surface(
@@ -4215,12 +4218,18 @@ fn next_scroll_offset(
     current: u64,
     direction: LiveScrollDirection,
     wheel_rows: u64,
-    total_history_lines: u64,
+    total_lines: u64,
+    viewport_rows: u16,
 ) -> u64 {
+    let max_offset = max_scroll_offset(total_lines, viewport_rows);
     match direction {
-        LiveScrollDirection::Up => current.saturating_add(wheel_rows).min(total_history_lines),
+        LiveScrollDirection::Up => current.saturating_add(wheel_rows).min(max_offset),
         LiveScrollDirection::Down => current.saturating_sub(wheel_rows),
     }
+}
+
+fn max_scroll_offset(total_lines: u64, viewport_rows: u16) -> u64 {
+    total_lines.saturating_sub(u64::from(viewport_rows.max(1)))
 }
 
 fn scrollback_viewport_range(
@@ -4235,7 +4244,7 @@ fn scrollback_viewport_range(
             history_line_count: 0,
         };
     }
-    let offset = offset_from_bottom.min(total_lines);
+    let offset = offset_from_bottom.min(max_scroll_offset(total_lines, viewport_rows));
     let end = total_lines.saturating_sub(offset).max(1);
     let start = end
         .saturating_sub(viewport_rows_u64.saturating_sub(1))
@@ -11079,12 +11088,18 @@ mod tests {
     #[test]
     fn scrollback_viewport_math_uses_bottom_offset() {
         assert_eq!(
-            next_scroll_offset(0, LiveScrollDirection::Up, 3, 2),
-            2,
-            "short history still enters scrollback"
+            next_scroll_offset(0, LiveScrollDirection::Up, 3, 2, 20),
+            0,
+            "short transcript cannot scroll beyond the viewport"
         );
-        assert_eq!(next_scroll_offset(2, LiveScrollDirection::Down, 3, 80), 0);
-        assert_eq!(next_scroll_offset(78, LiveScrollDirection::Up, 3, 80), 80);
+        assert_eq!(
+            next_scroll_offset(2, LiveScrollDirection::Down, 3, 80, 20),
+            0
+        );
+        assert_eq!(
+            next_scroll_offset(58, LiveScrollDirection::Up, 3, 80, 20),
+            60
+        );
 
         assert_eq!(
             scrollback_viewport_range(80, 20, 3),
@@ -11097,7 +11112,7 @@ mod tests {
             scrollback_viewport_range(2, 20, 2),
             super::ScrollbackViewportRange {
                 history_start_line: 1,
-                history_line_count: 1,
+                history_line_count: 2,
             }
         );
         assert_eq!(

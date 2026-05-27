@@ -851,9 +851,6 @@ fn draw_box(
         if active {
             badges.push("active");
         }
-        if chrome_state.scrollback.is_some() {
-            badges.push("scroll");
-        }
         if chrome_state.read_only {
             badges.push("ro");
         }
@@ -915,9 +912,7 @@ fn draw_right_scrollbar(buffer: &mut Buffer, area: Rect, scroll: PaneScrollChrom
     for offset in 0..track_height {
         set_cell(buffer, x, track_y + offset, "│", track_style);
     }
-    let total_content_rows = scroll
-        .total_history_lines
-        .saturating_add(u64::from(scroll.viewport_rows.max(1)));
+    let total_content_rows = scroll.total_history_lines;
     let viewport_rows = u64::from(scroll.viewport_rows.max(1)).min(total_content_rows);
     let thumb_height = if total_content_rows == 0 {
         1
@@ -926,7 +921,9 @@ fn draw_right_scrollbar(buffer: &mut Buffer, area: Rect, scroll: PaneScrollChrom
             .max(1)
             .min(u64::from(track_height)) as u16
     };
-    let range = scroll.total_history_lines;
+    let range = scroll
+        .total_history_lines
+        .saturating_sub(u64::from(scroll.viewport_rows.max(1)));
     let progress_from_top = range.saturating_sub(scroll.offset_from_bottom.min(range));
     let available = track_height.saturating_sub(thumb_height);
     let thumb_offset = if range == 0 || available == 0 {
@@ -1397,7 +1394,11 @@ mod tests {
             12,
         );
 
-        assert!(frame.text.contains("scroll"), "{:?}", frame.text);
+        assert!(
+            !frame.text.contains("scroll"),
+            "scroll mode should not change the pane title: {:?}",
+            frame.text
+        );
         assert!(frame.text.contains("ro"), "{:?}", frame.text);
         assert!(
             frame
