@@ -819,6 +819,8 @@ mod ghostty_vt {
         TerminalUpdate,
     };
 
+    const DEFAULT_MAX_SCROLLBACK_LINES: usize = 1_000_000;
+    const VT_WRITE_CHUNK_BYTES: usize = 4096;
     pub struct LibghosttyVtTerminalEngine {
         state: Option<GhosttyVtState>,
     }
@@ -982,20 +984,25 @@ mod ghostty_vt {
             input: TerminalInput<'_>,
             output: &[u8],
         ) -> Option<TerminalUpdate> {
-            let state = self.state_mut(&input)?;
-            state.osc7.ingest(output);
-            let pty_write_count = state.pty_writes.borrow().len();
-            let saw_wraparound_query = state.ingest_decrqm_query(output);
-            let vt_write_span = tracing::trace_span!("terminal.libghostty.vt_write");
-            vt_write_span.in_scope(|| state.terminal.vt_write(output));
-            if saw_wraparound_query && state.pty_writes.borrow().len() == pty_write_count {
-                state.pty_writes.borrow_mut().push(b"\x1b[?7;1$y".to_vec());
+            let chunks = vt_write_chunks(output, input.cols, input.rows);
+            if chunks.len() > 1 {
+                let mut update = None;
+                for chunk in chunks {
+                    let chunk_input = update.as_ref().map_or_else(
+                        || input.clone(),
+                        |update| terminal_input_from_update(input.cols, input.rows, update),
+                    );
+                    let chunk_update = self.apply_output_chunk(chunk_input, chunk)?;
+                    update = Some(match update.as_ref() {
+                        Some(previous) => {
+                            merge_chunked_update(input.cols, input.rows, previous, chunk_update)
+                        }
+                        None => chunk_update,
+                    });
+                }
+                return update;
             }
-            state.extract_update(
-                input,
-                false,
-                !vt_output_may_change_rows(output) && !vt_output_may_change_style_colors(output),
-            )
+            self.apply_output_chunk(input, output)
         }
 
         fn resize(
@@ -1029,6 +1036,145 @@ mod ghostty_vt {
         }
     }
 
+    impl LibghosttyVtTerminalEngine {
+        fn apply_output_chunk(
+            &mut self,
+            input: TerminalInput<'_>,
+            output: &[u8],
+        ) -> Option<TerminalUpdate> {
+            let state = self.state_mut(&input)?;
+            state.osc7.ingest(output);
+            let pty_write_count = state.pty_writes.borrow().len();
+            let saw_wraparound_query = state.ingest_decrqm_query(output);
+            let vt_write_span = tracing::trace_span!("terminal.libghostty.vt_write");
+            vt_write_span.in_scope(|| {
+                state.terminal.vt_write(output);
+            });
+            if saw_wraparound_query && state.pty_writes.borrow().len() == pty_write_count {
+                state.pty_writes.borrow_mut().push(b"\x1b[?7;1$y".to_vec());
+            }
+            state.extract_update(
+                input,
+                false,
+                !vt_output_may_change_rows(output) && !vt_output_may_change_style_colors(output),
+            )
+        }
+    }
+
+    fn terminal_input_from_update<'a>(
+        cols: u32,
+        rows: u32,
+        update: &'a TerminalUpdate,
+    ) -> TerminalInput<'a> {
+        TerminalInput {
+            pane_id: "",
+            cols,
+            rows,
+            surface: update.surface,
+            cursor: update.cursor,
+            modes: update.modes,
+            title: &update.title,
+            working_directory: &update.working_directory,
+            colors: update.colors.clone(),
+            styles: &update.styles,
+            surface_lines: &update.surface_lines,
+            surface_row_runs: &update.surface_row_runs,
+            surface_semantic_prompts: &update.surface_semantic_prompts,
+            surface_dirty_rows: &update.surface_dirty_rows,
+            surface_kitty_placeholders: &update.surface_kitty_placeholders,
+            scrollback_lines: &update.scrollback_lines,
+            scrollback_row_runs: &update.scrollback_row_runs,
+            scrollback_semantic_prompts: &update.scrollback_semantic_prompts,
+            scrollback_dirty_rows: &update.scrollback_dirty_rows,
+            scrollback_kitty_placeholders: &update.scrollback_kitty_placeholders,
+        }
+    }
+
+    fn merge_chunked_update(
+        cols: u32,
+        rows: u32,
+        previous: &TerminalUpdate,
+        mut update: TerminalUpdate,
+    ) -> TerminalUpdate {
+        if update.surface != protocol::SurfaceKind::Main {
+            return update;
+        }
+
+        let input = terminal_input_from_update(cols, rows, previous);
+        let surface_rows = ExtractedRows {
+            lines: update.surface_lines.clone(),
+            row_runs: update.surface_row_runs.clone(),
+            semantic_prompts: update.surface_semantic_prompts.clone(),
+            dirty_rows: update.surface_dirty_rows.clone(),
+            kitty_placeholders: update.surface_kitty_placeholders.clone(),
+        };
+        if let Some(scrollback_rows) = appended_cached_main_scrollback_rows(&input, &surface_rows) {
+            update.scrollback_lines = scrollback_rows.lines;
+            update.scrollback_row_runs = scrollback_rows.row_runs;
+            update.scrollback_semantic_prompts = scrollback_rows.semantic_prompts;
+            update.scrollback_dirty_rows = scrollback_rows.dirty_rows;
+            update.scrollback_kitty_placeholders = scrollback_rows.kitty_placeholders;
+        }
+        update
+    }
+
+    fn vt_write_chunks(output: &[u8], cols: u32, rows: u32) -> Vec<&[u8]> {
+        if output.len() <= VT_WRITE_CHUNK_BYTES {
+            return vec![output];
+        }
+
+        // Large PTY reads can outrun the backend's extractable viewport/history
+        // window. Feed them in screen-sized slices so each intermediate tail can
+        // be merged into nmux's pane transcript before the backend advances.
+        let row_budget = (rows / 2).clamp(1, 12) as usize;
+        let col_budget = cols.max(1) as usize;
+        let mut chunks = Vec::new();
+        let mut start = 0;
+        let mut estimated_rows = 0;
+        let mut estimated_cols = 0;
+        let mut escape = false;
+
+        for (index, byte) in output.iter().copied().enumerate() {
+            if escape {
+                escape = false;
+            } else {
+                match byte {
+                    0x1b => escape = true,
+                    b'\n' => {
+                        estimated_rows += 1;
+                        estimated_cols = 0;
+                    }
+                    b'\r' => estimated_cols = 0,
+                    b'\t' => {
+                        estimated_cols += 8 - (estimated_cols % 8);
+                    }
+                    0x20..=0x7e | 0x80..=0xff => {
+                        estimated_cols += 1;
+                    }
+                    _ => {}
+                }
+                if estimated_cols >= col_budget {
+                    estimated_rows += estimated_cols / col_budget;
+                    estimated_cols %= col_budget;
+                }
+            }
+
+            let chunk_len = index + 1 - start;
+            if estimated_rows >= row_budget || chunk_len >= VT_WRITE_CHUNK_BYTES {
+                chunks.push(&output[start..=index]);
+                start = index + 1;
+                estimated_rows = 0;
+                estimated_cols = 0;
+                escape = false;
+            }
+        }
+
+        if start < output.len() {
+            chunks.push(&output[start..]);
+        }
+        chunks
+    }
+
     impl GhosttyVtState {
         fn new(cols: u32, rows: u32) -> Option<Self> {
             let pty_writes = Rc::new(RefCell::new(Vec::new()));
@@ -1036,7 +1182,7 @@ mod ghostty_vt {
                 Terminal::new(TerminalOptions {
                     cols: u16::try_from(cols).ok()?,
                     rows: u16::try_from(rows).ok()?,
-                    max_scrollback: 10000,
+                    max_scrollback: DEFAULT_MAX_SCROLLBACK_LINES,
                 })
                 .ok()?,
             );
@@ -1140,7 +1286,17 @@ mod ghostty_vt {
                     kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
                 }
             } else if let Some(total_rows) = total_main_rows {
-                if total_rows <= surface_rows.lines.len() {
+                if let Some(scrollback_rows) =
+                    appended_cached_main_scrollback_rows(&input, &surface_rows)
+                {
+                    let cached_span = tracing::trace_span!(
+                        "terminal.libghostty.appended_cached_scrollback_rows",
+                        total_rows,
+                        surface_rows = surface_rows.lines.len(),
+                        input_scrollback_rows = input.scrollback_lines.len()
+                    );
+                    cached_span.in_scope(|| scrollback_rows)
+                } else if total_rows <= surface_rows.lines.len() {
                     surface_rows.truncated(total_rows)
                 } else if let Some(scrollback_rows) =
                     proven_cached_main_scrollback_rows(&input, total_rows, &surface_rows)
@@ -1383,6 +1539,92 @@ mod ghostty_vt {
             .extend(surface_rows.dirty_rows.iter().copied());
         rows.kitty_placeholders
             .extend(surface_rows.kitty_placeholders.iter().copied());
+        Some(rows)
+    }
+
+    fn appended_cached_main_scrollback_rows(
+        input: &TerminalInput<'_>,
+        surface_rows: &ExtractedRows,
+    ) -> Option<ExtractedRows> {
+        if input.scrollback_lines.is_empty() || surface_rows.lines.is_empty() {
+            return None;
+        }
+
+        // The fresh viewport may overlap the cached transcript before its
+        // final row, because the previous final blank row can be filled by
+        // later output. Search near the tail and splice after the proven match.
+        let search_window = surface_rows.lines.len().saturating_mul(2).saturating_add(1);
+        let first_candidate = input.scrollback_lines.len().saturating_sub(search_window);
+        let mut best_overlap = None;
+        for input_start in first_candidate..input.scrollback_lines.len() {
+            let max_overlap = input.scrollback_lines.len() - input_start;
+            let max_overlap = max_overlap.min(surface_rows.lines.len());
+            for overlap_len in (1..=max_overlap).rev() {
+                if input.scrollback_lines[input_start..input_start + overlap_len]
+                    == surface_rows.lines[..overlap_len]
+                {
+                    best_overlap = Some((input_start, overlap_len));
+                    break;
+                }
+            }
+            if best_overlap.is_some() {
+                break;
+            }
+        }
+        let (input_start, overlap_len) = best_overlap?;
+
+        let mut rows = ExtractedRows {
+            lines: input.scrollback_lines.to_vec(),
+            row_runs: row_runs_prefix_or_plain(
+                input.scrollback_lines,
+                input.scrollback_row_runs,
+                input.scrollback_lines.len(),
+            ),
+            semantic_prompts: row_values_prefix_or_default(
+                input.scrollback_semantic_prompts,
+                input.scrollback_lines.len(),
+                protocol::RowSemanticPrompt::None,
+            ),
+            dirty_rows: row_values_prefix_or_default(
+                input.scrollback_dirty_rows,
+                input.scrollback_lines.len(),
+                false,
+            ),
+            kitty_placeholders: row_values_prefix_or_default(
+                input.scrollback_kitty_placeholders,
+                input.scrollback_lines.len(),
+                false,
+            ),
+        };
+        rows.lines.truncate(input_start + overlap_len);
+        rows.row_runs.truncate(input_start + overlap_len);
+        rows.semantic_prompts.truncate(input_start + overlap_len);
+        rows.dirty_rows.truncate(input_start + overlap_len);
+        rows.kitty_placeholders.truncate(input_start + overlap_len);
+        if overlap_len == surface_rows.lines.len() {
+            return Some(rows);
+        }
+        rows.lines
+            .extend(surface_rows.lines[overlap_len..].iter().cloned());
+        rows.row_runs
+            .extend(surface_rows.row_runs[overlap_len..].iter().cloned());
+        rows.semantic_prompts
+            .extend(surface_rows.semantic_prompts[overlap_len..].iter().copied());
+        rows.dirty_rows
+            .extend(surface_rows.dirty_rows[overlap_len..].iter().copied());
+        rows.kitty_placeholders.extend(
+            surface_rows.kitty_placeholders[overlap_len..]
+                .iter()
+                .copied(),
+        );
+        if rows.lines.len() > DEFAULT_MAX_SCROLLBACK_LINES {
+            let drop_count = rows.lines.len() - DEFAULT_MAX_SCROLLBACK_LINES;
+            rows.lines.drain(..drop_count);
+            rows.row_runs.drain(..drop_count);
+            rows.semantic_prompts.drain(..drop_count);
+            rows.dirty_rows.drain(..drop_count);
+            rows.kitty_placeholders.drain(..drop_count);
+        }
         Some(rows)
     }
 
@@ -5008,6 +5250,26 @@ mod tests {
 
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
         assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 999);
+        assert_surface_is_transcript_tail(&update);
+        assert_run_style_ids_are_valid(&update);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_main_transcript_retains_deep_ls_sized_output() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let output = numbered_output(0, 2_000);
+
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &empty, &empty),
+                output.as_bytes(),
+            )
+            .expect("terminal update");
+
+        assert_eq!(update.surface, protocol::SurfaceKind::Main);
+        assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 1_999);
         assert_surface_is_transcript_tail(&update);
         assert_run_style_ids_are_valid(&update);
     }
