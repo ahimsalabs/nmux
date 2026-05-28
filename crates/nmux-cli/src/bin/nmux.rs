@@ -2122,6 +2122,20 @@ fn record_live_update_scrollback_total(
     if update.scrollback_total_lines == 0 {
         return;
     }
+    if let Some(view) = surface_state.scrollback_views.get_mut(&update.pane_id) {
+        if update.scrollback_total_lines > view.total_history_lines {
+            let added = update
+                .scrollback_total_lines
+                .saturating_sub(view.total_history_lines);
+            view.offset_from_bottom = view.offset_from_bottom.saturating_add(added);
+        } else {
+            view.offset_from_bottom = view.offset_from_bottom.min(max_scroll_offset(
+                update.scrollback_total_lines,
+                view.viewport_rows,
+            ));
+        }
+        view.total_history_lines = update.scrollback_total_lines;
+    }
     surface_state
         .current_pane_scrollback_totals
         .insert(update.pane_id.clone(), update.scrollback_total_lines);
@@ -11904,6 +11918,64 @@ mod tests {
                 .and_then(|chrome| chrome.scrollback)
                 .map(|scroll| scroll.total_history_lines),
             Some(1200)
+        );
+    }
+
+    #[test]
+    fn active_scrollback_view_tracks_total_growth_without_jumping() {
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: String::new(),
+            current_pane_surfaces: BTreeMap::new(),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
+            scrollback_views: BTreeMap::new(),
+        };
+        surface_state.scrollback_views.insert(
+            "pane-1".to_owned(),
+            LiveScrollbackView {
+                offset_from_bottom: 3,
+                viewport_rows: 20,
+                total_history_lines: 80,
+            },
+        );
+
+        let mut update = test_surface_update(
+            local::SurfaceUpdateKind::Patch,
+            Some(protocol::PatchKind::ReplaceRows),
+        );
+        update.scrollback_total_lines = 86;
+        record_live_update_scrollback_total(&mut surface_state, &update);
+
+        assert_eq!(
+            surface_state.scrollback_views.get("pane-1"),
+            Some(&LiveScrollbackView {
+                offset_from_bottom: 9,
+                viewport_rows: 20,
+                total_history_lines: 86,
+            }),
+            "new output below a scrolled viewport should preserve the same historical rows"
+        );
+        assert_eq!(
+            surface_state.current_pane_scrollback_totals.get("pane-1"),
+            Some(&86)
+        );
+
+        update.scrollback_total_lines = 12;
+        record_live_update_scrollback_total(&mut surface_state, &update);
+
+        assert_eq!(
+            surface_state.scrollback_views.get("pane-1"),
+            Some(&LiveScrollbackView {
+                offset_from_bottom: 0,
+                viewport_rows: 20,
+                total_history_lines: 12,
+            }),
+            "shrinking history should clamp the viewport back to a valid offset"
         );
     }
 
