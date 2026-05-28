@@ -1317,6 +1317,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             ) {
                                 match forward {
                                     StdinByteForward::Raw(input) => {
+                                        if restore_live_pane_surface_before_input(
+                                            &attached_pane_id,
+                                            &mut surface_state,
+                                            &client_state,
+                                            &current_workspace,
+                                            args,
+                                            &mut redraw_state,
+                                            use_styled,
+                                        ) {
+                                            flush_stdout()?;
+                                        }
                                         let input_span = tracing::trace_span!(
                                             "live.stdin_bytes.forward_input",
                                             bytes = input.len(),
@@ -1347,6 +1358,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                         }
                                     }
                                     StdinByteForward::Paste(text) => {
+                                        if restore_live_pane_surface_before_input(
+                                            &attached_pane_id,
+                                            &mut surface_state,
+                                            &client_state,
+                                            &current_workspace,
+                                            args,
+                                            &mut redraw_state,
+                                            use_styled,
+                                        ) {
+                                            flush_stdout()?;
+                                        }
                                         let input_span = tracing::trace_span!(
                                             "live.stdin_bytes.forward_paste",
                                             bytes = text.len(),
@@ -1388,6 +1410,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 flush_stdout()?;
                                             }
                                             LiveKeyHandling::Forward(bytes) => {
+                                                if restore_live_pane_surface_before_input(
+                                                    &attached_pane_id,
+                                                    &mut surface_state,
+                                                    &client_state,
+                                                    &current_workspace,
+                                                    args,
+                                                    &mut redraw_state,
+                                                    use_styled,
+                                                ) {
+                                                    flush_stdout()?;
+                                                }
                                                 let input_span = tracing::trace_span!(
                                                     "live.stdin_bytes.forward_input",
                                                     bytes = bytes.len(),
@@ -4836,6 +4869,33 @@ fn restore_live_pane_surface(
     if pane_id == workspace.pane_id {
         surface_state.current_surface_text = surface_text;
     }
+}
+
+fn restore_live_pane_surface_before_input(
+    pane_id: &str,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &local::ClientAttachState,
+    workspace: &local::WorkspaceSummary,
+    args: &Args,
+    redraw_state: &mut Option<RedrawState>,
+    use_styled: bool,
+) -> bool {
+    if !args.redraw || !surface_state.scrollback_views.contains_key(pane_id) {
+        return false;
+    }
+
+    restore_live_pane_surface(pane_id, surface_state, client_state, workspace, use_styled);
+    print_live_surface(
+        workspace,
+        &surface_state.current_surface_metadata,
+        &surface_state.current_surface_text,
+        args.redraw,
+        redraw_state.as_mut(),
+        Some(&surface_state.current_pane_surfaces),
+        Some(&surface_state.current_pane_surface_summaries),
+        Some(&live_pane_chrome_state(surface_state, workspace)),
+    );
+    true
 }
 
 fn render_scrollback_view_text(scrollback: Option<&local::ScrollbackChunkSummary>) -> String {
@@ -9316,7 +9376,8 @@ mod tests {
         preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
         record_live_surface_scrollback_total, record_live_update_scrollback_total,
         redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        render_scrollback_view_summary, render_scrollback_view_text, scrollback_viewport_range,
+        render_scrollback_view_summary, render_scrollback_view_text,
+        restore_live_pane_surface_before_input, scrollback_viewport_range,
         scrollbar_offset_from_track, sigwinch_resize_needed, split_stdin_bytes_for_detach,
         stdin_byte_forwards, stdin_byte_forwards_with_options, terminal_size_from_fds,
         terminal_size_unavailable, tui, usage,
@@ -12050,6 +12111,79 @@ mod tests {
                 total_history_lines: 12,
             }),
             "shrinking history should clamp the viewport back to a valid offset"
+        );
+    }
+
+    #[test]
+    fn input_into_scrolled_pane_restores_live_surface_before_forwarding() {
+        let current_workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: "pinned-history".to_owned(),
+            current_pane_surfaces: BTreeMap::from([(
+                "pane-1".to_owned(),
+                "pinned-history".to_owned(),
+            )]),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
+            scrollback_views: BTreeMap::from([(
+                "pane-1".to_owned(),
+                LiveScrollbackView {
+                    offset_from_bottom: 12,
+                    viewport_rows: 20,
+                    total_history_lines: 80,
+                },
+            )]),
+        };
+        let mut client_state = local::ClientAttachState::default();
+        let mut snapshot = test_surface_update(local::SurfaceUpdateKind::Snapshot, None);
+        snapshot.row_updates.push(local::SurfaceRowUpdate {
+            row: 0,
+            text: "live-surface".to_owned(),
+            runs: Vec::new(),
+            dirty_hash: 0,
+            row_state_hash: 0,
+            semantic_prompt: protocol::RowSemanticPrompt::None,
+            dirty: true,
+            kitty_virtual_placeholder: false,
+        });
+        client_state
+            .render_surface_update_styled(&snapshot, false)
+            .expect("cache live surface");
+        let args = args_from_iter(["--live", "--redraw"]).expect("redraw args");
+        let mut redraw_state = None;
+
+        assert!(restore_live_pane_surface_before_input(
+            "pane-1",
+            &mut surface_state,
+            &client_state,
+            &current_workspace,
+            &args,
+            &mut redraw_state,
+            false,
+        ));
+
+        assert!(
+            !surface_state.scrollback_views.contains_key("pane-1"),
+            "typing into a scrolled pane should return it to the live surface"
+        );
+        assert_eq!(surface_state.current_surface_text, "live-surface");
+        assert_eq!(
+            surface_state.current_pane_surfaces.get("pane-1"),
+            Some(&"live-surface".to_owned())
         );
     }
 

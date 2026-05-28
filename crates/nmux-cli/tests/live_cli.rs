@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -25,6 +25,7 @@ struct PtyCommand {
     master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     output_rx: mpsc::Receiver<Vec<u8>>,
+    output: Arc<Mutex<Vec<u8>>>,
     reader_thread: thread::JoinHandle<()>,
 }
 
@@ -80,9 +81,25 @@ fn spawn_nmux_client_in_pty_with_env(args: &[&str], env: &[(&str, &str)]) -> Pty
     let mut reader = pair.master.try_clone_reader().expect("clone pty reader");
     let writer = pair.master.take_writer().expect("take pty writer");
     let (output_tx, output_rx) = mpsc::channel();
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let reader_output = Arc::clone(&output);
     let reader_thread = thread::spawn(move || {
         let mut output = Vec::new();
-        reader.read_to_end(&mut output).expect("read pty output");
+        let mut buf = [0_u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    output.extend_from_slice(&buf[..n]);
+                    reader_output
+                        .lock()
+                        .expect("lock pty output")
+                        .extend_from_slice(&buf[..n]);
+                }
+                Err(err) if err.raw_os_error() == Some(libc::EIO) => break,
+                Err(err) => panic!("read pty output: {err}"),
+            }
+        }
         output_tx.send(output).ok();
     });
 
@@ -91,6 +108,7 @@ fn spawn_nmux_client_in_pty_with_env(args: &[&str], env: &[(&str, &str)]) -> Pty
         master: pair.master,
         writer,
         output_rx,
+        output,
         reader_thread,
     }
 }
@@ -114,6 +132,11 @@ impl PtyCommand {
 
     fn is_running(&mut self) -> bool {
         self.child.try_wait().expect("poll nmux in pty").is_none()
+    }
+
+    fn output_snapshot(&self) -> String {
+        let output = self.output.lock().expect("lock pty output").clone();
+        String::from_utf8_lossy(&output).into_owned()
     }
 
     fn resize(&mut self, cols: u16, rows: u16) {
@@ -192,6 +215,78 @@ fn live_redraw_tty_holding_enter_does_not_detach() {
     assert!(
         !output.output.contains("detached by local Ctrl-]"),
         "held Enter should not be treated as local detach:\n{}",
+        output.output
+    );
+}
+
+#[test]
+fn live_redraw_tty_scrolled_holding_enter_does_not_detach() {
+    let socket_path = test_socket_path();
+    let socket = socket_path.to_str().expect("socket path");
+    let _ = fs::remove_file(&socket_path);
+
+    let mut daemon = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live",
+            "--command",
+            "for i in $(seq 1 120); do printf 'line:%04d\\n' \"$i\"; done; while IFS= read -r line; do printf 'echo:%s\\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--live", "--redraw", "--interval-ms", "20"],
+        &[("NMUX_SOCKET", socket)],
+    );
+    thread::sleep(Duration::from_millis(500));
+    client.write_all(b"\x1b[<64;20;10M");
+    thread::sleep(Duration::from_millis(300));
+    for _ in 0..20 {
+        client.write_all(&vec![b'\r'; 32]);
+        thread::sleep(Duration::from_millis(25));
+        let snapshot = client.output_snapshot();
+        assert!(
+            !snapshot.contains("\x1b[?25h\x1b[?1049l"),
+            "client left alternate screen during held Enter while scrolled:\n{snapshot}"
+        );
+    }
+    thread::sleep(Duration::from_millis(500));
+    let snapshot = client.output_snapshot();
+    assert!(
+        snapshot.contains("\x1b[?1049h\x1b[?25l"),
+        "client never entered alternate screen:\n{snapshot}"
+    );
+    assert!(
+        !snapshot.contains("\x1b[?25h\x1b[?1049l"),
+        "client left alternate screen before test shutdown:\n{snapshot}"
+    );
+    assert!(
+        client.is_running(),
+        "client exited after held Enter while scrolled"
+    );
+    client.kill();
+    let output = client.wait();
+
+    let _kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill daemon");
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        !output.output.contains("stdin EOF; detached"),
+        "held Enter while scrolled detached through stdin EOF:\n{}",
+        output.output
+    );
+    assert!(
+        !output.output.contains("detached by local Ctrl-]"),
+        "held Enter while scrolled should not be treated as local detach:\n{}",
         output.output
     );
 }
