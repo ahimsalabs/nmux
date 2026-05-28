@@ -4615,7 +4615,62 @@ fn scroll_live_pane_with_intent(
     )?;
     let update = loop {
         match local::read_live_surface_update_from_stream(stream)? {
-            local::LiveSurfaceRead::Update(update) if update.pane_id == pane_id => break update,
+            local::LiveSurfaceRead::Update(update)
+                if is_requested_scrollback_view_update(&update, pane_id) =>
+            {
+                break update;
+            }
+            local::LiveSurfaceRead::Update(update) => {
+                speculative_echo.reconcile_update(&update);
+                let update_surface_text =
+                    client_state.render_surface_update_styled(&update, use_styled)?;
+                record_live_update_scrollback_total(surface_state, &update);
+                if !surface_state.scrollback_views.contains_key(&update.pane_id) {
+                    surface_state
+                        .current_pane_surfaces
+                        .insert(update.pane_id.clone(), update_surface_text.clone());
+                    if let Some(summary) =
+                        client_state.cached_rendered_surface_summary(&update.pane_id)
+                    {
+                        surface_state
+                            .current_pane_surface_summaries
+                            .insert(update.pane_id.clone(), summary);
+                    }
+                }
+                surface_state
+                    .current_pane_modes
+                    .insert(update.pane_id.clone(), update.modes);
+                if let Some(surface_kind) = update.surface {
+                    surface_state
+                        .current_pane_surface_kinds
+                        .insert(update.pane_id.clone(), surface_kind);
+                }
+                if update.pane_id == workspace.pane_id {
+                    surface_state.current_surface_metadata = local::TerminalMetadataSummary {
+                        title: update.title.clone(),
+                        working_directory: update.working_directory.clone(),
+                    };
+                    if let Some(surface_kind) = update.surface {
+                        surface_state.current_surface_kind = surface_kind;
+                    }
+                    surface_state.current_modes = update.modes;
+                    if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+                        mouse_modes.sync(surface_state.current_modes)?;
+                    }
+                    if !surface_state.scrollback_views.contains_key(&update.pane_id) {
+                        surface_state.current_surface_text = update_surface_text;
+                    }
+                }
+                recorder.record(&format_live_surface_update_json(
+                    workspace,
+                    &local::TerminalMetadataSummary {
+                        title: update.title.clone(),
+                        working_directory: update.working_directory.clone(),
+                    },
+                    &surface_state.current_surface_text,
+                    &update,
+                ))?;
+            }
             local::LiveSurfaceRead::ClientInventorySnapshot(snapshot) => {
                 client_inventory.apply_snapshot(snapshot);
             }
@@ -4683,6 +4738,12 @@ fn scroll_live_pane_with_intent(
         Some(&live_pane_chrome_state(surface_state, workspace)),
     );
     Ok(true)
+}
+
+fn is_requested_scrollback_view_update(update: &local::SurfaceUpdate, pane_id: &str) -> bool {
+    update.pane_id == pane_id
+        && update.kind == local::SurfaceUpdateKind::Snapshot
+        && update.viewport == protocol::PaneViewportKind::Pinned
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9246,19 +9307,20 @@ mod tests {
         format_state_info_text, format_stats_right, frontend_resize_pane_size,
         host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
         host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
-        live_mouse_dispatch_for_workspace_size, live_pane_chrome_state,
-        live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
-        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory,
-        next_scroll_offset, parse_detach_key, parse_env_assignment, parse_focus_event,
-        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
-        raw_terminal_mode_needed, record_live_surface_scrollback_total,
-        record_live_update_scrollback_total, redraw_terminal_guard_needed,
-        redraw_text_with_context, redraw_workspace_surface_text, render_scrollback_view_summary,
-        render_scrollback_view_text, scrollback_viewport_range, scrollbar_offset_from_track,
-        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
-        stdin_byte_forwards_with_options, terminal_size_from_fds, terminal_size_unavailable, tui,
-        usage, validate_explicit_input_modes as super_validate_explicit_input_modes,
+        is_requested_scrollback_view_update, live_mouse_dispatch_for_workspace_size,
+        live_pane_chrome_state, live_session_new_should_fallback, live_update_print_kind,
+        managed_ready_error_message, menu_overlay_for_action,
+        menu_overlay_for_action_with_session_inventory, next_scroll_offset, parse_detach_key,
+        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
+        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
+        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
+        record_live_surface_scrollback_total, record_live_update_scrollback_total,
+        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
+        render_scrollback_view_summary, render_scrollback_view_text, scrollback_viewport_range,
+        scrollbar_offset_from_track, sigwinch_resize_needed, split_stdin_bytes_for_detach,
+        stdin_byte_forwards, stdin_byte_forwards_with_options, terminal_size_from_fds,
+        terminal_size_unavailable, tui, usage,
+        validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
     };
@@ -9299,6 +9361,7 @@ mod tests {
     ) -> local::SurfaceUpdate {
         local::SurfaceUpdate {
             kind,
+            viewport: protocol::PaneViewportKind::Active,
             pane_id: "pane-1".to_owned(),
             version: 7,
             scrollback_version: 2,
@@ -12117,6 +12180,23 @@ mod tests {
             rendered.styles[23].bg_rgba,
             deterministic_scrollback_bg(996)
         );
+    }
+
+    #[test]
+    fn scrollback_view_waits_for_pinned_snapshot_not_live_surface() {
+        let mut active = test_surface_update(local::SurfaceUpdateKind::Snapshot, None);
+        active.viewport = protocol::PaneViewportKind::Active;
+        let mut pinned = active.clone();
+        pinned.viewport = protocol::PaneViewportKind::Pinned;
+        let mut other_pane = pinned.clone();
+        other_pane.pane_id = "pane-2".to_owned();
+        let mut patch = pinned.clone();
+        patch.kind = local::SurfaceUpdateKind::Patch;
+
+        assert!(!is_requested_scrollback_view_update(&active, "pane-1"));
+        assert!(!is_requested_scrollback_view_update(&other_pane, "pane-1"));
+        assert!(!is_requested_scrollback_view_update(&patch, "pane-1"));
+        assert!(is_requested_scrollback_view_update(&pinned, "pane-1"));
     }
 
     #[test]

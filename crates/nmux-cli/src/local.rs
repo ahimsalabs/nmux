@@ -2259,11 +2259,7 @@ fn write_live_attach_initial(
     let surface_frame = response
         .as_ref()
         .and_then(|response| surface_response_frame(session, pane_id, *response, *seq + 1));
-    let surface_state = if surface_frame.is_some() {
-        attach_surface_state(response)
-    } else {
-        protocol::AttachSurfaceState::Current
-    };
+    let surface_state = attach_surface_state(response);
     let status_frame = session.attach_status_frame("local-client", *seq, pane_id, surface_state);
     wire::write_default_frame(stream, &status_frame)?;
     *seq += 1;
@@ -6313,6 +6309,7 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
             validate_palette_diff_scope(SurfaceUpdateKind::Snapshot, None, colors.as_ref())?;
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Snapshot,
+                viewport: snapshot.viewport(),
                 pane_id: required_string(snapshot.pane_id(), "pane viewport pane_id")?,
                 version: snapshot.version(),
                 scrollback_version: snapshot.timeline_version(),
@@ -6380,6 +6377,7 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
             )?;
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Patch,
+                viewport: patch.viewport(),
                 pane_id: required_string(patch.pane_id(), "pane viewport patch pane_id")?,
                 version: patch.version(),
                 scrollback_version: patch.timeline_version(),
@@ -8758,6 +8756,7 @@ mod tests {
     ) -> SurfaceUpdate {
         SurfaceUpdate {
             kind,
+            viewport: protocol::PaneViewportKind::Active,
             pane_id: "pane-1".to_owned(),
             version,
             scrollback_version: 1,
@@ -16226,6 +16225,51 @@ mod tests {
                 .any(|event| matches!(event, HostEvent::Input { .. }))
         );
 
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
+    fn live_attach_ahead_cached_surface_version_gets_snapshot_status() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve current live");
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                known_viewports: vec![KnownViewportVersion {
+                    pane_id: "pane-1".to_owned(),
+                    version: 99,
+                }],
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
+                ..AttachOptions::default().request
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(
+            initial.status.surface_state,
+            protocol::AttachSurfaceState::Snapshot
+        );
+        assert_eq!(
+            initial.surface.expect("snapshot").kind,
+            SurfaceUpdateKind::Snapshot
+        );
+
+        drop(stream);
+        server.join().expect("server thread");
         let _ = fs::remove_file(socket_path);
     }
 

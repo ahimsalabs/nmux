@@ -324,6 +324,7 @@ fn sanitized_metadata_value(value: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceUpdate {
     pub kind: SurfaceUpdateKind,
+    pub viewport: protocol::PaneViewportKind,
     pub pane_id: String,
     pub version: u64,
     pub scrollback_version: u64,
