@@ -41,7 +41,7 @@ impl SpeculativeEchoOverlay {
         if self.prediction.is_some() {
             return None;
         }
-        let ch = single_predictable_char(text)?;
+        let text = predictable_text(text)?;
         let cursor = surface.cursor?;
         if surface.surface != protocol::SurfaceKind::Main
             || !cursor.visible
@@ -55,7 +55,8 @@ impl SpeculativeEchoOverlay {
         if cursor.col as usize != row_text.chars().count() {
             return None;
         }
-        if cursor.col + 1 > surface.cols {
+        let text_cols = u32::try_from(text.chars().count()).ok()?;
+        if cursor.col + text_cols > surface.cols {
             return None;
         }
         if self.prediction_suppressed() {
@@ -69,7 +70,7 @@ impl SpeculativeEchoOverlay {
             input_seq,
             row: cursor.row,
             col: cursor.col,
-            text: ch.to_string(),
+            text: text.to_owned(),
         });
         self.render(surface)
     }
@@ -180,10 +181,18 @@ impl SpeculativeEchoOverlay {
         else {
             return self.rebase_pending_prediction(update);
         };
-        match row.text.chars().nth(prediction.col as usize) {
-            Some(ch) if ch.to_string() == prediction.text => self.clear_confirmed(),
-            Some(_) => self.clear_mismatched(),
-            None => self.clear_displaced(),
+        let actual = row
+            .text
+            .chars()
+            .skip(prediction.col as usize)
+            .take(prediction.text.chars().count())
+            .collect::<String>();
+        if actual == prediction.text {
+            self.clear_confirmed()
+        } else if actual.is_empty() {
+            self.clear_displaced()
+        } else {
+            self.clear_mismatched()
         }
     }
 
@@ -233,11 +242,9 @@ enum SpeculativeSurfaceStyle {
     StructuredSgr,
 }
 
-fn single_predictable_char(text: &str) -> Option<char> {
-    let mut chars = text.chars();
-    let ch = chars.next()?;
-    if chars.next().is_some() || ch.is_control() || !ch.is_ascii() {
+fn predictable_text(text: &str) -> Option<&str> {
+    if text.is_empty() || text.chars().any(|ch| ch.is_control() || !ch.is_ascii()) {
         return None;
     }
-    Some(ch)
+    Some(text)
 }

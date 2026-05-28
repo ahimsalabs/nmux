@@ -129,7 +129,6 @@ const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
 const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
 const LIVE_SCROLL_WHEEL_ROWS: u64 = 3;
-const LIVE_INPUT_REPAIR_INTERVAL: Duration = Duration::from_millis(250);
 const LIVE_STREAM_FRAMES_PER_CYCLE: usize = 64;
 const STDIN_BYTE_READ_CHUNK: usize = 32;
 
@@ -1273,6 +1272,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             &current_workspace,
             args,
             use_styled,
+            true,
         )?;
     }
     if let Err(err) = stream.set_read_timeout(Some(live_socket_read_timeout)) {
@@ -1369,12 +1369,6 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
-                            if let Some(state) = redraw_state.as_mut()
-                                && args.redraw
-                                && !args.output_json
-                            {
-                                state.request_input_damage_repair();
-                            }
                             let tui_enter_enabled =
                                 active_overlay.is_some() || active_menu_index.is_some();
                             for forward in stdin_byte_forwards_with_pending(
@@ -1417,8 +1411,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 input_seq,
                                                 text,
                                                 &current_workspace,
-                                                &surface_state.current_surface_metadata,
-                                                &mut surface_state.current_surface_text,
+                                                &mut surface_state,
                                                 &mut redraw_state,
                                                 use_styled,
                                             )?;
@@ -1522,8 +1515,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                         input_seq,
                                                         text,
                                                         &current_workspace,
-                                                        &surface_state.current_surface_metadata,
-                                                        &mut surface_state.current_surface_text,
+                                                        &mut surface_state,
                                                         &mut redraw_state,
                                                         use_styled,
                                                     )?;
@@ -1944,8 +1936,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     input_seq,
                     input_text,
                     &current_workspace,
-                    &surface_state.current_surface_metadata,
-                    &mut surface_state.current_surface_text,
+                    &mut surface_state,
                     &mut redraw_state,
                     use_styled,
                 )?;
@@ -1953,6 +1944,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let mut stream_frames_this_cycle = 0_usize;
+        let mut deferred_surface_render = false;
+        let mut stream_limit_reached = false;
         loop {
             if let Some(reader) = stdin_bytes.as_ref()
                 && (!sent_stdin_bytes_this_cycle || read_after_stdin_bytes_this_cycle)
@@ -2081,6 +2074,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 local::LiveSurfaceRead::Update(update) => {
+                    let render_update = args.output_json || stdin_bytes.is_none() || !stdin_tty;
                     process_surface_update(
                         &update,
                         &mut surface_state,
@@ -2092,7 +2086,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         &current_workspace,
                         args,
                         use_styled,
+                        render_update,
                     )?;
+                    if !render_update {
+                        deferred_surface_render = true;
+                    }
                 }
                 local::LiveSurfaceRead::Error(error) => {
                     let event = format_live_error_json(&error);
@@ -2117,9 +2115,24 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             if stdin_bytes.is_some() {
                 stream_frames_this_cycle += 1;
                 if stream_frames_this_cycle >= LIVE_STREAM_FRAMES_PER_CYCLE {
+                    stream_limit_reached = true;
                     break;
                 }
             }
+        }
+        if deferred_surface_render && !stream_limit_reached && args.redraw && !args.output_json {
+            print_live_surface_with_overlay(
+                &current_workspace,
+                &surface_state.current_surface_metadata,
+                &surface_state.current_surface_text,
+                args.redraw,
+                redraw_state.as_mut(),
+                Some(&surface_state.current_pane_surfaces),
+                Some(&surface_state.current_pane_surface_summaries),
+                Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
+                active_overlay.as_ref(),
+            );
+            flush_stdout()?;
         }
         if detach_requested {
             eprintln!("nmux: detached by local Ctrl-]");
@@ -2132,12 +2145,6 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         if stdin_bytes_closed && args.iterations.is_none() {
             eprintln!("nmux: stdin EOF; detached");
             break LiveDetachReason::StdinEof;
-        }
-        if redraw_state
-            .as_ref()
-            .is_some_and(RedrawState::input_damage_repair_due)
-        {
-            repaint_live_surface(&current_workspace, &surface_state, &mut redraw_state, args)?;
         }
         cycles += 1;
     };
@@ -2318,6 +2325,7 @@ fn process_surface_update(
     current_workspace: &local::WorkspaceSummary,
     args: &Args,
     use_styled: bool,
+    render_update: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let decode_start = Instant::now();
     speculative_echo.reconcile_update(update);
@@ -2381,6 +2389,9 @@ fn process_surface_update(
             &update_surface_text,
             update,
         ))?;
+        if !render_update {
+            return Ok(());
+        }
         if pane_is_scrolled {
             print_live_surface(
                 current_workspace,
@@ -2944,70 +2955,96 @@ fn repaint_speculative_echo(
     input_seq: u64,
     text: &str,
     workspace: &local::WorkspaceSummary,
-    metadata: &local::TerminalMetadataSummary,
-    current_surface_text: &mut String,
+    surface_state: &mut LiveSurfaceState,
     redraw_state: &mut Option<RedrawState>,
     use_styled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !enabled {
         return Ok(());
     }
-    let Some(predicted) =
-        client_state.render_speculative_echo(overlay, pane_id, input_seq, text, use_styled)
+    let Some(text) = speculative_echo_printable_prefix(text) else {
+        return Ok(());
+    };
+    let Some(predicted) = client_state
+        .render_speculative_echo(overlay, pane_id, input_seq, text, use_styled)
+        .or_else(|| render_fallback_speculative_echo(&surface_state.current_surface_text, text))
     else {
         return Ok(());
     };
-    let prediction = overlay.prediction().cloned();
-    *current_surface_text = predicted;
+    surface_state.current_surface_text = predicted.clone();
+    surface_state
+        .current_pane_surfaces
+        .insert(pane_id.to_owned(), predicted);
+    let pane_chrome = live_pane_chrome_state(surface_state, workspace);
     match redraw_state {
         Some(state) => {
             if state.terminal.is_some() {
                 print_live_surface(
                     workspace,
-                    metadata,
-                    current_surface_text,
+                    &surface_state.current_surface_metadata,
+                    &surface_state.current_surface_text,
                     true,
                     Some(state),
-                    None,
-                    None,
-                    None,
+                    Some(&surface_state.current_pane_surfaces),
+                    Some(&surface_state.current_pane_surface_summaries),
+                    Some(&pane_chrome),
                 );
-            } else if let Some(prediction) = prediction.as_ref()
-                && let Some(text) = state.render_speculative_append_text(
-                    workspace,
-                    current_surface_text,
-                    prediction,
-                )
-            {
-                print!("{text}");
             } else {
                 print_live_surface(
                     workspace,
-                    metadata,
-                    current_surface_text,
+                    &surface_state.current_surface_metadata,
+                    &surface_state.current_surface_text,
                     true,
                     Some(state),
-                    None,
-                    None,
-                    None,
+                    Some(&surface_state.current_pane_surfaces),
+                    Some(&surface_state.current_pane_surface_summaries),
+                    Some(&pane_chrome),
                 );
             }
         }
         None => {
             print_live_surface(
                 workspace,
-                metadata,
-                current_surface_text,
+                &surface_state.current_surface_metadata,
+                &surface_state.current_surface_text,
                 true,
                 None,
-                None,
-                None,
-                None,
+                Some(&surface_state.current_pane_surfaces),
+                Some(&surface_state.current_pane_surface_summaries),
+                Some(&pane_chrome),
             );
         }
     }
     flush_stdout()?;
     Ok(())
+}
+
+fn speculative_echo_printable_prefix(text: &str) -> Option<&str> {
+    let mut run_start = None;
+    let mut last_run = None;
+    for (index, ch) in text.char_indices() {
+        if ch.is_ascii() && !ch.is_control() {
+            run_start.get_or_insert(index);
+            continue;
+        }
+        if let Some(start) = run_start.take() {
+            last_run = Some(&text[start..index]);
+        }
+    }
+    if let Some(start) = run_start {
+        last_run = Some(&text[start..]);
+    }
+    last_run
+}
+
+fn render_fallback_speculative_echo(surface_text: &str, text: &str) -> Option<String> {
+    if text.is_empty() || text.chars().any(|ch| ch.is_control() || !ch.is_ascii()) {
+        return None;
+    }
+    let mut rows = surface_text.lines().map(str::to_owned).collect::<Vec<_>>();
+    let row = rows.last_mut()?;
+    row.push_str(text);
+    Some(rows.join("\n"))
 }
 
 fn stdin_bytes_speculative_echo_enabled(args: &Args) -> bool {
@@ -4595,6 +4632,7 @@ fn switch_live_session(
             &workspace,
             args,
             use_styled,
+            true,
         )?;
     }
     stream.set_read_timeout(Some(live_socket_read_timeout))?;
@@ -5100,37 +5138,7 @@ fn repaint_live_surface_after_input(
     redraw_state: &mut Option<RedrawState>,
     args: &Args,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !args.redraw || args.output_json {
-        return Ok(());
-    }
-
-    if let Some(state) = redraw_state.as_mut() {
-        state.request_input_damage_repair();
-    }
-    repaint_live_surface(workspace, surface_state, redraw_state, args)
-}
-
-fn repaint_live_surface(
-    workspace: &local::WorkspaceSummary,
-    surface_state: &LiveSurfaceState,
-    redraw_state: &mut Option<RedrawState>,
-    args: &Args,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if !args.redraw || args.output_json {
-        return Ok(());
-    }
-
-    print_live_surface(
-        workspace,
-        &surface_state.current_surface_metadata,
-        &surface_state.current_surface_text,
-        args.redraw,
-        redraw_state.as_mut(),
-        Some(&surface_state.current_pane_surfaces),
-        Some(&surface_state.current_pane_surface_summaries),
-        Some(&live_pane_chrome_state(surface_state, workspace)),
-    );
-    flush_stdout()?;
+    let _ = (workspace, surface_state, redraw_state, args);
     Ok(())
 }
 
@@ -6296,10 +6304,6 @@ struct RedrawState {
     last_frame_time: Instant,
     /// Most recent frame statistics.
     last_stats: FrameStats,
-    /// Whether local input may have dirtied the terminal outside ratatui's buffer cache.
-    input_damage_repair_requested: bool,
-    /// Last forced input-damage repair.
-    last_input_repair_time: Instant,
     /// Pending decode time set before render_diff is called.
     pending_decode_time: Duration,
     /// Most recently observed ping round-trip time.
@@ -6319,8 +6323,6 @@ impl RedrawState {
             terminal_rows: 24,
             last_frame_time: Instant::now(),
             last_stats: FrameStats::default(),
-            input_damage_repair_requested: false,
-            last_input_repair_time: Instant::now() - LIVE_INPUT_REPAIR_INTERVAL,
             pending_decode_time: Duration::ZERO,
             last_rtt: None,
             last_client_count: None,
@@ -6365,15 +6367,6 @@ impl RedrawState {
     fn record_client_count(&mut self, count: usize) {
         self.last_client_count = Some(count);
         self.last_stats.client_count = Some(count);
-    }
-
-    fn request_input_damage_repair(&mut self) {
-        self.input_damage_repair_requested = true;
-    }
-
-    fn input_damage_repair_due(&self) -> bool {
-        self.input_damage_repair_requested
-            && self.last_input_repair_time.elapsed() >= LIVE_INPUT_REPAIR_INTERVAL
     }
 
     fn render_workspace(
@@ -6430,18 +6423,13 @@ impl RedrawState {
             idle: rows_changed == 0,
         };
         let status_text = self.format_status_text(workspace);
-        let repair_input_damage = self.input_damage_repair_due();
         let Some(terminal) = self.terminal.as_mut() else {
             return false;
         };
-        if resized || repair_input_damage {
+        if resized {
             let _ = clear_redraw_terminal();
             let _ = terminal.resize(area);
             let _ = terminal.clear();
-            if repair_input_damage {
-                self.input_damage_repair_requested = false;
-                self.last_input_repair_time = render_start;
-            }
         }
 
         let draw_result = terminal.draw(|frame| {
@@ -9691,9 +9679,10 @@ mod tests {
         parse_mouse_pixels, parse_numeric_arg, prefer_stdin_for_live_poll, preprocess_args,
         raw_terminal_mode_needed, raw_terminal_mode_termios, record_live_surface_scrollback_total,
         record_live_update_scrollback_total, redraw_terminal_guard_needed,
-        redraw_text_with_context, redraw_workspace_surface_text, render_scrollback_view_summary,
-        render_scrollback_view_text, restore_live_pane_surface_before_input,
-        scrollback_viewport_range, scrollbar_offset_from_track, sigwinch_resize_needed,
+        redraw_text_with_context, redraw_workspace_surface_text, render_fallback_speculative_echo,
+        render_scrollback_view_summary, render_scrollback_view_text,
+        restore_live_pane_surface_before_input, scrollback_viewport_range,
+        scrollbar_offset_from_track, sigwinch_resize_needed, speculative_echo_printable_prefix,
         split_stdin_bytes_for_detach, stdin_byte_forwards, stdin_byte_forwards_with_options,
         stdin_byte_forwards_with_pending, terminal_size_from_fds, terminal_size_unavailable, tui,
         usage, validate_explicit_input_modes as super_validate_explicit_input_modes,
@@ -9715,6 +9704,18 @@ mod tests {
         assert!(prefer_stdin_for_live_poll(false, true));
         assert!(!prefer_stdin_for_live_poll(false, false));
         assert!(!prefer_stdin_for_live_poll(true, true));
+    }
+
+    #[test]
+    fn speculative_echo_uses_printable_prefix_before_enter() {
+        assert_eq!(speculative_echo_printable_prefix("ls\r"), Some("ls"));
+        assert_eq!(speculative_echo_printable_prefix("\r\r\nls\r"), Some("ls"));
+        assert_eq!(speculative_echo_printable_prefix("\r"), None);
+        assert_eq!(speculative_echo_printable_prefix("abc"), Some("abc"));
+        assert_eq!(
+            render_fallback_speculative_echo("echo:\n", "ls").as_deref(),
+            Some("echo:ls")
+        );
     }
 
     fn zero_termios() -> libc::termios {

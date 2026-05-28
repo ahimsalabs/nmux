@@ -412,7 +412,19 @@ fn live_redraw_tty_holding_enter_does_not_detach() {
     thread::sleep(Duration::from_millis(300));
     client.write_all(&vec![b'\r'; 256]);
     thread::sleep(Duration::from_millis(500));
+    client.write_all(b"l");
+    thread::sleep(Duration::from_millis(20));
+    client.write_all(b"s");
+    thread::sleep(Duration::from_millis(20));
+    client.write_all(b"\r");
+    thread::sleep(Duration::from_millis(500));
     assert!(client.is_running(), "client exited after held Enter");
+    let snapshot = client.output_snapshot();
+    let screen = TestScreen::replay(snapshot.as_bytes(), 100, 24).text();
+    assert!(
+        screen.contains("ls"),
+        "latest input after held Enter did not render:\n{screen}\nraw:\n{snapshot}"
+    );
     client.kill();
     let output = client.wait();
 
@@ -428,6 +440,11 @@ fn live_redraw_tty_holding_enter_does_not_detach() {
     assert!(
         !output.output.contains("stdin EOF; detached"),
         "held Enter detached through stdin EOF:\n{}",
+        output.output
+    );
+    assert!(
+        output.output.matches("\x1b[2J").count() <= 2,
+        "held Enter should not repeatedly full-clear the TUI:\n{}",
         output.output
     );
     assert!(
@@ -471,6 +488,7 @@ fn live_redraw_tty_scrolled_holding_enter_does_not_detach() {
             "client left alternate screen during held Enter while scrolled:\n{snapshot}"
         );
     }
+    client.write_all(b"ls\r");
     thread::sleep(Duration::from_millis(500));
     let snapshot = client.output_snapshot();
     assert!(
@@ -480,6 +498,10 @@ fn live_redraw_tty_scrolled_holding_enter_does_not_detach() {
     assert!(
         !snapshot.contains("\x1b[?25h\x1b[?1049l"),
         "client left alternate screen before test shutdown:\n{snapshot}"
+    );
+    assert!(
+        snapshot.matches("\x1b[2J").count() <= 2,
+        "held Enter while scrolled should not repeatedly full-clear the TUI:\n{snapshot}"
     );
     let screen = TestScreen::replay(snapshot.as_bytes(), 100, 24).text();
     assert!(
