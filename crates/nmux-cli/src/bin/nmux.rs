@@ -3,6 +3,7 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
@@ -2566,28 +2567,31 @@ impl PersistentDaemon {
             command_args.push("--rows".to_owned());
             command_args.push(rows.to_string());
         }
-        let args = command_args
-            .into_iter()
-            .map(|arg| shell_quote_for_sh(&arg))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let script = format!(
-            "nohup {} {args} >/dev/null 2>&1 &",
-            shell_quote_for_sh(&nmux.display().to_string())
-        );
-        let status = Command::new("sh")
-            .arg("-c")
-            .arg(script)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|err| format!("failed to start daemon launcher: {err}"))?;
-        if !status.success() {
-            return Err(format!("daemon launcher failed: {status}").into());
+        // SAFETY: pre_exec only calls async-signal-safe setsid and returns the OS error.
+        let mut child = unsafe {
+            let mut command = Command::new(nmux);
+            command
+                .args(command_args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            command.spawn()
         }
-        wait_for_daemon_socket(socket_path, startup_timeout)?;
-        Ok(Self)
+        .map_err(|err| format!("failed to start daemon: {err}"))?;
+        match wait_for_daemon_socket(socket_path, startup_timeout) {
+            Ok(()) => Ok(Self),
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                Err(err)
+            }
+        }
     }
 }
 

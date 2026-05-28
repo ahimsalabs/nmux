@@ -20,6 +20,13 @@ struct PtyCommandOutput {
     output: String,
 }
 
+#[derive(Debug)]
+struct LinuxProcStat {
+    pgrp: i32,
+    session: i32,
+    tty_nr: i32,
+}
+
 struct TestScreen {
     cols: usize,
     rows: usize,
@@ -276,6 +283,54 @@ fn daemon_command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nmux"));
     command.arg("daemon");
     command
+}
+
+fn find_daemon_pid_for_socket(socket_path: &Path) -> Option<i32> {
+    let socket = socket_path.to_string_lossy();
+    for entry in fs::read_dir("/proc").ok()? {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let pid = match entry.file_name().to_string_lossy().parse::<i32>() {
+            Ok(pid) => pid,
+            Err(_) => continue,
+        };
+        let cmdline = match fs::read(entry.path().join("cmdline")) {
+            Ok(cmdline) => cmdline,
+            Err(_) => continue,
+        };
+        if cmdline.is_empty() {
+            continue;
+        }
+        let args = cmdline
+            .split(|byte| *byte == 0)
+            .map(|arg| String::from_utf8_lossy(arg))
+            .collect::<Vec<_>>();
+        if args
+            .iter()
+            .any(|arg| arg.ends_with("/nmux") || *arg == "nmux")
+            && args.iter().any(|arg| *arg == "daemon")
+            && args.iter().any(|arg| *arg == "--socket")
+            && args.iter().any(|arg| arg.as_ref() == socket.as_ref())
+        {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+fn linux_proc_stat(pid: i32) -> LinuxProcStat {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).expect("read daemon proc stat");
+    let close_paren = stat.rfind(')').expect("proc stat command terminator");
+    let fields = stat[close_paren + 2..]
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    LinuxProcStat {
+        pgrp: fields[2].parse().expect("parse daemon process group"),
+        session: fields[3].parse().expect("parse daemon session"),
+        tty_nr: fields[4].parse().expect("parse daemon tty"),
+    }
 }
 
 impl PtyCommand {
@@ -2551,6 +2606,21 @@ fn bare_tty_nmux_starts_shared_default_session_and_can_reattach() {
         spawn_nmux_client_in_pty_with_env(&[], &[("NMUX_SOCKET", socket), ("SHELL", shell)]);
     wait_for_socket(&socket_path);
     thread::sleep(Duration::from_millis(200));
+    let daemon_pid =
+        find_daemon_pid_for_socket(&socket_path).expect("find shared default daemon process");
+    let daemon_stat = linux_proc_stat(daemon_pid);
+    assert_eq!(
+        daemon_stat.tty_nr, 0,
+        "shared default daemon should not keep the client PTY as a controlling terminal: {daemon_stat:?}"
+    );
+    assert_eq!(
+        daemon_stat.session, daemon_pid,
+        "shared default daemon should be a new session leader: {daemon_stat:?}"
+    );
+    assert_eq!(
+        daemon_stat.pgrp, daemon_pid,
+        "shared default daemon should own its process group: {daemon_stat:?}"
+    );
     client.kill();
     let _ = client.wait();
     thread::sleep(Duration::from_millis(200));
