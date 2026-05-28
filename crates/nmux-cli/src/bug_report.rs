@@ -474,12 +474,12 @@ mod tests {
         ];
 
         let metadata_path =
-            write_signal_interrupt(&dir, "nmux", "SIGINT", &args).expect("write report");
+            write_signal_interrupt(&dir, "nmux", "SIGUSR1", &args).expect("write report");
 
         let metadata = fs::read_to_string(metadata_path).expect("read metadata");
         assert!(metadata.contains("\"kind\":\"signal-interrupt\""));
         assert!(metadata.contains("\"binary\":\"nmux\""));
-        assert!(metadata.contains("\"signal\":\"SIGINT\""));
+        assert!(metadata.contains("\"signal\":\"SIGUSR1\""));
         assert!(metadata.contains("\"--bug-report-dir\""));
 
         let _ = fs::remove_dir_all(dir);
@@ -495,7 +495,7 @@ mod tests {
         ];
         let report = LiveInterruptReport {
             binary: "nmux",
-            signal: "STDIN_CTRL_C",
+            signal: "SIGUSR1",
             args: &args,
             socket_path: "/tmp/nmux-test.sock",
             session_id: "session-1",
@@ -523,7 +523,7 @@ mod tests {
 
         let metadata = fs::read_to_string(metadata_path).expect("read metadata");
         assert!(metadata.contains("\"kind\":\"live-interrupt\""));
-        assert!(metadata.contains("\"signal\":\"STDIN_CTRL_C\""));
+        assert!(metadata.contains("\"signal\":\"SIGUSR1\""));
         assert!(metadata.contains("\"socket_path\":\"/tmp/nmux-test.sock\""));
         assert!(metadata.contains("\"session_id\":\"session-1\""));
         assert!(metadata.contains("\"surface_version\":7"));
@@ -664,10 +664,19 @@ mod tests {
         let mut update = None;
         for entry in entries {
             assert_eq!(entry.pane_id, "pane-1");
-            if let Some(next) = engines.engine_mut("pane-1").apply_output(
+            if let Some(mut next) = engines.engine_mut("pane-1").apply_output(
                 input_from_update(update.as_ref(), &empty_surface, &empty_scrollback),
                 &entry.bytes,
             ) {
+                if let Some(previous) = update.as_ref() {
+                    if let Some(base_len) = next.scrollback_replace_from {
+                        let mut lines = previous.scrollback_lines.clone();
+                        lines.truncate(base_len.min(lines.len()));
+                        lines.extend(next.scrollback_lines);
+                        next.scrollback_lines = lines;
+                        next.scrollback_replace_from = None;
+                    }
+                }
                 update = Some(next);
             }
         }
@@ -679,11 +688,11 @@ mod tests {
             .filter_map(|line| trace_line_number(line))
             .collect::<Vec<_>>();
         assert!(
-            (100..200).contains(&transcript.len()),
-            "live replay should keep bounded scrollback under pressure: {:?}",
+            transcript.len() == 200,
+            "live replay should keep contiguous scrollback under pressure: {:?}",
             update.scrollback_lines
         );
-        assert_eq!(transcript, (0..transcript.len()).collect::<Vec<_>>());
+        assert_eq!(transcript, (0..200).collect::<Vec<_>>());
         let surface = update
             .surface_lines
             .iter()

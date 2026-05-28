@@ -34,7 +34,8 @@ mod tui;
 
 const STDIN_BYTES_DETACH: u8 = 0x1d;
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
-static SIGINT_BUG_REPORT_FD: AtomicI32 = AtomicI32::new(-1);
+static SIGUSR1_BUG_REPORT_FD: AtomicI32 = AtomicI32::new(-1);
+static SIGUSR1_LIVE_BUG_REPORT_REQUESTED: AtomicBool = AtomicBool::new(false);
 const SUPPORTED_KEY_NAMES: &[&str] = &[
     "numpad-enter",
     "numpad-0",
@@ -146,8 +147,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = args.bug_report_dir.clone() {
         nmux_cli::bug_report::set_bug_report_dir(path);
     }
-    let _sigint_bug_report = if args.bug_report_dir.is_some() {
-        Some(SigintBugReportGuard::install(
+    let _signal_bug_report = if args.bug_report_dir.is_some() {
+        Some(SignalBugReportGuard::install(
             std::env::args_os()
                 .map(|arg| arg.to_string_lossy().into_owned())
                 .collect(),
@@ -1294,17 +1295,16 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 flush_stdout()?;
             }
+            record_live_signal_bug_report_if_needed(
+                args,
+                &current_workspace,
+                &attached_pane_id,
+                &surface_state,
+                redraw_state.as_ref(),
+            );
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
                 match receiver.try_recv() {
                     Ok(StdinByteRead::Input(input)) => {
-                        record_stdin_ctrl_c_bug_report_if_needed(
-                            args,
-                            &input,
-                            &current_workspace,
-                            &attached_pane_id,
-                            &surface_state,
-                            redraw_state.as_ref(),
-                        );
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
@@ -2955,15 +2955,16 @@ fn initial_live_scrollback(
     Ok((Some(scrollback), pending_updates, pending_live))
 }
 
-fn record_stdin_ctrl_c_bug_report_if_needed(
+fn record_live_signal_bug_report_if_needed(
     args: &Args,
-    input: &[u8],
     workspace: &local::WorkspaceSummary,
     attached_pane_id: &str,
     surface_state: &LiveSurfaceState,
     redraw_state: Option<&RedrawState>,
 ) {
-    if args.bug_report_dir.is_none() || !input.contains(&0x03) {
+    if args.bug_report_dir.is_none()
+        || !SIGUSR1_LIVE_BUG_REPORT_REQUESTED.swap(false, Ordering::SeqCst)
+    {
         return;
     }
     let process_args = std::env::args_os()
@@ -2981,7 +2982,7 @@ fn record_stdin_ctrl_c_bug_report_if_needed(
     let socket_path = args.socket_path.display().to_string();
     let report = nmux_cli::bug_report::LiveInterruptReport {
         binary: "nmux",
-        signal: "STDIN_CTRL_C",
+        signal: "SIGUSR1",
         args: &process_args,
         socket_path: &socket_path,
         session_id: &workspace.session_id,
@@ -4963,13 +4964,13 @@ impl Drop for RedrawTerminalGuard {
     }
 }
 
-struct SigintBugReportGuard {
+struct SignalBugReportGuard {
     previous: libc::sighandler_t,
     write_fd: libc::c_int,
     thread: Option<thread::JoinHandle<()>>,
 }
 
-impl SigintBugReportGuard {
+impl SignalBugReportGuard {
     fn install(args: Vec<String>) -> io::Result<Self> {
         let mut fds = [-1; 2];
         // SAFETY: fds points to two valid c_int slots for pipe to fill.
@@ -4982,10 +4983,10 @@ impl SigintBugReportGuard {
             return Err(err);
         }
 
-        let handler = handle_sigint_bug_report as *const () as libc::sighandler_t;
+        let handler = handle_sigusr1_bug_report as *const () as libc::sighandler_t;
         // SAFETY: installing a process signal handler is inherently global.
         // The handler only writes one byte to a pre-opened nonblocking pipe.
-        let previous = unsafe { libc::signal(libc::SIGINT, handler) };
+        let previous = unsafe { libc::signal(libc::SIGUSR1, handler) };
         if previous == libc::SIG_ERR {
             let err = io::Error::last_os_error();
             close_fd(fds[0]);
@@ -4993,9 +4994,9 @@ impl SigintBugReportGuard {
             return Err(err);
         }
 
-        SIGINT_BUG_REPORT_FD.store(fds[1], Ordering::SeqCst);
+        SIGUSR1_BUG_REPORT_FD.store(fds[1], Ordering::SeqCst);
         let read_fd = fds[0];
-        let thread = thread::spawn(move || watch_sigint_bug_report(read_fd, args));
+        let thread = thread::spawn(move || watch_sigusr1_bug_report(read_fd, args));
         Ok(Self {
             previous,
             write_fd: fds[1],
@@ -5004,12 +5005,12 @@ impl SigintBugReportGuard {
     }
 }
 
-impl Drop for SigintBugReportGuard {
+impl Drop for SignalBugReportGuard {
     fn drop(&mut self) {
-        SIGINT_BUG_REPORT_FD.store(-1, Ordering::SeqCst);
+        SIGUSR1_BUG_REPORT_FD.store(-1, Ordering::SeqCst);
         // SAFETY: previous was returned by signal during install. Drop must not
         // panic, so restoration errors are intentionally ignored.
-        let _ = unsafe { libc::signal(libc::SIGINT, self.previous) };
+        let _ = unsafe { libc::signal(libc::SIGUSR1, self.previous) };
         close_fd(self.write_fd);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -5037,15 +5038,14 @@ fn close_fd(fd: libc::c_int) {
     }
 }
 
-fn watch_sigint_bug_report(read_fd: libc::c_int, args: Vec<String>) {
+fn watch_sigusr1_bug_report(read_fd: libc::c_int, args: Vec<String>) {
     let mut byte = [0_u8; 1];
     loop {
         // SAFETY: byte is a valid one-byte buffer and read_fd is owned by this thread.
         let count = unsafe { libc::read(read_fd, byte.as_mut_ptr().cast(), byte.len()) };
         if count > 0 {
-            close_fd(read_fd);
-            nmux_cli::bug_report::record_signal_interrupt("nmux", "SIGINT", &args);
-            std::process::exit(130);
+            nmux_cli::bug_report::record_signal_interrupt("nmux", "SIGUSR1", &args);
+            continue;
         }
         if count == 0 {
             close_fd(read_fd);
@@ -5059,8 +5059,9 @@ fn watch_sigint_bug_report(read_fd: libc::c_int, args: Vec<String>) {
     }
 }
 
-extern "C" fn handle_sigint_bug_report(_: libc::c_int) {
-    let fd = SIGINT_BUG_REPORT_FD.load(Ordering::SeqCst);
+extern "C" fn handle_sigusr1_bug_report(_: libc::c_int) {
+    SIGUSR1_LIVE_BUG_REPORT_REQUESTED.store(true, Ordering::SeqCst);
+    let fd = SIGUSR1_BUG_REPORT_FD.load(Ordering::SeqCst);
     if fd < 0 {
         return;
     }

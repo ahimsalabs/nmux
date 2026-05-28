@@ -113,6 +113,7 @@ pub struct TerminalUpdate {
     pub patch_kind: protocol::PatchKind,
     pub surface: protocol::SurfaceKind,
     pub preserve_scrollback: bool,
+    pub scrollback_replace_from: Option<usize>,
     pub cursor: TerminalCursor,
     pub modes: TerminalModes,
     pub title: String,
@@ -143,6 +144,7 @@ impl TerminalUpdate {
             patch_kind,
             surface,
             preserve_scrollback: false,
+            scrollback_replace_from: None,
             cursor,
             modes: TerminalModes::default(),
             title: String::new(),
@@ -821,7 +823,7 @@ mod ghostty_vt {
 
     const DEFAULT_MAX_SCROLLBACK_LINES: usize = 1_000_000;
     const VT_WRITE_CHUNK_BYTES: usize = 4096;
-    const LIVE_SCROLLBACK_PRESERVE_THRESHOLD_ROWS: usize = 128;
+    const LIVE_SCROLLBACK_INCREMENTAL_THRESHOLD_ROWS: usize = 32;
     pub struct LibghosttyVtTerminalEngine {
         state: Option<GhosttyVtState>,
     }
@@ -834,6 +836,8 @@ mod ghostty_vt {
         row_iterator: RowIterator<'static>,
         cell_iterator: CellIterator<'static>,
         osc7: Osc7Tracker,
+        scrollback_parser: super::InterimAnsiParser,
+        main_scrollback_lines: Vec<String>,
         pending_decrqm: Vec<u8>,
         pty_writes: Rc<RefCell<Vec<Vec<u8>>>>,
         main_tail_ref: Option<TrackedGridRef>,
@@ -997,9 +1001,14 @@ mod ghostty_vt {
                     let chunk_update = self.apply_output_chunk(chunk_input, chunk)?;
                     update = Some(chunk_update);
                 }
+                if let Some(update) = update.as_mut() {
+                    self.rebase_scrollback_range_update(update, input.scrollback_lines.len());
+                }
                 return update;
             }
-            self.apply_output_chunk(input, output)
+            let mut update = self.apply_output_chunk(input.clone(), output)?;
+            self.rebase_scrollback_range_update(&mut update, input.scrollback_lines.len());
+            Some(update)
         }
 
         fn resize(
@@ -1013,7 +1022,7 @@ mod ghostty_vt {
             let rows = u16::try_from(rows).ok()?;
             state.main_tail_ref = None;
             state.terminal.resize(cols, rows, 8, 16).ok()?;
-            state.extract_update(input, true, false, None)
+            state.extract_update(input, None, true, false, None)
         }
 
         fn encode_mouse_input(&mut self, input: MouseTerminalInput) -> Option<Vec<u8>> {
@@ -1035,6 +1044,29 @@ mod ghostty_vt {
     }
 
     impl LibghosttyVtTerminalEngine {
+        fn rebase_scrollback_range_update(
+            &self,
+            update: &mut TerminalUpdate,
+            original_scrollback_len: usize,
+        ) {
+            if update.scrollback_replace_from.is_none()
+                || update.scrollback_replace_from <= Some(original_scrollback_len)
+            {
+                return;
+            }
+            let Some(state) = self.state.as_ref() else {
+                return;
+            };
+            let suffix_start = original_scrollback_len.min(state.main_scrollback_lines.len());
+            let suffix = state.main_scrollback_lines[suffix_start..].to_vec();
+            update.scrollback_replace_from = Some(suffix_start);
+            update.scrollback_row_runs = super::plain_row_runs(&suffix);
+            update.scrollback_semantic_prompts = super::plain_row_semantic_prompts(&suffix);
+            update.scrollback_dirty_rows = super::plain_row_dirty_flags(&suffix);
+            update.scrollback_kitty_placeholders = super::plain_row_kitty_placeholders(&suffix);
+            update.scrollback_lines = suffix;
+        }
+
         fn apply_output_chunk(
             &mut self,
             input: TerminalInput<'_>,
@@ -1058,6 +1090,7 @@ mod ghostty_vt {
             }
             state.extract_update(
                 input,
+                Some(output),
                 false,
                 !vt_output_may_change_rows(output) && !vt_output_may_change_style_colors(output),
                 previous_main_tail_screen_y,
@@ -1179,6 +1212,8 @@ mod ghostty_vt {
                 row_iterator: RowIterator::new().ok()?,
                 cell_iterator: CellIterator::new().ok()?,
                 osc7: Osc7Tracker::default(),
+                scrollback_parser: super::InterimAnsiParser::default(),
+                main_scrollback_lines: Vec::new(),
                 pending_decrqm: Vec::new(),
                 pty_writes,
                 main_tail_ref: None,
@@ -1211,6 +1246,7 @@ mod ghostty_vt {
         fn extract_update(
             &mut self,
             input: TerminalInput<'_>,
+            output: Option<&[u8]>,
             force_rows: bool,
             preserve_input_rows: bool,
             previous_main_tail_screen_y: Option<usize>,
@@ -1254,14 +1290,20 @@ mod ghostty_vt {
             let surface_dirty_rows = surface_rows.dirty_rows.clone();
             let surface_kitty_placeholders = surface_rows.kitty_placeholders.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
-            let preserve_scrollback = !force_rows
+            let use_incremental_scrollback = !force_rows
+                && surface == protocol::SurfaceKind::Main
                 && total_main_rows.is_some_and(|total_rows| {
                     total_rows > surface_rows.lines.len()
-                        && total_rows >= LIVE_SCROLLBACK_PRESERVE_THRESHOLD_ROWS
-                });
-            let scrollback_rows = if preserve_scrollback
-                || preserve_input_rows && surface == input.surface
-            {
+                        && total_rows >= LIVE_SCROLLBACK_INCREMENTAL_THRESHOLD_ROWS
+                })
+                && output.is_some();
+            let mut scrollback_replace_from = None;
+            let scrollback_rows = if use_incremental_scrollback {
+                let (base_len, rows) =
+                    self.incremental_main_scrollback_rows(&input, output.expect("checked output"));
+                scrollback_replace_from = Some(base_len);
+                rows
+            } else if preserve_input_rows && surface == input.surface {
                 ExtractedRows {
                     lines: input.scrollback_lines.to_vec(),
                     row_runs: input.scrollback_row_runs.to_vec(),
@@ -1300,6 +1342,9 @@ mod ghostty_vt {
                     kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
                 }
             };
+            if !use_incremental_scrollback && surface == protocol::SurfaceKind::Main {
+                self.main_scrollback_lines = scrollback_rows.lines.clone();
+            }
             self.track_main_tail(surface, !scrollback_rows.lines.is_empty());
             let modes = modes(&self.terminal)?;
             let title = self.terminal.title().ok()?;
@@ -1349,7 +1394,8 @@ mod ghostty_vt {
             Some(TerminalUpdate {
                 patch_kind,
                 surface,
-                preserve_scrollback,
+                preserve_scrollback: use_incremental_scrollback,
+                scrollback_replace_from,
                 cursor,
                 modes,
                 title: title.to_owned(),
@@ -1367,6 +1413,61 @@ mod ghostty_vt {
                 surface_lines,
                 scrollback_lines: scrollback_rows.lines,
             })
+        }
+
+        fn incremental_main_scrollback_rows(
+            &mut self,
+            input: &TerminalInput<'_>,
+            output: &[u8],
+        ) -> (usize, ExtractedRows) {
+            if self.main_scrollback_lines.is_empty() && !input.scrollback_lines.is_empty() {
+                self.main_scrollback_lines = input.scrollback_lines.to_vec();
+            }
+            let parsed = self.scrollback_parser.consume(output, input.modes);
+            if parsed.text.is_empty() {
+                return (
+                    self.main_scrollback_lines.len(),
+                    ExtractedRows {
+                        lines: Vec::new(),
+                        row_runs: Vec::new(),
+                        semantic_prompts: Vec::new(),
+                        dirty_rows: Vec::new(),
+                        kitty_placeholders: Vec::new(),
+                    },
+                );
+            }
+
+            let append_to_previous_line =
+                input.cursor.col > 0 && !self.main_scrollback_lines.is_empty();
+            let base_len = if append_to_previous_line {
+                self.main_scrollback_lines.len().saturating_sub(1)
+            } else {
+                self.main_scrollback_lines.len()
+            };
+            let seed = if append_to_previous_line {
+                self.main_scrollback_lines[base_len..].to_vec()
+            } else {
+                Vec::new()
+            };
+            let (suffix, _) =
+                super::merge_interim_pty_output(&seed, append_to_previous_line, &parsed.text);
+            self.main_scrollback_lines.truncate(base_len);
+            self.main_scrollback_lines.extend(suffix.iter().cloned());
+            if self.main_scrollback_lines.len() > DEFAULT_MAX_SCROLLBACK_LINES {
+                let drop_count = self.main_scrollback_lines.len() - DEFAULT_MAX_SCROLLBACK_LINES;
+                self.main_scrollback_lines.drain(..drop_count);
+            }
+
+            (
+                base_len,
+                ExtractedRows {
+                    row_runs: super::plain_row_runs(&suffix),
+                    semantic_prompts: super::plain_row_semantic_prompts(&suffix),
+                    dirty_rows: super::plain_row_dirty_flags(&suffix),
+                    kitty_placeholders: super::plain_row_kitty_placeholders(&suffix),
+                    lines: suffix,
+                },
+            )
         }
 
         fn scrollback_rows(
@@ -2125,36 +2226,6 @@ mod tests {
                     .ok()
             })
             .collect()
-    }
-
-    #[cfg(feature = "libghostty-vt")]
-    fn assert_numbered_rows_are_contiguous(lines: &[String], start: usize, end_inclusive: usize) {
-        let actual = numbered_rows(lines);
-        let expected = (start..=end_inclusive).collect::<Vec<_>>();
-        assert_eq!(
-            actual, expected,
-            "numbered transcript has gaps or duplicates; rows={lines:?}"
-        );
-    }
-
-    #[cfg(feature = "libghostty-vt")]
-    fn assert_surface_is_transcript_tail(update: &super::TerminalUpdate) {
-        let transcript = numbered_rows(&update.scrollback_lines);
-        let surface = numbered_rows(&update.surface_lines);
-        assert!(
-            !surface.is_empty(),
-            "surface did not contain numbered output: {:?}",
-            update.surface_lines
-        );
-        assert!(
-            surface.len() <= transcript.len(),
-            "surface numbered rows exceeded transcript rows"
-        );
-        let expected_tail = &transcript[transcript.len() - surface.len()..];
-        assert_eq!(
-            surface, expected_tail,
-            "visible main surface must be the tail of canonical scrollback"
-        );
     }
 
     #[cfg(feature = "libghostty-vt")]
@@ -5159,18 +5230,14 @@ mod tests {
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
         assert!(
             update.preserve_scrollback,
-            "large live output should preserve prior scrollback instead of rebuilding full history"
+            "large live output should send a scrollback range update"
         );
-        let retained_scrollback = numbered_rows(&update.scrollback_lines);
-        assert!(
-            (100..1000).contains(&retained_scrollback.len()),
-            "scrollback should be bounded under live-output pressure: {:?}",
-            update.scrollback_lines
-        );
-        assert_numbered_rows_are_contiguous(
-            &update.scrollback_lines,
-            0,
-            retained_scrollback.len() - 1,
+        assert!(update.scrollback_replace_from.is_some());
+        let suffix = numbered_rows(&update.scrollback_lines);
+        assert_eq!(suffix.last(), Some(&999));
+        assert_eq!(
+            suffix,
+            (*suffix.first().expect("suffix start")..=999).collect::<Vec<_>>()
         );
         assert!(
             numbered_rows(&update.surface_lines).contains(&999),
@@ -5197,18 +5264,14 @@ mod tests {
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
         assert!(
             update.preserve_scrollback,
-            "large ls-sized output should not rebuild the full scrollback transcript"
+            "large ls-sized output should send a scrollback range update"
         );
-        let retained_scrollback = numbered_rows(&update.scrollback_lines);
-        assert!(
-            (100..2_000).contains(&retained_scrollback.len()),
-            "scrollback should be bounded under live-output pressure: {:?}",
-            update.scrollback_lines
-        );
-        assert_numbered_rows_are_contiguous(
-            &update.scrollback_lines,
-            0,
-            retained_scrollback.len() - 1,
+        assert!(update.scrollback_replace_from.is_some());
+        let suffix = numbered_rows(&update.scrollback_lines);
+        assert_eq!(suffix.last(), Some(&1_999));
+        assert_eq!(
+            suffix,
+            (*suffix.first().expect("suffix start")..=1_999).collect::<Vec<_>>()
         );
         assert!(
             numbered_rows(&update.surface_lines).contains(&1_999),
@@ -5255,9 +5318,15 @@ mod tests {
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
         assert!(
             update.preserve_scrollback,
-            "post-threshold live output should preserve bounded scrollback"
+            "post-threshold live output should send a scrollback range update"
         );
-        assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 249);
+        assert!(update.scrollback_replace_from.is_some());
+        let suffix = numbered_rows(&update.scrollback_lines);
+        assert_eq!(suffix.last(), Some(&499));
+        assert_eq!(
+            suffix,
+            (*suffix.first().expect("suffix start")..=499).collect::<Vec<_>>()
+        );
         assert!(
             numbered_rows(&update.surface_lines).contains(&499),
             "visible surface should still reach the latest post-resize output: {:?}",
@@ -5358,8 +5427,16 @@ mod tests {
             .expect("restored main update");
 
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
-        assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 81);
-        assert_surface_is_transcript_tail(&update);
+        let suffix = numbered_rows(&update.scrollback_lines);
+        assert_eq!(suffix.last(), Some(&81));
+        assert!(
+            update
+                .scrollback_lines
+                .iter()
+                .all(|line| !line.contains("alt-")),
+            "alternate-screen output leaked into restored main transcript: {:?}",
+            update.scrollback_lines
+        );
         assert_run_style_ids_are_valid(&update);
     }
 

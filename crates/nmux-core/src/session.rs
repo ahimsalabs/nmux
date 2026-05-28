@@ -2742,23 +2742,27 @@ fn apply_terminal_update(
         row_dirty_flags_for_lines(&update.surface_lines, &update.surface_dirty_rows);
     let surface_kitty_placeholders =
         row_kitty_placeholders_for_lines(&update.surface_lines, &update.surface_kitty_placeholders);
-    let scrollback_row_runs = (!update.preserve_scrollback)
+    let scrollback_is_range_update = update.scrollback_replace_from.is_some();
+    let scrollback_row_runs = (!update.preserve_scrollback || scrollback_is_range_update)
         .then(|| row_runs_for_lines(&update.scrollback_lines, &update.scrollback_row_runs));
-    let scrollback_semantic_prompts = (!update.preserve_scrollback).then(|| {
-        row_semantic_prompts_for_lines(
-            &update.scrollback_lines,
-            &update.scrollback_semantic_prompts,
-        )
-    });
-    let scrollback_dirty_rows = (!update.preserve_scrollback).then(|| {
-        row_dirty_flags_for_lines(&update.scrollback_lines, &update.scrollback_dirty_rows)
-    });
-    let scrollback_kitty_placeholders = (!update.preserve_scrollback).then(|| {
-        row_kitty_placeholders_for_lines(
-            &update.scrollback_lines,
-            &update.scrollback_kitty_placeholders,
-        )
-    });
+    let scrollback_semantic_prompts = (!update.preserve_scrollback || scrollback_is_range_update)
+        .then(|| {
+            row_semantic_prompts_for_lines(
+                &update.scrollback_lines,
+                &update.scrollback_semantic_prompts,
+            )
+        });
+    let scrollback_dirty_rows =
+        (!update.preserve_scrollback || scrollback_is_range_update).then(|| {
+            row_dirty_flags_for_lines(&update.scrollback_lines, &update.scrollback_dirty_rows)
+        });
+    let scrollback_kitty_placeholders = (!update.preserve_scrollback || scrollback_is_range_update)
+        .then(|| {
+            row_kitty_placeholders_for_lines(
+                &update.scrollback_lines,
+                &update.scrollback_kitty_placeholders,
+            )
+        });
     let modes_changed = pane.modes != update.modes;
     let title_changed = pane.terminal_title != update.title;
     let working_directory_changed = pane.terminal_working_directory != update.working_directory;
@@ -2797,7 +2801,9 @@ fn apply_terminal_update(
         || title_changed
         || working_directory_changed
         || colors_changed;
-    let scrollback_changed = if update.preserve_scrollback {
+    let scrollback_changed = if update.scrollback_replace_from.is_some() {
+        true
+    } else if update.preserve_scrollback {
         false
     } else {
         pane.scrollback_lines != update.scrollback_lines
@@ -2809,7 +2815,27 @@ fn apply_terminal_update(
                 != scrollback_kitty_placeholders.as_deref().unwrap_or_default()
     };
 
-    if !update.preserve_scrollback {
+    if let Some(base_len) = update.scrollback_replace_from {
+        pane.scrollback_lines
+            .truncate(base_len.min(pane.scrollback_lines.len()));
+        pane.scrollback_row_runs
+            .truncate(base_len.min(pane.scrollback_row_runs.len()));
+        pane.scrollback_semantic_prompts
+            .truncate(base_len.min(pane.scrollback_semantic_prompts.len()));
+        pane.scrollback_dirty_rows
+            .truncate(base_len.min(pane.scrollback_dirty_rows.len()));
+        pane.scrollback_kitty_placeholders
+            .truncate(base_len.min(pane.scrollback_kitty_placeholders.len()));
+        pane.scrollback_lines.extend(update.scrollback_lines);
+        pane.scrollback_row_runs
+            .extend(scrollback_row_runs.unwrap_or_default());
+        pane.scrollback_semantic_prompts
+            .extend(scrollback_semantic_prompts.unwrap_or_default());
+        pane.scrollback_dirty_rows
+            .extend(scrollback_dirty_rows.unwrap_or_default());
+        pane.scrollback_kitty_placeholders
+            .extend(scrollback_kitty_placeholders.unwrap_or_default());
+    } else if !update.preserve_scrollback {
         pane.scrollback_lines = update.scrollback_lines;
         pane.scrollback_row_runs = scrollback_row_runs.unwrap_or_default();
         pane.scrollback_semantic_prompts = scrollback_semantic_prompts.unwrap_or_default();
@@ -3682,10 +3708,14 @@ mod tests {
             .session()
             .pane_scrollback("pane-1")
             .expect("pane scrollback");
-        assert!(
-            scrollback.lines.len() < 300,
-            "live replay should preserve bounded scrollback under pressure"
+        assert_eq!(
+            scrollback.lines.len(),
+            300,
+            "live replay should keep a contiguous daemon backing transcript"
         );
+        for index in 0..300 {
+            assert_eq!(scrollback.lines[index], format!("line {index:04}"));
+        }
         let pane = replayed.session().pane("pane-1").expect("pane");
         assert!(
             pane.surface_lines.iter().any(|line| line == "line 0299"),
@@ -4962,7 +4992,7 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
-    fn ghostty_vt_scrollback_chunk_preserves_bounded_transcript_under_pressure() {
+    fn ghostty_vt_scrollback_chunk_serves_contiguous_daemon_transcript_under_pressure() {
         let mut session = Session::initial();
         if let Some(pane) = session.pane_mut("pane-1") {
             pane.cols = 80;
@@ -4992,9 +5022,20 @@ mod tests {
         ));
 
         let pane = session.pane("pane-1").expect("pane");
-        assert!(
-            pane.scrollback_lines.len() < 1000,
-            "large live output should not rebuild the full daemon transcript"
+        let transcript = pane
+            .scrollback_lines
+            .iter()
+            .filter_map(|line| {
+                let start = line.find("line ")?;
+                line.get(start + "line ".len()..start + "line ".len() + 4)?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            transcript,
+            (0..1000).collect::<Vec<_>>(),
+            "large live output should keep a contiguous daemon backing transcript"
         );
         assert!(
             pane.surface_lines.iter().any(|line| line == "line 0999"),
@@ -5016,6 +5057,7 @@ mod tests {
         }
         let rows = chunk.rows_data().expect("scrollback rows");
         assert_eq!(rows.len(), line_count as usize);
+        let mut text_rows = Vec::new();
         for index in 0..rows.len() {
             let row = rows.get(index);
             assert_eq!(
@@ -5026,8 +5068,18 @@ mod tests {
             let text = (0..runs.len())
                 .filter_map(|run_index| runs.get(run_index).text_utf8())
                 .collect::<String>();
-            assert_eq!(text, format!("line {index:04}"));
+            text_rows.push(text);
         }
+        let transcript = text_rows
+            .iter()
+            .filter_map(|line| {
+                let start = line.find("line ")?;
+                line.get(start + "line ".len()..start + "line ".len() + 4)?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(transcript, (0..1000).collect::<Vec<_>>());
     }
 
     #[cfg(feature = "libghostty-vt")]
@@ -5893,6 +5945,7 @@ mod tests {
                     patch_kind: protocol::PatchKind::ReplaceRows,
                     surface: input.surface,
                     preserve_scrollback: false,
+                    scrollback_replace_from: None,
                     cursor: input.cursor,
                     modes: input.modes,
                     title: input.title.to_owned(),
@@ -6010,6 +6063,7 @@ mod tests {
                     patch_kind: protocol::PatchKind::ReplaceRows,
                     surface: input.surface,
                     preserve_scrollback: false,
+                    scrollback_replace_from: None,
                     cursor: input.cursor,
                     modes: input.modes,
                     title: input.title.to_owned(),
