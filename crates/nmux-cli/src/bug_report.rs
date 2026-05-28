@@ -50,6 +50,44 @@ pub fn record_signal_interrupt(binary: &str, signal: &str, args: &[String]) {
     }
 }
 
+pub struct LiveInterruptReport<'a> {
+    pub binary: &'a str,
+    pub signal: &'a str,
+    pub args: &'a [String],
+    pub socket_path: &'a str,
+    pub session_id: &'a str,
+    pub tab_id: &'a str,
+    pub pane_id: &'a str,
+    pub cols: u32,
+    pub rows: u32,
+    pub surface_kind: &'a str,
+    pub surface_version: Option<u64>,
+    pub scrollback_version: Option<u64>,
+    pub scrollback_total_lines: Option<u64>,
+    pub visible_surface_rows: usize,
+    pub cached_pane_surfaces: usize,
+    pub scrollback_views: usize,
+    pub rtt_micros: Option<u128>,
+    pub rendered_fps: Option<u32>,
+    pub rows_changed: Option<usize>,
+    pub rows_total: Option<usize>,
+    pub decode_micros: Option<u128>,
+    pub render_micros: Option<u128>,
+    pub client_count: Option<usize>,
+}
+
+pub fn record_live_interrupt(report: &LiveInterruptReport<'_>) {
+    let Some(dir) = bug_report_dir_from_env() else {
+        return;
+    };
+    if let Err(write_err) = write_live_interrupt(&dir, report) {
+        eprintln!(
+            "nmux: failed to write bug report to {}: {write_err}",
+            dir.display()
+        );
+    }
+}
+
 pub fn record_frame_decode_error(context: &str, frame: &[u8], err: &dyn std::error::Error) {
     let Some(dir) = bug_report_dir_from_env() else {
         return;
@@ -191,6 +229,80 @@ fn write_signal_interrupt(
     Ok(metadata_path)
 }
 
+fn write_live_interrupt(dir: &Path, report: &LiveInterruptReport<'_>) -> io::Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    let stamp = ReportStamp::now();
+    let metadata_path = dir.join(format!("{}-live-interrupt.json", stamp.file_prefix()));
+    fs::write(
+        &metadata_path,
+        format!(
+            concat!(
+                "{{",
+                "\"kind\":\"live-interrupt\",",
+                "\"timestamp_ms\":{},",
+                "\"pid\":{},",
+                "\"binary\":{},",
+                "\"cwd\":{},",
+                "\"signal\":{},",
+                "\"socket_path\":{},",
+                "\"session_id\":{},",
+                "\"tab_id\":{},",
+                "\"pane_id\":{},",
+                "\"cols\":{},",
+                "\"rows\":{},",
+                "\"surface_kind\":{},",
+                "\"surface_version\":{},",
+                "\"scrollback_version\":{},",
+                "\"scrollback_total_lines\":{},",
+                "\"visible_surface_rows\":{},",
+                "\"cached_pane_surfaces\":{},",
+                "\"scrollback_views\":{},",
+                "\"rtt_micros\":{},",
+                "\"rendered_fps\":{},",
+                "\"rows_changed\":{},",
+                "\"rows_total\":{},",
+                "\"decode_micros\":{},",
+                "\"render_micros\":{},",
+                "\"client_count\":{},",
+                "\"args\":[{}]",
+                "}}\n"
+            ),
+            stamp.timestamp_ms,
+            std::process::id(),
+            json_string(report.binary),
+            json_string(&cwd_for_report()),
+            json_string(report.signal),
+            json_string(report.socket_path),
+            json_string(report.session_id),
+            json_string(report.tab_id),
+            json_string(report.pane_id),
+            report.cols,
+            report.rows,
+            json_string(report.surface_kind),
+            json_option_u64(report.surface_version),
+            json_option_u64(report.scrollback_version),
+            json_option_u64(report.scrollback_total_lines),
+            report.visible_surface_rows,
+            report.cached_pane_surfaces,
+            report.scrollback_views,
+            json_option_u128(report.rtt_micros),
+            json_option_u32(report.rendered_fps),
+            json_option_usize(report.rows_changed),
+            json_option_usize(report.rows_total),
+            json_option_u128(report.decode_micros),
+            json_option_u128(report.render_micros),
+            json_option_usize(report.client_count),
+            report
+                .args
+                .iter()
+                .map(|arg| json_string(arg))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    )?;
+    Ok(metadata_path)
+}
+
 fn write_frame_decode_error(
     dir: &Path,
     context: &str,
@@ -218,6 +330,30 @@ fn write_frame_decode_error(
         ),
     )?;
     Ok((metadata_path, frame_path))
+}
+
+fn json_option_u64(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_owned())
+}
+
+fn json_option_u128(value: Option<u128>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_owned())
+}
+
+fn json_option_u32(value: Option<u32>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_owned())
+}
+
+fn json_option_usize(value: Option<usize>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_owned())
 }
 
 fn parse_terminal_output_trace_line(line: &str) -> Result<TerminalOutputTraceEntry, String> {
@@ -345,6 +481,54 @@ mod tests {
         assert!(metadata.contains("\"binary\":\"nmux\""));
         assert!(metadata.contains("\"signal\":\"SIGINT\""));
         assert!(metadata.contains("\"--bug-report-dir\""));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn live_interrupt_report_writes_runtime_context() {
+        let dir = temp_bug_report_dir("live-interrupt-test");
+        let args = vec![
+            "nmux".to_owned(),
+            "--bug-report-dir".to_owned(),
+            dir.display().to_string(),
+        ];
+        let report = LiveInterruptReport {
+            binary: "nmux",
+            signal: "STDIN_CTRL_C",
+            args: &args,
+            socket_path: "/tmp/nmux-test.sock",
+            session_id: "session-1",
+            tab_id: "tab-1",
+            pane_id: "pane-1",
+            cols: 80,
+            rows: 24,
+            surface_kind: "main",
+            surface_version: Some(7),
+            scrollback_version: Some(9),
+            scrollback_total_lines: Some(42),
+            visible_surface_rows: 24,
+            cached_pane_surfaces: 1,
+            scrollback_views: 0,
+            rtt_micros: Some(1234),
+            rendered_fps: Some(60),
+            rows_changed: Some(3),
+            rows_total: Some(24),
+            decode_micros: Some(50),
+            render_micros: Some(900),
+            client_count: Some(2),
+        };
+
+        let metadata_path = write_live_interrupt(&dir, &report).expect("write report");
+
+        let metadata = fs::read_to_string(metadata_path).expect("read metadata");
+        assert!(metadata.contains("\"kind\":\"live-interrupt\""));
+        assert!(metadata.contains("\"signal\":\"STDIN_CTRL_C\""));
+        assert!(metadata.contains("\"socket_path\":\"/tmp/nmux-test.sock\""));
+        assert!(metadata.contains("\"session_id\":\"session-1\""));
+        assert!(metadata.contains("\"surface_version\":7"));
+        assert!(metadata.contains("\"rtt_micros\":1234"));
+        assert!(metadata.contains("\"rendered_fps\":60"));
 
         let _ = fs::remove_dir_all(dir);
     }

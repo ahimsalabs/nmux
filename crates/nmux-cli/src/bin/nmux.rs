@@ -1297,7 +1297,14 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
                 match receiver.try_recv() {
                     Ok(StdinByteRead::Input(input)) => {
-                        record_stdin_ctrl_c_bug_report_if_needed(args, &input);
+                        record_stdin_ctrl_c_bug_report_if_needed(
+                            args,
+                            &input,
+                            &current_workspace,
+                            &attached_pane_id,
+                            &surface_state,
+                            redraw_state.as_ref(),
+                        );
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
@@ -2948,14 +2955,56 @@ fn initial_live_scrollback(
     Ok((Some(scrollback), pending_updates, pending_live))
 }
 
-fn record_stdin_ctrl_c_bug_report_if_needed(args: &Args, input: &[u8]) {
+fn record_stdin_ctrl_c_bug_report_if_needed(
+    args: &Args,
+    input: &[u8],
+    workspace: &local::WorkspaceSummary,
+    attached_pane_id: &str,
+    surface_state: &LiveSurfaceState,
+    redraw_state: Option<&RedrawState>,
+) {
     if args.bug_report_dir.is_none() || !input.contains(&0x03) {
         return;
     }
     let process_args = std::env::args_os()
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
-    nmux_cli::bug_report::record_signal_interrupt("nmux", "STDIN_CTRL_C", &process_args);
+    let active_surface = surface_state
+        .current_pane_surface_summaries
+        .get(attached_pane_id);
+    let scrollback_total_lines = surface_state
+        .current_pane_scrollback_totals
+        .get(attached_pane_id)
+        .copied()
+        .or_else(|| active_surface.map(|surface| surface.scrollback_total_lines));
+    let stats = redraw_state.map(|state| &state.last_stats);
+    let socket_path = args.socket_path.display().to_string();
+    let report = nmux_cli::bug_report::LiveInterruptReport {
+        binary: "nmux",
+        signal: "STDIN_CTRL_C",
+        args: &process_args,
+        socket_path: &socket_path,
+        session_id: &workspace.session_id,
+        tab_id: &workspace.tab_id,
+        pane_id: attached_pane_id,
+        cols: workspace.cols,
+        rows: workspace.rows,
+        surface_kind: surface_kind_name(surface_state.current_surface_kind),
+        surface_version: active_surface.map(|surface| surface.version),
+        scrollback_version: active_surface.map(|surface| surface.scrollback_version),
+        scrollback_total_lines,
+        visible_surface_rows: surface_state.current_surface_text.lines().count(),
+        cached_pane_surfaces: surface_state.current_pane_surfaces.len(),
+        scrollback_views: surface_state.scrollback_views.len(),
+        rtt_micros: stats.and_then(|stats| stats.rtt.map(|rtt| rtt.as_micros())),
+        rendered_fps: stats.and_then(|stats| stats.rendered_fps),
+        rows_changed: stats.map(|stats| stats.rows_changed),
+        rows_total: stats.map(|stats| stats.rows_total),
+        decode_micros: stats.map(|stats| stats.decode_time.as_micros()),
+        render_micros: stats.map(|stats| stats.render_time.as_micros()),
+        client_count: stats.and_then(|stats| stats.client_count),
+    };
+    nmux_cli::bug_report::record_live_interrupt(&report);
 }
 
 fn spawn_stdin_line_reader() -> mpsc::Receiver<StdinLineRead> {
