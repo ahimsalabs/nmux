@@ -128,6 +128,7 @@ const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
 const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
 const LIVE_SCROLL_WHEEL_ROWS: u64 = 3;
+const LIVE_REDRAW_REPAIR_INTERVAL: Duration = Duration::from_millis(250);
 const STDIN_BYTE_READ_CHUNK: usize = 32;
 
 fn main() {
@@ -810,6 +811,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         RawTerminalModeContext {
             stdin_bytes: args.stdin_bytes,
             stdin_is_tty: stdin_is_tty(),
+            stdout_is_tty: stdout_is_tty(),
         },
         args.local_echo,
     ) {
@@ -1356,6 +1358,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 use_styled,
                                             )?;
                                         }
+                                        repaint_live_surface_after_input(
+                                            &current_workspace,
+                                            &surface_state,
+                                            &mut redraw_state,
+                                            args,
+                                        )?;
                                     }
                                     StdinByteForward::Paste(text) => {
                                         if restore_live_pane_surface_before_input(
@@ -1382,6 +1390,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 &text,
                                             )
                                         })?;
+                                        repaint_live_surface_after_input(
+                                            &current_workspace,
+                                            &surface_state,
+                                            &mut redraw_state,
+                                            args,
+                                        )?;
                                     }
                                     StdinByteForward::Key(key) => {
                                         match handle_live_tui_key(
@@ -1449,6 +1463,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                         use_styled,
                                                     )?;
                                                 }
+                                                repaint_live_surface_after_input(
+                                                    &current_workspace,
+                                                    &surface_state,
+                                                    &mut redraw_state,
+                                                    args,
+                                                )?;
                                             }
                                         }
                                     }
@@ -2039,6 +2059,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         if stdin_bytes_closed && args.iterations.is_none() {
             eprintln!("nmux: stdin EOF; detached");
             break LiveDetachReason::StdinEof;
+        }
+        if redraw_state
+            .as_ref()
+            .is_some_and(RedrawState::full_redraw_repair_due)
+        {
+            repaint_live_surface_after_input(
+                &current_workspace,
+                &surface_state,
+                &mut redraw_state,
+                args,
+            )?;
         }
         cycles += 1;
     };
@@ -4898,6 +4929,30 @@ fn restore_live_pane_surface_before_input(
     true
 }
 
+fn repaint_live_surface_after_input(
+    workspace: &local::WorkspaceSummary,
+    surface_state: &LiveSurfaceState,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !args.redraw || args.output_json {
+        return Ok(());
+    }
+
+    print_live_surface(
+        workspace,
+        &surface_state.current_surface_metadata,
+        &surface_state.current_surface_text,
+        args.redraw,
+        redraw_state.as_mut(),
+        Some(&surface_state.current_pane_surfaces),
+        Some(&surface_state.current_pane_surface_summaries),
+        Some(&live_pane_chrome_state(surface_state, workspace)),
+    );
+    flush_stdout()?;
+    Ok(())
+}
+
 fn render_scrollback_view_text(scrollback: Option<&local::ScrollbackChunkSummary>) -> String {
     scrollback
         .into_iter()
@@ -5063,7 +5118,9 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-struct RawTerminalGuard;
+struct RawTerminalGuard {
+    stdin_termios: Option<libc::termios>,
+}
 
 impl RawTerminalGuard {
     fn enable_if_needed(
@@ -5075,18 +5132,34 @@ impl RawTerminalGuard {
         }
 
         terminal::enable_raw_mode()?;
-        if let Err(err) = apply_raw_terminal_fixups(local_echo) {
-            let _ = terminal::disable_raw_mode();
-            return Err(err);
-        }
+        let stdin_termios = match read_stdin_termios() {
+            Ok(termios) => {
+                if let Err(err) = apply_stdin_raw_terminal_mode(termios, local_echo) {
+                    let _ = terminal::disable_raw_mode();
+                    return Err(err);
+                }
+                Some(termios)
+            }
+            Err(err) if context.stdout_is_tty => {
+                tracing::debug!(error = %err, "stdin termios unavailable after raw mode enabled");
+                None
+            }
+            Err(err) => {
+                let _ = terminal::disable_raw_mode();
+                return Err(err);
+            }
+        };
 
-        Ok(Some(Self))
+        Ok(Some(Self { stdin_termios }))
     }
 }
 
 impl Drop for RawTerminalGuard {
     fn drop(&mut self) {
         let _ = terminal::disable_raw_mode();
+        if let Some(termios) = self.stdin_termios.take() {
+            let _ = set_stdin_termios(&termios);
+        }
     }
 }
 
@@ -5094,10 +5167,11 @@ impl Drop for RawTerminalGuard {
 struct RawTerminalModeContext {
     stdin_bytes: bool,
     stdin_is_tty: bool,
+    stdout_is_tty: bool,
 }
 
 fn raw_terminal_mode_needed(context: RawTerminalModeContext) -> bool {
-    context.stdin_bytes && context.stdin_is_tty
+    context.stdin_bytes && (context.stdin_is_tty || context.stdout_is_tty)
 }
 
 struct RedrawTerminalGuard;
@@ -5466,13 +5540,15 @@ fn terminal_size_from_fd(fd: i32) -> io::Result<Option<(u32, u32)>> {
     Ok(Some((u32::from(size.ws_col), u32::from(size.ws_row))))
 }
 
-fn apply_raw_terminal_fixups(local_echo: LocalEcho) -> io::Result<()> {
-    let mut termios = read_stdin_termios()?;
-    termios = raw_terminal_fixup_termios(termios, local_echo);
+fn apply_stdin_raw_terminal_mode(original: libc::termios, local_echo: LocalEcho) -> io::Result<()> {
+    let termios = raw_terminal_mode_termios(original, local_echo);
+    set_stdin_termios(&termios)
+}
 
+fn set_stdin_termios(termios: &libc::termios) -> io::Result<()> {
     // SAFETY: termios was fetched from STDIN_FILENO and only adjusted by this
     // process before being applied back to the same descriptor.
-    if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) } != 0 {
+    if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, termios) } != 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
@@ -5489,7 +5565,9 @@ fn read_stdin_termios() -> io::Result<libc::termios> {
     Ok(unsafe { termios.assume_init() })
 }
 
-fn raw_terminal_fixup_termios(mut termios: libc::termios, local_echo: LocalEcho) -> libc::termios {
+fn raw_terminal_mode_termios(mut termios: libc::termios, local_echo: LocalEcho) -> libc::termios {
+    // SAFETY: cfmakeraw only mutates the provided termios struct.
+    unsafe { libc::cfmakeraw(&mut termios) };
     termios.c_iflag &= !libc::IXOFF;
     match local_echo {
         LocalEcho::Off => {}
@@ -5999,6 +6077,8 @@ struct RedrawState {
     terminal_rows: u32,
     /// When the last frame was rendered.
     last_frame_time: Instant,
+    /// Last full repaint used to repair terminal-side scroll damage.
+    last_full_redraw_time: Instant,
     /// Most recent frame statistics.
     last_stats: FrameStats,
     /// Pending decode time set before render_diff is called.
@@ -6019,6 +6099,7 @@ impl RedrawState {
             terminal_cols: 80,
             terminal_rows: 24,
             last_frame_time: Instant::now(),
+            last_full_redraw_time: Instant::now(),
             last_stats: FrameStats::default(),
             pending_decode_time: Duration::ZERO,
             last_rtt: None,
@@ -6064,6 +6145,10 @@ impl RedrawState {
     fn record_client_count(&mut self, count: usize) {
         self.last_client_count = Some(count);
         self.last_stats.client_count = Some(count);
+    }
+
+    fn full_redraw_repair_due(&self) -> bool {
+        self.last_full_redraw_time.elapsed() >= LIVE_REDRAW_REPAIR_INTERVAL
     }
 
     fn render_workspace(
@@ -6123,10 +6208,13 @@ impl RedrawState {
         let Some(terminal) = self.terminal.as_mut() else {
             return false;
         };
-        if resized {
+        let repair =
+            render_start.duration_since(self.last_full_redraw_time) >= LIVE_REDRAW_REPAIR_INTERVAL;
+        if resized || repair {
             let _ = clear_redraw_terminal();
             let _ = terminal.resize(area);
             let _ = terminal.clear();
+            self.last_full_redraw_time = render_start;
         }
 
         let draw_result = terminal.draw(|frame| {
@@ -9373,7 +9461,7 @@ mod tests {
         menu_overlay_for_action_with_session_inventory, next_scroll_offset, parse_detach_key,
         parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
         parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
+        preprocess_args, raw_terminal_mode_needed, raw_terminal_mode_termios,
         record_live_surface_scrollback_total, record_live_update_scrollback_total,
         redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
         render_scrollback_view_summary, render_scrollback_view_text,
@@ -9392,7 +9480,7 @@ mod tests {
     use std::path::Path;
 
     fn zero_termios() -> libc::termios {
-        // SAFETY: tests assign the termios fields read by raw_terminal_fixup_termios
+        // SAFETY: tests assign the termios fields read by raw_terminal_mode_termios
         // before asserting against the returned value.
         unsafe { std::mem::zeroed() }
     }
@@ -10372,15 +10460,22 @@ mod tests {
     }
 
     #[test]
-    fn raw_terminal_mode_is_only_needed_for_stdin_bytes_on_tty() {
+    fn raw_terminal_mode_is_needed_for_stdin_bytes_on_any_attached_tty() {
         let interactive_byte_mode = RawTerminalModeContext {
             stdin_bytes: true,
             stdin_is_tty: true,
+            stdout_is_tty: false,
         };
 
         assert!(raw_terminal_mode_needed(interactive_byte_mode));
+        assert!(raw_terminal_mode_needed(RawTerminalModeContext {
+            stdin_is_tty: false,
+            stdout_is_tty: true,
+            ..interactive_byte_mode
+        }));
         assert!(!raw_terminal_mode_needed(RawTerminalModeContext {
             stdin_is_tty: false,
+            stdout_is_tty: false,
             ..interactive_byte_mode
         }));
         assert!(!raw_terminal_mode_needed(RawTerminalModeContext {
@@ -10770,23 +10865,23 @@ mod tests {
     }
 
     #[test]
-    fn raw_terminal_mode_fixup_clears_flow_control_and_handles_local_echo() {
+    fn raw_terminal_mode_termios_enables_raw_input_and_handles_local_echo() {
         let mut original = zero_termios();
         original.c_lflag = libc::ICANON | libc::ISIG | libc::IEXTEN;
         original.c_iflag = libc::IXON | libc::IXOFF | libc::ICRNL;
         original.c_oflag = libc::OPOST;
 
-        let raw = raw_terminal_fixup_termios(original, LocalEcho::Off);
-        assert_eq!(raw.c_lflag & libc::ICANON, libc::ICANON);
+        let raw = raw_terminal_mode_termios(original, LocalEcho::Off);
+        assert_eq!(raw.c_lflag & libc::ICANON, 0);
         assert_eq!(raw.c_lflag & libc::ECHO, 0);
-        assert_eq!(raw.c_lflag & libc::ISIG, libc::ISIG);
-        assert_eq!(raw.c_lflag & libc::IEXTEN, libc::IEXTEN);
-        assert_eq!(raw.c_iflag & libc::IXON, libc::IXON);
+        assert_eq!(raw.c_lflag & libc::ISIG, 0);
+        assert_eq!(raw.c_lflag & libc::IEXTEN, 0);
+        assert_eq!(raw.c_iflag & libc::IXON, 0);
         assert_eq!(raw.c_iflag & libc::IXOFF, 0);
-        assert_eq!(raw.c_iflag & libc::ICRNL, libc::ICRNL);
-        assert_eq!(raw.c_oflag & libc::OPOST, libc::OPOST);
+        assert_eq!(raw.c_iflag & libc::ICRNL, 0);
+        assert_eq!(raw.c_oflag & libc::OPOST, 0);
 
-        let raw = raw_terminal_fixup_termios(original, LocalEcho::Tty);
+        let raw = raw_terminal_mode_termios(original, LocalEcho::Tty);
         assert_eq!(raw.c_lflag & libc::ECHO, libc::ECHO);
         assert_eq!(raw.c_iflag & libc::IXOFF, 0);
     }

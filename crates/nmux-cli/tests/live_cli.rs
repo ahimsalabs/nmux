@@ -20,6 +20,165 @@ struct PtyCommandOutput {
     output: String,
 }
 
+struct TestScreen {
+    cols: usize,
+    rows: usize,
+    cursor_col: usize,
+    cursor_row: usize,
+    cells: Vec<Vec<char>>,
+}
+
+impl TestScreen {
+    fn new(cols: usize, rows: usize) -> Self {
+        Self {
+            cols,
+            rows,
+            cursor_col: 0,
+            cursor_row: 0,
+            cells: vec![vec![' '; cols]; rows],
+        }
+    }
+
+    fn replay(bytes: &[u8], cols: usize, rows: usize) -> Self {
+        let mut screen = Self::new(cols, rows);
+        let text = String::from_utf8_lossy(bytes);
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\x1b' => screen.consume_escape(&mut chars),
+                '\r' => screen.cursor_col = 0,
+                '\n' => screen.newline(),
+                '\x08' => screen.cursor_col = screen.cursor_col.saturating_sub(1),
+                ch if ch.is_control() => {}
+                ch => screen.put_char(ch),
+            }
+        }
+        screen
+    }
+
+    fn text(&self) -> String {
+        self.cells
+            .iter()
+            .map(|row| row.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn put_char(&mut self, ch: char) {
+        if self.cursor_row >= self.rows || self.cursor_col >= self.cols {
+            return;
+        }
+        self.cells[self.cursor_row][self.cursor_col] = ch;
+        self.cursor_col += 1;
+        if self.cursor_col >= self.cols {
+            self.cursor_col = self.cols.saturating_sub(1);
+        }
+    }
+
+    fn newline(&mut self) {
+        self.cursor_col = 0;
+        self.cursor_row += 1;
+        if self.cursor_row >= self.rows {
+            self.cells.remove(0);
+            self.cells.push(vec![' '; self.cols]);
+            self.cursor_row = self.rows.saturating_sub(1);
+        }
+    }
+
+    fn consume_escape(&mut self, chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+        match chars.next() {
+            Some('[') => self.consume_csi(chars),
+            Some(']') | Some('P') | Some('_') | Some('^') | Some('X') | Some('G') => {
+                let mut escape_pending = false;
+                for ch in chars.by_ref() {
+                    if escape_pending {
+                        if ch == '\\' {
+                            break;
+                        }
+                        escape_pending = ch == '\x1b';
+                        continue;
+                    }
+                    if ch == '\u{7}' {
+                        break;
+                    }
+                    escape_pending = ch == '\x1b';
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn consume_csi(&mut self, chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+        let mut params = String::new();
+        let mut private = false;
+        let mut final_ch = None;
+        for ch in chars.by_ref() {
+            if ch == '?' {
+                private = true;
+                params.push(ch);
+                continue;
+            }
+            if ('\u{40}'..='\u{7e}').contains(&ch) {
+                final_ch = Some(ch);
+                break;
+            }
+            params.push(ch);
+        }
+        match final_ch {
+            Some('H') | Some('f') => {
+                let values = csi_numbers(&params);
+                let row = values.first().copied().unwrap_or(1).saturating_sub(1);
+                let col = values.get(1).copied().unwrap_or(1).saturating_sub(1);
+                self.cursor_row = row.min(self.rows.saturating_sub(1));
+                self.cursor_col = col.min(self.cols.saturating_sub(1));
+            }
+            Some('J') if params == "2" => {
+                self.cells = vec![vec![' '; self.cols]; self.rows];
+                self.cursor_col = 0;
+                self.cursor_row = 0;
+            }
+            Some('J') if params.is_empty() || params == "0" => {
+                if self.cursor_row < self.rows {
+                    for col in self.cursor_col..self.cols {
+                        self.cells[self.cursor_row][col] = ' ';
+                    }
+                    for row in self.cursor_row.saturating_add(1)..self.rows {
+                        for col in 0..self.cols {
+                            self.cells[row][col] = ' ';
+                        }
+                    }
+                }
+            }
+            Some('K') => {
+                if self.cursor_row < self.rows {
+                    for col in self.cursor_col..self.cols {
+                        self.cells[self.cursor_row][col] = ' ';
+                    }
+                }
+            }
+            Some('h') if private && params.contains("1049") => {
+                self.cells = vec![vec![' '; self.cols]; self.rows];
+                self.cursor_col = 0;
+                self.cursor_row = 0;
+            }
+            Some('l') if private && params.contains("1049") => {
+                self.cells = vec![vec![' '; self.cols]; self.rows];
+                self.cursor_col = 0;
+                self.cursor_row = 0;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn csi_numbers(params: &str) -> Vec<usize> {
+    params
+        .trim_start_matches('?')
+        .split(';')
+        .filter_map(|part| part.parse::<usize>().ok())
+        .collect()
+}
+
 struct PtyCommand {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     master: Box<dyn portable_pty::MasterPty + Send>,
@@ -262,6 +421,15 @@ fn live_redraw_tty_scrolled_holding_enter_does_not_detach() {
     assert!(
         !snapshot.contains("\x1b[?25h\x1b[?1049l"),
         "client left alternate screen before test shutdown:\n{snapshot}"
+    );
+    let screen = TestScreen::replay(snapshot.as_bytes(), 100, 24).text();
+    assert!(
+        screen.contains("Sessions"),
+        "menu disappeared after held Enter while scrolled:\n{screen}\nraw:\n{snapshot}"
+    );
+    assert!(
+        screen.contains("pane-1 active"),
+        "pane frame disappeared after held Enter while scrolled:\n{screen}\nraw:\n{snapshot}"
     );
     assert!(
         client.is_running(),
