@@ -1288,6 +1288,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut sent_explicit_live_resize = false;
     let mut active_overlay: Option<tui::TuiOverlay> = None;
     let mut active_menu_index: Option<usize> = None;
+    let mut pending_stdin_bytes = Vec::new();
     let detach_reason = loop {
         if cycle_limit.is_some_and(|iterations| cycles >= iterations) {
             break LiveDetachReason::IterationLimit;
@@ -1376,9 +1377,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             }
                             let tui_enter_enabled =
                                 active_overlay.is_some() || active_menu_index.is_some();
-                            for forward in stdin_byte_forwards_with_options(
+                            for forward in stdin_byte_forwards_with_pending(
                                 &input,
                                 StdinForwardOptions { tui_enter_enabled },
+                                &mut pending_stdin_bytes,
                             ) {
                                 match forward {
                                     StdinByteForward::Raw(input) => {
@@ -3459,6 +3461,82 @@ fn stdin_byte_forwards_with_options(
         StdinByteForward::Key(_) => true,
     });
     forwards
+}
+
+fn stdin_byte_forwards_with_pending(
+    input: &[u8],
+    options: StdinForwardOptions,
+    pending: &mut Vec<u8>,
+) -> Vec<StdinByteForward> {
+    let mut bytes = if pending.is_empty() {
+        input.to_vec()
+    } else {
+        let mut bytes = std::mem::take(pending);
+        bytes.extend_from_slice(input);
+        bytes
+    };
+    let pending_start = structured_stdin_pending_suffix_start(&bytes);
+    if let Some(start) = pending_start {
+        pending.extend_from_slice(&bytes[start..]);
+        bytes.truncate(start);
+    }
+    stdin_byte_forwards_with_options(&bytes, options)
+}
+
+fn structured_stdin_pending_suffix_start(input: &[u8]) -> Option<usize> {
+    for start in (0..input.len()).rev() {
+        if input[start] != b'\x1b' {
+            continue;
+        }
+        let suffix = &input[start..];
+        if is_pending_bracketed_paste_suffix(suffix)
+            || is_pending_sgr_mouse_suffix(suffix)
+            || is_pending_tui_key_suffix(suffix)
+        {
+            return Some(start);
+        }
+        return None;
+    }
+    None
+}
+
+fn is_pending_bracketed_paste_suffix(suffix: &[u8]) -> bool {
+    if suffix.len() <= 1 {
+        return false;
+    }
+    if BRACKETED_PASTE_START.starts_with(suffix) {
+        return true;
+    }
+    suffix.starts_with(BRACKETED_PASTE_START)
+        && find_bytes(&suffix[BRACKETED_PASTE_START.len()..], BRACKETED_PASTE_END).is_none()
+}
+
+fn is_pending_sgr_mouse_suffix(suffix: &[u8]) -> bool {
+    if suffix.len() <= 1 {
+        return false;
+    }
+    if SGR_MOUSE_START.starts_with(suffix) {
+        return true;
+    }
+    if !suffix.starts_with(SGR_MOUSE_START) || parse_sgr_mouse_sequence(suffix).is_some() {
+        return false;
+    }
+    suffix[SGR_MOUSE_START.len()..]
+        .iter()
+        .all(|byte| byte.is_ascii_digit() || *byte == b';')
+}
+
+fn is_pending_tui_key_suffix(suffix: &[u8]) -> bool {
+    if suffix.len() <= 1 {
+        return false;
+    }
+    const TUI_KEY_SEQUENCES: &[&[u8]] = &[
+        b"\x1b[A", b"\x1b[B", b"\x1b[C", b"\x1b[D", b"\x1b[Z", b"\x1bs", b"\x1bn", b"\x1bw",
+        b"\x1bc",
+    ];
+    TUI_KEY_SEQUENCES
+        .iter()
+        .any(|sequence| sequence.starts_with(suffix) && suffix.len() < sequence.len())
 }
 
 fn next_structured_stdin_forward(
@@ -9613,8 +9691,8 @@ mod tests {
         render_scrollback_view_text, restore_live_pane_surface_before_input,
         scrollback_viewport_range, scrollbar_offset_from_track, sigwinch_resize_needed,
         split_stdin_bytes_for_detach, stdin_byte_forwards, stdin_byte_forwards_with_options,
-        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
-        validate_explicit_input_modes as super_validate_explicit_input_modes,
+        stdin_byte_forwards_with_pending, terminal_size_from_fds, terminal_size_unavailable, tui,
+        usage, validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
     };
@@ -12768,6 +12846,88 @@ mod tests {
                 button: protocol::MouseButton::Middle,
                 action: protocol::MouseAction::Release,
                 modifiers: 3,
+            })]
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_buffer_split_sgr_mouse_before_forwarding() {
+        let mut pending = Vec::new();
+        assert_eq!(
+            stdin_byte_forwards_with_pending(
+                b"\x1b[<64;72;",
+                StdinForwardOptions::default(),
+                &mut pending
+            ),
+            Vec::<StdinByteForward>::new()
+        );
+        assert_eq!(pending, b"\x1b[<64;72;");
+
+        assert_eq!(
+            stdin_byte_forwards_with_pending(b"31M", StdinForwardOptions::default(), &mut pending),
+            vec![StdinByteForward::Mouse(SgrMouseInput {
+                row: 30,
+                col: 71,
+                button: protocol::MouseButton::WheelUp,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            })]
+        );
+        assert!(pending.is_empty());
+
+        assert_eq!(
+            stdin_byte_forwards_with_pending(
+                b"\x1b[<64;72;31M\x1b[<65;96;",
+                StdinForwardOptions::default(),
+                &mut pending
+            ),
+            vec![StdinByteForward::Mouse(SgrMouseInput {
+                row: 30,
+                col: 71,
+                button: protocol::MouseButton::WheelUp,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            })]
+        );
+        assert_eq!(pending, b"\x1b[<65;96;");
+        assert_eq!(
+            stdin_byte_forwards_with_pending(b"40M", StdinForwardOptions::default(), &mut pending),
+            vec![StdinByteForward::Mouse(SgrMouseInput {
+                row: 39,
+                col: 95,
+                button: protocol::MouseButton::WheelDown,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            })]
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_buffer_split_structured_escape_without_hiding_escape_key() {
+        let mut pending = Vec::new();
+        assert_eq!(
+            stdin_byte_forwards_with_pending(b"\x1b", StdinForwardOptions::default(), &mut pending),
+            vec![StdinByteForward::Key(StdinKeyInput {
+                key: StdinKey::Escape,
+                bytes: b"\x1b".to_vec(),
+            })]
+        );
+        assert!(pending.is_empty());
+
+        assert_eq!(
+            stdin_byte_forwards_with_pending(
+                b"\x1b[",
+                StdinForwardOptions::default(),
+                &mut pending
+            ),
+            Vec::<StdinByteForward>::new()
+        );
+        assert_eq!(pending, b"\x1b[");
+        assert_eq!(
+            stdin_byte_forwards_with_pending(b"A", StdinForwardOptions::default(), &mut pending),
+            vec![StdinByteForward::Key(StdinKeyInput {
+                key: StdinKey::Up,
+                bytes: b"\x1b[A".to_vec(),
             })]
         );
     }
