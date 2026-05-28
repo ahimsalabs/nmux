@@ -1022,6 +1022,17 @@ mod ghostty_vt {
             cols: u32,
             rows: u32,
         ) -> Option<TerminalUpdate> {
+            if input.cursor.col >= cols
+                || input.cursor.row >= rows
+                || self
+                    .state
+                    .as_ref()
+                    .is_some_and(ghostty_state_cursor_out_of_bounds)
+            {
+                self.state = None;
+                let mut fallback = super::InterimTextTerminalEngine::default();
+                return fallback.resize(input, cols, rows);
+            }
             let state = self.state_mut(&input)?;
             let cols = u16::try_from(cols).ok()?;
             let rows = u16::try_from(rows).ok()?;
@@ -1046,6 +1057,22 @@ mod ghostty_vt {
             };
             state.drain_pty_writes()
         }
+    }
+
+    fn ghostty_state_cursor_out_of_bounds(state: &GhosttyVtState) -> bool {
+        let Ok(cols) = state.terminal.cols() else {
+            return true;
+        };
+        let Ok(rows) = state.terminal.rows() else {
+            return true;
+        };
+        let Ok(cursor_x) = state.terminal.cursor_x() else {
+            return true;
+        };
+        let Ok(cursor_y) = state.terminal.cursor_y() else {
+            return true;
+        };
+        cursor_x >= cols || cursor_y >= rows
     }
 
     impl LibghosttyVtTerminalEngine {

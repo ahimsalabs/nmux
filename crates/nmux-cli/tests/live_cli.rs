@@ -347,7 +347,7 @@ fn live_redraw_tty_holding_enter_does_not_detach() {
     wait_for_socket(&socket_path);
 
     let mut client = spawn_nmux_client_in_pty_with_env(
-        &["--live", "--redraw", "--interval-ms", "20"],
+        &["--live", "--redraw", "--stdin-bytes", "--interval-ms", "20"],
         &[("NMUX_SOCKET", socket)],
     );
     thread::sleep(Duration::from_millis(300));
@@ -397,13 +397,13 @@ fn live_redraw_tty_scrolled_holding_enter_does_not_detach() {
     wait_for_socket(&socket_path);
 
     let mut client = spawn_nmux_client_in_pty_with_env(
-        &["--live", "--redraw", "--interval-ms", "20"],
+        &["--live", "--redraw", "--stdin-bytes", "--interval-ms", "20"],
         &[("NMUX_SOCKET", socket)],
     );
     thread::sleep(Duration::from_millis(500));
     client.write_all(b"\x1b[<64;20;10M");
     thread::sleep(Duration::from_millis(300));
-    for _ in 0..20 {
+    for _ in 0..80 {
         client.write_all(&vec![b'\r'; 32]);
         thread::sleep(Duration::from_millis(25));
         let snapshot = client.output_snapshot();
@@ -435,7 +435,7 @@ fn live_redraw_tty_scrolled_holding_enter_does_not_detach() {
         client.is_running(),
         "client exited after held Enter while scrolled"
     );
-    client.kill();
+    client.detach();
     let output = client.wait();
 
     let _kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
@@ -453,8 +453,8 @@ fn live_redraw_tty_scrolled_holding_enter_does_not_detach() {
         output.output
     );
     assert!(
-        !output.output.contains("detached by local Ctrl-]"),
-        "held Enter while scrolled should not be treated as local detach:\n{}",
+        output.output.contains("detached by local Ctrl-]"),
+        "client should still respond to local detach after held Enter while scrolled:\n{}",
         output.output
     );
 }

@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
@@ -128,7 +128,8 @@ const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
 const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
 const LIVE_SCROLL_WHEEL_ROWS: u64 = 3;
-const LIVE_REDRAW_REPAIR_INTERVAL: Duration = Duration::from_millis(250);
+const LIVE_INPUT_REPAIR_INTERVAL: Duration = Duration::from_millis(250);
+const LIVE_STREAM_FRAMES_PER_CYCLE: usize = 64;
 const STDIN_BYTE_READ_CHUNK: usize = 32;
 
 fn main() {
@@ -800,6 +801,8 @@ fn run_attach_loop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let stdin_tty = stdin_is_tty();
+    let stdout_tty = stdout_is_tty();
     let mut recorder = match LiveRecorder::open(args.record_path.as_deref()) {
         Ok(recorder) => recorder,
         Err(err) => {
@@ -810,8 +813,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let _raw_terminal = match RawTerminalGuard::enable_if_needed(
         RawTerminalModeContext {
             stdin_bytes: args.stdin_bytes,
-            stdin_is_tty: stdin_is_tty(),
-            stdout_is_tty: stdout_is_tty(),
+            stdin_is_tty: stdin_tty,
+            stdout_is_tty: stdout_tty,
         },
         args.local_echo,
     ) {
@@ -823,7 +826,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
     let _redraw_terminal = match RedrawTerminalGuard::enable_if_needed(RedrawTerminalContext {
         redraw: args.redraw,
-        stdout_is_tty: stdout_is_tty(),
+        stdout_is_tty: stdout_tty,
     }) {
         Ok(guard) => guard,
         Err(err) => {
@@ -860,10 +863,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let socket_scope = local::socket_identity(&args.socket_path).ok();
     let live_poll_timeout = Duration::from_millis(args.interval_ms);
     let live_socket_read_timeout = live_poll_timeout;
-    let stdout_tty = stdout_is_tty();
     let post_input_stream_grace = if stdout_tty && stdin_bytes_speculative_echo_enabled(args) {
         Duration::ZERO
-    } else if args.stdin_bytes && !stdin_is_tty() {
+    } else if args.stdin_bytes && !stdin_tty {
         live_poll_timeout
     } else {
         live_poll_timeout.min(Duration::from_millis(2))
@@ -1089,6 +1091,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     reader.wake_reader(),
                     live_poll_timeout,
                     false,
+                    stdin_tty,
                 )? {
                     LiveLoopReadiness::Stdin | LiveLoopReadiness::Timeout => break,
                     LiveLoopReadiness::Stream => {}
@@ -1311,6 +1314,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
+                            if let Some(state) = redraw_state.as_mut()
+                                && args.redraw
+                                && !args.output_json
+                            {
+                                state.request_input_damage_repair();
+                            }
                             let tui_enter_enabled =
                                 active_overlay.is_some() || active_menu_index.is_some();
                             for forward in stdin_byte_forwards_with_options(
@@ -1887,6 +1896,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        let mut stream_frames_this_cycle = 0_usize;
         loop {
             if let Some(reader) = stdin_bytes.as_ref()
                 && (!sent_stdin_bytes_this_cycle || read_after_stdin_bytes_this_cycle)
@@ -1907,6 +1917,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             reader.wake_reader(),
                             timeout,
                             sent_stdin_bytes_this_cycle,
+                            stdin_tty,
                         )
                     })?
                 };
@@ -2047,6 +2058,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
             }
+            if stdin_bytes.is_some() {
+                stream_frames_this_cycle += 1;
+                if stream_frames_this_cycle >= LIVE_STREAM_FRAMES_PER_CYCLE {
+                    break;
+                }
+            }
         }
         if detach_requested {
             eprintln!("nmux: detached by local Ctrl-]");
@@ -2062,14 +2079,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         }
         if redraw_state
             .as_ref()
-            .is_some_and(RedrawState::full_redraw_repair_due)
+            .is_some_and(RedrawState::input_damage_repair_due)
         {
-            repaint_live_surface_after_input(
-                &current_workspace,
-                &surface_state,
-                &mut redraw_state,
-                args,
-            )?;
+            repaint_live_surface(&current_workspace, &surface_state, &mut redraw_state, args)?;
         }
         cycles += 1;
     };
@@ -3187,6 +3199,7 @@ fn poll_live_stream_or_stdin(
     stdin_wake_reader: &UnixStream,
     timeout: Duration,
     wait_for_stream_on_stdin: bool,
+    prefer_stdin: bool,
 ) -> io::Result<LiveLoopReadiness> {
     let mut fds = [
         libc::pollfd {
@@ -3204,10 +3217,15 @@ fn poll_live_stream_or_stdin(
     loop {
         let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
         if ready > 0 {
-            if fds[0].revents != 0 {
+            let stream_ready = fds[0].revents != 0;
+            let stdin_ready = fds[1].revents != 0;
+            if stdin_ready && prefer_stdin {
+                return Ok(LiveLoopReadiness::Stdin);
+            }
+            if stream_ready {
                 return Ok(LiveLoopReadiness::Stream);
             }
-            if fds[1].revents != 0 {
+            if stdin_ready {
                 if wait_for_stream_on_stdin
                     && poll_live_stream(stream, timeout)? == LiveLoopReadiness::Stream
                 {
@@ -4939,6 +4957,22 @@ fn repaint_live_surface_after_input(
         return Ok(());
     }
 
+    if let Some(state) = redraw_state.as_mut() {
+        state.request_input_damage_repair();
+    }
+    repaint_live_surface(workspace, surface_state, redraw_state, args)
+}
+
+fn repaint_live_surface(
+    workspace: &local::WorkspaceSummary,
+    surface_state: &LiveSurfaceState,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !args.redraw || args.output_json {
+        return Ok(());
+    }
+
     print_live_surface(
         workspace,
         &surface_state.current_surface_metadata,
@@ -5120,6 +5154,7 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 struct RawTerminalGuard {
     stdin_termios: Option<libc::termios>,
+    tty_termios: Option<(File, libc::termios)>,
 }
 
 impl RawTerminalGuard {
@@ -5132,6 +5167,7 @@ impl RawTerminalGuard {
         }
 
         terminal::enable_raw_mode()?;
+        let mut tty_termios = None;
         let stdin_termios = match read_stdin_termios() {
             Ok(termios) => {
                 if let Err(err) = apply_stdin_raw_terminal_mode(termios, local_echo) {
@@ -5142,6 +5178,24 @@ impl RawTerminalGuard {
             }
             Err(err) if context.stdout_is_tty => {
                 tracing::debug!(error = %err, "stdin termios unavailable after raw mode enabled");
+                if let Ok(tty) = File::options().read(true).write(true).open("/dev/tty") {
+                    match read_fd_termios(tty.as_raw_fd()) {
+                        Ok(termios) => {
+                            let raw = raw_terminal_mode_termios(termios, local_echo);
+                            if let Err(err) = set_fd_termios(tty.as_raw_fd(), &raw) {
+                                let _ = terminal::disable_raw_mode();
+                                return Err(err);
+                            }
+                            tty_termios = Some((tty, termios));
+                        }
+                        Err(err) => {
+                            tracing::debug!(
+                                error = %err,
+                                "controlling tty termios unavailable after raw mode enabled"
+                            );
+                        }
+                    }
+                }
                 None
             }
             Err(err) => {
@@ -5150,7 +5204,10 @@ impl RawTerminalGuard {
             }
         };
 
-        Ok(Some(Self { stdin_termios }))
+        Ok(Some(Self {
+            stdin_termios,
+            tty_termios,
+        }))
     }
 }
 
@@ -5159,6 +5216,9 @@ impl Drop for RawTerminalGuard {
         let _ = terminal::disable_raw_mode();
         if let Some(termios) = self.stdin_termios.take() {
             let _ = set_stdin_termios(&termios);
+        }
+        if let Some((tty, termios)) = self.tty_termios.take() {
+            let _ = set_fd_termios(tty.as_raw_fd(), &termios);
         }
     }
 }
@@ -5548,17 +5608,27 @@ fn apply_stdin_raw_terminal_mode(original: libc::termios, local_echo: LocalEcho)
 fn set_stdin_termios(termios: &libc::termios) -> io::Result<()> {
     // SAFETY: termios was fetched from STDIN_FILENO and only adjusted by this
     // process before being applied back to the same descriptor.
-    if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, termios) } != 0 {
+    set_fd_termios(libc::STDIN_FILENO, termios)
+}
+
+fn set_fd_termios(fd: libc::c_int, termios: &libc::termios) -> io::Result<()> {
+    // SAFETY: fd is expected to reference a terminal and termios points to a
+    // valid termios value previously read from that terminal.
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, termios) } != 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
 }
 
 fn read_stdin_termios() -> io::Result<libc::termios> {
+    read_fd_termios(libc::STDIN_FILENO)
+}
+
+fn read_fd_termios(fd: libc::c_int) -> io::Result<libc::termios> {
     let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
     // SAFETY: STDIN_FILENO is a valid process file descriptor when raw mode is
     // enabled, and termios points to writable storage initialized by tcgetattr.
-    if unsafe { libc::tcgetattr(libc::STDIN_FILENO, termios.as_mut_ptr()) } != 0 {
+    if unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: successful tcgetattr initialized the termios storage.
@@ -6077,10 +6147,12 @@ struct RedrawState {
     terminal_rows: u32,
     /// When the last frame was rendered.
     last_frame_time: Instant,
-    /// Last full repaint used to repair terminal-side scroll damage.
-    last_full_redraw_time: Instant,
     /// Most recent frame statistics.
     last_stats: FrameStats,
+    /// Whether local input may have dirtied the terminal outside ratatui's buffer cache.
+    input_damage_repair_requested: bool,
+    /// Last forced input-damage repair.
+    last_input_repair_time: Instant,
     /// Pending decode time set before render_diff is called.
     pending_decode_time: Duration,
     /// Most recently observed ping round-trip time.
@@ -6099,8 +6171,9 @@ impl RedrawState {
             terminal_cols: 80,
             terminal_rows: 24,
             last_frame_time: Instant::now(),
-            last_full_redraw_time: Instant::now(),
             last_stats: FrameStats::default(),
+            input_damage_repair_requested: false,
+            last_input_repair_time: Instant::now() - LIVE_INPUT_REPAIR_INTERVAL,
             pending_decode_time: Duration::ZERO,
             last_rtt: None,
             last_client_count: None,
@@ -6147,8 +6220,13 @@ impl RedrawState {
         self.last_stats.client_count = Some(count);
     }
 
-    fn full_redraw_repair_due(&self) -> bool {
-        self.last_full_redraw_time.elapsed() >= LIVE_REDRAW_REPAIR_INTERVAL
+    fn request_input_damage_repair(&mut self) {
+        self.input_damage_repair_requested = true;
+    }
+
+    fn input_damage_repair_due(&self) -> bool {
+        self.input_damage_repair_requested
+            && self.last_input_repair_time.elapsed() >= LIVE_INPUT_REPAIR_INTERVAL
     }
 
     fn render_workspace(
@@ -6205,16 +6283,18 @@ impl RedrawState {
             idle: rows_changed == 0,
         };
         let status_text = self.format_status_text(workspace);
+        let repair_input_damage = self.input_damage_repair_due();
         let Some(terminal) = self.terminal.as_mut() else {
             return false;
         };
-        let repair =
-            render_start.duration_since(self.last_full_redraw_time) >= LIVE_REDRAW_REPAIR_INTERVAL;
-        if resized || repair {
+        if resized || repair_input_damage {
             let _ = clear_redraw_terminal();
             let _ = terminal.resize(area);
             let _ = terminal.clear();
-            self.last_full_redraw_time = render_start;
+            if repair_input_damage {
+                self.input_damage_repair_requested = false;
+                self.last_input_repair_time = render_start;
+            }
         }
 
         let draw_result = terminal.draw(|frame| {
