@@ -48,8 +48,10 @@ viewport snapshot. This removes a class of blank or missing-scrollback bugs
 caused by client-side range stitching.
 
 The old `PaneSurfaceSnapshot`, `PaneSurfacePatch`, `ScrollbackFetch`, and
-`ScrollbackChunk` envelope bodies are removed from protocol v2. Compatibility
-with protocol v1 is intentionally not preserved while nmux is pre-release.
+`ScrollbackChunk` envelope bodies are removed from protocol v2.
+`AttachRequest.known_surfaces` is also removed; clients advertise
+`known_viewports` only. Compatibility with protocol v1 is intentionally not
+preserved while nmux is pre-release.
 
 Viewport patches can be implemented after the snapshot path is stable. Until
 then, snapshots are the correctness path and patch support is an optimization.

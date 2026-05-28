@@ -15,18 +15,20 @@ cross-cutting pre-schema protocol tracks live in
 `nmux daemon` engine `libghostty-vt`; no-default-features builds keep the
 interim engine available as a fallback.
 
-## Current nmux Surface
+## Current nmux Viewport
 
 `nmux-core` currently publishes:
 
 - `WorkspaceTreeSnapshot`: session, tab, root pane identity, size, resize policy,
-  and current pane surface version.
-- `PaneSurfaceSnapshot`: pane ID, surface version, size, cursor, terminal
-  metadata, terminal modes, terminal colors, style table, and rendered row runs.
-- `PaneSurfacePatch`: base/version pair, replacement row runs, cursor, terminal
-  metadata, terminal modes, terminal colors, and patch kind.
-- `ScrollbackChunk`: scrollback row runs, terminal colors, and the style and
-  hyperlink tables for the requested range.
+  and current pane viewport version.
+- `PaneViewportIntent`: active, top, pinned, or delta viewport selection from a
+  client.
+- `PaneViewportSnapshot`: pane ID, viewport version, timeline version, selected
+  viewport range, size, cursor, terminal metadata, terminal modes, terminal
+  colors, style table, hyperlink table, and rendered row runs.
+- `PaneViewportPatch`: base/version pair, selected viewport range, sparse row
+  updates, cursor, terminal metadata, terminal modes, terminal colors, and patch
+  kind.
 
 The current terminal engine boundary owns:
 
@@ -49,22 +51,20 @@ backend terminal state into the same nmux objects:
 - Surface kind: active main versus alternate screen state comes from the
   terminal engine and is present on full surface snapshots.
 - Visible rows: extract the active screen viewport as row runs compatible with
-  the current `PaneSurfaceSnapshot` and `PaneSurfacePatch` fields. Snapshot and
-  patch serialization must stay pane-scoped.
+  the current `PaneViewportSnapshot` and `PaneViewportPatch` fields. Snapshot
+  and patch serialization must stay pane-scoped.
 - Cell runs: preserve style identity, semantic content, hyperlink presence, and
   cell-width metadata from the VT engine while keeping rendered row text
   available as a client fallback.
-- Scrollback: expose historical rows through the existing `ScrollbackChunk`
-  range model and advance scrollback versions when backend-owned history
-  changes. Fetch handling must stay pane-scoped, treat version zero as no
-  client precondition, and reject nonzero stale client versions with
-  `ErrorCode::StaleVersion`. Decoded non-empty chunks must preserve a
-  contiguous public range from `start_line` through the returned rows without
-  exceeding `total_lines`. Local persisted client state records the last seen
-  scrollback range/version metadata; matching later fetches still ask the daemon
-  for scrollback when the visible surface is current, preserve distinct cached
-  range/version entries, send matching versions as preconditions, and retry once
-  with version zero if a precondition is stale.
+- Scrollback: expose historical rows through pinned `PaneViewportIntent`
+  requests and daemon-owned `PaneViewportSnapshot` responses. Viewport handling
+  must stay pane-scoped, treat version zero as no client precondition, and
+  reject nonzero stale client versions with `ErrorCode::StaleVersion`. Decoded
+  viewport rows preserve public line numbers from `viewport_top_line`; rows
+  beyond `total_lines` are daemon-provided blank padding. Local persisted client
+  state records the last seen scrollback range/version metadata, sends matching
+  versions as preconditions, and retries once with version zero if a precondition
+  is stale.
 - Resize: feed resize events into the VT engine and publish the resulting pane
   size, cursor, visible rows, and scrollback state.
 - Versions: bump surface versions when the nmux-visible surface, cursor,
@@ -149,30 +149,30 @@ only after the backend extraction proves the exact shape needed.
 - Palette and theme state: indexed SGR colors resolve into RGBA style-table
   entries during `libghostty-vt` extraction. `TerminalColorState` carries
   backend-observed default foreground/background colors, the active palette,
-  palette overrides, and explicit cursor color state through surface snapshots,
-  color-only surface patches, scrollback chunks, and cached client state. ADR
-  0019 scopes incremental palette diffs to color-only patches; clients reject
-  palette diffs on snapshots, scrollback chunks, and non-color patches so those
-  objects remain self-contained or row/state compatible.
+  palette overrides, and explicit cursor color state through viewport snapshots,
+  color-only viewport patches, and cached client state. ADR 0019 scopes
+  incremental palette diffs to color-only patches; clients reject palette diffs
+  on snapshots and non-color patches so those objects remain self-contained or
+  row/state compatible.
   Palette overrides that alter existing row style-table entries force full
   surface refreshes because current style-table entries store resolved RGBA
   values.
 - Hyperlinks: OSC 8 link text is preserved by `libghostty-vt` extraction, and
   backend row/cell hyperlink presence is carried as bit 0 in `CellRun.flags`.
-  `PaneSurfaceSnapshot` and `ScrollbackChunk` now carry a `Hyperlink` table, but
-  nmux intentionally leaves `hyperlink_id` unset until URI, identifier, range
-  ownership, and lifetime are wired from the backend. Current `libghostty-vt`
+  `PaneViewportSnapshot` carries a `Hyperlink` table, but nmux intentionally
+  leaves `hyperlink_id` unset until URI, identifier, range ownership, and
+  lifetime are wired from the backend. Current `libghostty-vt`
   bindings expose presence only, not a structured per-cell identity reference;
   the upstream/API gap is tracked in
   [libghostty-vt hyperlink identity access](upstream/libghostty-vt-hyperlink-identity.md).
   ADR 0022 records the conservative patching rule for new identities.
 - Images and graphics protocols: nmux carries Kitty virtual placeholder
-  presence on surface snapshots, surface patches, and scrollback chunks. Image
+  presence on viewport snapshots and viewport patches. Image
   placement, dimensions, persistence, pixel-data, and fallback protocol objects
   remain withheld.
 - Damage granularity: row replacement is enough for the prototype, and nmux now
-  carries backend row dirty flags on surface snapshots, sparse row-replacement
-  patches, and scrollback chunks. Rows also carry a `row_state_hash` covering
+  carries backend row dirty flags on viewport snapshots and sparse row-replacement
+  patches. Rows also carry a `row_state_hash` covering
   runs, semantic metadata, dirty state, and Kitty placeholder state, while the
   older `dirty_hash` remains a text-only compatibility fingerprint. The
   `libghostty-vt` extractor only emits no-row cursor or mode patches when
@@ -188,7 +188,7 @@ The repository has passed the initial gate for the feature-enabled
 keep tests proving:
 
 - the engine is stateful per pane across multiple PTY output reads;
-- cursor movement without printable text updates `PaneSurfacePatch.cursor` using
+- cursor movement without printable text updates `PaneViewportPatch.cursor` using
   `PatchKind::CursorOnly`;
 - resize events are handled by the engine instance used for that pane;
 - scrollback fetches return backend-owned history after viewport changes;

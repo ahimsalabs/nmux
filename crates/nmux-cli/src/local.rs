@@ -1496,7 +1496,7 @@ struct LiveAttachedClient {
     last_seen_mono_ms: u64,
     last_input_mono_ms: Option<u64>,
     seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
     frontend_resize_constraints: BTreeMap<String, (u32, u32)>,
     completed_cycles: usize,
 }
@@ -1602,14 +1602,14 @@ fn signal_changed_surface_frames_to_live_client(
             session,
             &mut client.seq,
             pane_ids,
-            &mut client.known_surface_versions,
+            &mut client.known_viewport_versions,
         ),
         LiveClientTransport::Async { output, .. } => {
             for pane_id in pane_ids {
                 let Some(current) = session.surface_version(pane_id) else {
                     continue;
                 };
-                if client.known_surface_versions.get(pane_id).copied() == Some(current) {
+                if client.known_viewport_versions.get(pane_id).copied() == Some(current) {
                     continue;
                 }
                 let Some(bundle) = surface_frame_bundle_for_pane(session, pane_id, client.seq)
@@ -1626,7 +1626,7 @@ fn signal_changed_surface_frames_to_live_client(
                     .map_err(live_client_output_error)?;
                 client.seq += 1;
                 client
-                    .known_surface_versions
+                    .known_viewport_versions
                     .insert(pane_id.clone(), current);
             }
             Ok(())
@@ -1801,15 +1801,15 @@ fn smallest_read_write_frontend_resize(
 fn async_live_client_transport(
     stream: UnixStream,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
 ) -> Result<LiveClientTransport, ServeError> {
-    async_live_client_transport_with_runtime(stream, next_seq, known_surface_versions, None)
+    async_live_client_transport_with_runtime(stream, next_seq, known_viewport_versions, None)
 }
 
 fn async_live_client_transport_with_runtime(
     stream: UnixStream,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
     runtime: Option<&LiveAsyncRuntime>,
 ) -> Result<LiveClientTransport, ServeError> {
     let read_stream = stream.try_clone()?;
@@ -1832,7 +1832,7 @@ fn async_live_client_transport_with_runtime(
             input_tx,
             output_rx,
             next_seq,
-            known_surface_versions,
+            known_viewport_versions,
         )?;
     } else {
         spawn_async_live_client_tasks(
@@ -1841,7 +1841,7 @@ fn async_live_client_transport_with_runtime(
             input_tx,
             output_rx,
             next_seq,
-            known_surface_versions,
+            known_viewport_versions,
         );
     }
     Ok(LiveClientTransport::Async {
@@ -1861,7 +1861,7 @@ struct LiveAsyncClientTask {
     input_tx: async_live::AsyncClientInputTx,
     output_rx: async_live::AsyncClientOutputRx,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
 }
 
 impl LiveAsyncRuntime {
@@ -1891,7 +1891,7 @@ impl LiveAsyncRuntime {
                             task.input_tx,
                             task.output_rx,
                             task.next_seq,
-                            task.known_surface_versions,
+                            task.known_viewport_versions,
                         )
                         .await
                         {
@@ -1915,7 +1915,7 @@ impl LiveAsyncRuntime {
         input_tx: async_live::AsyncClientInputTx,
         output_rx: async_live::AsyncClientOutputRx,
         next_seq: u64,
-        known_surface_versions: BTreeMap<String, u64>,
+        known_viewport_versions: BTreeMap<String, u64>,
     ) -> Result<(), ServeError> {
         self.task_tx
             .send(LiveAsyncClientTask {
@@ -1924,7 +1924,7 @@ impl LiveAsyncRuntime {
                 input_tx,
                 output_rx,
                 next_seq,
-                known_surface_versions,
+                known_viewport_versions,
             })
             .map_err(|_| "shared async live runtime stopped".into())
     }
@@ -1936,7 +1936,7 @@ fn spawn_async_live_client_tasks(
     input_tx: async_live::AsyncClientInputTx,
     output_rx: async_live::AsyncClientOutputRx,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
 ) {
     thread::spawn(move || {
         if let Err(err) = run_async_live_client_tasks(
@@ -1945,7 +1945,7 @@ fn spawn_async_live_client_tasks(
             input_tx,
             output_rx,
             next_seq,
-            known_surface_versions,
+            known_viewport_versions,
         ) {
             tracing::debug!(error = %err, "async live client task exited");
         }
@@ -1958,7 +1958,7 @@ fn run_async_live_client_tasks(
     input_tx: async_live::AsyncClientInputTx,
     output_rx: async_live::AsyncClientOutputRx,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
 ) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -1970,7 +1970,7 @@ fn run_async_live_client_tasks(
         input_tx,
         output_rx,
         next_seq,
-        known_surface_versions,
+        known_viewport_versions,
     ))
 }
 
@@ -1980,14 +1980,14 @@ async fn run_async_live_client_tasks_on_runtime(
     input_tx: async_live::AsyncClientInputTx,
     output_rx: async_live::AsyncClientOutputRx,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
 ) -> Result<(), String> {
     let reader = tokio::net::UnixStream::from_std(read_stream)
         .map_err(|err| format!("failed to register live client reader: {err}"))?;
     let writer = tokio::net::UnixStream::from_std(write_stream)
         .map_err(|err| format!("failed to register live client writer: {err}"))?;
     let mut surface_source = BundledSurfaceFrameSource;
-    let mut state = async_live::ClientWriteTaskState::new(next_seq, known_surface_versions);
+    let mut state = async_live::ClientWriteTaskState::new(next_seq, known_viewport_versions);
 
     tokio::select! {
         result = async_live::run_client_read_task(reader, input_tx) => {
@@ -2059,7 +2059,7 @@ fn accept_live_client(
                 last_seen_mono_ms: now_mono_ms,
                 last_input_mono_ms: None,
                 seq,
-                known_surface_versions: BTreeMap::new(),
+                known_viewport_versions: BTreeMap::new(),
                 frontend_resize_constraints: BTreeMap::new(),
                 completed_cycles: usize::MAX,
             })));
@@ -2069,11 +2069,11 @@ fn accept_live_client(
         }
         let mut seq = 1;
         write_live_attach_initial(&mut stream, session, &request, &pane_id, &mut seq)?;
-        let mut known_surface_versions = known_surface_versions_from_request(&request);
+        let mut known_viewport_versions = known_viewport_versions_from_request(&request);
         if let Some(current) = session.surface_version(&pane_id) {
-            known_surface_versions.insert(pane_id, current);
+            known_viewport_versions.insert(pane_id, current);
         }
-        let transport = async_live_client_transport(stream, seq, known_surface_versions.clone())?;
+        let transport = async_live_client_transport(stream, seq, known_viewport_versions.clone())?;
         return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
             transport,
             connection_id,
@@ -2085,7 +2085,7 @@ fn accept_live_client(
             last_seen_mono_ms: now_mono_ms,
             last_input_mono_ms: None,
             seq,
-            known_surface_versions,
+            known_viewport_versions,
             frontend_resize_constraints: BTreeMap::new(),
             completed_cycles: 0,
         })));
@@ -2104,7 +2104,7 @@ fn accept_live_client(
         last_seen_mono_ms: now_mono_ms,
         last_input_mono_ms: None,
         seq,
-        known_surface_versions: BTreeMap::new(),
+        known_viewport_versions: BTreeMap::new(),
         frontend_resize_constraints: BTreeMap::new(),
         completed_cycles: usize::MAX,
     })))
@@ -2180,7 +2180,7 @@ fn accept_live_client_with_session_actor(
                 last_seen_mono_ms: now_mono_ms,
                 last_input_mono_ms: None,
                 seq,
-                known_surface_versions: BTreeMap::new(),
+                known_viewport_versions: BTreeMap::new(),
                 frontend_resize_constraints: BTreeMap::new(),
                 completed_cycles: usize::MAX,
             })));
@@ -2189,18 +2189,18 @@ fn accept_live_client_with_session_actor(
             drain_notify_fd(notify_fd)?;
         }
         let mut seq = 1;
-        let mut known_surface_versions = known_surface_versions_from_request(&request);
+        let mut known_viewport_versions = known_viewport_versions_from_request(&request);
         {
             let session = actor.session();
             write_live_attach_initial(&mut stream, session, &request, &pane_id, &mut seq)?;
             if let Some(current) = session.surface_version(&pane_id) {
-                known_surface_versions.insert(pane_id, current);
+                known_viewport_versions.insert(pane_id, current);
             }
         }
         let transport = async_live_client_transport_with_runtime(
             stream,
             seq,
-            known_surface_versions.clone(),
+            known_viewport_versions.clone(),
             async_runtime,
         )?;
         return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
@@ -2214,7 +2214,7 @@ fn accept_live_client_with_session_actor(
             last_seen_mono_ms: now_mono_ms,
             last_input_mono_ms: None,
             seq,
-            known_surface_versions,
+            known_viewport_versions,
             frontend_resize_constraints: BTreeMap::new(),
             completed_cycles: 0,
         })));
@@ -2233,7 +2233,7 @@ fn accept_live_client_with_session_actor(
         last_seen_mono_ms: now_mono_ms,
         last_input_mono_ms: None,
         seq,
-        known_surface_versions: BTreeMap::new(),
+        known_viewport_versions: BTreeMap::new(),
         frontend_resize_constraints: BTreeMap::new(),
         completed_cycles: usize::MAX,
     })))
@@ -3138,9 +3138,9 @@ fn serve_live_attached_client(
         return Ok(());
     };
     let leaf_pane_ids = session.leaf_pane_ids();
-    let mut known_surface_versions = known_surface_versions_from_request(&request);
+    let mut known_viewport_versions = known_viewport_versions_from_request(&request);
     if let Some(current) = session.surface_version(&pane_id) {
-        known_surface_versions.insert(pane_id.clone(), current);
+        known_viewport_versions.insert(pane_id.clone(), current);
     }
 
     let mut completed_cycles = 0;
@@ -3413,7 +3413,7 @@ fn serve_live_attached_client(
                                 session,
                                 &mut seq,
                                 &leaf_pane_ids,
-                                &mut known_surface_versions,
+                                &mut known_viewport_versions,
                             )
                         })?;
                     }
@@ -3498,7 +3498,7 @@ fn serve_live_attached_client(
                 session,
                 &mut seq,
                 &leaf_pane_ids,
-                &mut known_surface_versions,
+                &mut known_viewport_versions,
             )
         })?;
         let host_completion = readiness.host_output && actor.mode == AttachMode::ReadOnly;
@@ -3526,9 +3526,9 @@ fn serve_live_attached_client_with_session_actor(
         return Ok(());
     };
     let leaf_pane_ids = actor.session().leaf_pane_ids();
-    let mut known_surface_versions = known_surface_versions_from_request(&request);
+    let mut known_viewport_versions = known_viewport_versions_from_request(&request);
     if let Some(current) = actor.session().surface_version(&pane_id) {
-        known_surface_versions.insert(pane_id.clone(), current);
+        known_viewport_versions.insert(pane_id.clone(), current);
     }
 
     let mut completed_cycles = 0;
@@ -3828,7 +3828,7 @@ fn serve_live_attached_client_with_session_actor(
                                 session,
                                 &mut seq,
                                 &leaf_pane_ids,
-                                &mut known_surface_versions,
+                                &mut known_viewport_versions,
                             )
                         })?;
                     }
@@ -3917,7 +3917,7 @@ fn serve_live_attached_client_with_session_actor(
                 session,
                 &mut seq,
                 &leaf_pane_ids,
-                &mut known_surface_versions,
+                &mut known_viewport_versions,
             )
         })?;
         let host_completion = readiness.host_output && client_actor.mode == AttachMode::ReadOnly;
@@ -4862,9 +4862,9 @@ fn surface_frame_bundle_for_pane(
     })
 }
 
-fn known_surface_versions_from_request(request: &AttachRequest) -> BTreeMap<String, u64> {
+fn known_viewport_versions_from_request(request: &AttachRequest) -> BTreeMap<String, u64> {
     request
-        .known_surfaces
+        .known_viewports
         .iter()
         .map(|known| (known.pane_id.clone(), known.version))
         .collect()
@@ -5370,12 +5370,12 @@ fn input_write_target_exited(error: &HostError, pane_id: &str) -> bool {
 }
 
 pub(crate) fn attach(path: &Path) -> Result<AttachSnapshot, ServeError> {
-    attach_with_known_surfaces(path, Vec::new())
+    attach_with_known_viewports(path, Vec::new())
 }
 
-pub(crate) fn attach_with_known_surfaces(
+pub(crate) fn attach_with_known_viewports(
     path: &Path,
-    known_surfaces: Vec<KnownSurfaceVersion>,
+    known_viewports: Vec<KnownViewportVersion>,
 ) -> Result<AttachSnapshot, ServeError> {
     attach_with_options(
         path,
@@ -5385,8 +5385,7 @@ pub(crate) fn attach_with_known_surfaces(
             display_name: "local".to_owned(),
             mode: AttachMode::ReadWrite,
             focused_pane_id: None,
-            known_surfaces,
-            known_viewports: Vec::new(),
+            known_viewports,
             hostname: String::new(),
             client_kind: "nmux".to_owned(),
             subscribe_client_inventory: false,
@@ -5442,7 +5441,6 @@ impl Default for AttachOptions {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -5573,7 +5571,7 @@ pub fn attach_render_once(
     client_state: &mut ClientAttachState,
 ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
     let scope = socket_identity(path).ok();
-    options.request.known_surfaces = client_state.known_surfaces_for_scope(scope);
+    options.request.known_viewports = client_state.known_viewports_for_scope(scope);
     options.known_scrollback_versions = client_state.known_scrollback_versions_for_scope(scope);
     let snapshot = attach_with_client_options(path, options).map_err(ServeError::into_boxed)?;
     client_state.apply_scope(socket_identity(path).ok());
@@ -5585,7 +5583,7 @@ pub fn attach_render_once_from_stream(
     mut options: AttachOptions,
     client_state: &mut ClientAttachState,
 ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
-    options.request.known_surfaces = client_state.known_surfaces_for_scope(None);
+    options.request.known_viewports = client_state.known_viewports_for_scope(None);
     options.known_scrollback_versions = client_state.known_scrollback_versions_for_scope(None);
     let snapshot =
         attach_with_client_options_from_stream(stream, options).map_err(ServeError::into_boxed)?;
@@ -7520,23 +7518,12 @@ fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
     let request = envelope
         .body_as_attach_request()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing attach body"))?;
-    let known = request.known_surfaces();
-    let mut known_surfaces = Vec::with_capacity(known.map(|known| known.len()).unwrap_or(0));
-    if let Some(known) = known {
-        for index in 0..known.len() {
-            let surface = known.get(index);
-            known_surfaces.push(KnownSurfaceVersion {
-                pane_id: required_io_string(surface.pane_id(), "known surface pane_id")?,
-                version: surface.version(),
-            });
-        }
-    }
     let known = request.known_viewports();
     let mut known_viewports = Vec::with_capacity(known.map(|known| known.len()).unwrap_or(0));
     if let Some(known) = known {
         for index in 0..known.len() {
             let viewport = known.get(index);
-            known_viewports.push(KnownSurfaceVersion {
+            known_viewports.push(KnownViewportVersion {
                 pane_id: required_io_string(viewport.pane_id(), "known viewport pane_id")?,
                 version: viewport.version(),
             });
@@ -7559,7 +7546,6 @@ fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
             )
         })?,
         focused_pane_id,
-        known_surfaces,
         known_viewports,
         hostname: request.hostname().unwrap_or_default().to_owned(),
         client_kind: request.client_kind().unwrap_or("nmux").to_owned(),
@@ -7659,8 +7645,7 @@ pub struct AttachRequest {
     pub display_name: String,
     pub mode: AttachMode,
     pub focused_pane_id: Option<String>,
-    pub known_surfaces: Vec<KnownSurfaceVersion>,
-    pub known_viewports: Vec<KnownSurfaceVersion>,
+    pub known_viewports: Vec<KnownViewportVersion>,
     pub hostname: String,
     pub client_kind: String,
     pub subscribe_client_inventory: bool,
@@ -7734,19 +7719,6 @@ impl ControlCommandSummary {
 impl AttachRequest {
     fn frame_for_session(&self, session_id: Option<&str>) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let mut known_surface_offsets = Vec::with_capacity(self.known_surfaces.len());
-        for surface in &self.known_surfaces {
-            let pane_id = builder.create_string(&surface.pane_id);
-            let known_surface = protocol::KnownPaneSurfaceVersion::create(
-                &mut builder,
-                &protocol::KnownPaneSurfaceVersionArgs {
-                    pane_id: Some(pane_id),
-                    version: surface.version,
-                },
-            );
-            known_surface_offsets.push(known_surface);
-        }
-        let known_surfaces = builder.create_vector(&known_surface_offsets);
         let mut known_viewport_offsets = Vec::with_capacity(self.known_viewports.len());
         for viewport in &self.known_viewports {
             let pane_id = builder.create_string(&viewport.pane_id);
@@ -7778,7 +7750,6 @@ impl AttachRequest {
                 display_name: Some(display_name),
                 mode: attach_mode_as_protocol(self.mode),
                 focused_pane_id,
-                known_surfaces: Some(known_surfaces),
                 known_viewports: Some(known_viewports),
                 hostname: Some(hostname),
                 client_kind: Some(client_kind),
@@ -7820,7 +7791,7 @@ impl AttachRequest {
         let current = session.surface_version(pane_id)?;
 
         let Some(known) = self
-            .known_surfaces
+            .known_viewports
             .iter()
             .find(|known| known.pane_id == pane_id)
         else {
@@ -8003,7 +7974,7 @@ enum SurfaceResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KnownSurfaceVersion {
+pub struct KnownViewportVersion {
     pub pane_id: String,
     pub version: u64,
 }
@@ -9125,7 +9096,6 @@ mod tests {
                 display_name: Some(display_name),
                 mode,
                 focused_pane_id: Some(focused_pane_id),
-                known_surfaces: None,
                 known_viewports: None,
                 hostname: None,
                 client_kind: None,
@@ -9144,7 +9114,7 @@ mod tests {
         user_id: Option<&str>,
         display_name: Option<&str>,
         focused_pane_id: Option<&str>,
-        known_surface_pane_id: Option<Option<&str>>,
+        known_viewport_pane_id: Option<Option<&str>>,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
         let actor_id = actor_id.map(|actor_id| builder.create_string(actor_id));
@@ -9152,16 +9122,16 @@ mod tests {
         let display_name = display_name.map(|display_name| builder.create_string(display_name));
         let focused_pane_id =
             focused_pane_id.map(|focused_pane_id| builder.create_string(focused_pane_id));
-        let known_surfaces = known_surface_pane_id.map(|pane_id| {
+        let known_viewports = known_viewport_pane_id.map(|pane_id| {
             let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
-            let known_surface = protocol::KnownPaneSurfaceVersion::create(
+            let known_viewport = protocol::KnownPaneViewportVersion::create(
                 &mut builder,
-                &protocol::KnownPaneSurfaceVersionArgs {
+                &protocol::KnownPaneViewportVersionArgs {
                     pane_id,
                     version: 1,
                 },
             );
-            builder.create_vector(&[known_surface])
+            builder.create_vector(&[known_viewport])
         });
         let request = protocol::AttachRequest::create(
             &mut builder,
@@ -9171,8 +9141,7 @@ mod tests {
                 display_name,
                 mode: protocol::AttachMode::ReadWrite,
                 focused_pane_id,
-                known_surfaces,
-                known_viewports: None,
+                known_viewports,
                 hostname: None,
                 client_kind: None,
                 subscribe_client_inventory: false,
@@ -10263,7 +10232,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -12028,7 +11996,7 @@ mod tests {
     }
 
     #[test]
-    fn client_attach_state_tracks_known_surface_and_renders_patch() {
+    fn client_attach_state_tracks_known_viewport_and_renders_patch() {
         let mut state = ClientAttachState::default();
         let mut session = Session::initial();
         let snapshot_update =
@@ -12059,8 +12027,8 @@ mod tests {
         );
         assert!(rendered.surface_metadata.is_empty());
         assert_eq!(
-            state.known_surfaces(),
-            vec![KnownSurfaceVersion {
+            state.known_viewports(),
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }]
@@ -12089,8 +12057,8 @@ mod tests {
             Some("booting nmux workspace\nnmux pane-1\nserver-owned terminal state\nnew output")
         );
         assert_eq!(
-            state.known_surfaces(),
-            vec![KnownSurfaceVersion {
+            state.known_viewports(),
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 3,
             }]
@@ -12464,20 +12432,20 @@ mod tests {
 
         let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
         assert_eq!(decoded.scope, Some(expected_scope));
-        assert_eq!(decoded.known_surfaces(), state.known_surfaces());
+        assert_eq!(decoded.known_viewports(), state.known_viewports());
         assert_eq!(decoded.cached_surface_modes("pane-1"), Some(expected_modes));
         assert_eq!(decoded.cached_surface_modes("missing"), None);
         assert_eq!(
-            decoded.known_surfaces_for_scope(Some(expected_scope)),
-            state.known_surfaces()
+            decoded.known_viewports_for_scope(Some(expected_scope)),
+            state.known_viewports()
         );
         assert_eq!(
-            decoded.known_surfaces_for_scope(Some(test_socket_identity(10, 21))),
+            decoded.known_viewports_for_scope(Some(test_socket_identity(10, 21))),
             Vec::new()
         );
         assert_eq!(
             decoded
-                .known_surfaces_for_scope(Some(test_socket_identity_with_ctime(10, 20, 100, 201))),
+                .known_viewports_for_scope(Some(test_socket_identity_with_ctime(10, 20, 100, 201))),
             Vec::new()
         );
         assert_eq!(decoded.cached_scrollback_version("pane-1", 4, 1), Some(11));
@@ -12581,7 +12549,7 @@ mod tests {
         .expect("decode legacy scoped state");
 
         assert_eq!(
-            decoded.known_surfaces_for_scope(Some(test_socket_identity(10, 20))),
+            decoded.known_viewports_for_scope(Some(test_socket_identity(10, 20))),
             Vec::new()
         );
     }
@@ -12595,7 +12563,7 @@ mod tests {
 
         assert_eq!(decoded.scope, None);
         assert_eq!(
-            decoded.known_surfaces_for_scope(Some(test_socket_identity(1, 2))),
+            decoded.known_viewports_for_scope(Some(test_socket_identity(1, 2))),
             Vec::new()
         );
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
@@ -12929,9 +12897,9 @@ mod tests {
                 .serve_with_output(&listener, &mut session, &mut output)
                 .expect("serve one")
         });
-        let snapshot = attach_with_known_surfaces(
+        let snapshot = attach_with_known_viewports(
             &socket_path,
-            vec![KnownSurfaceVersion {
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
@@ -13514,7 +13482,6 @@ mod tests {
                 display_name: "Reader".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: "machine-a".to_owned(),
                 client_kind: "nmux".to_owned(),
@@ -13539,7 +13506,6 @@ mod tests {
                 display_name: "Agent X".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: "machine-b".to_owned(),
                 client_kind: "agent".to_owned(),
@@ -13599,7 +13565,6 @@ mod tests {
                 display_name: "Reader".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: "machine-a".to_owned(),
                 client_kind: "nmux".to_owned(),
@@ -13624,7 +13589,6 @@ mod tests {
                 display_name: "Agent X".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: "machine-b".to_owned(),
                 client_kind: "agent".to_owned(),
@@ -13682,7 +13646,6 @@ mod tests {
                 display_name: "Reader".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -13702,7 +13665,6 @@ mod tests {
                 display_name: "Writer".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -13772,7 +13734,6 @@ mod tests {
                 display_name: "Reader".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -13791,7 +13752,6 @@ mod tests {
                 display_name: "Writer".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -13867,7 +13827,6 @@ mod tests {
                 display_name: "First".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -13886,7 +13845,6 @@ mod tests {
                 display_name: "Second".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -14237,7 +14195,6 @@ mod tests {
                 display_name: "First".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -14257,7 +14214,6 @@ mod tests {
                 display_name: "Second".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -14339,7 +14295,6 @@ mod tests {
                 display_name: "Smaller".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -14359,7 +14314,6 @@ mod tests {
                 display_name: "Larger".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -14507,7 +14461,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -14551,7 +14504,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -15060,7 +15012,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -15117,7 +15068,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -15198,7 +15148,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -15451,11 +15400,10 @@ mod tests {
         write_attach_request(
             &mut stream,
             &AttachRequest {
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: current_version - 1,
                 }],
-                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16007,7 +15955,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -16064,7 +16011,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -16124,7 +16070,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -16186,7 +16131,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -16246,11 +16190,10 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
-                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16311,11 +16254,10 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
-                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16361,11 +16303,10 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
-                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16412,11 +16353,10 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
-                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16462,11 +16402,10 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
-                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16512,11 +16451,10 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
-                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16591,11 +16529,10 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 3,
                 }],
-                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -17290,7 +17227,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -17362,7 +17298,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -17414,7 +17349,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -17462,9 +17396,9 @@ mod tests {
                 .serve_without_host(&listener, &mut session)
                 .expect("serve one")
         });
-        let snapshot = attach_with_known_surfaces(
+        let snapshot = attach_with_known_viewports(
             &socket_path,
-            vec![KnownSurfaceVersion {
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
@@ -17560,7 +17494,7 @@ mod tests {
             let request = read_attach_request(&mut stream).expect("read attach request");
             assert!(
                 request
-                    .known_surfaces
+                    .known_viewports
                     .iter()
                     .any(|known| { known.pane_id == "pane-2" && known.version == 2 })
             );
@@ -17726,11 +17660,10 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
-                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17790,11 +17723,10 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
-                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17853,11 +17785,10 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
-                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17916,11 +17847,10 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
-                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17985,11 +17915,10 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
-                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -18048,11 +17977,10 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
-                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -18122,11 +18050,10 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
-                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -18200,11 +18127,10 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 3,
                     }],
-                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -18289,11 +18215,10 @@ mod tests {
             display_name: "Spectator".to_owned(),
             mode: AttachMode::ReadOnly,
             focused_pane_id: Some("pane-1".to_owned()),
-            known_surfaces: vec![KnownSurfaceVersion {
+            known_viewports: vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
-            known_viewports: Vec::new(),
             hostname: String::new(),
             client_kind: "nmux".to_owned(),
             subscribe_client_inventory: false,
@@ -18310,10 +18235,10 @@ mod tests {
         assert_eq!(body.display_name(), Some("Spectator"));
         assert_eq!(body.mode(), protocol::AttachMode::ReadOnly);
         assert_eq!(body.focused_pane_id(), Some("pane-1"));
-        let known_surfaces = body.known_surfaces().expect("known surfaces");
-        assert_eq!(known_surfaces.len(), 1);
-        assert_eq!(known_surfaces.get(0).pane_id(), Some("pane-1"));
-        assert_eq!(known_surfaces.get(0).version(), 2);
+        let known_viewports = body.known_viewports().expect("known viewports");
+        assert_eq!(known_viewports.len(), 1);
+        assert_eq!(known_viewports.get(0).pane_id(), Some("pane-1"));
+        assert_eq!(known_viewports.get(0).version(), 2);
         let decoded = read_attach_request(&mut buffer.as_slice()).expect("read attach request");
 
         assert_eq!(decoded, request);
@@ -18421,7 +18346,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_attach_request_with_empty_focused_or_known_surface_panes() {
+    fn rejects_attach_request_with_empty_focused_or_known_viewport_panes() {
         for (frame, expected) in [
             (
                 attach_request_frame_with_fields(
@@ -18441,7 +18366,7 @@ mod tests {
                     Some("pane-1"),
                     Some(None),
                 ),
-                "missing known surface pane_id",
+                "missing known viewport pane_id",
             ),
             (
                 attach_request_frame_with_fields(
@@ -18451,7 +18376,7 @@ mod tests {
                     Some("pane-1"),
                     Some(Some("")),
                 ),
-                "empty known surface pane_id",
+                "empty known viewport pane_id",
             ),
         ] {
             let err =
@@ -18483,7 +18408,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -18522,7 +18446,6 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
                 known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
@@ -18585,8 +18508,8 @@ mod tests {
             Some("booting nmux workspace\nnmux pane-1\nserver-owned terminal state\nloop update")
         );
         assert_eq!(
-            state.known_surfaces(),
-            vec![KnownSurfaceVersion {
+            state.known_viewports(),
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 3,
             }]
@@ -18862,7 +18785,7 @@ mod tests {
         let status_err = attach_status_from_frame(&attach_status_frame_with_surface_state(
             protocol::AttachSurfaceState(99),
         ))
-        .expect_err("attach status with unknown surface state should be rejected");
+        .expect_err("attach status with unknown viewport state should be rejected");
         assert!(
             status_err
                 .to_string()
@@ -19261,9 +19184,9 @@ mod tests {
                 .serve_without_host(&listener, &mut session)
                 .expect("serve one")
         });
-        let snapshot = attach_with_known_surfaces(
+        let snapshot = attach_with_known_viewports(
             &socket_path,
-            vec![KnownSurfaceVersion {
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 1,
             }],
@@ -19293,9 +19216,9 @@ mod tests {
                 .serve_without_host(&listener, &mut session)
                 .expect("serve one")
         });
-        let snapshot = attach_with_known_surfaces(
+        let snapshot = attach_with_known_viewports(
             &socket_path,
-            vec![KnownSurfaceVersion {
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 0,
             }],
@@ -19357,7 +19280,7 @@ mod tests {
             last_seen_mono_ms: 0,
             last_input_mono_ms: None,
             seq: 9,
-            known_surface_versions: BTreeMap::from([("pane-1".to_owned(), 1)]),
+            known_viewport_versions: BTreeMap::from([("pane-1".to_owned(), 1)]),
             frontend_resize_constraints: BTreeMap::new(),
             completed_cycles: 0,
         };
@@ -19367,7 +19290,7 @@ mod tests {
             .expect("signal surface");
 
         assert_eq!(client.seq, 10);
-        assert_eq!(client.known_surface_versions.get("pane-1"), Some(&2));
+        assert_eq!(client.known_viewport_versions.get("pane-1"), Some(&2));
         match output_rx.recv_write_event().await {
             async_live::ClientWriteEvent::Surface(surfaces) => {
                 let signal = surfaces.panes.get("pane-1").expect("pane surface signal");
@@ -19417,11 +19340,10 @@ mod tests {
         assert!(session.apply_pane_output_with_engine("pane-1", b"alternate", &mut engine));
 
         let request = AttachRequest {
-            known_surfaces: vec![KnownSurfaceVersion {
+            known_viewports: vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
-            known_viewports: Vec::new(),
             hostname: String::new(),
             client_kind: "nmux".to_owned(),
             subscribe_client_inventory: false,

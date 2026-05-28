@@ -416,11 +416,6 @@ table Error {
   input_seq:ulong;
 }
 
-table KnownPaneSurfaceVersion {
-  pane_id:string;
-  version:ulong;
-}
-
 table KnownPaneViewportVersion {
   pane_id:string;
   version:ulong;
@@ -432,7 +427,6 @@ table AttachRequest {
   display_name:string;
   mode:AttachMode = ReadOnly;
   focused_pane_id:string;
-  known_surfaces:[KnownPaneSurfaceVersion];
   known_viewports:[KnownPaneViewportVersion];
   hostname:string;
   client_kind:string;

@@ -321,7 +321,6 @@ fn wait_for_default_daemon_attach(args: &Args) -> Result<(), Box<dyn std::error:
             .target_pane_id
             .clone()
             .or_else(|| args.target_tab_id.clone()),
-        known_surfaces: Vec::new(),
         known_viewports: Vec::new(),
         hostname: resolve_short_hostname(),
         client_kind: "nmux".to_owned(),
@@ -931,7 +930,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         options.request.mode = AttachMode::ReadOnly;
     }
 
-    options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
+    options.request.known_viewports = client_state.known_viewports_for_scope(socket_scope);
     if let Err(err) = local::write_attach_request_for_session(
         &mut stream,
         &options.request,
@@ -4165,7 +4164,7 @@ fn switch_live_session(
     stream.set_read_timeout(Some(setup_read_timeout))?;
     let mut switch_options = options.clone();
     switch_options.target_session_id = Some(session_id.to_owned());
-    switch_options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
+    switch_options.request.known_viewports = client_state.known_viewports_for_scope(socket_scope);
     switch_options.known_scrollback_versions =
         client_state.known_scrollback_versions_for_scope(socket_scope);
     local::write_attach_request_for_session(

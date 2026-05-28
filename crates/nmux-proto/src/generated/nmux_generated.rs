@@ -7584,119 +7584,6 @@ impl ::core::fmt::Debug for Error<'_> {
       ds.finish()
   }
 }
-pub enum KnownPaneSurfaceVersionOffset {}
-#[derive(Copy, Clone, PartialEq)]
-
-pub struct KnownPaneSurfaceVersion<'a> {
-  pub _tab: ::flatbuffers::Table<'a>,
-}
-
-impl<'a> ::flatbuffers::Follow<'a> for KnownPaneSurfaceVersion<'a> {
-  type Inner = KnownPaneSurfaceVersion<'a>;
-  #[inline]
-  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
-  }
-}
-
-impl<'a> KnownPaneSurfaceVersion<'a> {
-  pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
-  pub const VT_VERSION: ::flatbuffers::VOffsetT = 6;
-
-  #[inline]
-  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
-    KnownPaneSurfaceVersion { _tab: table }
-  }
-  #[allow(unused_mut)]
-  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
-    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
-    args: &'args KnownPaneSurfaceVersionArgs<'args>
-  ) -> ::flatbuffers::WIPOffset<KnownPaneSurfaceVersion<'bldr>> {
-    let mut builder = KnownPaneSurfaceVersionBuilder::new(_fbb);
-    builder.add_version(args.version);
-    if let Some(x) = args.pane_id { builder.add_pane_id(x); }
-    builder.finish()
-  }
-
-
-  #[inline]
-  pub fn pane_id(&self) -> Option<&'a str> {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(KnownPaneSurfaceVersion::VT_PANE_ID, None)}
-  }
-  #[inline]
-  pub fn version(&self) -> u64 {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(KnownPaneSurfaceVersion::VT_VERSION, Some(0)).unwrap()}
-  }
-}
-
-impl ::flatbuffers::Verifiable for KnownPaneSurfaceVersion<'_> {
-  #[inline]
-  fn run_verifier(
-    v: &mut ::flatbuffers::Verifier, pos: usize
-  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
-    v.visit_table(pos)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
-     .visit_field::<u64>("version", Self::VT_VERSION, false)?
-     .finish();
-    Ok(())
-  }
-}
-pub struct KnownPaneSurfaceVersionArgs<'a> {
-    pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
-    pub version: u64,
-}
-impl<'a> Default for KnownPaneSurfaceVersionArgs<'a> {
-  #[inline]
-  fn default() -> Self {
-    KnownPaneSurfaceVersionArgs {
-      pane_id: None,
-      version: 0,
-    }
-  }
-}
-
-pub struct KnownPaneSurfaceVersionBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
-  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
-  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
-}
-impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> KnownPaneSurfaceVersionBuilder<'a, 'b, A> {
-  #[inline]
-  pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(KnownPaneSurfaceVersion::VT_PANE_ID, pane_id);
-  }
-  #[inline]
-  pub fn add_version(&mut self, version: u64) {
-    self.fbb_.push_slot::<u64>(KnownPaneSurfaceVersion::VT_VERSION, version, 0);
-  }
-  #[inline]
-  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> KnownPaneSurfaceVersionBuilder<'a, 'b, A> {
-    let start = _fbb.start_table();
-    KnownPaneSurfaceVersionBuilder {
-      fbb_: _fbb,
-      start_: start,
-    }
-  }
-  #[inline]
-  pub fn finish(self) -> ::flatbuffers::WIPOffset<KnownPaneSurfaceVersion<'a>> {
-    let o = self.fbb_.end_table(self.start_);
-    ::flatbuffers::WIPOffset::new(o.value())
-  }
-}
-
-impl ::core::fmt::Debug for KnownPaneSurfaceVersion<'_> {
-  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-    let mut ds = f.debug_struct("KnownPaneSurfaceVersion");
-      ds.field("pane_id", &self.pane_id());
-      ds.field("version", &self.version());
-      ds.finish()
-  }
-}
 pub enum KnownPaneViewportVersionOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -7831,11 +7718,10 @@ impl<'a> AttachRequest<'a> {
   pub const VT_DISPLAY_NAME: ::flatbuffers::VOffsetT = 8;
   pub const VT_MODE: ::flatbuffers::VOffsetT = 10;
   pub const VT_FOCUSED_PANE_ID: ::flatbuffers::VOffsetT = 12;
-  pub const VT_KNOWN_SURFACES: ::flatbuffers::VOffsetT = 14;
-  pub const VT_KNOWN_VIEWPORTS: ::flatbuffers::VOffsetT = 16;
-  pub const VT_HOSTNAME: ::flatbuffers::VOffsetT = 18;
-  pub const VT_CLIENT_KIND: ::flatbuffers::VOffsetT = 20;
-  pub const VT_SUBSCRIBE_CLIENT_INVENTORY: ::flatbuffers::VOffsetT = 22;
+  pub const VT_KNOWN_VIEWPORTS: ::flatbuffers::VOffsetT = 14;
+  pub const VT_HOSTNAME: ::flatbuffers::VOffsetT = 16;
+  pub const VT_CLIENT_KIND: ::flatbuffers::VOffsetT = 18;
+  pub const VT_SUBSCRIBE_CLIENT_INVENTORY: ::flatbuffers::VOffsetT = 20;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -7850,7 +7736,6 @@ impl<'a> AttachRequest<'a> {
     if let Some(x) = args.client_kind { builder.add_client_kind(x); }
     if let Some(x) = args.hostname { builder.add_hostname(x); }
     if let Some(x) = args.known_viewports { builder.add_known_viewports(x); }
-    if let Some(x) = args.known_surfaces { builder.add_known_surfaces(x); }
     if let Some(x) = args.focused_pane_id { builder.add_focused_pane_id(x); }
     if let Some(x) = args.display_name { builder.add_display_name(x); }
     if let Some(x) = args.user_id { builder.add_user_id(x); }
@@ -7897,13 +7782,6 @@ impl<'a> AttachRequest<'a> {
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AttachRequest::VT_FOCUSED_PANE_ID, None)}
   }
   #[inline]
-  pub fn known_surfaces(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion<'a>>>> {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion>>>>(AttachRequest::VT_KNOWN_SURFACES, None)}
-  }
-  #[inline]
   pub fn known_viewports(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneViewportVersion<'a>>>> {
     // Safety:
     // Created from valid Table for this object
@@ -7944,7 +7822,6 @@ impl ::flatbuffers::Verifiable for AttachRequest<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("display_name", Self::VT_DISPLAY_NAME, false)?
      .visit_field::<AttachMode>("mode", Self::VT_MODE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("focused_pane_id", Self::VT_FOCUSED_PANE_ID, false)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion>>>>("known_surfaces", Self::VT_KNOWN_SURFACES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<KnownPaneViewportVersion>>>>("known_viewports", Self::VT_KNOWN_VIEWPORTS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("hostname", Self::VT_HOSTNAME, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("client_kind", Self::VT_CLIENT_KIND, false)?
@@ -7959,7 +7836,6 @@ pub struct AttachRequestArgs<'a> {
     pub display_name: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub mode: AttachMode,
     pub focused_pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
-    pub known_surfaces: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion<'a>>>>>,
     pub known_viewports: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneViewportVersion<'a>>>>>,
     pub hostname: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub client_kind: Option<::flatbuffers::WIPOffset<&'a str>>,
@@ -7974,7 +7850,6 @@ impl<'a> Default for AttachRequestArgs<'a> {
       display_name: None,
       mode: AttachMode::ReadOnly,
       focused_pane_id: None,
-      known_surfaces: None,
       known_viewports: None,
       hostname: None,
       client_kind: None,
@@ -8007,10 +7882,6 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> AttachRequestBuilder<'a, 'b, 
   #[inline]
   pub fn add_focused_pane_id(&mut self, focused_pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_FOCUSED_PANE_ID, focused_pane_id);
-  }
-  #[inline]
-  pub fn add_known_surfaces(&mut self, known_surfaces: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion<'b >>>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_KNOWN_SURFACES, known_surfaces);
   }
   #[inline]
   pub fn add_known_viewports(&mut self, known_viewports: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<KnownPaneViewportVersion<'b >>>>) {
@@ -8051,7 +7922,6 @@ impl ::core::fmt::Debug for AttachRequest<'_> {
       ds.field("display_name", &self.display_name());
       ds.field("mode", &self.mode());
       ds.field("focused_pane_id", &self.focused_pane_id());
-      ds.field("known_surfaces", &self.known_surfaces());
       ds.field("known_viewports", &self.known_viewports());
       ds.field("hostname", &self.hostname());
       ds.field("client_kind", &self.client_kind());

@@ -104,22 +104,22 @@ impl ClientAttachState {
         }
     }
 
-    pub fn known_surfaces(&self) -> Vec<KnownSurfaceVersion> {
+    pub fn known_viewports(&self) -> Vec<KnownViewportVersion> {
         self.surfaces
             .iter()
-            .map(|surface| KnownSurfaceVersion {
+            .map(|surface| KnownViewportVersion {
                 pane_id: surface.pane_id.clone(),
                 version: surface.version,
             })
             .collect()
     }
 
-    pub fn known_surfaces_for_scope(
+    pub fn known_viewports_for_scope(
         &self,
         scope: Option<SocketIdentity>,
-    ) -> Vec<KnownSurfaceVersion> {
+    ) -> Vec<KnownViewportVersion> {
         if self.scope == scope {
-            self.known_surfaces()
+            self.known_viewports()
         } else {
             Vec::new()
         }

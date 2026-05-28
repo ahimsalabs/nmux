@@ -6,11 +6,11 @@ Last reviewed: 2026-05-22
 
 ## nmux Requirement
 
-nmux frontends render backend-owned terminal state. The specific M7 question is whether a Ghostty/libghostty-facing frontend can hydrate a renderer from nmux `PaneSurfaceSnapshot` and `PaneSurfacePatch` objects without parsing raw PTY bytes as its source of truth.
+nmux frontends render backend-owned terminal state. The specific M7 question is whether a Ghostty/libghostty-facing frontend can hydrate a renderer from nmux `PaneViewportSnapshot` and `PaneViewportPatch` objects without parsing raw PTY bytes as its source of truth.
 
 ADR 0007 decides that backend libghostty/libghostty-vt integration is the primary correctness path. Frontend Ghostty/libghostty rendering is an integration milestone, and nmux should use a temporary renderer until upstream exposes a clear external surface hydration API.
 
-Backend `libghostty-vt` extraction can proceed independently of this frontend hydration question: `nmux daemon` can feed PTY bytes into libghostty-vt, own the resulting terminal state, and emit nmux snapshots and patches without asking clients to parse raw PTY bytes.
+Backend `libghostty-vt` extraction can proceed independently of this frontend hydration question: `nmux daemon` can feed PTY bytes into libghostty-vt, own the resulting terminal state, and emit nmux viewport snapshots and patches without asking clients to parse raw PTY bytes.
 
 ## Current Upstream Evidence
 
@@ -31,21 +31,20 @@ For nmux to replace its temporary renderer with a Ghostty/libghostty-backed fron
 - render without replaying raw PTY bytes on the client;
 - report when the supplied state is too stale or incomplete and a full nmux snapshot is required.
 
-## Mapping To Current nmux Surface Objects
+## Mapping To Current nmux Viewport Objects
 
 The current nmux prototype can supply:
 
-- `PaneSurfaceSnapshot`: pane ID, version, surface kind, size, cursor,
-  terminal modes, terminal color state, terminal title, working directory,
-  styles, hyperlink table, and rows;
-- `PaneSurfacePatch`: pane ID, base version, version, patch kind, sparse row
-  updates, cursor, terminal modes, terminal color state, terminal title, and
-  working directory;
-- `ScrollbackChunk`: backend-owned scrollback rows, style table, hyperlink
-  table, and terminal color state;
-- `SurfaceRow` / `RowUpdate` / `ScrollbackRow`: row index, cell runs, dirty
-  metadata, row state hash, OSC 133 prompt metadata, and Kitty placeholder
-  presence;
+- `PaneViewportIntent`: active, top, pinned-line, or delta viewport selection;
+- `PaneViewportSnapshot`: pane ID, version, timeline version, surface kind,
+  selected viewport range, size, cursor, terminal modes, terminal color state,
+  terminal title, working directory, styles, hyperlink table, and rows;
+- `PaneViewportPatch`: pane ID, base version, version, patch kind, selected
+  viewport range, sparse row updates, cursor, terminal modes, terminal color
+  state, terminal title, and working directory;
+- `SurfaceRow` / `RowUpdate`: row index within the selected viewport, cell
+  runs, dirty metadata, row state hash, OSC 133 prompt metadata, and Kitty
+  placeholder presence;
 - `CellRun`: UTF-8 text, cell widths, style ID, hyperlink-presence flags,
   semantic content, and hyperlink ID;
 - `Style`: foreground, background, underline color, and flags;
@@ -77,7 +76,7 @@ This tracker can be considered satisfied for M7 when one of these is true:
 
 - upstream Ghostty/libghostty documents and exposes an external surface hydration API that can render nmux-owned state without PTY replay;
 - nmux has a documented upstream issue, discussion, or proposal for that API shape;
-- nmux has a temporary native/frontend renderer that consumes `PaneSurfaceSnapshot` and `PaneSurfacePatch`, with the upstream API gap documented here.
+- nmux has a temporary native/frontend renderer that consumes `PaneViewportSnapshot` and `PaneViewportPatch`, with the upstream API gap documented here.
 
 ## Non-Goals And Licensing
 
