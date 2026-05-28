@@ -595,6 +595,7 @@ fn attach_live_stream(
         mode,
         focused_pane_id: Some(pane_id.to_owned()),
         known_surfaces: Vec::new(),
+        known_viewports: Vec::new(),
         subscribe_client_inventory: false,
     };
     local::write_attach_request(stream, &request)?;

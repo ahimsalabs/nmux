@@ -97,6 +97,40 @@ pub struct ScrollbackFetchSpec {
     pub known_scrollback_version: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneViewportIntentSpec {
+    pub viewport: protocol::PaneViewportKind,
+    pub top_line: u64,
+    pub delta_rows: i32,
+    pub visible_rows: u32,
+    pub known_viewport_version: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneViewport {
+    pub pane_id: String,
+    pub version: u64,
+    pub timeline_version: u64,
+    pub total_lines: u64,
+    pub active_start_line: u64,
+    pub viewport_top_line: u64,
+    pub viewport: protocol::PaneViewportKind,
+    pub surface: protocol::SurfaceKind,
+    pub cols: u32,
+    pub rows: u32,
+    pub cursor: Cursor,
+    pub modes: TerminalModes,
+    pub title: String,
+    pub working_directory: String,
+    pub colors: TerminalColors,
+    pub styles: Vec<PaneStyle>,
+    pub lines: Vec<String>,
+    pub row_runs: Vec<Vec<CellRun>>,
+    pub semantic_prompts: Vec<protocol::RowSemanticPrompt>,
+    pub dirty_rows: Vec<bool>,
+    pub kitty_placeholders: Vec<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tab {
     pub id: String,
@@ -1751,6 +1785,406 @@ impl Session {
         Some(builder.finished_data().to_vec())
     }
 
+    pub fn pane_viewport(
+        &self,
+        pane_id: &str,
+        intent: PaneViewportIntentSpec,
+    ) -> Option<PaneViewport> {
+        let pane = self.pane(pane_id)?;
+        let total_lines = pane.scrollback_lines.len() as u64;
+        let visible_rows = intent.visible_rows.max(1).min(u32::MAX);
+        let active_rows = pane.surface_lines.len().max(1) as u64;
+        let active_start_line = total_lines
+            .saturating_sub(active_rows)
+            .saturating_add(1)
+            .max(1);
+        let max_top_line = total_lines
+            .saturating_sub(u64::from(visible_rows))
+            .saturating_add(1)
+            .max(1);
+        let viewport_top_line = match intent.viewport {
+            protocol::PaneViewportKind::Active => active_start_line,
+            protocol::PaneViewportKind::Top => 1,
+            protocol::PaneViewportKind::Pinned => intent.top_line.max(1).min(max_top_line),
+            protocol::PaneViewportKind::Delta => {
+                let base = intent.top_line.max(1).min(max_top_line);
+                if intent.delta_rows < 0 {
+                    base.saturating_sub(u64::from(intent.delta_rows.unsigned_abs()))
+                } else {
+                    base.saturating_add(intent.delta_rows as u64)
+                }
+                .max(1)
+                .min(max_top_line)
+            }
+            _ => max_top_line,
+        };
+
+        let requested = usize::try_from(visible_rows).unwrap_or(usize::MAX);
+        let (mut lines, mut row_runs, mut semantic_prompts, mut dirty_rows, mut kitty_placeholders) =
+            if intent.viewport == protocol::PaneViewportKind::Active {
+                let end = requested.min(pane.surface_lines.len());
+                let lines = pane
+                    .surface_lines
+                    .get(..end)
+                    .map_or_else(Vec::new, ToOwned::to_owned);
+                let row_runs =
+                    row_runs_for_lines(&lines, pane.surface_row_runs.get(..end).unwrap_or(&[]));
+                let semantic_prompts = row_semantic_prompts_for_lines(
+                    &lines,
+                    pane.surface_semantic_prompts.get(..end).unwrap_or(&[]),
+                );
+                let dirty_rows = row_dirty_flags_for_lines(
+                    &lines,
+                    pane.surface_dirty_rows.get(..end).unwrap_or(&[]),
+                );
+                let kitty_placeholders = row_kitty_placeholders_for_lines(
+                    &lines,
+                    pane.surface_kitty_placeholders.get(..end).unwrap_or(&[]),
+                );
+                (
+                    lines,
+                    row_runs,
+                    semantic_prompts,
+                    dirty_rows,
+                    kitty_placeholders,
+                )
+            } else {
+                let start =
+                    usize::try_from(viewport_top_line.saturating_sub(1)).unwrap_or(usize::MAX);
+                let end = start
+                    .saturating_add(requested)
+                    .min(pane.scrollback_lines.len());
+                let lines = pane
+                    .scrollback_lines
+                    .get(start..end)
+                    .map_or_else(Vec::new, ToOwned::to_owned);
+                let row_runs = row_runs_for_lines(
+                    &lines,
+                    pane.scrollback_row_runs.get(start..end).unwrap_or(&[]),
+                );
+                let semantic_prompts = row_semantic_prompts_for_lines(
+                    &lines,
+                    pane.scrollback_semantic_prompts
+                        .get(start..end)
+                        .unwrap_or(&[]),
+                );
+                let dirty_rows = row_dirty_flags_for_lines(
+                    &lines,
+                    pane.scrollback_dirty_rows.get(start..end).unwrap_or(&[]),
+                );
+                let kitty_placeholders = row_kitty_placeholders_for_lines(
+                    &lines,
+                    pane.scrollback_kitty_placeholders
+                        .get(start..end)
+                        .unwrap_or(&[]),
+                );
+                (
+                    lines,
+                    row_runs,
+                    semantic_prompts,
+                    dirty_rows,
+                    kitty_placeholders,
+                )
+            };
+        let selected_len = lines.len();
+        for _ in selected_len..requested {
+            lines.push(String::new());
+            row_runs.push(vec![CellRun::plain("")]);
+            semantic_prompts.push(protocol::RowSemanticPrompt::None);
+            dirty_rows.push(false);
+            kitty_placeholders.push(false);
+        }
+
+        let mut cursor = pane.cursor.clone();
+        let cursor_line = active_start_line.saturating_add(u64::from(pane.cursor.row));
+        if cursor_line >= viewport_top_line
+            && cursor_line < viewport_top_line.saturating_add(u64::from(visible_rows))
+        {
+            cursor.row = cursor_line.saturating_sub(viewport_top_line) as u32;
+            cursor.visible = pane.cursor.visible;
+        } else {
+            cursor.row = 0;
+            cursor.visible = false;
+        }
+
+        Some(PaneViewport {
+            pane_id: pane.id.clone(),
+            version: pane.surface_version.max(pane.scrollback_version),
+            timeline_version: pane.scrollback_version,
+            total_lines,
+            active_start_line,
+            viewport_top_line,
+            viewport: if viewport_top_line == active_start_line {
+                protocol::PaneViewportKind::Active
+            } else if viewport_top_line == 1 {
+                protocol::PaneViewportKind::Top
+            } else {
+                protocol::PaneViewportKind::Pinned
+            },
+            surface: pane.surface,
+            cols: pane.cols,
+            rows: visible_rows,
+            cursor,
+            modes: pane.modes,
+            title: pane.terminal_title.clone(),
+            working_directory: pane.terminal_working_directory.clone(),
+            colors: pane.colors.clone(),
+            styles: pane.styles.clone(),
+            lines,
+            row_runs,
+            semantic_prompts,
+            dirty_rows,
+            kitty_placeholders,
+        })
+    }
+
+    pub fn pane_viewport_frame_for_pane(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        pane_id: &str,
+        intent: PaneViewportIntentSpec,
+    ) -> Option<Vec<u8>> {
+        let viewport = self.pane_viewport(pane_id, intent)?;
+        let mut builder = FlatBufferBuilder::new();
+
+        let mut row_offsets = Vec::with_capacity(viewport.lines.len());
+        for (row, (line, line_runs)) in viewport
+            .lines
+            .iter()
+            .zip(viewport.row_runs.iter())
+            .enumerate()
+        {
+            let runs = build_cell_runs(&mut builder, line_runs);
+            let row_metadata = RowStateMetadata {
+                semantic_prompt: viewport
+                    .semantic_prompts
+                    .get(row)
+                    .copied()
+                    .unwrap_or(protocol::RowSemanticPrompt::None),
+                dirty: viewport.dirty_rows.get(row).copied().unwrap_or(false),
+                kitty_virtual_placeholder: viewport
+                    .kitty_placeholders
+                    .get(row)
+                    .copied()
+                    .unwrap_or(false),
+            };
+            row_offsets.push(protocol::SurfaceRow::create(
+                &mut builder,
+                &protocol::SurfaceRowArgs {
+                    row: row as u32,
+                    runs: Some(runs),
+                    dirty_hash: stable_row_hash(line),
+                    row_state_hash: row_state_hash(line_runs, row_metadata),
+                    semantic_prompt: row_metadata.semantic_prompt,
+                    dirty: row_metadata.dirty,
+                    kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
+                },
+            ));
+        }
+
+        let rows_data = builder.create_vector(&row_offsets);
+        let mut style_offsets = Vec::with_capacity(viewport.styles.len());
+        for style in &viewport.styles {
+            style_offsets.push(protocol::Style::create(
+                &mut builder,
+                &protocol::StyleArgs {
+                    fg_rgba: style.fg_rgba,
+                    bg_rgba: style.bg_rgba,
+                    underline_rgba: style.underline_rgba,
+                    flags: style.flags,
+                },
+            ));
+        }
+        let styles = builder.create_vector(&style_offsets);
+        let hyperlinks = builder.create_vector::<flatbuffers::WIPOffset<protocol::Hyperlink>>(&[]);
+        let cursor = protocol::CursorState::create(
+            &mut builder,
+            &protocol::CursorStateArgs {
+                row: viewport.cursor.row,
+                col: viewport.cursor.col,
+                visible: viewport.cursor.visible,
+                shape: viewport.cursor.shape,
+                blinking: viewport.cursor.blinking,
+            },
+        );
+        let modes = build_terminal_modes(&mut builder, viewport.modes);
+        let metadata =
+            build_terminal_metadata(&mut builder, &viewport.title, &viewport.working_directory);
+        let colors = build_terminal_colors(&mut builder, &viewport.colors, None, true);
+        let pane_id = builder.create_string(&viewport.pane_id);
+        let snapshot = protocol::PaneViewportSnapshot::create(
+            &mut builder,
+            &protocol::PaneViewportSnapshotArgs {
+                pane_id: Some(pane_id),
+                version: viewport.version,
+                timeline_version: viewport.timeline_version,
+                total_lines: viewport.total_lines,
+                active_start_line: viewport.active_start_line,
+                viewport_top_line: viewport.viewport_top_line,
+                viewport: viewport.viewport,
+                surface: viewport.surface,
+                cols: viewport.cols,
+                rows: viewport.rows,
+                cursor: Some(cursor),
+                modes: Some(modes),
+                metadata: Some(metadata),
+                colors: Some(colors),
+                styles: Some(styles),
+                rows_data: Some(rows_data),
+                hyperlinks: Some(hyperlinks),
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::PaneViewportSnapshot,
+                body: Some(snapshot.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        Some(builder.finished_data().to_vec())
+    }
+
+    pub fn pane_viewport_patch_frame_for_pane(
+        &self,
+        connection_id: &str,
+        seq: u64,
+        pane_id: &str,
+        base_version: u64,
+        intent: PaneViewportIntentSpec,
+    ) -> Option<Vec<u8>> {
+        let viewport = self.pane_viewport(pane_id, intent)?;
+        let pane = self.pane(pane_id)?;
+        let patch_kind = pane.last_patch_kind;
+        let row_update_indices = pane.last_row_update_indices.as_slice();
+        let active_row_offset = viewport
+            .active_start_line
+            .saturating_sub(viewport.viewport_top_line);
+        let mut builder = FlatBufferBuilder::new();
+
+        let mut row_offsets = Vec::new();
+        if patch_kind == protocol::PatchKind::ReplaceRows {
+            row_offsets.reserve(row_update_indices.len());
+            for source_row in row_update_indices {
+                let viewport_row = active_row_offset.saturating_add(u64::from(*source_row));
+                if viewport_row >= u64::from(viewport.rows) {
+                    continue;
+                }
+                let row = usize::try_from(viewport_row).ok()?;
+                let line = viewport.lines.get(row).map_or("", String::as_str);
+                let fallback_runs;
+                let line_runs = if let Some(line_runs) = viewport.row_runs.get(row) {
+                    line_runs.as_slice()
+                } else {
+                    fallback_runs = vec![CellRun::plain(line)];
+                    fallback_runs.as_slice()
+                };
+                let runs = build_cell_runs(&mut builder, line_runs);
+                let row_metadata = RowStateMetadata {
+                    semantic_prompt: viewport
+                        .semantic_prompts
+                        .get(row)
+                        .copied()
+                        .unwrap_or(protocol::RowSemanticPrompt::None),
+                    dirty: viewport.dirty_rows.get(row).copied().unwrap_or(false),
+                    kitty_virtual_placeholder: viewport
+                        .kitty_placeholders
+                        .get(row)
+                        .copied()
+                        .unwrap_or(false),
+                };
+                row_offsets.push(protocol::RowUpdate::create(
+                    &mut builder,
+                    &protocol::RowUpdateArgs {
+                        row: viewport_row as u32,
+                        runs: Some(runs),
+                        dirty_hash: stable_row_hash(line),
+                        row_state_hash: row_state_hash(line_runs, row_metadata),
+                        semantic_prompt: row_metadata.semantic_prompt,
+                        dirty: row_metadata.dirty,
+                        kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
+                    },
+                ));
+            }
+        }
+
+        let row_updates = builder.create_vector(&row_offsets);
+        let cursor = protocol::CursorState::create(
+            &mut builder,
+            &protocol::CursorStateArgs {
+                row: viewport.cursor.row,
+                col: viewport.cursor.col,
+                visible: viewport.cursor.visible,
+                shape: viewport.cursor.shape,
+                blinking: viewport.cursor.blinking,
+            },
+        );
+        let modes = build_terminal_modes(&mut builder, viewport.modes);
+        let metadata =
+            build_terminal_metadata(&mut builder, &viewport.title, &viewport.working_directory);
+        let palette_diff = pane
+            .last_palette_diff
+            .as_ref()
+            .filter(|_| patch_kind == protocol::PatchKind::ColorOnly);
+        let include_full_palette = patch_kind != protocol::PatchKind::ColorOnly;
+        let colors = build_terminal_colors(
+            &mut builder,
+            &viewport.colors,
+            palette_diff,
+            include_full_palette,
+        );
+        let pane_id = builder.create_string(&viewport.pane_id);
+        let patch = protocol::PaneViewportPatch::create(
+            &mut builder,
+            &protocol::PaneViewportPatchArgs {
+                pane_id: Some(pane_id),
+                base_version,
+                version: viewport.version,
+                timeline_version: viewport.timeline_version,
+                total_lines: viewport.total_lines,
+                active_start_line: viewport.active_start_line,
+                viewport_top_line: viewport.viewport_top_line,
+                viewport: viewport.viewport,
+                kind: patch_kind,
+                row_updates: Some(row_updates),
+                cursor: Some(cursor),
+                modes: Some(modes),
+                metadata: Some(metadata),
+                colors: Some(colors),
+            },
+        );
+
+        let envelope_session_id = builder.create_string(&self.id);
+        let connection_id = builder.create_string(connection_id);
+        let envelope = protocol::Envelope::create(
+            &mut builder,
+            &protocol::EnvelopeArgs {
+                protocol_version: PROTOCOL_VERSION,
+                session_id: Some(envelope_session_id),
+                connection_id: Some(connection_id),
+                seq,
+                ack: 0,
+                sent_at_mono_ms: 0,
+                body_type: protocol::EnvelopeBody::PaneViewportPatch,
+                body: Some(patch.as_union_value()),
+            },
+        );
+
+        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+        Some(builder.finished_data().to_vec())
+    }
+
     pub fn scrollback_fetch_frame(
         &self,
         context: InputFrameContext<'_>,
@@ -3032,9 +3466,9 @@ mod tests {
     use super::{
         AcceptedEventMetadata, AcceptedSessionEvent, AttachMode, Cursor,
         DeterministicSessionScheduler, FocusInputSpec, InputFrameContext, MouseInputSpec,
-        PasteInputSpec, PendingSessionEvent, ScrollbackFetchSpec, ScrollbackRange, Session,
-        SessionActor, SessionCore, SessionEffect, SessionEvent, SessionEventLane, SessionRegistry,
-        SessionTraceRecord, SessionTraceRing,
+        PaneViewportIntentSpec, PasteInputSpec, PendingSessionEvent, ScrollbackFetchSpec,
+        ScrollbackRange, Session, SessionActor, SessionCore, SessionEffect, SessionEvent,
+        SessionEventLane, SessionRegistry, SessionTraceRecord, SessionTraceRing,
     };
 
     fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -4559,6 +4993,136 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(texts, ["before", "", "", "after"]);
+    }
+
+    #[test]
+    fn pane_viewport_snapshot_preserves_empty_prompt_rows_after_later_output() {
+        let mut session = Session::initial();
+        let pane = session.pane_mut("pane-1").expect("pane");
+        pane.scrollback_lines = vec![
+            "$".to_owned(),
+            String::new(),
+            String::new(),
+            "ls".to_owned(),
+            "file.txt".to_owned(),
+        ];
+        pane.surface_lines = pane.scrollback_lines[2..].to_vec();
+        pane.rows = 3;
+        pane.scrollback_row_runs = crate::terminal::plain_row_runs(&pane.scrollback_lines);
+        pane.surface_row_runs = crate::terminal::plain_row_runs(&pane.surface_lines);
+        pane.scrollback_semantic_prompts =
+            vec![protocol::RowSemanticPrompt::None; pane.scrollback_lines.len()];
+        pane.surface_semantic_prompts =
+            vec![protocol::RowSemanticPrompt::None; pane.surface_lines.len()];
+        pane.scrollback_dirty_rows = vec![false; pane.scrollback_lines.len()];
+        pane.surface_dirty_rows = vec![false; pane.surface_lines.len()];
+        pane.scrollback_kitty_placeholders = vec![false; pane.scrollback_lines.len()];
+        pane.surface_kitty_placeholders = vec![false; pane.surface_lines.len()];
+
+        let intent = PaneViewportIntentSpec {
+            viewport: protocol::PaneViewportKind::Pinned,
+            top_line: 1,
+            delta_rows: 0,
+            visible_rows: 5,
+            known_viewport_version: 0,
+        };
+        let viewport = session
+            .pane_viewport("pane-1", intent)
+            .expect("pane viewport");
+        assert_eq!(viewport.viewport_top_line, 1);
+        assert_eq!(viewport.rows, 5);
+        assert_eq!(viewport.lines, ["$", "", "", "ls", "file.txt"]);
+
+        let frame = session
+            .pane_viewport_frame_for_pane("conn-1", 11, "pane-1", intent)
+            .expect("pane viewport frame");
+        let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
+        assert_eq!(
+            envelope.body_type(),
+            protocol::EnvelopeBody::PaneViewportSnapshot
+        );
+        let snapshot = envelope
+            .body_as_pane_viewport_snapshot()
+            .expect("viewport snapshot");
+        assert_eq!(snapshot.viewport_top_line(), 1);
+        assert_eq!(snapshot.rows(), 5);
+        let rows = snapshot.rows_data().expect("rows");
+        assert_eq!(rows.len(), 5);
+        let texts = (0..rows.len())
+            .map(|index| {
+                let row = rows.get(index);
+                assert_eq!(row.row(), index as u32);
+                row.runs()
+                    .map(|runs| {
+                        (0..runs.len())
+                            .filter_map(|run_index| runs.get(run_index).text_utf8())
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(texts, ["$", "", "", "ls", "file.txt"]);
+    }
+
+    #[test]
+    fn pane_viewport_delta_clamps_to_daemon_timeline() {
+        let mut session = Session::initial();
+        let pane = session.pane_mut("pane-1").expect("pane");
+        pane.scrollback_lines = vec![
+            "one".to_owned(),
+            "two".to_owned(),
+            "three".to_owned(),
+            "four".to_owned(),
+            "five".to_owned(),
+            "six".to_owned(),
+        ];
+        pane.surface_lines = pane.scrollback_lines[3..].to_vec();
+        pane.rows = 3;
+        pane.scrollback_row_runs = crate::terminal::plain_row_runs(&pane.scrollback_lines);
+        pane.surface_row_runs = crate::terminal::plain_row_runs(&pane.surface_lines);
+        pane.scrollback_semantic_prompts =
+            vec![protocol::RowSemanticPrompt::None; pane.scrollback_lines.len()];
+        pane.surface_semantic_prompts =
+            vec![protocol::RowSemanticPrompt::None; pane.surface_lines.len()];
+        pane.scrollback_dirty_rows = vec![false; pane.scrollback_lines.len()];
+        pane.surface_dirty_rows = vec![false; pane.surface_lines.len()];
+        pane.scrollback_kitty_placeholders = vec![false; pane.scrollback_lines.len()];
+        pane.surface_kitty_placeholders = vec![false; pane.surface_lines.len()];
+
+        let viewport = session
+            .pane_viewport(
+                "pane-1",
+                PaneViewportIntentSpec {
+                    viewport: protocol::PaneViewportKind::Delta,
+                    top_line: 4,
+                    delta_rows: -10,
+                    visible_rows: 3,
+                    known_viewport_version: 0,
+                },
+            )
+            .expect("pane viewport");
+
+        assert_eq!(viewport.viewport, protocol::PaneViewportKind::Top);
+        assert_eq!(viewport.viewport_top_line, 1);
+        assert_eq!(viewport.rows, 3);
+        assert_eq!(viewport.lines, ["one", "two", "three"]);
+
+        let padded = session
+            .pane_viewport(
+                "pane-1",
+                PaneViewportIntentSpec {
+                    viewport: protocol::PaneViewportKind::Pinned,
+                    top_line: 4,
+                    delta_rows: 0,
+                    visible_rows: 5,
+                    known_viewport_version: 0,
+                },
+            )
+            .expect("padded pane viewport");
+        assert_eq!(padded.viewport_top_line, 2);
+        assert_eq!(padded.rows, 5);
+        assert_eq!(padded.lines, ["two", "three", "four", "five", "six"]);
     }
 
     #[cfg(feature = "libghostty-vt")]

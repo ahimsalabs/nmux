@@ -11,8 +11,8 @@ use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{
     Actor, AttachMode, ErrorRetryability, FocusInputSpec, InputFrameContext, MouseInputSpec,
-    PasteInputSpec, PendingSessionEvent, ScrollbackFetchSpec, ScrollbackRange, Session,
-    SessionActor, SessionEvent, SessionEventLane,
+    PaneViewportIntentSpec, PasteInputSpec, PendingSessionEvent, ScrollbackFetchSpec,
+    ScrollbackRange, Session, SessionActor, SessionEvent, SessionEventLane,
 };
 use nmux_core::terminal::{
     KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines,
@@ -2339,6 +2339,9 @@ fn read_live_client_frame(client: &mut LiveAttachedClient) -> Result<LiveClientR
         Ok(async_live::ClientInputEvent::Scrollback(fetch)) => {
             Ok(LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)))
         }
+        Ok(async_live::ClientInputEvent::Viewport(intent)) => {
+            Ok(LiveClientRead::Frame(LiveClientFrame::Viewport(intent)))
+        }
         Ok(async_live::ClientInputEvent::Ping(ping)) => {
             Ok(LiveClientRead::Frame(LiveClientFrame::Ping(ping)))
         }
@@ -2389,6 +2392,28 @@ fn drain_live_client_frames(
                     return Ok(ClientDrainStatus::Closed);
                 };
                 queue_reliable_frame_to_live_client(client, chunk)?;
+            }
+            LiveClientRead::Frame(LiveClientFrame::Viewport(intent)) => {
+                client.last_seen_mono_ms = now_mono_ms;
+                if let Some(error) = pane_viewport_intent_error_code(session, &intent) {
+                    queue_pane_viewport_intent_error_to_live_client(
+                        client, session, &intent, error,
+                    )?;
+                    if error == protocol::ErrorCode::StaleVersion {
+                        continue;
+                    }
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                let Some(frame) = session.pane_viewport_frame_for_pane(
+                    "local-client",
+                    client.seq,
+                    &intent.pane_id,
+                    intent.spec(),
+                ) else {
+                    queue_pane_not_found_error_to_live_client(client, session, &intent.pane_id, 0)?;
+                    return Ok(ClientDrainStatus::Closed);
+                };
+                queue_reliable_frame_to_live_client(client, frame)?;
             }
             LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                 client.last_seen_mono_ms = now_mono_ms;
@@ -2516,6 +2541,29 @@ fn drain_live_client_frames_with_session_actor(
                     return Ok(ClientDrainStatus::Closed);
                 };
                 queue_reliable_frame_to_live_client(client, chunk)?;
+            }
+            LiveClientRead::Frame(LiveClientFrame::Viewport(intent)) => {
+                client.last_seen_mono_ms = now_mono_ms;
+                let session = actor.session();
+                if let Some(error) = pane_viewport_intent_error_code(session, &intent) {
+                    queue_pane_viewport_intent_error_to_live_client(
+                        client, session, &intent, error,
+                    )?;
+                    if error == protocol::ErrorCode::StaleVersion {
+                        continue;
+                    }
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                let Some(frame) = session.pane_viewport_frame_for_pane(
+                    "local-client",
+                    client.seq,
+                    &intent.pane_id,
+                    intent.spec(),
+                ) else {
+                    queue_pane_not_found_error_to_live_client(client, session, &intent.pane_id, 0)?;
+                    return Ok(ClientDrainStatus::Closed);
+                };
+                queue_reliable_frame_to_live_client(client, frame)?;
             }
             LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                 client.last_seen_mono_ms = now_mono_ms;
@@ -3137,6 +3185,29 @@ fn serve_live_attached_client(
                         wire::write_default_frame(stream, &chunk)?;
                         seq += 1;
                     }
+                    LiveClientRead::Frame(LiveClientFrame::Viewport(intent)) => {
+                        count_cycle = false;
+                        if let Some(error) = pane_viewport_intent_error_code(session, &intent) {
+                            write_pane_viewport_intent_error(
+                                stream, session, &mut seq, &intent, error,
+                            )?;
+                            if error == protocol::ErrorCode::StaleVersion {
+                                continue;
+                            }
+                            return Ok(());
+                        }
+                        let Some(frame) = session.pane_viewport_frame_for_pane(
+                            "local-client",
+                            seq,
+                            &intent.pane_id,
+                            intent.spec(),
+                        ) else {
+                            write_pane_not_found_error(stream, session, &mut seq, &intent.pane_id)?;
+                            return Ok(());
+                        };
+                        wire::write_default_frame(stream, &frame)?;
+                        seq += 1;
+                    }
                     LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                         count_cycle = false;
                         if !Session::input_allowed(&actor) {
@@ -3504,6 +3575,30 @@ fn serve_live_attached_client_with_session_actor(
                         wire::write_default_frame(stream, &chunk)?;
                         seq += 1;
                     }
+                    LiveClientRead::Frame(LiveClientFrame::Viewport(intent)) => {
+                        count_cycle = false;
+                        let session = actor.session();
+                        if let Some(error) = pane_viewport_intent_error_code(session, &intent) {
+                            write_pane_viewport_intent_error(
+                                stream, session, &mut seq, &intent, error,
+                            )?;
+                            if error == protocol::ErrorCode::StaleVersion {
+                                continue;
+                            }
+                            return Ok(());
+                        }
+                        let Some(frame) = session.pane_viewport_frame_for_pane(
+                            "local-client",
+                            seq,
+                            &intent.pane_id,
+                            intent.spec(),
+                        ) else {
+                            write_pane_not_found_error(stream, session, &mut seq, &intent.pane_id)?;
+                            return Ok(());
+                        };
+                        wire::write_default_frame(stream, &frame)?;
+                        seq += 1;
+                    }
                     LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                         count_cycle = false;
                         {
@@ -3847,6 +3942,9 @@ fn read_live_client_frame_from_stream(
                 protocol::EnvelopeBody::ScrollbackFetch => Ok(LiveClientRead::Frame(
                     LiveClientFrame::Scrollback(scrollback_fetch_from_frame(&frame)?),
                 )),
+                protocol::EnvelopeBody::PaneViewportIntent => Ok(LiveClientRead::Frame(
+                    LiveClientFrame::Viewport(pane_viewport_intent_from_frame(&frame)?),
+                )),
                 protocol::EnvelopeBody::InputEvent => Ok(LiveClientRead::Frame(
                     LiveClientFrame::Input(input_summary_from_frame(&frame)?),
                 )),
@@ -4040,12 +4138,14 @@ enum LiveClientRead {
 enum LiveClientFrame {
     Resize(ResizeIntentSummary),
     Scrollback(ScrollbackFetchSummary),
+    Viewport(PaneViewportIntentSummary),
     Input(InputSummary),
     Ping(PingSummary),
 }
 
 enum AttachedClientFrame {
     Scrollback(ScrollbackFetchSummary),
+    Viewport(PaneViewportIntentSummary),
     Input(InputSummary),
 }
 
@@ -4118,6 +4218,26 @@ fn serve_attached_client(
                     wait_for_more = false;
                 } else {
                     write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
+                    return Ok(());
+                }
+            }
+            AttachedClientFrame::Viewport(intent) => {
+                if let Some(error) = pane_viewport_intent_error_code(session, &intent) {
+                    write_pane_viewport_intent_error(stream, session, &mut seq, &intent, error)?;
+                    wait_for_more = true;
+                    continue;
+                }
+                if let Some(frame) = session.pane_viewport_frame_for_pane(
+                    "local-client",
+                    seq,
+                    &intent.pane_id,
+                    intent.spec(),
+                ) {
+                    wire::write_default_frame(stream, &frame)?;
+                    seq += 1;
+                    wait_for_more = false;
+                } else {
+                    write_pane_not_found_error(stream, session, &mut seq, &intent.pane_id)?;
                     return Ok(());
                 }
             }
@@ -4434,6 +4554,78 @@ fn scrollback_fetch_error_code(
         .then_some(protocol::ErrorCode::StaleVersion)
 }
 
+fn pane_viewport_intent_error_code(
+    session: &Session,
+    intent: &PaneViewportIntentSummary,
+) -> Option<protocol::ErrorCode> {
+    let current = session.surface_version(&intent.pane_id)?;
+    let current = current.max(
+        session
+            .scrollback_version(&intent.pane_id)
+            .unwrap_or_default(),
+    );
+    (intent.known_viewport_version != 0 && intent.known_viewport_version != current)
+        .then_some(protocol::ErrorCode::StaleVersion)
+}
+
+fn write_pane_viewport_intent_error(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    intent: &PaneViewportIntentSummary,
+    code: protocol::ErrorCode,
+) -> Result<(), ServeError> {
+    let Some(current) = session.surface_version(&intent.pane_id) else {
+        write_pane_not_found_error(stream, session, seq, &intent.pane_id)?;
+        return Ok(());
+    };
+    let current = current.max(
+        session
+            .scrollback_version(&intent.pane_id)
+            .unwrap_or_default(),
+    );
+    write_protocol_error(
+        stream,
+        session,
+        seq,
+        code,
+        &format!(
+            "stale pane viewport version for {}: client={} server={current}",
+            intent.pane_id, intent.known_viewport_version
+        ),
+        Some(&intent.pane_id),
+        0,
+    )
+}
+
+fn queue_pane_viewport_intent_error_to_live_client(
+    client: &mut LiveAttachedClient,
+    session: &Session,
+    intent: &PaneViewportIntentSummary,
+    code: protocol::ErrorCode,
+) -> Result<(), ServeError> {
+    let Some(current) = session.surface_version(&intent.pane_id) else {
+        queue_pane_not_found_error_to_live_client(client, session, &intent.pane_id, 0)?;
+        return Ok(());
+    };
+    let current = current.max(
+        session
+            .scrollback_version(&intent.pane_id)
+            .unwrap_or_default(),
+    );
+    queue_protocol_error_to_live_client(
+        client,
+        session,
+        code,
+        &format!(
+            "stale pane viewport version for {}: client={} server={current}",
+            intent.pane_id, intent.known_viewport_version
+        ),
+        Some(&intent.pane_id),
+        0,
+    )
+}
+
 fn write_scrollback_fetch_error(
     stream: &mut UnixStream,
     session: &Session,
@@ -4584,13 +4776,25 @@ fn surface_response_frame(
     response: SurfaceResponse,
     seq: u64,
 ) -> Option<Vec<u8>> {
+    let (_, rows) = session.pane_size(pane_id)?;
+    let intent = PaneViewportIntentSpec {
+        viewport: protocol::PaneViewportKind::Active,
+        top_line: 0,
+        delta_rows: 0,
+        visible_rows: rows,
+        known_viewport_version: 0,
+    };
     match response {
         SurfaceResponse::Snapshot => {
-            session.pane_surface_frame_for_pane("local-client", seq, pane_id)
+            session.pane_viewport_frame_for_pane("local-client", seq, pane_id, intent)
         }
-        SurfaceResponse::Patch { base_version } => {
-            session.pane_surface_patch_frame_for_pane("local-client", seq, pane_id, base_version)
-        }
+        SurfaceResponse::Patch { base_version } => session.pane_viewport_patch_frame_for_pane(
+            "local-client",
+            seq,
+            pane_id,
+            base_version,
+            intent,
+        ),
     }
 }
 
@@ -4616,23 +4820,44 @@ fn surface_frame_bundle_for_pane(
     seq: u64,
 ) -> Option<SurfaceFrameBundle> {
     let version = session.surface_version(pane_id)?;
-    let snapshot_frame = session.pane_surface_frame_for_pane("local-client", seq, pane_id)?;
-    let patch_frame = if session
-        .surface_patch_kind(pane_id)
-        .unwrap_or(protocol::PatchKind::ReplaceRows)
-        == protocol::PatchKind::FullRefreshRequired
-    {
-        None
-    } else {
+    let (_, rows) = session.pane_size(pane_id)?;
+    let snapshot_frame = session.pane_viewport_frame_for_pane(
+        "local-client",
+        seq,
+        pane_id,
+        PaneViewportIntentSpec {
+            viewport: protocol::PaneViewportKind::Active,
+            top_line: 0,
+            delta_rows: 0,
+            visible_rows: rows,
+            known_viewport_version: 0,
+        },
+    )?;
+    let patch_frame = (session.surface_patch_kind(pane_id)
+        != Some(protocol::PatchKind::FullRefreshRequired))
+    .then(|| {
         version.checked_sub(1).and_then(|base_version| {
             session
-                .pane_surface_patch_frame_for_pane("local-client", seq, pane_id, base_version)
+                .pane_viewport_patch_frame_for_pane(
+                    "local-client",
+                    seq,
+                    pane_id,
+                    base_version,
+                    PaneViewportIntentSpec {
+                        viewport: protocol::PaneViewportKind::Active,
+                        top_line: 0,
+                        delta_rows: 0,
+                        visible_rows: rows,
+                        known_viewport_version: 0,
+                    },
+                )
                 .map(|bytes| async_live::SurfacePatchFrame {
                     base_version,
                     bytes,
                 })
         })
-    };
+    })
+    .flatten();
     Some(SurfaceFrameBundle {
         version,
         snapshot_frame,
@@ -5164,6 +5389,7 @@ pub(crate) fn attach_with_known_surfaces(
             mode: AttachMode::ReadWrite,
             focused_pane_id: None,
             known_surfaces,
+            known_viewports: Vec::new(),
             hostname: String::new(),
             client_kind: "nmux".to_owned(),
             subscribe_client_inventory: false,
@@ -5220,6 +5446,7 @@ impl Default for AttachOptions {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -5464,7 +5691,9 @@ pub fn attach_from_stream(
                 let frame = wire::read_default_frame(stream)?;
                 match protocol::size_prefixed_root_as_envelope(&frame)?.body_type() {
                     protocol::EnvelopeBody::PaneSurfaceSnapshot
-                    | protocol::EnvelopeBody::PaneSurfacePatch => {
+                    | protocol::EnvelopeBody::PaneSurfacePatch
+                    | protocol::EnvelopeBody::PaneViewportSnapshot
+                    | protocol::EnvelopeBody::PaneViewportPatch => {
                         break surface_update_from_frame(&frame)?;
                     }
                     protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
@@ -5833,6 +6062,47 @@ pub fn send_scrollback_fetch_with_known_version(
     Ok(())
 }
 
+pub fn send_pane_viewport_intent(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    intent: PaneViewportIntentSpec,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut builder = FlatBufferBuilder::new();
+    let pane_id_offset = builder.create_string(pane_id);
+    let actor_id = builder.create_string("local-actor");
+    let intent_frame = protocol::PaneViewportIntent::create(
+        &mut builder,
+        &protocol::PaneViewportIntentArgs {
+            pane_id: Some(pane_id_offset),
+            actor_id: Some(actor_id),
+            viewport: intent.viewport,
+            top_line: intent.top_line,
+            delta_rows: intent.delta_rows,
+            visible_rows: intent.visible_rows,
+            known_viewport_version: intent.known_viewport_version,
+        },
+    );
+    let session_id = builder.create_string("local");
+    let connection_id = builder.create_string("local-client");
+    let envelope = protocol::Envelope::create(
+        &mut builder,
+        &protocol::EnvelopeArgs {
+            protocol_version: PROTOCOL_VERSION,
+            session_id: Some(session_id),
+            connection_id: Some(connection_id),
+            seq: sequence.next_envelope_seq(),
+            ack: 0,
+            sent_at_mono_ms: 0,
+            body_type: protocol::EnvelopeBody::PaneViewportIntent,
+            body: Some(intent_frame.as_union_value()),
+        },
+    );
+    protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+    wire::write_default_frame(stream, builder.finished_data())?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientFrameSequence {
     next_envelope_seq: u64,
@@ -6077,6 +6347,77 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
                 text,
             })
         }
+        protocol::EnvelopeBody::PaneViewportSnapshot => {
+            let snapshot = envelope
+                .body_as_pane_viewport_snapshot()
+                .ok_or("missing pane viewport body")?;
+            validate_surface_kind(snapshot.surface())?;
+            validate_pane_viewport_kind(snapshot.viewport())?;
+            let rows = snapshot.rows_data().ok_or("pane viewport has no rows")?;
+            let styles = snapshot
+                .styles()
+                .map(decoded_styles)
+                .unwrap_or_else(default_style_summaries);
+            let hyperlinks = snapshot
+                .hyperlinks()
+                .map(decoded_hyperlinks)
+                .transpose()?
+                .unwrap_or_default();
+            let mut row_updates = decoded_surface_rows(rows.len(), |index| {
+                let row = rows.get(index);
+                decoded_surface_row(
+                    row.row(),
+                    row.runs(),
+                    row.dirty_hash(),
+                    row.row_state_hash(),
+                    row.semantic_prompt(),
+                    row.dirty(),
+                    row.kitty_virtual_placeholder(),
+                )
+            });
+            validate_row_update_terminal_enums(&row_updates)?;
+            normalize_surface_row_style_ids(&mut row_updates, &styles);
+            validate_row_update_hyperlink_ids(&row_updates, &hyperlinks)?;
+            let cursor = snapshot.cursor().map(CursorSummary::from_protocol);
+            validate_cursor_summary(cursor)?;
+            let modes = snapshot
+                .modes()
+                .map(TerminalModeSummary::from_protocol)
+                .unwrap_or_default();
+            validate_terminal_mode_summary(modes)?;
+            let text = render_viewport_rows_for_summary(&row_updates);
+            let colors = decoded_terminal_colors(snapshot.colors());
+            validate_palette_diff_scope(SurfaceUpdateKind::Snapshot, None, colors.as_ref())?;
+            Ok(SurfaceUpdate {
+                kind: SurfaceUpdateKind::Snapshot,
+                pane_id: required_string(snapshot.pane_id(), "pane viewport pane_id")?,
+                version: snapshot.version(),
+                scrollback_version: snapshot.timeline_version(),
+                scrollback_total_lines: snapshot.total_lines(),
+                base_version: None,
+                patch_kind: None,
+                cols: Some(snapshot.cols()),
+                rows: Some(snapshot.rows()),
+                surface: Some(snapshot.surface()),
+                cursor,
+                modes,
+                title: snapshot
+                    .metadata()
+                    .and_then(|metadata| metadata.title())
+                    .unwrap_or_default()
+                    .to_owned(),
+                working_directory: snapshot
+                    .metadata()
+                    .and_then(|metadata| metadata.working_directory())
+                    .unwrap_or_default()
+                    .to_owned(),
+                colors,
+                row_updates,
+                styles,
+                hyperlinks,
+                text,
+            })
+        }
         protocol::EnvelopeBody::PaneSurfacePatch => {
             let patch = envelope
                 .body_as_pane_surface_patch()
@@ -6143,8 +6484,83 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
                 text,
             })
         }
+        protocol::EnvelopeBody::PaneViewportPatch => {
+            let patch = envelope
+                .body_as_pane_viewport_patch()
+                .ok_or("missing pane viewport patch body")?;
+            validate_patch_kind(patch.kind())?;
+            validate_pane_viewport_kind(patch.viewport())?;
+            let rows = patch
+                .row_updates()
+                .ok_or("pane viewport patch has no rows")?;
+            let row_updates = decoded_surface_rows(rows.len(), |index| {
+                let row = rows.get(index);
+                decoded_surface_row(
+                    row.row(),
+                    row.runs(),
+                    row.dirty_hash(),
+                    row.row_state_hash(),
+                    row.semantic_prompt(),
+                    row.dirty(),
+                    row.kitty_virtual_placeholder(),
+                )
+            });
+            validate_row_update_terminal_enums(&row_updates)?;
+            validate_no_row_patch_payload(patch.kind(), &row_updates)?;
+            let cursor = patch.cursor().map(CursorSummary::from_protocol);
+            validate_cursor_summary(cursor)?;
+            let modes = patch
+                .modes()
+                .map(TerminalModeSummary::from_protocol)
+                .unwrap_or_default();
+            validate_terminal_mode_summary(modes)?;
+            let text = render_decoded_rows(&row_updates);
+            let colors = decoded_terminal_colors(patch.colors());
+            validate_palette_diff_scope(
+                SurfaceUpdateKind::Patch,
+                Some(patch.kind()),
+                colors.as_ref(),
+            )?;
+            Ok(SurfaceUpdate {
+                kind: SurfaceUpdateKind::Patch,
+                pane_id: required_string(patch.pane_id(), "pane viewport patch pane_id")?,
+                version: patch.version(),
+                scrollback_version: patch.timeline_version(),
+                scrollback_total_lines: patch.total_lines(),
+                base_version: Some(patch.base_version()),
+                patch_kind: Some(patch.kind()),
+                cols: None,
+                rows: None,
+                surface: None,
+                cursor,
+                modes,
+                title: patch
+                    .metadata()
+                    .and_then(|metadata| metadata.title())
+                    .unwrap_or_default()
+                    .to_owned(),
+                working_directory: patch
+                    .metadata()
+                    .and_then(|metadata| metadata.working_directory())
+                    .unwrap_or_default()
+                    .to_owned(),
+                colors,
+                row_updates,
+                styles: Vec::new(),
+                hyperlinks: Vec::new(),
+                text,
+            })
+        }
         other => Err(format!("unexpected envelope body: {other:?}").into()),
     }
+}
+
+fn render_viewport_rows_for_summary(rows: &[SurfaceRowUpdate]) -> String {
+    let visible_end = rows
+        .iter()
+        .rposition(|row| !row.text.is_empty())
+        .map_or(0, |index| index + 1);
+    render_decoded_rows(&rows[..visible_end])
 }
 
 pub(crate) fn read_input_event_from_stream(
@@ -6203,6 +6619,9 @@ fn read_attached_client_frame_from_stream(
         )),
         protocol::EnvelopeBody::ScrollbackFetch => Ok(AttachedClientRead::Frame(
             AttachedClientFrame::Scrollback(scrollback_fetch_from_frame(&frame)?),
+        )),
+        protocol::EnvelopeBody::PaneViewportIntent => Ok(AttachedClientRead::Frame(
+            AttachedClientFrame::Viewport(pane_viewport_intent_from_frame(&frame)?),
         )),
         other => Err(format!("unexpected attached client frame: {other:?}").into()),
     }
@@ -6405,6 +6824,8 @@ fn read_scrollback_response_from_stream(
             }
             protocol::EnvelopeBody::PaneSurfaceSnapshot
             | protocol::EnvelopeBody::PaneSurfacePatch
+            | protocol::EnvelopeBody::PaneViewportSnapshot
+            | protocol::EnvelopeBody::PaneViewportPatch
                 if pending_updates.is_some() =>
             {
                 match surface_update_from_frame(&frame) {
@@ -6523,7 +6944,9 @@ fn read_optional_server_error_from_stream(stream: &mut UnixStream) -> Result<(),
                 protocol::EnvelopeBody::PresenceUpdate
                 | protocol::EnvelopeBody::WorkspaceTreeSnapshot
                 | protocol::EnvelopeBody::PaneSurfaceSnapshot
-                | protocol::EnvelopeBody::PaneSurfacePatch => Ok(()),
+                | protocol::EnvelopeBody::PaneSurfacePatch
+                | protocol::EnvelopeBody::PaneViewportSnapshot
+                | protocol::EnvelopeBody::PaneViewportPatch => Ok(()),
                 other => Err(
                     format!("unexpected server frame before scrollback fetch: {other:?}").into(),
                 ),
@@ -6604,7 +7027,9 @@ pub fn read_live_surface_update_from_stream(
                     workspace_summary_from_frame(&frame).map(LiveSurfaceRead::Workspace)
                 }
                 protocol::EnvelopeBody::PaneSurfaceSnapshot
-                | protocol::EnvelopeBody::PaneSurfacePatch => {
+                | protocol::EnvelopeBody::PaneSurfacePatch
+                | protocol::EnvelopeBody::PaneViewportSnapshot
+                | protocol::EnvelopeBody::PaneViewportPatch => {
                     surface_update_from_frame(&frame).map(LiveSurfaceRead::Update)
                 }
                 protocol::EnvelopeBody::Error => {
@@ -7025,6 +7450,39 @@ pub(crate) fn scrollback_fetch_from_frame(
     })
 }
 
+pub(crate) fn pane_viewport_intent_from_frame(
+    frame: &[u8],
+) -> Result<PaneViewportIntentSummary, ServeError> {
+    let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
+    if envelope.body_type() != protocol::EnvelopeBody::PaneViewportIntent {
+        return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
+    }
+
+    let intent = envelope
+        .body_as_pane_viewport_intent()
+        .ok_or("missing pane viewport intent body")?;
+    validate_pane_viewport_kind(intent.viewport())?;
+    if intent.visible_rows() == 0 {
+        return Err("pane viewport visible_rows must be nonzero".into());
+    }
+    if matches!(
+        intent.viewport(),
+        protocol::PaneViewportKind::Pinned | protocol::PaneViewportKind::Delta
+    ) && intent.top_line() == 0
+    {
+        return Err("pane viewport top_line must be 1-based".into());
+    }
+    Ok(PaneViewportIntentSummary {
+        pane_id: required_string(intent.pane_id(), "pane viewport intent pane_id")?,
+        actor_id: required_string(intent.actor_id(), "pane viewport intent actor_id")?,
+        viewport: intent.viewport(),
+        top_line: intent.top_line(),
+        delta_rows: intent.delta_rows(),
+        visible_rows: intent.visible_rows(),
+        known_viewport_version: intent.known_viewport_version(),
+    })
+}
+
 pub(crate) fn scrollback_chunk_from_frame(
     frame: &[u8],
 ) -> Result<ScrollbackChunkSummary, ServeError> {
@@ -7143,7 +7601,9 @@ pub fn read_health_probe_response<R: Read>(
             }
             protocol::EnvelopeBody::WorkspaceTreeSnapshot
             | protocol::EnvelopeBody::PaneSurfaceSnapshot
-            | protocol::EnvelopeBody::PaneSurfacePatch => {}
+            | protocol::EnvelopeBody::PaneSurfacePatch
+            | protocol::EnvelopeBody::PaneViewportSnapshot
+            | protocol::EnvelopeBody::PaneViewportPatch => {}
             other => return Err(format!("unexpected health response frame: {other:?}").into()),
         }
     }
@@ -7193,6 +7653,17 @@ fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
             });
         }
     }
+    let known = request.known_viewports();
+    let mut known_viewports = Vec::with_capacity(known.map(|known| known.len()).unwrap_or(0));
+    if let Some(known) = known {
+        for index in 0..known.len() {
+            let viewport = known.get(index);
+            known_viewports.push(KnownSurfaceVersion {
+                pane_id: required_io_string(viewport.pane_id(), "known viewport pane_id")?,
+                version: viewport.version(),
+            });
+        }
+    }
 
     let focused_pane_id = request
         .focused_pane_id()
@@ -7211,6 +7682,7 @@ fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
         })?,
         focused_pane_id,
         known_surfaces,
+        known_viewports,
         hostname: request.hostname().unwrap_or_default().to_owned(),
         client_kind: request.client_kind().unwrap_or("nmux").to_owned(),
         subscribe_client_inventory: request.subscribe_client_inventory(),
@@ -7310,6 +7782,7 @@ pub struct AttachRequest {
     pub mode: AttachMode,
     pub focused_pane_id: Option<String>,
     pub known_surfaces: Vec<KnownSurfaceVersion>,
+    pub known_viewports: Vec<KnownSurfaceVersion>,
     pub hostname: String,
     pub client_kind: String,
     pub subscribe_client_inventory: bool,
@@ -7396,6 +7869,19 @@ impl AttachRequest {
             known_surface_offsets.push(known_surface);
         }
         let known_surfaces = builder.create_vector(&known_surface_offsets);
+        let mut known_viewport_offsets = Vec::with_capacity(self.known_viewports.len());
+        for viewport in &self.known_viewports {
+            let pane_id = builder.create_string(&viewport.pane_id);
+            let known_viewport = protocol::KnownPaneViewportVersion::create(
+                &mut builder,
+                &protocol::KnownPaneViewportVersionArgs {
+                    pane_id: Some(pane_id),
+                    version: viewport.version,
+                },
+            );
+            known_viewport_offsets.push(known_viewport);
+        }
+        let known_viewports = builder.create_vector(&known_viewport_offsets);
 
         let actor_id = builder.create_string(&self.actor_id);
         let user_id = builder.create_string(&self.user_id);
@@ -7415,6 +7901,7 @@ impl AttachRequest {
                 mode: attach_mode_as_protocol(self.mode),
                 focused_pane_id,
                 known_surfaces: Some(known_surfaces),
+                known_viewports: Some(known_viewports),
                 hostname: Some(hostname),
                 client_kind: Some(client_kind),
                 subscribe_client_inventory: self.subscribe_client_inventory,
@@ -7607,6 +8094,15 @@ fn validate_presence_kind(
 ) -> Result<protocol::PresenceKind, ServeError> {
     if kind.variant_name().is_none() {
         return Err(format!("unknown presence kind {}", kind.0).into());
+    }
+    Ok(kind)
+}
+
+fn validate_pane_viewport_kind(
+    kind: protocol::PaneViewportKind,
+) -> Result<protocol::PaneViewportKind, ServeError> {
+    if kind.variant_name().is_none() {
+        return Err(format!("unknown pane viewport kind {}", kind.0).into());
     }
     Ok(kind)
 }
@@ -8216,6 +8712,29 @@ pub(crate) struct ScrollbackFetchSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PaneViewportIntentSummary {
+    pub(crate) pane_id: String,
+    pub(crate) actor_id: String,
+    pub(crate) viewport: protocol::PaneViewportKind,
+    pub(crate) top_line: u64,
+    pub(crate) delta_rows: i32,
+    pub(crate) visible_rows: u32,
+    pub(crate) known_viewport_version: u64,
+}
+
+impl PaneViewportIntentSummary {
+    fn spec(&self) -> PaneViewportIntentSpec {
+        PaneViewportIntentSpec {
+            viewport: self.viewport,
+            top_line: self.top_line,
+            delta_rows: self.delta_rows,
+            visible_rows: self.visible_rows,
+            known_viewport_version: self.known_viewport_version,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScrollbackChunkSummary {
     pub pane_id: String,
     pub scrollback_version: u64,
@@ -8753,6 +9272,7 @@ mod tests {
                 mode,
                 focused_pane_id: Some(focused_pane_id),
                 known_surfaces: None,
+                known_viewports: None,
                 hostname: None,
                 client_kind: None,
                 subscribe_client_inventory: false,
@@ -8798,6 +9318,7 @@ mod tests {
                 mode: protocol::AttachMode::ReadWrite,
                 focused_pane_id,
                 known_surfaces,
+                known_viewports: None,
                 hostname: None,
                 client_kind: None,
                 subscribe_client_inventory: false,
@@ -9842,6 +10363,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13107,6 +13629,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: "machine-a".to_owned(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: true,
@@ -13131,6 +13654,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: "machine-b".to_owned(),
                 client_kind: "agent".to_owned(),
                 subscribe_client_inventory: true,
@@ -13190,6 +13714,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: "machine-a".to_owned(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: true,
@@ -13214,6 +13739,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: "machine-b".to_owned(),
                 client_kind: "agent".to_owned(),
                 subscribe_client_inventory: true,
@@ -13271,6 +13797,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13290,6 +13817,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13359,6 +13887,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13377,6 +13906,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13452,6 +13982,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13470,6 +14001,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13820,6 +14352,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13839,6 +14372,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13920,6 +14454,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13939,6 +14474,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -14086,6 +14622,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -14129,6 +14666,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -14637,6 +15175,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -14693,6 +15232,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -14773,6 +15313,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15028,6 +15569,7 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: current_version - 1,
                 }],
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15580,6 +16122,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15636,6 +16179,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15695,6 +16239,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15756,6 +16301,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15818,6 +16364,7 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15882,6 +16429,7 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15931,6 +16479,7 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15981,6 +16530,7 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16030,6 +16580,7 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16079,6 +16630,7 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16157,6 +16709,7 @@ mod tests {
                     pane_id: "pane-1".to_owned(),
                     version: 3,
                 }],
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16852,6 +17405,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16923,6 +17477,7 @@ mod tests {
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16974,6 +17529,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -17288,6 +17844,7 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17351,6 +17908,7 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17413,6 +17971,7 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17475,6 +18034,7 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17543,6 +18103,7 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17605,6 +18166,7 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17678,6 +18240,7 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
+                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17755,6 +18318,7 @@ mod tests {
                         pane_id: "pane-1".to_owned(),
                         version: 3,
                     }],
+                    known_viewports: Vec::new(),
                     hostname: String::new(),
                     client_kind: "nmux".to_owned(),
                     subscribe_client_inventory: false,
@@ -17843,6 +18407,7 @@ mod tests {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
+            known_viewports: Vec::new(),
             hostname: String::new(),
             client_kind: "nmux".to_owned(),
             subscribe_client_inventory: false,
@@ -18033,6 +18598,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -18071,6 +18637,7 @@ mod tests {
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
                 known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -18968,6 +19535,7 @@ mod tests {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
+            known_viewports: Vec::new(),
             hostname: String::new(),
             client_kind: "nmux".to_owned(),
             subscribe_client_inventory: false,

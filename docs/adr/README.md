@@ -57,3 +57,4 @@ Add a new ADR for decisions that change the protocol shape, process boundaries, 
 | [0047: Session New Control Command](0047-session-new-control-command.md) | Accepted |
 | [0048: Session Inventory Control Command](0048-session-inventory-control-command.md) | Accepted |
 | [0049: Surface Scrollback Metadata](0049-surface-scrollback-metadata.md) | Accepted |
+| [0050: Daemon-Owned Pane Viewports](0050-daemon-owned-pane-viewports.md) | Accepted |

@@ -7,9 +7,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{
-    InputSummary, PingSummary, ResizeIntentSummary, ScrollbackFetchSummary,
-    input_summary_from_frame, ping_from_frame, resize_intent_from_frame,
-    scrollback_fetch_from_frame,
+    InputSummary, PaneViewportIntentSummary, PingSummary, ResizeIntentSummary,
+    ScrollbackFetchSummary, input_summary_from_frame, pane_viewport_intent_from_frame,
+    ping_from_frame, resize_intent_from_frame, scrollback_fetch_from_frame,
 };
 use nmux_proto::{protocol, wire};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -80,6 +80,7 @@ pub(crate) enum ClientInputError {
 pub(crate) enum ClientInputEvent {
     Resize(ResizeIntentSummary),
     Scrollback(ScrollbackFetchSummary),
+    Viewport(PaneViewportIntentSummary),
     Input(InputSummary),
     Ping(PingSummary),
     Closed,
@@ -504,6 +505,9 @@ fn client_input_event_from_frame(frame: &[u8]) -> Result<ClientInputEvent, Clien
             .map_err(|err| ClientInputError::Wire(err.to_string())),
         protocol::EnvelopeBody::ScrollbackFetch => scrollback_fetch_from_frame(frame)
             .map(ClientInputEvent::Scrollback)
+            .map_err(|err| ClientInputError::Wire(err.to_string())),
+        protocol::EnvelopeBody::PaneViewportIntent => pane_viewport_intent_from_frame(frame)
+            .map(ClientInputEvent::Viewport)
             .map_err(|err| ClientInputError::Wire(err.to_string())),
         protocol::EnvelopeBody::InputEvent => input_summary_from_frame(frame)
             .map(ClientInputEvent::Input)

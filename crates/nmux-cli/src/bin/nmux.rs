@@ -322,6 +322,7 @@ fn wait_for_default_daemon_attach(args: &Args) -> Result<(), Box<dyn std::error:
             .clone()
             .or_else(|| args.target_tab_id.clone()),
         known_surfaces: Vec::new(),
+        known_viewports: Vec::new(),
         hostname: resolve_short_hostname(),
         client_kind: "nmux".to_owned(),
         subscribe_client_inventory: false,
@@ -4397,43 +4398,35 @@ fn scroll_live_pane_with_intent(
         return Ok(false);
     }
     let viewport_rows = visible_rows.max(1);
-    let line_count = u32::from(viewport_rows);
+    let _ = socket_scope;
     let existing = surface_state.scrollback_views.get(pane_id).copied();
-    let mut pending_updates = Vec::new();
-    let mut pending_live = Vec::new();
+    let known_total = || {
+        surface_state
+            .current_pane_scrollback_totals
+            .get(pane_id)
+            .copied()
+            .or_else(|| {
+                surface_state
+                    .current_pane_surface_summaries
+                    .get(pane_id)
+                    .map(|summary| summary.scrollback_total_lines)
+            })
+            .unwrap_or(0)
+    };
     let (offset_from_bottom, total_history_lines) = match (intent, existing) {
         (LiveScrollIntent::Wheel(LiveScrollDirection::Up), None) => {
-            let probe = local::fetch_scrollback_chunk_with_selection_and_pending_live(
-                stream,
-                sequence,
-                pane_id,
-                1,
-                line_count,
-                Some(line_count),
-                |range_start, range_count| {
-                    client_state
-                        .cached_scrollback_version_for_scope(
-                            socket_scope,
-                            pane_id,
-                            range_start,
-                            range_count,
-                        )
-                        .unwrap_or(0)
-                },
-                Some(&mut pending_updates),
-                Some(&mut pending_live),
-            )?;
+            let total_history_lines = known_total();
             let offset = next_scroll_offset(
                 0,
                 LiveScrollDirection::Up,
                 LIVE_SCROLL_WHEEL_ROWS,
-                probe.total_lines,
+                total_history_lines,
                 viewport_rows,
             );
             if offset == 0 {
                 return Ok(false);
             }
-            (offset, probe.total_lines)
+            (offset, total_history_lines)
         }
         (LiveScrollIntent::Wheel(LiveScrollDirection::Up), Some(view)) => {
             let offset = next_scroll_offset(
@@ -4486,31 +4479,8 @@ fn scroll_live_pane_with_intent(
             },
             existing,
         ) => {
-            let total_history_lines = if let Some(view) = existing {
-                view.total_history_lines
-            } else {
-                let probe = local::fetch_scrollback_chunk_with_selection_and_pending_live(
-                    stream,
-                    sequence,
-                    pane_id,
-                    1,
-                    line_count,
-                    Some(line_count),
-                    |range_start, range_count| {
-                        client_state
-                            .cached_scrollback_version_for_scope(
-                                socket_scope,
-                                pane_id,
-                                range_start,
-                                range_count,
-                            )
-                            .unwrap_or(0)
-                    },
-                    Some(&mut pending_updates),
-                    Some(&mut pending_live),
-                )?;
-                probe.total_lines
-            };
+            let total_history_lines =
+                existing.map_or_else(known_total, |view| view.total_history_lines);
             let offset = scrollbar_offset_from_track(
                 track_position,
                 track_len,
@@ -4543,104 +4513,45 @@ fn scroll_live_pane_with_intent(
 
     let viewport =
         scrollback_viewport_range(total_history_lines, viewport_rows, offset_from_bottom);
-    let scrollback = if viewport.history_line_count > 0 {
-        Some(
-            local::fetch_scrollback_chunk_with_selection_and_pending_live(
-                stream,
-                sequence,
-                pane_id,
-                viewport.history_start_line,
-                viewport.history_line_count,
-                None,
-                |range_start, range_count| {
-                    client_state
-                        .cached_scrollback_version_for_scope(
-                            socket_scope,
-                            pane_id,
-                            range_start,
-                            range_count,
-                        )
-                        .unwrap_or(0)
-                },
-                Some(&mut pending_updates),
-                Some(&mut pending_live),
-            )?,
-        )
-    } else {
-        None
-    };
-    for pending in pending_live {
-        match pending {
+    if viewport.history_line_count == 0 {
+        return Ok(false);
+    }
+    local::send_pane_viewport_intent(
+        stream,
+        sequence,
+        pane_id,
+        nmux_core::session::PaneViewportIntentSpec {
+            viewport: protocol::PaneViewportKind::Pinned,
+            top_line: viewport.history_start_line,
+            delta_rows: 0,
+            visible_rows: u32::from(viewport_rows),
+            known_viewport_version: 0,
+        },
+    )?;
+    let update = loop {
+        match local::read_live_surface_update_from_stream(stream)? {
+            local::LiveSurfaceRead::Update(update) if update.pane_id == pane_id => break update,
             local::LiveSurfaceRead::ClientInventorySnapshot(snapshot) => {
                 client_inventory.apply_snapshot(snapshot);
             }
             local::LiveSurfaceRead::ClientInventoryPatch(patch) => {
                 let _ = client_inventory.apply_patch(patch);
             }
-            _ => {}
+            local::LiveSurfaceRead::Error(error) => return Err(format!("{error}").into()),
+            local::LiveSurfaceRead::Closed => return Err("live server closed connection".into()),
+            _ => continue,
         }
-    }
+    };
     if let Some(state) = redraw_state.as_deref_mut() {
         state.record_client_count(client_inventory.count());
     }
-    for update in pending_updates {
-        speculative_echo.reconcile_update(&update);
-        let update_metadata = local::TerminalMetadataSummary {
-            title: update.title.clone(),
-            working_directory: update.working_directory.clone(),
-        };
-        let update_surface_text = client_state.render_surface_update_styled(&update, use_styled)?;
-        surface_state
-            .current_pane_surfaces
-            .insert(update.pane_id.clone(), update_surface_text.clone());
-        if let Some(summary) = client_state.cached_rendered_surface_summary(&update.pane_id) {
-            surface_state
-                .current_pane_surface_summaries
-                .insert(update.pane_id.clone(), summary);
-        }
-        surface_state
-            .current_pane_modes
-            .insert(update.pane_id.clone(), update.modes);
-        if let Some(surface_kind) = update.surface {
-            surface_state
-                .current_pane_surface_kinds
-                .insert(update.pane_id.clone(), surface_kind);
-        }
-        surface_state.scrollback_views.remove(&update.pane_id);
-        if update.pane_id == workspace.pane_id {
-            surface_state.current_surface_metadata = update_metadata.clone();
-            if let Some(surface_kind) = update.surface {
-                surface_state.current_surface_kind = surface_kind;
-            }
-            surface_state.current_modes = update.modes;
-            if let Some(mouse_modes) = host_mouse_modes.as_mut() {
-                mouse_modes.sync(surface_state.current_modes)?;
-            }
-            surface_state.current_surface_text = update_surface_text.clone();
-        } else if let Some(active_text) =
-            surface_state.current_pane_surfaces.get(&workspace.pane_id)
-        {
-            surface_state.current_surface_text = active_text.clone();
-        }
-        recorder.record(&format_live_surface_update_json(
-            workspace,
-            &update_metadata,
-            &update_surface_text,
-            &update,
-        ))?;
-    }
-    if scrollback
-        .as_ref()
-        .is_some_and(|scrollback| scrollback.lines.is_empty())
-    {
-        return Ok(false);
-    }
-    if let Some(scrollback) = scrollback.as_ref() {
-        client_state.cache_scrollback_chunk(scrollback);
-        record_live_scrollback_total(surface_state, scrollback);
-    }
-    let rendered = render_scrollback_view_text(scrollback.as_ref());
-    let rendered_summary = scrollback.as_ref().map(render_scrollback_view_summary);
+    speculative_echo.reconcile_update(&update);
+    let update_metadata = local::TerminalMetadataSummary {
+        title: update.title.clone(),
+        working_directory: update.working_directory.clone(),
+    };
+    let rendered = client_state.render_surface_update_styled(&update, use_styled)?;
+    let rendered_summary = client_state.cached_rendered_surface_summary(&update.pane_id);
     surface_state
         .current_pane_surfaces
         .insert(pane_id.to_owned(), rendered.clone());
@@ -4652,8 +4563,22 @@ fn scroll_live_pane_with_intent(
         surface_state.current_pane_surface_summaries.remove(pane_id);
     }
     if pane_id == workspace.pane_id {
+        surface_state.current_surface_metadata = update_metadata.clone();
+        if let Some(surface_kind) = update.surface {
+            surface_state.current_surface_kind = surface_kind;
+        }
+        surface_state.current_modes = update.modes;
+        if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+            mouse_modes.sync(surface_state.current_modes)?;
+        }
         surface_state.current_surface_text = rendered;
     }
+    recorder.record(&format_live_surface_update_json(
+        workspace,
+        &update_metadata,
+        &surface_state.current_surface_text,
+        &update,
+    ))?;
     surface_state.scrollback_views.insert(
         pane_id.to_owned(),
         LiveScrollbackView {

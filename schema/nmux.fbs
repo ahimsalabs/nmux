@@ -113,6 +113,13 @@ enum AttachSurfaceState : byte {
   Patch = 2,
 }
 
+enum PaneViewportKind : byte {
+  Active = 0,
+  Top = 1,
+  Pinned = 2,
+  Delta = 3,
+}
+
 enum RowSemanticPrompt : byte {
   None = 0,
   Prompt = 1,
@@ -191,6 +198,43 @@ table PaneSurfacePatch {
   version:ulong;
   scrollback_version:ulong;
   scrollback_total_lines:ulong;
+  kind:PatchKind = ReplaceRows;
+  row_updates:[RowUpdate];
+  cursor:CursorState;
+  modes:TerminalModeState;
+  metadata:TerminalMetadataState;
+  colors:TerminalColorState;
+}
+
+table PaneViewportSnapshot {
+  pane_id:string;
+  version:ulong;
+  timeline_version:ulong;
+  total_lines:ulong;
+  active_start_line:ulong;
+  viewport_top_line:ulong;
+  viewport:PaneViewportKind = Active;
+  surface:SurfaceKind = Main;
+  cols:uint;
+  rows:uint;
+  cursor:CursorState;
+  modes:TerminalModeState;
+  metadata:TerminalMetadataState;
+  styles:[Style];
+  rows_data:[SurfaceRow];
+  colors:TerminalColorState;
+  hyperlinks:[Hyperlink];
+}
+
+table PaneViewportPatch {
+  pane_id:string;
+  base_version:ulong;
+  version:ulong;
+  timeline_version:ulong;
+  total_lines:ulong;
+  active_start_line:ulong;
+  viewport_top_line:ulong;
+  viewport:PaneViewportKind = Active;
   kind:PatchKind = ReplaceRows;
   row_updates:[RowUpdate];
   cursor:CursorState;
@@ -346,6 +390,16 @@ table ScrollbackFetch {
   known_scrollback_version:ulong;
 }
 
+table PaneViewportIntent {
+  pane_id:string;
+  actor_id:string;
+  viewport:PaneViewportKind = Active;
+  top_line:ulong;
+  delta_rows:int;
+  visible_rows:uint;
+  known_viewport_version:ulong;
+}
+
 table ScrollbackChunk {
   pane_id:string;
   scrollback_version:ulong;
@@ -427,6 +481,11 @@ table KnownPaneSurfaceVersion {
   version:ulong;
 }
 
+table KnownPaneViewportVersion {
+  pane_id:string;
+  version:ulong;
+}
+
 table AttachRequest {
   actor_id:string;
   user_id:string;
@@ -434,6 +493,7 @@ table AttachRequest {
   mode:AttachMode = ReadOnly;
   focused_pane_id:string;
   known_surfaces:[KnownPaneSurfaceVersion];
+  known_viewports:[KnownPaneViewportVersion];
   hostname:string;
   client_kind:string;
   subscribe_client_inventory:bool;
@@ -449,10 +509,13 @@ union EnvelopeBody {
   WorkspaceTreeSnapshot,
   PaneSurfaceSnapshot,
   PaneSurfacePatch,
+  PaneViewportSnapshot,
+  PaneViewportPatch,
   InputEvent,
   ResizeIntent,
   Error,
   ScrollbackFetch,
+  PaneViewportIntent,
   ScrollbackChunk,
   PresenceUpdate,
   AttachRequest,
