@@ -31,7 +31,7 @@ Protocol v2 adds daemon-owned pane viewport messages:
 - `PaneViewportPatch` is reserved for incremental updates against a viewport
   version.
 - `AttachRequest.known_viewports` lets reconnecting clients advertise cached
-  viewport versions independently from older surface versions.
+  viewport versions.
 
 The daemon owns viewport selection, clamping, padding, cursor visibility, and
 the mapping from absolute timeline lines to rendered rows. Live clients render
@@ -47,10 +47,9 @@ The live scroll path has one authoritative row source per pane: the daemon's
 viewport snapshot. This removes a class of blank or missing-scrollback bugs
 caused by client-side range stitching.
 
-The old `ScrollbackFetch` and `ScrollbackChunk` bodies can remain temporarily
-for CLI/debug paths, but they are no longer the live viewport architecture.
-They should be removed once all user-facing scrollback commands consume
-viewport snapshots.
+The old `PaneSurfaceSnapshot`, `PaneSurfacePatch`, `ScrollbackFetch`, and
+`ScrollbackChunk` envelope bodies are removed from protocol v2. Compatibility
+with protocol v1 is intentionally not preserved while nmux is pre-release.
 
 Viewport patches can be implemented after the snapshot path is stable. Until
 then, snapshots are the correctness path and patch support is an optimization.

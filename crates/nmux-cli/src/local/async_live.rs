@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::{
     InputSummary, PaneViewportIntentSummary, PingSummary, ResizeIntentSummary,
     ScrollbackFetchSummary, input_summary_from_frame, pane_viewport_intent_from_frame,
-    ping_from_frame, resize_intent_from_frame, scrollback_fetch_from_frame,
+    ping_from_frame, resize_intent_from_frame,
 };
 use nmux_proto::{protocol, wire};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -502,9 +502,6 @@ fn client_input_event_from_frame(frame: &[u8]) -> Result<ClientInputEvent, Clien
     match envelope.body_type() {
         protocol::EnvelopeBody::ResizeIntent => resize_intent_from_frame(frame)
             .map(ClientInputEvent::Resize)
-            .map_err(|err| ClientInputError::Wire(err.to_string())),
-        protocol::EnvelopeBody::ScrollbackFetch => scrollback_fetch_from_frame(frame)
-            .map(ClientInputEvent::Scrollback)
             .map_err(|err| ClientInputError::Wire(err.to_string())),
         protocol::EnvelopeBody::PaneViewportIntent => pane_viewport_intent_from_frame(frame)
             .map(ClientInputEvent::Viewport)
@@ -1109,13 +1106,14 @@ mod tests {
             other => panic!("expected resize event, got {other:?}"),
         }
         match rx.recv().await {
-            Some(ClientInputEvent::Scrollback(fetch)) => {
-                assert_eq!(fetch.pane_id, "pane-1");
-                assert_eq!(fetch.start_line, 1);
-                assert_eq!(fetch.line_count, 10);
-                assert_eq!(fetch.known_scrollback_version, 3);
+            Some(ClientInputEvent::Viewport(intent)) => {
+                assert_eq!(intent.pane_id, "pane-1");
+                assert_eq!(intent.viewport, protocol::PaneViewportKind::Pinned);
+                assert_eq!(intent.top_line, 1);
+                assert_eq!(intent.visible_rows, 10);
+                assert_eq!(intent.known_viewport_version, 3);
             }
-            other => panic!("expected scrollback event, got {other:?}"),
+            other => panic!("expected viewport event, got {other:?}"),
         }
         assert_eq!(
             rx.recv().await,

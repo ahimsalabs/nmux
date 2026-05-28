@@ -175,37 +175,6 @@ table PaneNode {
   resize_policy:ResizePolicy = Fixed;
 }
 
-table PaneSurfaceSnapshot {
-  pane_id:string;
-  version:ulong;
-  scrollback_version:ulong;
-  scrollback_total_lines:ulong;
-  surface:SurfaceKind = Main;
-  cols:uint;
-  rows:uint;
-  cursor:CursorState;
-  modes:TerminalModeState;
-  metadata:TerminalMetadataState;
-  styles:[Style];
-  rows_data:[SurfaceRow];
-  colors:TerminalColorState;
-  hyperlinks:[Hyperlink];
-}
-
-table PaneSurfacePatch {
-  pane_id:string;
-  base_version:ulong;
-  version:ulong;
-  scrollback_version:ulong;
-  scrollback_total_lines:ulong;
-  kind:PatchKind = ReplaceRows;
-  row_updates:[RowUpdate];
-  cursor:CursorState;
-  modes:TerminalModeState;
-  metadata:TerminalMetadataState;
-  colors:TerminalColorState;
-}
-
 table PaneViewportSnapshot {
   pane_id:string;
   version:ulong;
@@ -382,14 +351,6 @@ table ControlCommand {
   session_id:string;
 }
 
-table ScrollbackFetch {
-  pane_id:string;
-  actor_id:string;
-  start_line:ulong;
-  line_count:uint;
-  known_scrollback_version:ulong;
-}
-
 table PaneViewportIntent {
   pane_id:string;
   actor_id:string;
@@ -398,27 +359,6 @@ table PaneViewportIntent {
   delta_rows:int;
   visible_rows:uint;
   known_viewport_version:ulong;
-}
-
-table ScrollbackChunk {
-  pane_id:string;
-  scrollback_version:ulong;
-  start_line:ulong;
-  total_lines:ulong;
-  rows:[ScrollbackRow];
-  styles:[Style];
-  colors:TerminalColorState;
-  hyperlinks:[Hyperlink];
-}
-
-table ScrollbackRow {
-  line:ulong;
-  runs:[CellRun];
-  dirty_hash:ulong;
-  semantic_prompt:RowSemanticPrompt = None;
-  dirty:bool;
-  kitty_virtual_placeholder:bool;
-  row_state_hash:ulong;
 }
 
 table PresenceUpdate {
@@ -507,16 +447,12 @@ table AttachStatus {
 
 union EnvelopeBody {
   WorkspaceTreeSnapshot,
-  PaneSurfaceSnapshot,
-  PaneSurfacePatch,
   PaneViewportSnapshot,
   PaneViewportPatch,
   InputEvent,
   ResizeIntent,
   Error,
-  ScrollbackFetch,
   PaneViewportIntent,
-  ScrollbackChunk,
   PresenceUpdate,
   AttachRequest,
   AttachStatus,

@@ -1385,118 +1385,19 @@ impl Session {
         seq: u64,
         pane_id: &str,
     ) -> Option<Vec<u8>> {
-        let surface = self.pane_surface(pane_id)?;
-        let mut builder = FlatBufferBuilder::new();
-
-        let mut row_offsets = Vec::with_capacity(surface.lines.len());
-        for (row, (line, line_runs)) in surface
-            .lines
-            .iter()
-            .zip(surface.row_runs.iter())
-            .enumerate()
-        {
-            let runs = build_cell_runs(&mut builder, line_runs);
-            let row_metadata = RowStateMetadata {
-                semantic_prompt: surface
-                    .semantic_prompts
-                    .get(row)
-                    .copied()
-                    .unwrap_or(protocol::RowSemanticPrompt::None),
-                dirty: surface.dirty_rows.get(row).copied().unwrap_or(false),
-                kitty_virtual_placeholder: surface
-                    .kitty_placeholders
-                    .get(row)
-                    .copied()
-                    .unwrap_or(false),
-            };
-            let row = protocol::SurfaceRow::create(
-                &mut builder,
-                &protocol::SurfaceRowArgs {
-                    row: row as u32,
-                    runs: Some(runs),
-                    dirty_hash: stable_row_hash(line),
-                    row_state_hash: row_state_hash(line_runs, row_metadata),
-                    semantic_prompt: row_metadata.semantic_prompt,
-                    dirty: row_metadata.dirty,
-                    kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
-                },
-            );
-            row_offsets.push(row);
-        }
-
-        let rows_data = builder.create_vector(&row_offsets);
-        let mut style_offsets = Vec::with_capacity(surface.styles.len());
-        for style in &surface.styles {
-            style_offsets.push(protocol::Style::create(
-                &mut builder,
-                &protocol::StyleArgs {
-                    fg_rgba: style.fg_rgba,
-                    bg_rgba: style.bg_rgba,
-                    underline_rgba: style.underline_rgba,
-                    flags: style.flags,
-                },
-            ));
-        }
-        let styles = builder.create_vector(&style_offsets);
-        let hyperlinks = builder.create_vector::<flatbuffers::WIPOffset<protocol::Hyperlink>>(&[]);
-        let cursor = protocol::CursorState::create(
-            &mut builder,
-            &protocol::CursorStateArgs {
-                row: surface.cursor.row,
-                col: surface.cursor.col,
-                visible: surface.cursor.visible,
-                shape: surface.cursor.shape,
-                blinking: surface.cursor.blinking,
+        let (_, rows) = self.pane_size(pane_id)?;
+        self.pane_viewport_frame_for_pane(
+            connection_id,
+            seq,
+            pane_id,
+            PaneViewportIntentSpec {
+                viewport: protocol::PaneViewportKind::Active,
+                top_line: 0,
+                delta_rows: 0,
+                visible_rows: rows,
+                known_viewport_version: 0,
             },
-        );
-        let modes = build_terminal_modes(&mut builder, surface.modes);
-        let metadata =
-            build_terminal_metadata(&mut builder, &surface.title, &surface.working_directory);
-        let colors = build_terminal_colors(&mut builder, &surface.colors, None, true);
-        let pane_id = builder.create_string(&surface.pane_id);
-        let scrollback = self.pane_scrollback(&surface.pane_id);
-        let snapshot = protocol::PaneSurfaceSnapshot::create(
-            &mut builder,
-            &protocol::PaneSurfaceSnapshotArgs {
-                pane_id: Some(pane_id),
-                version: surface.version,
-                scrollback_version: scrollback
-                    .as_ref()
-                    .map_or(0, |scrollback| scrollback.version),
-                scrollback_total_lines: scrollback
-                    .as_ref()
-                    .map_or(0, |scrollback| scrollback.lines.len() as u64),
-                surface: surface.surface,
-                cols: surface.cols,
-                rows: surface.rows,
-                cursor: Some(cursor),
-                modes: Some(modes),
-                metadata: Some(metadata),
-                colors: Some(colors),
-                styles: Some(styles),
-                rows_data: Some(rows_data),
-                hyperlinks: Some(hyperlinks),
-            },
-        );
-
-        let envelope_session_id = builder.create_string(&self.id);
-        let connection_id = builder.create_string(connection_id);
-        let envelope = protocol::Envelope::create(
-            &mut builder,
-            &protocol::EnvelopeArgs {
-                protocol_version: PROTOCOL_VERSION,
-                session_id: Some(envelope_session_id),
-                connection_id: Some(connection_id),
-                seq,
-                ack: 0,
-                sent_at_mono_ms: 0,
-                body_type: protocol::EnvelopeBody::PaneSurfaceSnapshot,
-                body: Some(snapshot.as_union_value()),
-            },
-        );
-
-        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
-        Some(builder.finished_data().to_vec())
+        )
     }
 
     pub fn pane_surface_patch_frame(
@@ -1516,126 +1417,20 @@ impl Session {
         pane_id: &str,
         base_version: u64,
     ) -> Option<Vec<u8>> {
-        let surface = self.pane_surface(pane_id)?;
-        let patch_kind = self
-            .pane(&surface.pane_id)
-            .map(|pane| pane.last_patch_kind)
-            .unwrap_or(protocol::PatchKind::ReplaceRows);
-        let row_update_indices = self
-            .pane(&surface.pane_id)
-            .map(|pane| pane.last_row_update_indices.as_slice())
-            .unwrap_or(&[]);
-        let mut builder = FlatBufferBuilder::new();
-
-        let mut row_offsets = Vec::new();
-        if patch_kind == protocol::PatchKind::ReplaceRows {
-            row_offsets.reserve(row_update_indices.len());
-            for row in row_update_indices {
-                let row = *row as usize;
-                let line = surface.lines.get(row).map_or("", String::as_str);
-                let fallback_runs;
-                let line_runs = if let Some(line_runs) = surface.row_runs.get(row) {
-                    line_runs.as_slice()
-                } else {
-                    fallback_runs = vec![CellRun::plain(line)];
-                    fallback_runs.as_slice()
-                };
-                let runs = build_cell_runs(&mut builder, line_runs);
-                let row_metadata = RowStateMetadata {
-                    semantic_prompt: surface
-                        .semantic_prompts
-                        .get(row)
-                        .copied()
-                        .unwrap_or(protocol::RowSemanticPrompt::None),
-                    dirty: surface.dirty_rows.get(row).copied().unwrap_or(false),
-                    kitty_virtual_placeholder: surface
-                        .kitty_placeholders
-                        .get(row)
-                        .copied()
-                        .unwrap_or(false),
-                };
-                let row_update = protocol::RowUpdate::create(
-                    &mut builder,
-                    &protocol::RowUpdateArgs {
-                        row: row as u32,
-                        runs: Some(runs),
-                        dirty_hash: stable_row_hash(line),
-                        row_state_hash: row_state_hash(line_runs, row_metadata),
-                        semantic_prompt: row_metadata.semantic_prompt,
-                        dirty: row_metadata.dirty,
-                        kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
-                    },
-                );
-                row_offsets.push(row_update);
-            }
-        }
-
-        let row_updates = builder.create_vector(&row_offsets);
-        let cursor = protocol::CursorState::create(
-            &mut builder,
-            &protocol::CursorStateArgs {
-                row: surface.cursor.row,
-                col: surface.cursor.col,
-                visible: surface.cursor.visible,
-                shape: surface.cursor.shape,
-                blinking: surface.cursor.blinking,
+        let (_, rows) = self.pane_size(pane_id)?;
+        self.pane_viewport_patch_frame_for_pane(
+            connection_id,
+            seq,
+            pane_id,
+            base_version,
+            PaneViewportIntentSpec {
+                viewport: protocol::PaneViewportKind::Active,
+                top_line: 0,
+                delta_rows: 0,
+                visible_rows: rows,
+                known_viewport_version: 0,
             },
-        );
-        let modes = build_terminal_modes(&mut builder, surface.modes);
-        let metadata =
-            build_terminal_metadata(&mut builder, &surface.title, &surface.working_directory);
-        let palette_diff = self
-            .pane(&surface.pane_id)
-            .and_then(|pane| pane.last_palette_diff.as_ref())
-            .filter(|_| patch_kind == protocol::PatchKind::ColorOnly);
-        let include_full_palette = patch_kind != protocol::PatchKind::ColorOnly;
-        let colors = build_terminal_colors(
-            &mut builder,
-            &surface.colors,
-            palette_diff,
-            include_full_palette,
-        );
-        let pane_id = builder.create_string(&surface.pane_id);
-        let scrollback = self.pane_scrollback(&surface.pane_id);
-        let patch = protocol::PaneSurfacePatch::create(
-            &mut builder,
-            &protocol::PaneSurfacePatchArgs {
-                pane_id: Some(pane_id),
-                base_version,
-                version: surface.version,
-                scrollback_version: scrollback
-                    .as_ref()
-                    .map_or(0, |scrollback| scrollback.version),
-                scrollback_total_lines: scrollback
-                    .as_ref()
-                    .map_or(0, |scrollback| scrollback.lines.len() as u64),
-                kind: patch_kind,
-                row_updates: Some(row_updates),
-                cursor: Some(cursor),
-                modes: Some(modes),
-                metadata: Some(metadata),
-                colors: Some(colors),
-            },
-        );
-
-        let envelope_session_id = builder.create_string(&self.id);
-        let connection_id = builder.create_string(connection_id);
-        let envelope = protocol::Envelope::create(
-            &mut builder,
-            &protocol::EnvelopeArgs {
-                protocol_version: PROTOCOL_VERSION,
-                session_id: Some(envelope_session_id),
-                connection_id: Some(connection_id),
-                seq,
-                ack: 0,
-                sent_at_mono_ms: 0,
-                body_type: protocol::EnvelopeBody::PaneSurfacePatch,
-                body: Some(patch.as_union_value()),
-            },
-        );
-
-        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
-        Some(builder.finished_data().to_vec())
+        )
     }
 
     pub fn scrollback_chunk_frame(
@@ -1660,129 +1455,18 @@ impl Session {
         if start_line == 0 || line_count == 0 {
             return None;
         }
-        let scrollback = self.pane_scrollback(pane_id)?;
-        let mut builder = FlatBufferBuilder::new();
-
-        let start = usize::try_from(start_line.saturating_sub(1)).unwrap_or(usize::MAX);
-        let count = line_count as usize;
-        let end = start.saturating_add(count).min(scrollback.lines.len());
-        let selected = scrollback
-            .lines
-            .get(start..end)
-            .map_or(&[][..], |rows| rows);
-        let first_returned_line = selected.first().map(|_| start_line);
-        let last_returned_line = selected
-            .last()
-            .map(|_| start_line + selected.len().saturating_sub(1) as u64);
-        tracing::debug!(
+        self.pane_viewport_frame_for_pane(
+            connection_id,
+            seq,
             pane_id,
-            scrollback_version = scrollback.version,
-            total_lines = scrollback.lines.len(),
-            surface_rows = self
-                .pane(pane_id)
-                .map(|pane| pane.surface_lines.len())
-                .unwrap_or_default(),
-            requested_start_line = start_line,
-            requested_line_count = line_count,
-            first_returned_line,
-            last_returned_line,
-            "pane scrollback fetch"
-        );
-        debug_assert!(
-            selected.is_empty() || start < scrollback.lines.len(),
-            "scrollback fetch selected rows from an out-of-range start"
-        );
-
-        let mut row_offsets = Vec::with_capacity(selected.len());
-        for (offset, line) in selected.iter().enumerate() {
-            let row_index = start.saturating_add(offset);
-            debug_assert_eq!(
-                start_line + offset as u64,
-                row_index as u64 + 1,
-                "scrollback public line numbers must remain contiguous"
-            );
-            let runs = build_cell_runs(&mut builder, &scrollback.row_runs[row_index]);
-            let row_metadata = RowStateMetadata {
-                semantic_prompt: scrollback
-                    .semantic_prompts
-                    .get(row_index)
-                    .copied()
-                    .unwrap_or(protocol::RowSemanticPrompt::None),
-                dirty: scrollback
-                    .dirty_rows
-                    .get(row_index)
-                    .copied()
-                    .unwrap_or(false),
-                kitty_virtual_placeholder: scrollback
-                    .kitty_placeholders
-                    .get(row_index)
-                    .copied()
-                    .unwrap_or(false),
-            };
-            let row = protocol::ScrollbackRow::create(
-                &mut builder,
-                &protocol::ScrollbackRowArgs {
-                    line: start_line + offset as u64,
-                    runs: Some(runs),
-                    dirty_hash: stable_row_hash(line),
-                    row_state_hash: row_state_hash(&scrollback.row_runs[row_index], row_metadata),
-                    semantic_prompt: row_metadata.semantic_prompt,
-                    dirty: row_metadata.dirty,
-                    kitty_virtual_placeholder: row_metadata.kitty_virtual_placeholder,
-                },
-            );
-            row_offsets.push(row);
-        }
-
-        let rows = builder.create_vector(&row_offsets);
-        let mut style_offsets = Vec::with_capacity(scrollback.styles.len());
-        for style in &scrollback.styles {
-            style_offsets.push(protocol::Style::create(
-                &mut builder,
-                &protocol::StyleArgs {
-                    fg_rgba: style.fg_rgba,
-                    bg_rgba: style.bg_rgba,
-                    underline_rgba: style.underline_rgba,
-                    flags: style.flags,
-                },
-            ));
-        }
-        let styles = builder.create_vector(&style_offsets);
-        let hyperlinks = builder.create_vector::<flatbuffers::WIPOffset<protocol::Hyperlink>>(&[]);
-        let colors = build_terminal_colors(&mut builder, &scrollback.colors, None, true);
-        let pane_id = builder.create_string(&scrollback.pane_id);
-        let chunk = protocol::ScrollbackChunk::create(
-            &mut builder,
-            &protocol::ScrollbackChunkArgs {
-                pane_id: Some(pane_id),
-                scrollback_version: scrollback.version,
-                start_line,
-                total_lines: scrollback.lines.len() as u64,
-                rows: Some(rows),
-                styles: Some(styles),
-                colors: Some(colors),
-                hyperlinks: Some(hyperlinks),
+            PaneViewportIntentSpec {
+                viewport: protocol::PaneViewportKind::Pinned,
+                top_line: start_line,
+                delta_rows: 0,
+                visible_rows: line_count,
+                known_viewport_version: 0,
             },
-        );
-
-        let envelope_session_id = builder.create_string(&self.id);
-        let connection_id = builder.create_string(connection_id);
-        let envelope = protocol::Envelope::create(
-            &mut builder,
-            &protocol::EnvelopeArgs {
-                protocol_version: PROTOCOL_VERSION,
-                session_id: Some(envelope_session_id),
-                connection_id: Some(connection_id),
-                seq,
-                ack: 0,
-                sent_at_mono_ms: 0,
-                body_type: protocol::EnvelopeBody::ScrollbackChunk,
-                body: Some(chunk.as_union_value()),
-            },
-        );
-
-        protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
-        Some(builder.finished_data().to_vec())
+        )
     }
 
     pub fn pane_viewport(
@@ -1914,12 +1598,12 @@ impl Session {
             total_lines,
             active_start_line,
             viewport_top_line,
-            viewport: if viewport_top_line == active_start_line {
+            viewport: match intent.viewport {
                 protocol::PaneViewportKind::Active
-            } else if viewport_top_line == 1 {
-                protocol::PaneViewportKind::Top
-            } else {
-                protocol::PaneViewportKind::Pinned
+                | protocol::PaneViewportKind::Top
+                | protocol::PaneViewportKind::Pinned
+                | protocol::PaneViewportKind::Delta => intent.viewport,
+                _ => protocol::PaneViewportKind::Pinned,
             },
             surface: pane.surface,
             cols: pane.cols,
@@ -2194,14 +1878,16 @@ impl Session {
 
         let pane_id = builder.create_string(context.pane_id);
         let actor_id = builder.create_string(context.actor_id);
-        let fetch = protocol::ScrollbackFetch::create(
+        let intent = protocol::PaneViewportIntent::create(
             &mut builder,
-            &protocol::ScrollbackFetchArgs {
+            &protocol::PaneViewportIntentArgs {
                 pane_id: Some(pane_id),
                 actor_id: Some(actor_id),
-                start_line: fetch_spec.range.start_line,
-                line_count: fetch_spec.range.line_count,
-                known_scrollback_version: fetch_spec.known_scrollback_version,
+                viewport: protocol::PaneViewportKind::Pinned,
+                top_line: fetch_spec.range.start_line,
+                delta_rows: 0,
+                visible_rows: fetch_spec.range.line_count,
+                known_viewport_version: fetch_spec.known_scrollback_version,
             },
         );
 
@@ -2216,8 +1902,8 @@ impl Session {
                 seq: context.seq,
                 ack: 0,
                 sent_at_mono_ms: 0,
-                body_type: protocol::EnvelopeBody::ScrollbackFetch,
-                body: Some(fetch.as_union_value()),
+                body_type: protocol::EnvelopeBody::PaneViewportIntent,
+                body: Some(intent.as_union_value()),
             },
         );
 
@@ -4429,16 +4115,16 @@ mod tests {
         assert_eq!(envelope.seq(), 8);
         assert_eq!(
             envelope.body_type(),
-            protocol::EnvelopeBody::PaneSurfaceSnapshot
+            protocol::EnvelopeBody::PaneViewportSnapshot
         );
 
         let snapshot = envelope
-            .body_as_pane_surface_snapshot()
+            .body_as_pane_viewport_snapshot()
             .expect("pane surface body");
         assert_eq!(snapshot.pane_id(), Some("pane-1"));
         assert_eq!(snapshot.version(), 2);
-        assert_eq!(snapshot.scrollback_version(), 1);
-        assert_eq!(snapshot.scrollback_total_lines(), 3);
+        assert_eq!(snapshot.timeline_version(), 1);
+        assert_eq!(snapshot.total_lines(), 3);
         assert_eq!(snapshot.surface(), protocol::SurfaceKind::Main);
         assert_eq!(snapshot.cols(), 80);
         assert_eq!(snapshot.rows(), 24);
@@ -4467,7 +4153,7 @@ mod tests {
         assert_eq!(styles.len(), 1);
 
         let rows = snapshot.rows_data().expect("rows");
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 24);
 
         let first_row = rows.get(0);
         assert_eq!(first_row.row(), 0);
@@ -4514,7 +4200,7 @@ mod tests {
             .pane_surface_frame_for_pane("conn-1", 8, "pane-2")
             .expect("pane surface");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        let snapshot = envelope.body_as_pane_viewport_snapshot().expect("snapshot");
         assert_eq!(snapshot.pane_id(), Some("pane-2"));
         assert_eq!(snapshot.version(), 9);
         assert_eq!(snapshot.cols(), 100);
@@ -4527,7 +4213,7 @@ mod tests {
         assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
         assert!(cursor.blinking());
         let rows = snapshot.rows_data().expect("rows");
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 10);
         assert_eq!(
             rows.get(0).runs().expect("runs").get(0).text_utf8(),
             Some("pane two")
@@ -4566,7 +4252,7 @@ mod tests {
 
         let frame = session.pane_surface_frame("conn-1", 8);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        let snapshot = envelope.body_as_pane_viewport_snapshot().expect("snapshot");
 
         let styles = snapshot.styles().expect("styles");
         assert_eq!(styles.len(), 2);
@@ -4620,7 +4306,7 @@ mod tests {
 
         let frame = session.pane_surface_frame("conn-1", 8);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        let snapshot = envelope.body_as_pane_viewport_snapshot().expect("snapshot");
         let rows = snapshot.rows_data().expect("rows");
 
         assert_eq!(rows.get(0).dirty_hash(), rows.get(1).dirty_hash());
@@ -4646,8 +4332,8 @@ mod tests {
 
         let frame = session.scrollback_chunk_frame("conn-1", 8, 1, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
-        let rows = chunk.rows().expect("rows");
+        let chunk = envelope.body_as_pane_viewport_snapshot().expect("chunk");
+        let rows = chunk.rows_data().expect("rows");
 
         assert_eq!(rows.get(0).dirty_hash(), rows.get(1).dirty_hash());
         assert_ne!(rows.get(0).row_state_hash(), rows.get(1).row_state_hash());
@@ -4664,17 +4350,17 @@ mod tests {
         assert_eq!(envelope.seq(), 10);
         assert_eq!(
             envelope.body_type(),
-            protocol::EnvelopeBody::PaneSurfacePatch
+            protocol::EnvelopeBody::PaneViewportPatch
         );
 
         let patch = envelope
-            .body_as_pane_surface_patch()
+            .body_as_pane_viewport_patch()
             .expect("pane surface patch body");
         assert_eq!(patch.pane_id(), Some("pane-1"));
         assert_eq!(patch.base_version(), 1);
         assert_eq!(patch.version(), 2);
-        assert_eq!(patch.scrollback_version(), 1);
-        assert_eq!(patch.scrollback_total_lines(), 3);
+        assert_eq!(patch.timeline_version(), 1);
+        assert_eq!(patch.total_lines(), 3);
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
         let metadata = patch.metadata().expect("metadata");
         assert_eq!(metadata.title(), Some(""));
@@ -4751,7 +4437,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 10, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
 
         let rows = patch.row_updates().expect("row updates");
@@ -4792,7 +4478,7 @@ mod tests {
             .pane_surface_patch_frame_for_pane("conn-1", 10, "pane-2", 3)
             .expect("pane patch");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.pane_id(), Some("pane-2"));
         assert_eq!(patch.base_version(), 3);
         assert_eq!(patch.version(), 4);
@@ -4816,22 +4502,22 @@ mod tests {
         assert_eq!(envelope.seq(), 11);
         assert_eq!(
             envelope.body_type(),
-            protocol::EnvelopeBody::ScrollbackChunk
+            protocol::EnvelopeBody::PaneViewportSnapshot
         );
 
         let chunk = envelope
-            .body_as_scrollback_chunk()
+            .body_as_pane_viewport_snapshot()
             .expect("scrollback chunk body");
         assert_eq!(chunk.pane_id(), Some("pane-1"));
-        assert_eq!(chunk.scrollback_version(), 1);
-        assert_eq!(chunk.start_line(), 1);
+        assert_eq!(chunk.timeline_version(), 1);
+        assert_eq!(chunk.viewport_top_line(), 1);
         assert_eq!(chunk.total_lines(), 3);
 
-        let rows = chunk.rows().expect("scrollback rows");
+        let rows = chunk.rows_data().expect("scrollback rows");
         assert_eq!(rows.len(), 2);
 
         let first = rows.get(0);
-        assert_eq!(first.line(), 1);
+        assert_eq!(u64::from(first.row()) + chunk.viewport_top_line(), 1);
         assert_eq!(first.semantic_prompt(), protocol::RowSemanticPrompt::None);
         assert!(!first.dirty());
         assert!(!first.kitty_virtual_placeholder());
@@ -4842,7 +4528,7 @@ mod tests {
         );
 
         let second = rows.get(1);
-        assert_eq!(second.line(), 2);
+        assert_eq!(u64::from(second.row()) + chunk.viewport_top_line(), 2);
         let second_runs = second.runs().expect("second runs");
         assert_eq!(second_runs.get(0).text_utf8(), Some("nmux pane-1"));
         assert_eq!(
@@ -4884,7 +4570,7 @@ mod tests {
         let frame = session.scrollback_chunk_frame("conn-1", 11, 1, 1);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let chunk = envelope
-            .body_as_scrollback_chunk()
+            .body_as_pane_viewport_snapshot()
             .expect("scrollback chunk");
 
         let styles = chunk.styles().expect("styles");
@@ -4900,7 +4586,7 @@ mod tests {
         let palette = colors.palette_rgba().expect("palette");
         assert_eq!(palette.get(1), 0x445566ff);
 
-        let rows = chunk.rows().expect("rows");
+        let rows = chunk.rows_data().expect("rows");
         let runs = rows.get(0).runs().expect("runs");
         assert_eq!(runs.len(), 2);
         assert_eq!(runs.get(0).text_utf8(), Some("red"));
@@ -4938,7 +4624,7 @@ mod tests {
             .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 1)
             .expect("pane scrollback");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+        let chunk = envelope.body_as_pane_viewport_snapshot().expect("chunk");
         assert_eq!(chunk.pane_id(), Some("pane-1"));
     }
 
@@ -4946,11 +4632,14 @@ mod tests {
     fn scrollback_chunk_uses_one_based_public_line_numbers() {
         let frame = Session::initial().scrollback_chunk_frame("conn-1", 11, 4, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+        let chunk = envelope.body_as_pane_viewport_snapshot().expect("chunk");
 
-        assert_eq!(chunk.start_line(), 4);
+        assert_eq!(chunk.viewport_top_line(), 2);
         assert_eq!(chunk.total_lines(), 3);
-        assert_eq!(chunk.rows().expect("rows").len(), 0);
+        let rows = chunk.rows_data().expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(u64::from(rows.get(0).row()) + chunk.viewport_top_line(), 2);
+        assert_eq!(u64::from(rows.get(1).row()) + chunk.viewport_top_line(), 3);
     }
 
     #[test]
@@ -4973,16 +4662,19 @@ mod tests {
             .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 4)
             .expect("scrollback chunk");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+        let chunk = envelope.body_as_pane_viewport_snapshot().expect("chunk");
 
-        assert_eq!(chunk.start_line(), 1);
+        assert_eq!(chunk.viewport_top_line(), 1);
         assert_eq!(chunk.total_lines(), 4);
-        let rows = chunk.rows().expect("rows");
+        let rows = chunk.rows_data().expect("rows");
         assert_eq!(rows.len(), 4);
         let texts = (0..rows.len())
             .map(|index| {
                 let row = rows.get(index);
-                assert_eq!(row.line(), index as u64 + 1);
+                assert_eq!(
+                    u64::from(row.row()) + chunk.viewport_top_line(),
+                    index as u64 + 1
+                );
                 row.runs()
                     .map(|runs| {
                         (0..runs.len())
@@ -5103,7 +4795,7 @@ mod tests {
             )
             .expect("pane viewport");
 
-        assert_eq!(viewport.viewport, protocol::PaneViewportKind::Top);
+        assert_eq!(viewport.viewport, protocol::PaneViewportKind::Delta);
         assert_eq!(viewport.viewport_top_line, 1);
         assert_eq!(viewport.rows, 3);
         assert_eq!(viewport.lines, ["one", "two", "three"]);
@@ -5150,13 +4842,13 @@ mod tests {
             .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 10)
             .expect("scrollback chunk");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
+        let chunk = envelope.body_as_pane_viewport_snapshot().expect("chunk");
         assert!(
             chunk.total_lines() as usize > surface.lines.len(),
             "scrollback chunk did not include history beyond the surface"
         );
 
-        let rows = chunk.rows().expect("scrollback rows");
+        let rows = chunk.rows_data().expect("scrollback rows");
         let row_text = (0..rows.len())
             .map(|index| {
                 let row = rows.get(index);
@@ -5227,21 +4919,28 @@ mod tests {
             .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 100)
             .expect("scrollback chunk");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
-        let rows = chunk.rows().expect("scrollback rows");
-        assert_eq!(chunk.start_line(), 1);
-        assert_eq!(chunk.total_lines() as usize, rows.len());
+        let chunk = envelope.body_as_pane_viewport_snapshot().expect("chunk");
+        let rows = chunk.rows_data().expect("scrollback rows");
+        assert_eq!(chunk.viewport_top_line(), 1);
+        assert_eq!(rows.len(), 100);
 
         let texts = (0..rows.len())
-            .map(|index| {
+            .filter_map(|index| {
                 let row = rows.get(index);
-                assert_eq!(row.line(), index as u64 + 1);
+                let public_line = u64::from(row.row()) + chunk.viewport_top_line();
+                if public_line > chunk.total_lines() {
+                    return None;
+                }
+                assert_eq!(public_line, index as u64 + 1);
                 let runs = row.runs().expect("runs");
-                (0..runs.len())
-                    .filter_map(|run_index| runs.get(run_index).text_utf8())
-                    .collect::<String>()
+                Some(
+                    (0..runs.len())
+                        .filter_map(|run_index| runs.get(run_index).text_utf8())
+                        .collect::<String>(),
+                )
             })
             .collect::<Vec<_>>();
+        assert_eq!(texts.len(), chunk.total_lines() as usize);
         let blank_rows = texts.iter().filter(|line| line.is_empty()).count();
         assert_eq!(
             blank_rows, 21,
@@ -5290,14 +4989,17 @@ mod tests {
             .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 1000)
             .expect("scrollback chunk");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
-        assert_eq!(chunk.start_line(), 1);
+        let chunk = envelope.body_as_pane_viewport_snapshot().expect("chunk");
+        assert_eq!(chunk.viewport_top_line(), 1);
         assert_eq!(chunk.total_lines(), 1000);
-        let rows = chunk.rows().expect("scrollback rows");
+        let rows = chunk.rows_data().expect("scrollback rows");
         assert_eq!(rows.len(), 1000);
         for index in 0..rows.len() {
             let row = rows.get(index);
-            assert_eq!(row.line(), index as u64 + 1);
+            assert_eq!(
+                u64::from(row.row()) + chunk.viewport_top_line(),
+                index as u64 + 1
+            );
             let runs = row.runs().expect("runs");
             let text = (0..runs.len())
                 .filter_map(|run_index| runs.get(run_index).text_utf8())
@@ -5346,8 +5048,8 @@ mod tests {
             .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 10)
             .expect("scrollback chunk");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let chunk = envelope.body_as_scrollback_chunk().expect("chunk");
-        let rows = chunk.rows().expect("scrollback rows");
+        let chunk = envelope.body_as_pane_viewport_snapshot().expect("chunk");
+        let rows = chunk.rows_data().expect("scrollback rows");
         let row_text = (0..rows.len())
             .map(|index| {
                 let row = rows.get(index);
@@ -5427,17 +5129,17 @@ mod tests {
         assert_eq!(envelope.seq(), 12);
         assert_eq!(
             envelope.body_type(),
-            protocol::EnvelopeBody::ScrollbackFetch
+            protocol::EnvelopeBody::PaneViewportIntent
         );
 
         let fetch = envelope
-            .body_as_scrollback_fetch()
+            .body_as_pane_viewport_intent()
             .expect("scrollback fetch body");
         assert_eq!(fetch.pane_id(), Some("pane-1"));
         assert_eq!(fetch.actor_id(), Some("actor-1"));
-        assert_eq!(fetch.start_line(), 1);
-        assert_eq!(fetch.line_count(), 2);
-        assert_eq!(fetch.known_scrollback_version(), 1);
+        assert_eq!(fetch.top_line(), 1);
+        assert_eq!(fetch.visible_rows(), 2);
+        assert_eq!(fetch.known_viewport_version(), 1);
     }
 
     #[test]
@@ -5481,7 +5183,7 @@ mod tests {
     }
 
     #[test]
-    fn finds_initial_pane_scrollback_version() {
+    fn finds_initial_pane_timeline_version() {
         let session = Session::initial();
 
         assert_eq!(session.scrollback_version("pane-1"), Some(1));
@@ -5827,7 +5529,7 @@ mod tests {
         );
         let frame = session.pane_surface_frame("conn-1", 1);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        let snapshot = envelope.body_as_pane_viewport_snapshot().expect("snapshot");
         let cursor = snapshot.cursor().expect("cursor");
         assert_eq!(cursor.shape(), protocol::CursorShape::Beam);
         assert!(cursor.blinking());
@@ -5949,7 +5651,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 11, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::FullRefreshRequired);
         let rows = patch.row_updates().expect("row updates");
         assert_eq!(rows.len(), 0);
@@ -5958,11 +5660,11 @@ mod tests {
             .pane_surface_frame_for_pane("conn-1", 12, "pane-1")
             .expect("surface snapshot");
         let envelope = protocol::size_prefixed_root_as_envelope(&snapshot).expect("valid envelope");
-        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        let snapshot = envelope.body_as_pane_viewport_snapshot().expect("snapshot");
         assert_eq!(snapshot.cols(), 100);
         assert_eq!(snapshot.rows(), 10);
         let rows = snapshot.rows_data().expect("snapshot rows");
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 10);
         assert_eq!(
             rows.get(0).runs().expect("runs").get(0).text_utf8(),
             Some("resized surface")
@@ -6141,7 +5843,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 8, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::CursorOnly);
         assert_eq!(patch.base_version(), 2);
         assert_eq!(patch.version(), 3);
@@ -6257,14 +5959,14 @@ mod tests {
         let patch_frame = session.pane_surface_patch_frame("conn-1", 9, base_version);
         let envelope =
             protocol::size_prefixed_root_as_envelope(&patch_frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::FullRefreshRequired);
         assert_eq!(patch.row_updates().expect("row updates").len(), 0);
 
         let snapshot_frame = session.pane_surface_frame("conn-1", 10);
         let envelope =
             protocol::size_prefixed_root_as_envelope(&snapshot_frame).expect("valid envelope");
-        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        let snapshot = envelope.body_as_pane_viewport_snapshot().expect("snapshot");
         assert!(
             snapshot.styles().expect("styles").len() > 1,
             "snapshot should carry the expanded style table"
@@ -6386,7 +6088,7 @@ mod tests {
         );
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::ModeOnly);
         assert_eq!(patch.row_updates().expect("row updates").len(), 0);
         let modes = patch.modes().expect("modes");
@@ -6452,7 +6154,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::ColorOnly);
         let colors = patch.colors().expect("colors");
         assert_eq!(colors.default_fg_rgba(), 0xeeeeeeff);
@@ -6525,7 +6227,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::ColorOnly);
         assert_eq!(patch.row_updates().expect("row updates").len(), 0);
         assert!(patch.modes().expect("modes").bracketed_paste());
@@ -6563,7 +6265,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, base_version);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::ColorOnly);
         let colors = patch.colors().expect("colors");
         assert!(colors.palette_rgba().is_none());
@@ -6607,14 +6309,14 @@ mod tests {
         let patch_frame = session.pane_surface_patch_frame("conn-1", 9, base_version);
         let envelope =
             protocol::size_prefixed_root_as_envelope(&patch_frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::FullRefreshRequired);
         assert_eq!(patch.row_updates().expect("row updates").len(), 0);
 
         let snapshot_frame = session.pane_surface_frame("conn-1", 10);
         let envelope =
             protocol::size_prefixed_root_as_envelope(&snapshot_frame).expect("valid envelope");
-        let snapshot = envelope.body_as_pane_surface_snapshot().expect("snapshot");
+        let snapshot = envelope.body_as_pane_viewport_snapshot().expect("snapshot");
         let rows = snapshot.rows_data().expect("rows");
         let styled_run = (0..rows.len())
             .flat_map(|row_index| {
@@ -6734,7 +6436,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::CursorOnly);
         assert_eq!(patch.row_updates().expect("row updates").len(), 0);
         assert_eq!(
@@ -6797,7 +6499,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::CursorOnly);
         assert_eq!(patch.row_updates().expect("row updates").len(), 0);
         assert_eq!(patch.metadata().expect("metadata").title(), Some(""));
@@ -6854,7 +6556,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
         let rows = patch.row_updates().expect("row updates");
         assert_eq!(
@@ -6912,7 +6614,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
         let rows = patch.row_updates().expect("row updates");
         assert_eq!(
@@ -6968,7 +6670,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
         let rows = patch.row_updates().expect("row updates");
         assert!(rows.get(0).dirty());
@@ -7023,7 +6725,7 @@ mod tests {
 
         let frame = session.pane_surface_patch_frame("conn-1", 9, 2);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
-        let patch = envelope.body_as_pane_surface_patch().expect("patch");
+        let patch = envelope.body_as_pane_viewport_patch().expect("patch");
         assert_eq!(patch.kind(), protocol::PatchKind::ReplaceRows);
         let rows = patch.row_updates().expect("row updates");
         assert!(rows.get(0).kitty_virtual_placeholder());
@@ -7199,14 +6901,14 @@ mod tests {
         let frame = session.scrollback_chunk_frame("conn-1", 11, 1, 1);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let chunk = envelope
-            .body_as_scrollback_chunk()
+            .body_as_pane_viewport_snapshot()
             .expect("scrollback chunk");
         let styles = chunk.styles().expect("styles");
         assert!(
             styles.len() > 5,
             "preserved scrollback style table must still cover old run ids"
         );
-        let rows = chunk.rows().expect("rows");
+        let rows = chunk.rows_data().expect("rows");
         let runs = rows.get(0).runs().expect("runs");
         assert_eq!(runs.get(0).style_id(), 5);
         assert_eq!(styles.get(5).flags(), 5);
@@ -7218,12 +6920,12 @@ mod tests {
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
 
         let snapshot = envelope
-            .body_as_pane_surface_snapshot()
+            .body_as_pane_viewport_snapshot()
             .expect("pane surface body");
         assert_eq!(snapshot.version(), 3);
 
         let rows = snapshot.rows_data().expect("rows");
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 24);
         let runs = rows.get(0).runs().expect("runs");
         assert_eq!(runs.get(0).text_utf8(), Some("pty says hi"));
     }
@@ -7278,7 +6980,7 @@ mod tests {
         let frame = session.pane_surface_frame("conn-1", 1);
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let snapshot = envelope
-            .body_as_pane_surface_snapshot()
+            .body_as_pane_viewport_snapshot()
             .expect("pane surface body");
 
         // Must have exactly 24 rows (0-indexed 0..23), not 25.
