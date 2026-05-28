@@ -1487,6 +1487,98 @@ impl<'a> ::flatbuffers::Verifiable for AttachSurfaceState {
 
 impl ::flatbuffers::SimpleToVerifyInSlice for AttachSurfaceState {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_PANE_VIEWPORT_KIND: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_PANE_VIEWPORT_KIND: i8 = 3;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_PANE_VIEWPORT_KIND: [PaneViewportKind; 4] = [
+  PaneViewportKind::Active,
+  PaneViewportKind::Top,
+  PaneViewportKind::Pinned,
+  PaneViewportKind::Delta,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct PaneViewportKind(pub i8);
+#[allow(non_upper_case_globals)]
+impl PaneViewportKind {
+  pub const Active: Self = Self(0);
+  pub const Top: Self = Self(1);
+  pub const Pinned: Self = Self(2);
+  pub const Delta: Self = Self(3);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 3;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Active,
+    Self::Top,
+    Self::Pinned,
+    Self::Delta,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Active => Some("Active"),
+      Self::Top => Some("Top"),
+      Self::Pinned => Some("Pinned"),
+      Self::Delta => Some("Delta"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for PaneViewportKind {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for PaneViewportKind {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for PaneViewportKind {
+    type Output = PaneViewportKind;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for PaneViewportKind {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for PaneViewportKind {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for PaneViewportKind {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_ROW_SEMANTIC_PROMPT: i8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MAX_ROW_SEMANTIC_PROMPT: i8 = 2;
@@ -1761,19 +1853,18 @@ impl ::flatbuffers::SimpleToVerifyInSlice for PresenceKind {}
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_ENVELOPE_BODY: u8 = 0;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
-pub const ENUM_MAX_ENVELOPE_BODY: u8 = 17;
+pub const ENUM_MAX_ENVELOPE_BODY: u8 = 16;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 18] = [
+pub const ENUM_VALUES_ENVELOPE_BODY: [EnvelopeBody; 17] = [
   EnvelopeBody::NONE,
   EnvelopeBody::WorkspaceTreeSnapshot,
-  EnvelopeBody::PaneSurfaceSnapshot,
-  EnvelopeBody::PaneSurfacePatch,
+  EnvelopeBody::PaneViewportSnapshot,
+  EnvelopeBody::PaneViewportPatch,
   EnvelopeBody::InputEvent,
   EnvelopeBody::ResizeIntent,
   EnvelopeBody::Error,
-  EnvelopeBody::ScrollbackFetch,
-  EnvelopeBody::ScrollbackChunk,
+  EnvelopeBody::PaneViewportIntent,
   EnvelopeBody::PresenceUpdate,
   EnvelopeBody::AttachRequest,
   EnvelopeBody::AttachStatus,
@@ -1792,35 +1883,33 @@ pub struct EnvelopeBody(pub u8);
 impl EnvelopeBody {
   pub const NONE: Self = Self(0);
   pub const WorkspaceTreeSnapshot: Self = Self(1);
-  pub const PaneSurfaceSnapshot: Self = Self(2);
-  pub const PaneSurfacePatch: Self = Self(3);
+  pub const PaneViewportSnapshot: Self = Self(2);
+  pub const PaneViewportPatch: Self = Self(3);
   pub const InputEvent: Self = Self(4);
   pub const ResizeIntent: Self = Self(5);
   pub const Error: Self = Self(6);
-  pub const ScrollbackFetch: Self = Self(7);
-  pub const ScrollbackChunk: Self = Self(8);
-  pub const PresenceUpdate: Self = Self(9);
-  pub const AttachRequest: Self = Self(10);
-  pub const AttachStatus: Self = Self(11);
-  pub const ControlCommand: Self = Self(12);
-  pub const Ping: Self = Self(13);
-  pub const Pong: Self = Self(14);
-  pub const ClientInventorySnapshot: Self = Self(15);
-  pub const ClientInventoryPatch: Self = Self(16);
-  pub const SessionInventorySnapshot: Self = Self(17);
+  pub const PaneViewportIntent: Self = Self(7);
+  pub const PresenceUpdate: Self = Self(8);
+  pub const AttachRequest: Self = Self(9);
+  pub const AttachStatus: Self = Self(10);
+  pub const ControlCommand: Self = Self(11);
+  pub const Ping: Self = Self(12);
+  pub const Pong: Self = Self(13);
+  pub const ClientInventorySnapshot: Self = Self(14);
+  pub const ClientInventoryPatch: Self = Self(15);
+  pub const SessionInventorySnapshot: Self = Self(16);
 
   pub const ENUM_MIN: u8 = 0;
-  pub const ENUM_MAX: u8 = 17;
+  pub const ENUM_MAX: u8 = 16;
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::NONE,
     Self::WorkspaceTreeSnapshot,
-    Self::PaneSurfaceSnapshot,
-    Self::PaneSurfacePatch,
+    Self::PaneViewportSnapshot,
+    Self::PaneViewportPatch,
     Self::InputEvent,
     Self::ResizeIntent,
     Self::Error,
-    Self::ScrollbackFetch,
-    Self::ScrollbackChunk,
+    Self::PaneViewportIntent,
     Self::PresenceUpdate,
     Self::AttachRequest,
     Self::AttachStatus,
@@ -1836,13 +1925,12 @@ impl EnvelopeBody {
     match self {
       Self::NONE => Some("NONE"),
       Self::WorkspaceTreeSnapshot => Some("WorkspaceTreeSnapshot"),
-      Self::PaneSurfaceSnapshot => Some("PaneSurfaceSnapshot"),
-      Self::PaneSurfacePatch => Some("PaneSurfacePatch"),
+      Self::PaneViewportSnapshot => Some("PaneViewportSnapshot"),
+      Self::PaneViewportPatch => Some("PaneViewportPatch"),
       Self::InputEvent => Some("InputEvent"),
       Self::ResizeIntent => Some("ResizeIntent"),
       Self::Error => Some("Error"),
-      Self::ScrollbackFetch => Some("ScrollbackFetch"),
-      Self::ScrollbackChunk => Some("ScrollbackChunk"),
+      Self::PaneViewportIntent => Some("PaneViewportIntent"),
       Self::PresenceUpdate => Some("PresenceUpdate"),
       Self::AttachRequest => Some("AttachRequest"),
       Self::AttachStatus => Some("AttachStatus"),
@@ -2643,45 +2731,54 @@ impl ::core::fmt::Debug for PaneNode<'_> {
       ds.finish()
   }
 }
-pub enum PaneSurfaceSnapshotOffset {}
+pub enum PaneViewportSnapshotOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
-pub struct PaneSurfaceSnapshot<'a> {
+pub struct PaneViewportSnapshot<'a> {
   pub _tab: ::flatbuffers::Table<'a>,
 }
 
-impl<'a> ::flatbuffers::Follow<'a> for PaneSurfaceSnapshot<'a> {
-  type Inner = PaneSurfaceSnapshot<'a>;
+impl<'a> ::flatbuffers::Follow<'a> for PaneViewportSnapshot<'a> {
+  type Inner = PaneViewportSnapshot<'a>;
   #[inline]
   unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
     Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
   }
 }
 
-impl<'a> PaneSurfaceSnapshot<'a> {
+impl<'a> PaneViewportSnapshot<'a> {
   pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
   pub const VT_VERSION: ::flatbuffers::VOffsetT = 6;
-  pub const VT_SURFACE: ::flatbuffers::VOffsetT = 8;
-  pub const VT_COLS: ::flatbuffers::VOffsetT = 10;
-  pub const VT_ROWS: ::flatbuffers::VOffsetT = 12;
-  pub const VT_CURSOR: ::flatbuffers::VOffsetT = 14;
-  pub const VT_MODES: ::flatbuffers::VOffsetT = 16;
-  pub const VT_METADATA: ::flatbuffers::VOffsetT = 18;
-  pub const VT_STYLES: ::flatbuffers::VOffsetT = 20;
-  pub const VT_ROWS_DATA: ::flatbuffers::VOffsetT = 22;
-  pub const VT_COLORS: ::flatbuffers::VOffsetT = 24;
-  pub const VT_HYPERLINKS: ::flatbuffers::VOffsetT = 26;
+  pub const VT_TIMELINE_VERSION: ::flatbuffers::VOffsetT = 8;
+  pub const VT_TOTAL_LINES: ::flatbuffers::VOffsetT = 10;
+  pub const VT_ACTIVE_START_LINE: ::flatbuffers::VOffsetT = 12;
+  pub const VT_VIEWPORT_TOP_LINE: ::flatbuffers::VOffsetT = 14;
+  pub const VT_VIEWPORT: ::flatbuffers::VOffsetT = 16;
+  pub const VT_SURFACE: ::flatbuffers::VOffsetT = 18;
+  pub const VT_COLS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_ROWS: ::flatbuffers::VOffsetT = 22;
+  pub const VT_CURSOR: ::flatbuffers::VOffsetT = 24;
+  pub const VT_MODES: ::flatbuffers::VOffsetT = 26;
+  pub const VT_METADATA: ::flatbuffers::VOffsetT = 28;
+  pub const VT_STYLES: ::flatbuffers::VOffsetT = 30;
+  pub const VT_ROWS_DATA: ::flatbuffers::VOffsetT = 32;
+  pub const VT_COLORS: ::flatbuffers::VOffsetT = 34;
+  pub const VT_HYPERLINKS: ::flatbuffers::VOffsetT = 36;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
-    PaneSurfaceSnapshot { _tab: table }
+    PaneViewportSnapshot { _tab: table }
   }
   #[allow(unused_mut)]
   pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
     _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
-    args: &'args PaneSurfaceSnapshotArgs<'args>
-  ) -> ::flatbuffers::WIPOffset<PaneSurfaceSnapshot<'bldr>> {
-    let mut builder = PaneSurfaceSnapshotBuilder::new(_fbb);
+    args: &'args PaneViewportSnapshotArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<PaneViewportSnapshot<'bldr>> {
+    let mut builder = PaneViewportSnapshotBuilder::new(_fbb);
+    builder.add_viewport_top_line(args.viewport_top_line);
+    builder.add_active_start_line(args.active_start_line);
+    builder.add_total_lines(args.total_lines);
+    builder.add_timeline_version(args.timeline_version);
     builder.add_version(args.version);
     if let Some(x) = args.hyperlinks { builder.add_hyperlinks(x); }
     if let Some(x) = args.colors { builder.add_colors(x); }
@@ -2694,6 +2791,7 @@ impl<'a> PaneSurfaceSnapshot<'a> {
     builder.add_cols(args.cols);
     if let Some(x) = args.pane_id { builder.add_pane_id(x); }
     builder.add_surface(args.surface);
+    builder.add_viewport(args.viewport);
     builder.finish()
   }
 
@@ -2703,88 +2801,123 @@ impl<'a> PaneSurfaceSnapshot<'a> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(PaneSurfaceSnapshot::VT_PANE_ID, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(PaneViewportSnapshot::VT_PANE_ID, None)}
   }
   #[inline]
   pub fn version(&self) -> u64 {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(PaneSurfaceSnapshot::VT_VERSION, Some(0)).unwrap()}
+    unsafe { self._tab.get::<u64>(PaneViewportSnapshot::VT_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn timeline_version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneViewportSnapshot::VT_TIMELINE_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn total_lines(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneViewportSnapshot::VT_TOTAL_LINES, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn active_start_line(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneViewportSnapshot::VT_ACTIVE_START_LINE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn viewport_top_line(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneViewportSnapshot::VT_VIEWPORT_TOP_LINE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn viewport(&self) -> PaneViewportKind {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<PaneViewportKind>(PaneViewportSnapshot::VT_VIEWPORT, Some(PaneViewportKind::Active)).unwrap()}
   }
   #[inline]
   pub fn surface(&self) -> SurfaceKind {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<SurfaceKind>(PaneSurfaceSnapshot::VT_SURFACE, Some(SurfaceKind::Main)).unwrap()}
+    unsafe { self._tab.get::<SurfaceKind>(PaneViewportSnapshot::VT_SURFACE, Some(SurfaceKind::Main)).unwrap()}
   }
   #[inline]
   pub fn cols(&self) -> u32 {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<u32>(PaneSurfaceSnapshot::VT_COLS, Some(0)).unwrap()}
+    unsafe { self._tab.get::<u32>(PaneViewportSnapshot::VT_COLS, Some(0)).unwrap()}
   }
   #[inline]
   pub fn rows(&self) -> u32 {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<u32>(PaneSurfaceSnapshot::VT_ROWS, Some(0)).unwrap()}
+    unsafe { self._tab.get::<u32>(PaneViewportSnapshot::VT_ROWS, Some(0)).unwrap()}
   }
   #[inline]
   pub fn cursor(&self) -> Option<CursorState<'a>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CursorState>>(PaneSurfaceSnapshot::VT_CURSOR, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CursorState>>(PaneViewportSnapshot::VT_CURSOR, None)}
   }
   #[inline]
   pub fn modes(&self) -> Option<TerminalModeState<'a>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalModeState>>(PaneSurfaceSnapshot::VT_MODES, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalModeState>>(PaneViewportSnapshot::VT_MODES, None)}
   }
   #[inline]
   pub fn metadata(&self) -> Option<TerminalMetadataState<'a>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>(PaneSurfaceSnapshot::VT_METADATA, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>(PaneViewportSnapshot::VT_METADATA, None)}
   }
   #[inline]
   pub fn styles(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style>>>>(PaneSurfaceSnapshot::VT_STYLES, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style>>>>(PaneViewportSnapshot::VT_STYLES, None)}
   }
   #[inline]
   pub fn rows_data(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SurfaceRow<'a>>>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SurfaceRow>>>>(PaneSurfaceSnapshot::VT_ROWS_DATA, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SurfaceRow>>>>(PaneViewportSnapshot::VT_ROWS_DATA, None)}
   }
   #[inline]
   pub fn colors(&self) -> Option<TerminalColorState<'a>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalColorState>>(PaneSurfaceSnapshot::VT_COLORS, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalColorState>>(PaneViewportSnapshot::VT_COLORS, None)}
   }
   #[inline]
   pub fn hyperlinks(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink<'a>>>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink>>>>(PaneSurfaceSnapshot::VT_HYPERLINKS, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink>>>>(PaneViewportSnapshot::VT_HYPERLINKS, None)}
   }
 }
 
-impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
+impl ::flatbuffers::Verifiable for PaneViewportSnapshot<'_> {
   #[inline]
   fn run_verifier(
     v: &mut ::flatbuffers::Verifier, pos: usize
@@ -2792,6 +2925,11 @@ impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
     v.visit_table(pos)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
      .visit_field::<u64>("version", Self::VT_VERSION, false)?
+     .visit_field::<u64>("timeline_version", Self::VT_TIMELINE_VERSION, false)?
+     .visit_field::<u64>("total_lines", Self::VT_TOTAL_LINES, false)?
+     .visit_field::<u64>("active_start_line", Self::VT_ACTIVE_START_LINE, false)?
+     .visit_field::<u64>("viewport_top_line", Self::VT_VIEWPORT_TOP_LINE, false)?
+     .visit_field::<PaneViewportKind>("viewport", Self::VT_VIEWPORT, false)?
      .visit_field::<SurfaceKind>("surface", Self::VT_SURFACE, false)?
      .visit_field::<u32>("cols", Self::VT_COLS, false)?
      .visit_field::<u32>("rows", Self::VT_ROWS, false)?
@@ -2806,9 +2944,14 @@ impl ::flatbuffers::Verifiable for PaneSurfaceSnapshot<'_> {
     Ok(())
   }
 }
-pub struct PaneSurfaceSnapshotArgs<'a> {
+pub struct PaneViewportSnapshotArgs<'a> {
     pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub version: u64,
+    pub timeline_version: u64,
+    pub total_lines: u64,
+    pub active_start_line: u64,
+    pub viewport_top_line: u64,
+    pub viewport: PaneViewportKind,
     pub surface: SurfaceKind,
     pub cols: u32,
     pub rows: u32,
@@ -2820,12 +2963,17 @@ pub struct PaneSurfaceSnapshotArgs<'a> {
     pub colors: Option<::flatbuffers::WIPOffset<TerminalColorState<'a>>>,
     pub hyperlinks: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink<'a>>>>>,
 }
-impl<'a> Default for PaneSurfaceSnapshotArgs<'a> {
+impl<'a> Default for PaneViewportSnapshotArgs<'a> {
   #[inline]
   fn default() -> Self {
-    PaneSurfaceSnapshotArgs {
+    PaneViewportSnapshotArgs {
       pane_id: None,
       version: 0,
+      timeline_version: 0,
+      total_lines: 0,
+      active_start_line: 0,
+      viewport_top_line: 0,
+      viewport: PaneViewportKind::Active,
       surface: SurfaceKind::Main,
       cols: 0,
       rows: 0,
@@ -2840,79 +2988,104 @@ impl<'a> Default for PaneSurfaceSnapshotArgs<'a> {
   }
 }
 
-pub struct PaneSurfaceSnapshotBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+pub struct PaneViewportSnapshotBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
   fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
   start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
 }
-impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfaceSnapshotBuilder<'a, 'b, A> {
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneViewportSnapshotBuilder<'a, 'b, A> {
   #[inline]
   pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneSurfaceSnapshot::VT_PANE_ID, pane_id);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneViewportSnapshot::VT_PANE_ID, pane_id);
   }
   #[inline]
   pub fn add_version(&mut self, version: u64) {
-    self.fbb_.push_slot::<u64>(PaneSurfaceSnapshot::VT_VERSION, version, 0);
+    self.fbb_.push_slot::<u64>(PaneViewportSnapshot::VT_VERSION, version, 0);
+  }
+  #[inline]
+  pub fn add_timeline_version(&mut self, timeline_version: u64) {
+    self.fbb_.push_slot::<u64>(PaneViewportSnapshot::VT_TIMELINE_VERSION, timeline_version, 0);
+  }
+  #[inline]
+  pub fn add_total_lines(&mut self, total_lines: u64) {
+    self.fbb_.push_slot::<u64>(PaneViewportSnapshot::VT_TOTAL_LINES, total_lines, 0);
+  }
+  #[inline]
+  pub fn add_active_start_line(&mut self, active_start_line: u64) {
+    self.fbb_.push_slot::<u64>(PaneViewportSnapshot::VT_ACTIVE_START_LINE, active_start_line, 0);
+  }
+  #[inline]
+  pub fn add_viewport_top_line(&mut self, viewport_top_line: u64) {
+    self.fbb_.push_slot::<u64>(PaneViewportSnapshot::VT_VIEWPORT_TOP_LINE, viewport_top_line, 0);
+  }
+  #[inline]
+  pub fn add_viewport(&mut self, viewport: PaneViewportKind) {
+    self.fbb_.push_slot::<PaneViewportKind>(PaneViewportSnapshot::VT_VIEWPORT, viewport, PaneViewportKind::Active);
   }
   #[inline]
   pub fn add_surface(&mut self, surface: SurfaceKind) {
-    self.fbb_.push_slot::<SurfaceKind>(PaneSurfaceSnapshot::VT_SURFACE, surface, SurfaceKind::Main);
+    self.fbb_.push_slot::<SurfaceKind>(PaneViewportSnapshot::VT_SURFACE, surface, SurfaceKind::Main);
   }
   #[inline]
   pub fn add_cols(&mut self, cols: u32) {
-    self.fbb_.push_slot::<u32>(PaneSurfaceSnapshot::VT_COLS, cols, 0);
+    self.fbb_.push_slot::<u32>(PaneViewportSnapshot::VT_COLS, cols, 0);
   }
   #[inline]
   pub fn add_rows(&mut self, rows: u32) {
-    self.fbb_.push_slot::<u32>(PaneSurfaceSnapshot::VT_ROWS, rows, 0);
+    self.fbb_.push_slot::<u32>(PaneViewportSnapshot::VT_ROWS, rows, 0);
   }
   #[inline]
   pub fn add_cursor(&mut self, cursor: ::flatbuffers::WIPOffset<CursorState<'b >>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CursorState>>(PaneSurfaceSnapshot::VT_CURSOR, cursor);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CursorState>>(PaneViewportSnapshot::VT_CURSOR, cursor);
   }
   #[inline]
   pub fn add_modes(&mut self, modes: ::flatbuffers::WIPOffset<TerminalModeState<'b >>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalModeState>>(PaneSurfaceSnapshot::VT_MODES, modes);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalModeState>>(PaneViewportSnapshot::VT_MODES, modes);
   }
   #[inline]
   pub fn add_metadata(&mut self, metadata: ::flatbuffers::WIPOffset<TerminalMetadataState<'b >>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalMetadataState>>(PaneSurfaceSnapshot::VT_METADATA, metadata);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalMetadataState>>(PaneViewportSnapshot::VT_METADATA, metadata);
   }
   #[inline]
   pub fn add_styles(&mut self, styles: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Style<'b >>>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneSurfaceSnapshot::VT_STYLES, styles);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneViewportSnapshot::VT_STYLES, styles);
   }
   #[inline]
   pub fn add_rows_data(&mut self, rows_data: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<SurfaceRow<'b >>>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneSurfaceSnapshot::VT_ROWS_DATA, rows_data);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneViewportSnapshot::VT_ROWS_DATA, rows_data);
   }
   #[inline]
   pub fn add_colors(&mut self, colors: ::flatbuffers::WIPOffset<TerminalColorState<'b >>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalColorState>>(PaneSurfaceSnapshot::VT_COLORS, colors);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalColorState>>(PaneViewportSnapshot::VT_COLORS, colors);
   }
   #[inline]
   pub fn add_hyperlinks(&mut self, hyperlinks: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Hyperlink<'b >>>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneSurfaceSnapshot::VT_HYPERLINKS, hyperlinks);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneViewportSnapshot::VT_HYPERLINKS, hyperlinks);
   }
   #[inline]
-  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PaneSurfaceSnapshotBuilder<'a, 'b, A> {
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PaneViewportSnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
-    PaneSurfaceSnapshotBuilder {
+    PaneViewportSnapshotBuilder {
       fbb_: _fbb,
       start_: start,
     }
   }
   #[inline]
-  pub fn finish(self) -> ::flatbuffers::WIPOffset<PaneSurfaceSnapshot<'a>> {
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<PaneViewportSnapshot<'a>> {
     let o = self.fbb_.end_table(self.start_);
     ::flatbuffers::WIPOffset::new(o.value())
   }
 }
 
-impl ::core::fmt::Debug for PaneSurfaceSnapshot<'_> {
+impl ::core::fmt::Debug for PaneViewportSnapshot<'_> {
   fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-    let mut ds = f.debug_struct("PaneSurfaceSnapshot");
+    let mut ds = f.debug_struct("PaneViewportSnapshot");
       ds.field("pane_id", &self.pane_id());
       ds.field("version", &self.version());
+      ds.field("timeline_version", &self.timeline_version());
+      ds.field("total_lines", &self.total_lines());
+      ds.field("active_start_line", &self.active_start_line());
+      ds.field("viewport_top_line", &self.viewport_top_line());
+      ds.field("viewport", &self.viewport());
       ds.field("surface", &self.surface());
       ds.field("cols", &self.cols());
       ds.field("rows", &self.rows());
@@ -2926,42 +3099,51 @@ impl ::core::fmt::Debug for PaneSurfaceSnapshot<'_> {
       ds.finish()
   }
 }
-pub enum PaneSurfacePatchOffset {}
+pub enum PaneViewportPatchOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
-pub struct PaneSurfacePatch<'a> {
+pub struct PaneViewportPatch<'a> {
   pub _tab: ::flatbuffers::Table<'a>,
 }
 
-impl<'a> ::flatbuffers::Follow<'a> for PaneSurfacePatch<'a> {
-  type Inner = PaneSurfacePatch<'a>;
+impl<'a> ::flatbuffers::Follow<'a> for PaneViewportPatch<'a> {
+  type Inner = PaneViewportPatch<'a>;
   #[inline]
   unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
     Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
   }
 }
 
-impl<'a> PaneSurfacePatch<'a> {
+impl<'a> PaneViewportPatch<'a> {
   pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
   pub const VT_BASE_VERSION: ::flatbuffers::VOffsetT = 6;
   pub const VT_VERSION: ::flatbuffers::VOffsetT = 8;
-  pub const VT_KIND: ::flatbuffers::VOffsetT = 10;
-  pub const VT_ROW_UPDATES: ::flatbuffers::VOffsetT = 12;
-  pub const VT_CURSOR: ::flatbuffers::VOffsetT = 14;
-  pub const VT_MODES: ::flatbuffers::VOffsetT = 16;
-  pub const VT_METADATA: ::flatbuffers::VOffsetT = 18;
-  pub const VT_COLORS: ::flatbuffers::VOffsetT = 20;
+  pub const VT_TIMELINE_VERSION: ::flatbuffers::VOffsetT = 10;
+  pub const VT_TOTAL_LINES: ::flatbuffers::VOffsetT = 12;
+  pub const VT_ACTIVE_START_LINE: ::flatbuffers::VOffsetT = 14;
+  pub const VT_VIEWPORT_TOP_LINE: ::flatbuffers::VOffsetT = 16;
+  pub const VT_VIEWPORT: ::flatbuffers::VOffsetT = 18;
+  pub const VT_KIND: ::flatbuffers::VOffsetT = 20;
+  pub const VT_ROW_UPDATES: ::flatbuffers::VOffsetT = 22;
+  pub const VT_CURSOR: ::flatbuffers::VOffsetT = 24;
+  pub const VT_MODES: ::flatbuffers::VOffsetT = 26;
+  pub const VT_METADATA: ::flatbuffers::VOffsetT = 28;
+  pub const VT_COLORS: ::flatbuffers::VOffsetT = 30;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
-    PaneSurfacePatch { _tab: table }
+    PaneViewportPatch { _tab: table }
   }
   #[allow(unused_mut)]
   pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
     _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
-    args: &'args PaneSurfacePatchArgs<'args>
-  ) -> ::flatbuffers::WIPOffset<PaneSurfacePatch<'bldr>> {
-    let mut builder = PaneSurfacePatchBuilder::new(_fbb);
+    args: &'args PaneViewportPatchArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<PaneViewportPatch<'bldr>> {
+    let mut builder = PaneViewportPatchBuilder::new(_fbb);
+    builder.add_viewport_top_line(args.viewport_top_line);
+    builder.add_active_start_line(args.active_start_line);
+    builder.add_total_lines(args.total_lines);
+    builder.add_timeline_version(args.timeline_version);
     builder.add_version(args.version);
     builder.add_base_version(args.base_version);
     if let Some(x) = args.colors { builder.add_colors(x); }
@@ -2971,6 +3153,7 @@ impl<'a> PaneSurfacePatch<'a> {
     if let Some(x) = args.row_updates { builder.add_row_updates(x); }
     if let Some(x) = args.pane_id { builder.add_pane_id(x); }
     builder.add_kind(args.kind);
+    builder.add_viewport(args.viewport);
     builder.finish()
   }
 
@@ -2980,67 +3163,102 @@ impl<'a> PaneSurfacePatch<'a> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(PaneSurfacePatch::VT_PANE_ID, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(PaneViewportPatch::VT_PANE_ID, None)}
   }
   #[inline]
   pub fn base_version(&self) -> u64 {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(PaneSurfacePatch::VT_BASE_VERSION, Some(0)).unwrap()}
+    unsafe { self._tab.get::<u64>(PaneViewportPatch::VT_BASE_VERSION, Some(0)).unwrap()}
   }
   #[inline]
   pub fn version(&self) -> u64 {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(PaneSurfacePatch::VT_VERSION, Some(0)).unwrap()}
+    unsafe { self._tab.get::<u64>(PaneViewportPatch::VT_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn timeline_version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneViewportPatch::VT_TIMELINE_VERSION, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn total_lines(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneViewportPatch::VT_TOTAL_LINES, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn active_start_line(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneViewportPatch::VT_ACTIVE_START_LINE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn viewport_top_line(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneViewportPatch::VT_VIEWPORT_TOP_LINE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn viewport(&self) -> PaneViewportKind {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<PaneViewportKind>(PaneViewportPatch::VT_VIEWPORT, Some(PaneViewportKind::Active)).unwrap()}
   }
   #[inline]
   pub fn kind(&self) -> PatchKind {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<PatchKind>(PaneSurfacePatch::VT_KIND, Some(PatchKind::ReplaceRows)).unwrap()}
+    unsafe { self._tab.get::<PatchKind>(PaneViewportPatch::VT_KIND, Some(PatchKind::ReplaceRows)).unwrap()}
   }
   #[inline]
   pub fn row_updates(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<RowUpdate<'a>>>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<RowUpdate>>>>(PaneSurfacePatch::VT_ROW_UPDATES, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<RowUpdate>>>>(PaneViewportPatch::VT_ROW_UPDATES, None)}
   }
   #[inline]
   pub fn cursor(&self) -> Option<CursorState<'a>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CursorState>>(PaneSurfacePatch::VT_CURSOR, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<CursorState>>(PaneViewportPatch::VT_CURSOR, None)}
   }
   #[inline]
   pub fn modes(&self) -> Option<TerminalModeState<'a>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalModeState>>(PaneSurfacePatch::VT_MODES, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalModeState>>(PaneViewportPatch::VT_MODES, None)}
   }
   #[inline]
   pub fn metadata(&self) -> Option<TerminalMetadataState<'a>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>(PaneSurfacePatch::VT_METADATA, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalMetadataState>>(PaneViewportPatch::VT_METADATA, None)}
   }
   #[inline]
   pub fn colors(&self) -> Option<TerminalColorState<'a>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalColorState>>(PaneSurfacePatch::VT_COLORS, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalColorState>>(PaneViewportPatch::VT_COLORS, None)}
   }
 }
 
-impl ::flatbuffers::Verifiable for PaneSurfacePatch<'_> {
+impl ::flatbuffers::Verifiable for PaneViewportPatch<'_> {
   #[inline]
   fn run_verifier(
     v: &mut ::flatbuffers::Verifier, pos: usize
@@ -3049,6 +3267,11 @@ impl ::flatbuffers::Verifiable for PaneSurfacePatch<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
      .visit_field::<u64>("base_version", Self::VT_BASE_VERSION, false)?
      .visit_field::<u64>("version", Self::VT_VERSION, false)?
+     .visit_field::<u64>("timeline_version", Self::VT_TIMELINE_VERSION, false)?
+     .visit_field::<u64>("total_lines", Self::VT_TOTAL_LINES, false)?
+     .visit_field::<u64>("active_start_line", Self::VT_ACTIVE_START_LINE, false)?
+     .visit_field::<u64>("viewport_top_line", Self::VT_VIEWPORT_TOP_LINE, false)?
+     .visit_field::<PaneViewportKind>("viewport", Self::VT_VIEWPORT, false)?
      .visit_field::<PatchKind>("kind", Self::VT_KIND, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<RowUpdate>>>>("row_updates", Self::VT_ROW_UPDATES, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<CursorState>>("cursor", Self::VT_CURSOR, false)?
@@ -3059,10 +3282,15 @@ impl ::flatbuffers::Verifiable for PaneSurfacePatch<'_> {
     Ok(())
   }
 }
-pub struct PaneSurfacePatchArgs<'a> {
+pub struct PaneViewportPatchArgs<'a> {
     pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub base_version: u64,
     pub version: u64,
+    pub timeline_version: u64,
+    pub total_lines: u64,
+    pub active_start_line: u64,
+    pub viewport_top_line: u64,
+    pub viewport: PaneViewportKind,
     pub kind: PatchKind,
     pub row_updates: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<RowUpdate<'a>>>>>,
     pub cursor: Option<::flatbuffers::WIPOffset<CursorState<'a>>>,
@@ -3070,13 +3298,18 @@ pub struct PaneSurfacePatchArgs<'a> {
     pub metadata: Option<::flatbuffers::WIPOffset<TerminalMetadataState<'a>>>,
     pub colors: Option<::flatbuffers::WIPOffset<TerminalColorState<'a>>>,
 }
-impl<'a> Default for PaneSurfacePatchArgs<'a> {
+impl<'a> Default for PaneViewportPatchArgs<'a> {
   #[inline]
   fn default() -> Self {
-    PaneSurfacePatchArgs {
+    PaneViewportPatchArgs {
       pane_id: None,
       base_version: 0,
       version: 0,
+      timeline_version: 0,
+      total_lines: 0,
+      active_start_line: 0,
+      viewport_top_line: 0,
+      viewport: PaneViewportKind::Active,
       kind: PatchKind::ReplaceRows,
       row_updates: None,
       cursor: None,
@@ -3087,68 +3320,93 @@ impl<'a> Default for PaneSurfacePatchArgs<'a> {
   }
 }
 
-pub struct PaneSurfacePatchBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+pub struct PaneViewportPatchBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
   fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
   start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
 }
-impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneSurfacePatchBuilder<'a, 'b, A> {
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneViewportPatchBuilder<'a, 'b, A> {
   #[inline]
   pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneSurfacePatch::VT_PANE_ID, pane_id);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneViewportPatch::VT_PANE_ID, pane_id);
   }
   #[inline]
   pub fn add_base_version(&mut self, base_version: u64) {
-    self.fbb_.push_slot::<u64>(PaneSurfacePatch::VT_BASE_VERSION, base_version, 0);
+    self.fbb_.push_slot::<u64>(PaneViewportPatch::VT_BASE_VERSION, base_version, 0);
   }
   #[inline]
   pub fn add_version(&mut self, version: u64) {
-    self.fbb_.push_slot::<u64>(PaneSurfacePatch::VT_VERSION, version, 0);
+    self.fbb_.push_slot::<u64>(PaneViewportPatch::VT_VERSION, version, 0);
+  }
+  #[inline]
+  pub fn add_timeline_version(&mut self, timeline_version: u64) {
+    self.fbb_.push_slot::<u64>(PaneViewportPatch::VT_TIMELINE_VERSION, timeline_version, 0);
+  }
+  #[inline]
+  pub fn add_total_lines(&mut self, total_lines: u64) {
+    self.fbb_.push_slot::<u64>(PaneViewportPatch::VT_TOTAL_LINES, total_lines, 0);
+  }
+  #[inline]
+  pub fn add_active_start_line(&mut self, active_start_line: u64) {
+    self.fbb_.push_slot::<u64>(PaneViewportPatch::VT_ACTIVE_START_LINE, active_start_line, 0);
+  }
+  #[inline]
+  pub fn add_viewport_top_line(&mut self, viewport_top_line: u64) {
+    self.fbb_.push_slot::<u64>(PaneViewportPatch::VT_VIEWPORT_TOP_LINE, viewport_top_line, 0);
+  }
+  #[inline]
+  pub fn add_viewport(&mut self, viewport: PaneViewportKind) {
+    self.fbb_.push_slot::<PaneViewportKind>(PaneViewportPatch::VT_VIEWPORT, viewport, PaneViewportKind::Active);
   }
   #[inline]
   pub fn add_kind(&mut self, kind: PatchKind) {
-    self.fbb_.push_slot::<PatchKind>(PaneSurfacePatch::VT_KIND, kind, PatchKind::ReplaceRows);
+    self.fbb_.push_slot::<PatchKind>(PaneViewportPatch::VT_KIND, kind, PatchKind::ReplaceRows);
   }
   #[inline]
   pub fn add_row_updates(&mut self, row_updates: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<RowUpdate<'b >>>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneSurfacePatch::VT_ROW_UPDATES, row_updates);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneViewportPatch::VT_ROW_UPDATES, row_updates);
   }
   #[inline]
   pub fn add_cursor(&mut self, cursor: ::flatbuffers::WIPOffset<CursorState<'b >>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CursorState>>(PaneSurfacePatch::VT_CURSOR, cursor);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<CursorState>>(PaneViewportPatch::VT_CURSOR, cursor);
   }
   #[inline]
   pub fn add_modes(&mut self, modes: ::flatbuffers::WIPOffset<TerminalModeState<'b >>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalModeState>>(PaneSurfacePatch::VT_MODES, modes);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalModeState>>(PaneViewportPatch::VT_MODES, modes);
   }
   #[inline]
   pub fn add_metadata(&mut self, metadata: ::flatbuffers::WIPOffset<TerminalMetadataState<'b >>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalMetadataState>>(PaneSurfacePatch::VT_METADATA, metadata);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalMetadataState>>(PaneViewportPatch::VT_METADATA, metadata);
   }
   #[inline]
   pub fn add_colors(&mut self, colors: ::flatbuffers::WIPOffset<TerminalColorState<'b >>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalColorState>>(PaneSurfacePatch::VT_COLORS, colors);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalColorState>>(PaneViewportPatch::VT_COLORS, colors);
   }
   #[inline]
-  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PaneSurfacePatchBuilder<'a, 'b, A> {
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PaneViewportPatchBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
-    PaneSurfacePatchBuilder {
+    PaneViewportPatchBuilder {
       fbb_: _fbb,
       start_: start,
     }
   }
   #[inline]
-  pub fn finish(self) -> ::flatbuffers::WIPOffset<PaneSurfacePatch<'a>> {
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<PaneViewportPatch<'a>> {
     let o = self.fbb_.end_table(self.start_);
     ::flatbuffers::WIPOffset::new(o.value())
   }
 }
 
-impl ::core::fmt::Debug for PaneSurfacePatch<'_> {
+impl ::core::fmt::Debug for PaneViewportPatch<'_> {
   fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-    let mut ds = f.debug_struct("PaneSurfacePatch");
+    let mut ds = f.debug_struct("PaneViewportPatch");
       ds.field("pane_id", &self.pane_id());
       ds.field("base_version", &self.base_version());
       ds.field("version", &self.version());
+      ds.field("timeline_version", &self.timeline_version());
+      ds.field("total_lines", &self.total_lines());
+      ds.field("active_start_line", &self.active_start_line());
+      ds.field("viewport_top_line", &self.viewport_top_line());
+      ds.field("viewport", &self.viewport());
       ds.field("kind", &self.kind());
       ds.field("row_updates", &self.row_updates());
       ds.field("cursor", &self.cursor());
@@ -5997,43 +6255,47 @@ impl ::core::fmt::Debug for ControlCommand<'_> {
       ds.finish()
   }
 }
-pub enum ScrollbackFetchOffset {}
+pub enum PaneViewportIntentOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
-pub struct ScrollbackFetch<'a> {
+pub struct PaneViewportIntent<'a> {
   pub _tab: ::flatbuffers::Table<'a>,
 }
 
-impl<'a> ::flatbuffers::Follow<'a> for ScrollbackFetch<'a> {
-  type Inner = ScrollbackFetch<'a>;
+impl<'a> ::flatbuffers::Follow<'a> for PaneViewportIntent<'a> {
+  type Inner = PaneViewportIntent<'a>;
   #[inline]
   unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
     Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
   }
 }
 
-impl<'a> ScrollbackFetch<'a> {
+impl<'a> PaneViewportIntent<'a> {
   pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
   pub const VT_ACTOR_ID: ::flatbuffers::VOffsetT = 6;
-  pub const VT_START_LINE: ::flatbuffers::VOffsetT = 8;
-  pub const VT_LINE_COUNT: ::flatbuffers::VOffsetT = 10;
-  pub const VT_KNOWN_SCROLLBACK_VERSION: ::flatbuffers::VOffsetT = 12;
+  pub const VT_VIEWPORT: ::flatbuffers::VOffsetT = 8;
+  pub const VT_TOP_LINE: ::flatbuffers::VOffsetT = 10;
+  pub const VT_DELTA_ROWS: ::flatbuffers::VOffsetT = 12;
+  pub const VT_VISIBLE_ROWS: ::flatbuffers::VOffsetT = 14;
+  pub const VT_KNOWN_VIEWPORT_VERSION: ::flatbuffers::VOffsetT = 16;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
-    ScrollbackFetch { _tab: table }
+    PaneViewportIntent { _tab: table }
   }
   #[allow(unused_mut)]
   pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
     _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
-    args: &'args ScrollbackFetchArgs<'args>
-  ) -> ::flatbuffers::WIPOffset<ScrollbackFetch<'bldr>> {
-    let mut builder = ScrollbackFetchBuilder::new(_fbb);
-    builder.add_known_scrollback_version(args.known_scrollback_version);
-    builder.add_start_line(args.start_line);
-    builder.add_line_count(args.line_count);
+    args: &'args PaneViewportIntentArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<PaneViewportIntent<'bldr>> {
+    let mut builder = PaneViewportIntentBuilder::new(_fbb);
+    builder.add_known_viewport_version(args.known_viewport_version);
+    builder.add_top_line(args.top_line);
+    builder.add_visible_rows(args.visible_rows);
+    builder.add_delta_rows(args.delta_rows);
     if let Some(x) = args.actor_id { builder.add_actor_id(x); }
     if let Some(x) = args.pane_id { builder.add_pane_id(x); }
+    builder.add_viewport(args.viewport);
     builder.finish()
   }
 
@@ -6043,39 +6305,53 @@ impl<'a> ScrollbackFetch<'a> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ScrollbackFetch::VT_PANE_ID, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(PaneViewportIntent::VT_PANE_ID, None)}
   }
   #[inline]
   pub fn actor_id(&self) -> Option<&'a str> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ScrollbackFetch::VT_ACTOR_ID, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(PaneViewportIntent::VT_ACTOR_ID, None)}
   }
   #[inline]
-  pub fn start_line(&self) -> u64 {
+  pub fn viewport(&self) -> PaneViewportKind {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(ScrollbackFetch::VT_START_LINE, Some(0)).unwrap()}
+    unsafe { self._tab.get::<PaneViewportKind>(PaneViewportIntent::VT_VIEWPORT, Some(PaneViewportKind::Active)).unwrap()}
   }
   #[inline]
-  pub fn line_count(&self) -> u32 {
+  pub fn top_line(&self) -> u64 {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<u32>(ScrollbackFetch::VT_LINE_COUNT, Some(0)).unwrap()}
+    unsafe { self._tab.get::<u64>(PaneViewportIntent::VT_TOP_LINE, Some(0)).unwrap()}
   }
   #[inline]
-  pub fn known_scrollback_version(&self) -> u64 {
+  pub fn delta_rows(&self) -> i32 {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(ScrollbackFetch::VT_KNOWN_SCROLLBACK_VERSION, Some(0)).unwrap()}
+    unsafe { self._tab.get::<i32>(PaneViewportIntent::VT_DELTA_ROWS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn visible_rows(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(PaneViewportIntent::VT_VISIBLE_ROWS, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn known_viewport_version(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(PaneViewportIntent::VT_KNOWN_VIEWPORT_VERSION, Some(0)).unwrap()}
   }
 }
 
-impl ::flatbuffers::Verifiable for ScrollbackFetch<'_> {
+impl ::flatbuffers::Verifiable for PaneViewportIntent<'_> {
   #[inline]
   fn run_verifier(
     v: &mut ::flatbuffers::Verifier, pos: usize
@@ -6083,494 +6359,97 @@ impl ::flatbuffers::Verifiable for ScrollbackFetch<'_> {
     v.visit_table(pos)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("actor_id", Self::VT_ACTOR_ID, false)?
-     .visit_field::<u64>("start_line", Self::VT_START_LINE, false)?
-     .visit_field::<u32>("line_count", Self::VT_LINE_COUNT, false)?
-     .visit_field::<u64>("known_scrollback_version", Self::VT_KNOWN_SCROLLBACK_VERSION, false)?
+     .visit_field::<PaneViewportKind>("viewport", Self::VT_VIEWPORT, false)?
+     .visit_field::<u64>("top_line", Self::VT_TOP_LINE, false)?
+     .visit_field::<i32>("delta_rows", Self::VT_DELTA_ROWS, false)?
+     .visit_field::<u32>("visible_rows", Self::VT_VISIBLE_ROWS, false)?
+     .visit_field::<u64>("known_viewport_version", Self::VT_KNOWN_VIEWPORT_VERSION, false)?
      .finish();
     Ok(())
   }
 }
-pub struct ScrollbackFetchArgs<'a> {
+pub struct PaneViewportIntentArgs<'a> {
     pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub actor_id: Option<::flatbuffers::WIPOffset<&'a str>>,
-    pub start_line: u64,
-    pub line_count: u32,
-    pub known_scrollback_version: u64,
+    pub viewport: PaneViewportKind,
+    pub top_line: u64,
+    pub delta_rows: i32,
+    pub visible_rows: u32,
+    pub known_viewport_version: u64,
 }
-impl<'a> Default for ScrollbackFetchArgs<'a> {
+impl<'a> Default for PaneViewportIntentArgs<'a> {
   #[inline]
   fn default() -> Self {
-    ScrollbackFetchArgs {
+    PaneViewportIntentArgs {
       pane_id: None,
       actor_id: None,
-      start_line: 0,
-      line_count: 0,
-      known_scrollback_version: 0,
+      viewport: PaneViewportKind::Active,
+      top_line: 0,
+      delta_rows: 0,
+      visible_rows: 0,
+      known_viewport_version: 0,
     }
   }
 }
 
-pub struct ScrollbackFetchBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+pub struct PaneViewportIntentBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
   fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
   start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
 }
-impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackFetchBuilder<'a, 'b, A> {
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PaneViewportIntentBuilder<'a, 'b, A> {
   #[inline]
   pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackFetch::VT_PANE_ID, pane_id);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneViewportIntent::VT_PANE_ID, pane_id);
   }
   #[inline]
   pub fn add_actor_id(&mut self, actor_id: ::flatbuffers::WIPOffset<&'b  str>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackFetch::VT_ACTOR_ID, actor_id);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(PaneViewportIntent::VT_ACTOR_ID, actor_id);
   }
   #[inline]
-  pub fn add_start_line(&mut self, start_line: u64) {
-    self.fbb_.push_slot::<u64>(ScrollbackFetch::VT_START_LINE, start_line, 0);
+  pub fn add_viewport(&mut self, viewport: PaneViewportKind) {
+    self.fbb_.push_slot::<PaneViewportKind>(PaneViewportIntent::VT_VIEWPORT, viewport, PaneViewportKind::Active);
   }
   #[inline]
-  pub fn add_line_count(&mut self, line_count: u32) {
-    self.fbb_.push_slot::<u32>(ScrollbackFetch::VT_LINE_COUNT, line_count, 0);
+  pub fn add_top_line(&mut self, top_line: u64) {
+    self.fbb_.push_slot::<u64>(PaneViewportIntent::VT_TOP_LINE, top_line, 0);
   }
   #[inline]
-  pub fn add_known_scrollback_version(&mut self, known_scrollback_version: u64) {
-    self.fbb_.push_slot::<u64>(ScrollbackFetch::VT_KNOWN_SCROLLBACK_VERSION, known_scrollback_version, 0);
+  pub fn add_delta_rows(&mut self, delta_rows: i32) {
+    self.fbb_.push_slot::<i32>(PaneViewportIntent::VT_DELTA_ROWS, delta_rows, 0);
   }
   #[inline]
-  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackFetchBuilder<'a, 'b, A> {
+  pub fn add_visible_rows(&mut self, visible_rows: u32) {
+    self.fbb_.push_slot::<u32>(PaneViewportIntent::VT_VISIBLE_ROWS, visible_rows, 0);
+  }
+  #[inline]
+  pub fn add_known_viewport_version(&mut self, known_viewport_version: u64) {
+    self.fbb_.push_slot::<u64>(PaneViewportIntent::VT_KNOWN_VIEWPORT_VERSION, known_viewport_version, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PaneViewportIntentBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
-    ScrollbackFetchBuilder {
+    PaneViewportIntentBuilder {
       fbb_: _fbb,
       start_: start,
     }
   }
   #[inline]
-  pub fn finish(self) -> ::flatbuffers::WIPOffset<ScrollbackFetch<'a>> {
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<PaneViewportIntent<'a>> {
     let o = self.fbb_.end_table(self.start_);
     ::flatbuffers::WIPOffset::new(o.value())
   }
 }
 
-impl ::core::fmt::Debug for ScrollbackFetch<'_> {
+impl ::core::fmt::Debug for PaneViewportIntent<'_> {
   fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-    let mut ds = f.debug_struct("ScrollbackFetch");
+    let mut ds = f.debug_struct("PaneViewportIntent");
       ds.field("pane_id", &self.pane_id());
       ds.field("actor_id", &self.actor_id());
-      ds.field("start_line", &self.start_line());
-      ds.field("line_count", &self.line_count());
-      ds.field("known_scrollback_version", &self.known_scrollback_version());
-      ds.finish()
-  }
-}
-pub enum ScrollbackChunkOffset {}
-#[derive(Copy, Clone, PartialEq)]
-
-pub struct ScrollbackChunk<'a> {
-  pub _tab: ::flatbuffers::Table<'a>,
-}
-
-impl<'a> ::flatbuffers::Follow<'a> for ScrollbackChunk<'a> {
-  type Inner = ScrollbackChunk<'a>;
-  #[inline]
-  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
-  }
-}
-
-impl<'a> ScrollbackChunk<'a> {
-  pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
-  pub const VT_SCROLLBACK_VERSION: ::flatbuffers::VOffsetT = 6;
-  pub const VT_START_LINE: ::flatbuffers::VOffsetT = 8;
-  pub const VT_TOTAL_LINES: ::flatbuffers::VOffsetT = 10;
-  pub const VT_ROWS: ::flatbuffers::VOffsetT = 12;
-  pub const VT_STYLES: ::flatbuffers::VOffsetT = 14;
-  pub const VT_COLORS: ::flatbuffers::VOffsetT = 16;
-  pub const VT_HYPERLINKS: ::flatbuffers::VOffsetT = 18;
-
-  #[inline]
-  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
-    ScrollbackChunk { _tab: table }
-  }
-  #[allow(unused_mut)]
-  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
-    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
-    args: &'args ScrollbackChunkArgs<'args>
-  ) -> ::flatbuffers::WIPOffset<ScrollbackChunk<'bldr>> {
-    let mut builder = ScrollbackChunkBuilder::new(_fbb);
-    builder.add_total_lines(args.total_lines);
-    builder.add_start_line(args.start_line);
-    builder.add_scrollback_version(args.scrollback_version);
-    if let Some(x) = args.hyperlinks { builder.add_hyperlinks(x); }
-    if let Some(x) = args.colors { builder.add_colors(x); }
-    if let Some(x) = args.styles { builder.add_styles(x); }
-    if let Some(x) = args.rows { builder.add_rows(x); }
-    if let Some(x) = args.pane_id { builder.add_pane_id(x); }
-    builder.finish()
-  }
-
-
-  #[inline]
-  pub fn pane_id(&self) -> Option<&'a str> {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ScrollbackChunk::VT_PANE_ID, None)}
-  }
-  #[inline]
-  pub fn scrollback_version(&self) -> u64 {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(ScrollbackChunk::VT_SCROLLBACK_VERSION, Some(0)).unwrap()}
-  }
-  #[inline]
-  pub fn start_line(&self) -> u64 {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(ScrollbackChunk::VT_START_LINE, Some(0)).unwrap()}
-  }
-  #[inline]
-  pub fn total_lines(&self) -> u64 {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(ScrollbackChunk::VT_TOTAL_LINES, Some(0)).unwrap()}
-  }
-  #[inline]
-  pub fn rows(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ScrollbackRow<'a>>>> {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ScrollbackRow>>>>(ScrollbackChunk::VT_ROWS, None)}
-  }
-  #[inline]
-  pub fn styles(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>> {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style>>>>(ScrollbackChunk::VT_STYLES, None)}
-  }
-  #[inline]
-  pub fn colors(&self) -> Option<TerminalColorState<'a>> {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<TerminalColorState>>(ScrollbackChunk::VT_COLORS, None)}
-  }
-  #[inline]
-  pub fn hyperlinks(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink<'a>>>> {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink>>>>(ScrollbackChunk::VT_HYPERLINKS, None)}
-  }
-}
-
-impl ::flatbuffers::Verifiable for ScrollbackChunk<'_> {
-  #[inline]
-  fn run_verifier(
-    v: &mut ::flatbuffers::Verifier, pos: usize
-  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
-    v.visit_table(pos)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("pane_id", Self::VT_PANE_ID, false)?
-     .visit_field::<u64>("scrollback_version", Self::VT_SCROLLBACK_VERSION, false)?
-     .visit_field::<u64>("start_line", Self::VT_START_LINE, false)?
-     .visit_field::<u64>("total_lines", Self::VT_TOTAL_LINES, false)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ScrollbackRow>>>>("rows", Self::VT_ROWS, false)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Style>>>>("styles", Self::VT_STYLES, false)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<TerminalColorState>>("colors", Self::VT_COLORS, false)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<Hyperlink>>>>("hyperlinks", Self::VT_HYPERLINKS, false)?
-     .finish();
-    Ok(())
-  }
-}
-pub struct ScrollbackChunkArgs<'a> {
-    pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
-    pub scrollback_version: u64,
-    pub start_line: u64,
-    pub total_lines: u64,
-    pub rows: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ScrollbackRow<'a>>>>>,
-    pub styles: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Style<'a>>>>>,
-    pub colors: Option<::flatbuffers::WIPOffset<TerminalColorState<'a>>>,
-    pub hyperlinks: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<Hyperlink<'a>>>>>,
-}
-impl<'a> Default for ScrollbackChunkArgs<'a> {
-  #[inline]
-  fn default() -> Self {
-    ScrollbackChunkArgs {
-      pane_id: None,
-      scrollback_version: 0,
-      start_line: 0,
-      total_lines: 0,
-      rows: None,
-      styles: None,
-      colors: None,
-      hyperlinks: None,
-    }
-  }
-}
-
-pub struct ScrollbackChunkBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
-  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
-  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
-}
-impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackChunkBuilder<'a, 'b, A> {
-  #[inline]
-  pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackChunk::VT_PANE_ID, pane_id);
-  }
-  #[inline]
-  pub fn add_scrollback_version(&mut self, scrollback_version: u64) {
-    self.fbb_.push_slot::<u64>(ScrollbackChunk::VT_SCROLLBACK_VERSION, scrollback_version, 0);
-  }
-  #[inline]
-  pub fn add_start_line(&mut self, start_line: u64) {
-    self.fbb_.push_slot::<u64>(ScrollbackChunk::VT_START_LINE, start_line, 0);
-  }
-  #[inline]
-  pub fn add_total_lines(&mut self, total_lines: u64) {
-    self.fbb_.push_slot::<u64>(ScrollbackChunk::VT_TOTAL_LINES, total_lines, 0);
-  }
-  #[inline]
-  pub fn add_rows(&mut self, rows: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<ScrollbackRow<'b >>>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackChunk::VT_ROWS, rows);
-  }
-  #[inline]
-  pub fn add_styles(&mut self, styles: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Style<'b >>>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackChunk::VT_STYLES, styles);
-  }
-  #[inline]
-  pub fn add_colors(&mut self, colors: ::flatbuffers::WIPOffset<TerminalColorState<'b >>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<TerminalColorState>>(ScrollbackChunk::VT_COLORS, colors);
-  }
-  #[inline]
-  pub fn add_hyperlinks(&mut self, hyperlinks: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<Hyperlink<'b >>>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackChunk::VT_HYPERLINKS, hyperlinks);
-  }
-  #[inline]
-  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackChunkBuilder<'a, 'b, A> {
-    let start = _fbb.start_table();
-    ScrollbackChunkBuilder {
-      fbb_: _fbb,
-      start_: start,
-    }
-  }
-  #[inline]
-  pub fn finish(self) -> ::flatbuffers::WIPOffset<ScrollbackChunk<'a>> {
-    let o = self.fbb_.end_table(self.start_);
-    ::flatbuffers::WIPOffset::new(o.value())
-  }
-}
-
-impl ::core::fmt::Debug for ScrollbackChunk<'_> {
-  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-    let mut ds = f.debug_struct("ScrollbackChunk");
-      ds.field("pane_id", &self.pane_id());
-      ds.field("scrollback_version", &self.scrollback_version());
-      ds.field("start_line", &self.start_line());
-      ds.field("total_lines", &self.total_lines());
-      ds.field("rows", &self.rows());
-      ds.field("styles", &self.styles());
-      ds.field("colors", &self.colors());
-      ds.field("hyperlinks", &self.hyperlinks());
-      ds.finish()
-  }
-}
-pub enum ScrollbackRowOffset {}
-#[derive(Copy, Clone, PartialEq)]
-
-pub struct ScrollbackRow<'a> {
-  pub _tab: ::flatbuffers::Table<'a>,
-}
-
-impl<'a> ::flatbuffers::Follow<'a> for ScrollbackRow<'a> {
-  type Inner = ScrollbackRow<'a>;
-  #[inline]
-  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
-  }
-}
-
-impl<'a> ScrollbackRow<'a> {
-  pub const VT_LINE: ::flatbuffers::VOffsetT = 4;
-  pub const VT_RUNS: ::flatbuffers::VOffsetT = 6;
-  pub const VT_DIRTY_HASH: ::flatbuffers::VOffsetT = 8;
-  pub const VT_SEMANTIC_PROMPT: ::flatbuffers::VOffsetT = 10;
-  pub const VT_DIRTY: ::flatbuffers::VOffsetT = 12;
-  pub const VT_KITTY_VIRTUAL_PLACEHOLDER: ::flatbuffers::VOffsetT = 14;
-  pub const VT_ROW_STATE_HASH: ::flatbuffers::VOffsetT = 16;
-
-  #[inline]
-  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
-    ScrollbackRow { _tab: table }
-  }
-  #[allow(unused_mut)]
-  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
-    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
-    args: &'args ScrollbackRowArgs<'args>
-  ) -> ::flatbuffers::WIPOffset<ScrollbackRow<'bldr>> {
-    let mut builder = ScrollbackRowBuilder::new(_fbb);
-    builder.add_row_state_hash(args.row_state_hash);
-    builder.add_dirty_hash(args.dirty_hash);
-    builder.add_line(args.line);
-    if let Some(x) = args.runs { builder.add_runs(x); }
-    builder.add_kitty_virtual_placeholder(args.kitty_virtual_placeholder);
-    builder.add_dirty(args.dirty);
-    builder.add_semantic_prompt(args.semantic_prompt);
-    builder.finish()
-  }
-
-
-  #[inline]
-  pub fn line(&self) -> u64 {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(ScrollbackRow::VT_LINE, Some(0)).unwrap()}
-  }
-  #[inline]
-  pub fn runs(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun<'a>>>> {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun>>>>(ScrollbackRow::VT_RUNS, None)}
-  }
-  #[inline]
-  pub fn dirty_hash(&self) -> u64 {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(ScrollbackRow::VT_DIRTY_HASH, Some(0)).unwrap()}
-  }
-  #[inline]
-  pub fn semantic_prompt(&self) -> RowSemanticPrompt {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<RowSemanticPrompt>(ScrollbackRow::VT_SEMANTIC_PROMPT, Some(RowSemanticPrompt::None)).unwrap()}
-  }
-  #[inline]
-  pub fn dirty(&self) -> bool {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<bool>(ScrollbackRow::VT_DIRTY, Some(false)).unwrap()}
-  }
-  #[inline]
-  pub fn kitty_virtual_placeholder(&self) -> bool {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<bool>(ScrollbackRow::VT_KITTY_VIRTUAL_PLACEHOLDER, Some(false)).unwrap()}
-  }
-  #[inline]
-  pub fn row_state_hash(&self) -> u64 {
-    // Safety:
-    // Created from valid Table for this object
-    // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(ScrollbackRow::VT_ROW_STATE_HASH, Some(0)).unwrap()}
-  }
-}
-
-impl ::flatbuffers::Verifiable for ScrollbackRow<'_> {
-  #[inline]
-  fn run_verifier(
-    v: &mut ::flatbuffers::Verifier, pos: usize
-  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
-    v.visit_table(pos)?
-     .visit_field::<u64>("line", Self::VT_LINE, false)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<CellRun>>>>("runs", Self::VT_RUNS, false)?
-     .visit_field::<u64>("dirty_hash", Self::VT_DIRTY_HASH, false)?
-     .visit_field::<RowSemanticPrompt>("semantic_prompt", Self::VT_SEMANTIC_PROMPT, false)?
-     .visit_field::<bool>("dirty", Self::VT_DIRTY, false)?
-     .visit_field::<bool>("kitty_virtual_placeholder", Self::VT_KITTY_VIRTUAL_PLACEHOLDER, false)?
-     .visit_field::<u64>("row_state_hash", Self::VT_ROW_STATE_HASH, false)?
-     .finish();
-    Ok(())
-  }
-}
-pub struct ScrollbackRowArgs<'a> {
-    pub line: u64,
-    pub runs: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<CellRun<'a>>>>>,
-    pub dirty_hash: u64,
-    pub semantic_prompt: RowSemanticPrompt,
-    pub dirty: bool,
-    pub kitty_virtual_placeholder: bool,
-    pub row_state_hash: u64,
-}
-impl<'a> Default for ScrollbackRowArgs<'a> {
-  #[inline]
-  fn default() -> Self {
-    ScrollbackRowArgs {
-      line: 0,
-      runs: None,
-      dirty_hash: 0,
-      semantic_prompt: RowSemanticPrompt::None,
-      dirty: false,
-      kitty_virtual_placeholder: false,
-      row_state_hash: 0,
-    }
-  }
-}
-
-pub struct ScrollbackRowBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
-  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
-  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
-}
-impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScrollbackRowBuilder<'a, 'b, A> {
-  #[inline]
-  pub fn add_line(&mut self, line: u64) {
-    self.fbb_.push_slot::<u64>(ScrollbackRow::VT_LINE, line, 0);
-  }
-  #[inline]
-  pub fn add_runs(&mut self, runs: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<CellRun<'b >>>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ScrollbackRow::VT_RUNS, runs);
-  }
-  #[inline]
-  pub fn add_dirty_hash(&mut self, dirty_hash: u64) {
-    self.fbb_.push_slot::<u64>(ScrollbackRow::VT_DIRTY_HASH, dirty_hash, 0);
-  }
-  #[inline]
-  pub fn add_semantic_prompt(&mut self, semantic_prompt: RowSemanticPrompt) {
-    self.fbb_.push_slot::<RowSemanticPrompt>(ScrollbackRow::VT_SEMANTIC_PROMPT, semantic_prompt, RowSemanticPrompt::None);
-  }
-  #[inline]
-  pub fn add_dirty(&mut self, dirty: bool) {
-    self.fbb_.push_slot::<bool>(ScrollbackRow::VT_DIRTY, dirty, false);
-  }
-  #[inline]
-  pub fn add_kitty_virtual_placeholder(&mut self, kitty_virtual_placeholder: bool) {
-    self.fbb_.push_slot::<bool>(ScrollbackRow::VT_KITTY_VIRTUAL_PLACEHOLDER, kitty_virtual_placeholder, false);
-  }
-  #[inline]
-  pub fn add_row_state_hash(&mut self, row_state_hash: u64) {
-    self.fbb_.push_slot::<u64>(ScrollbackRow::VT_ROW_STATE_HASH, row_state_hash, 0);
-  }
-  #[inline]
-  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ScrollbackRowBuilder<'a, 'b, A> {
-    let start = _fbb.start_table();
-    ScrollbackRowBuilder {
-      fbb_: _fbb,
-      start_: start,
-    }
-  }
-  #[inline]
-  pub fn finish(self) -> ::flatbuffers::WIPOffset<ScrollbackRow<'a>> {
-    let o = self.fbb_.end_table(self.start_);
-    ::flatbuffers::WIPOffset::new(o.value())
-  }
-}
-
-impl ::core::fmt::Debug for ScrollbackRow<'_> {
-  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-    let mut ds = f.debug_struct("ScrollbackRow");
-      ds.field("line", &self.line());
-      ds.field("runs", &self.runs());
-      ds.field("dirty_hash", &self.dirty_hash());
-      ds.field("semantic_prompt", &self.semantic_prompt());
-      ds.field("dirty", &self.dirty());
-      ds.field("kitty_virtual_placeholder", &self.kitty_virtual_placeholder());
-      ds.field("row_state_hash", &self.row_state_hash());
+      ds.field("viewport", &self.viewport());
+      ds.field("top_line", &self.top_line());
+      ds.field("delta_rows", &self.delta_rows());
+      ds.field("visible_rows", &self.visible_rows());
+      ds.field("known_viewport_version", &self.known_viewport_version());
       ds.finish()
   }
 }
@@ -7705,35 +7584,35 @@ impl ::core::fmt::Debug for Error<'_> {
       ds.finish()
   }
 }
-pub enum KnownPaneSurfaceVersionOffset {}
+pub enum KnownPaneViewportVersionOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
-pub struct KnownPaneSurfaceVersion<'a> {
+pub struct KnownPaneViewportVersion<'a> {
   pub _tab: ::flatbuffers::Table<'a>,
 }
 
-impl<'a> ::flatbuffers::Follow<'a> for KnownPaneSurfaceVersion<'a> {
-  type Inner = KnownPaneSurfaceVersion<'a>;
+impl<'a> ::flatbuffers::Follow<'a> for KnownPaneViewportVersion<'a> {
+  type Inner = KnownPaneViewportVersion<'a>;
   #[inline]
   unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
     Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
   }
 }
 
-impl<'a> KnownPaneSurfaceVersion<'a> {
+impl<'a> KnownPaneViewportVersion<'a> {
   pub const VT_PANE_ID: ::flatbuffers::VOffsetT = 4;
   pub const VT_VERSION: ::flatbuffers::VOffsetT = 6;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
-    KnownPaneSurfaceVersion { _tab: table }
+    KnownPaneViewportVersion { _tab: table }
   }
   #[allow(unused_mut)]
   pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
     _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
-    args: &'args KnownPaneSurfaceVersionArgs<'args>
-  ) -> ::flatbuffers::WIPOffset<KnownPaneSurfaceVersion<'bldr>> {
-    let mut builder = KnownPaneSurfaceVersionBuilder::new(_fbb);
+    args: &'args KnownPaneViewportVersionArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<KnownPaneViewportVersion<'bldr>> {
+    let mut builder = KnownPaneViewportVersionBuilder::new(_fbb);
     builder.add_version(args.version);
     if let Some(x) = args.pane_id { builder.add_pane_id(x); }
     builder.finish()
@@ -7745,18 +7624,18 @@ impl<'a> KnownPaneSurfaceVersion<'a> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(KnownPaneSurfaceVersion::VT_PANE_ID, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(KnownPaneViewportVersion::VT_PANE_ID, None)}
   }
   #[inline]
   pub fn version(&self) -> u64 {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<u64>(KnownPaneSurfaceVersion::VT_VERSION, Some(0)).unwrap()}
+    unsafe { self._tab.get::<u64>(KnownPaneViewportVersion::VT_VERSION, Some(0)).unwrap()}
   }
 }
 
-impl ::flatbuffers::Verifiable for KnownPaneSurfaceVersion<'_> {
+impl ::flatbuffers::Verifiable for KnownPaneViewportVersion<'_> {
   #[inline]
   fn run_verifier(
     v: &mut ::flatbuffers::Verifier, pos: usize
@@ -7768,51 +7647,51 @@ impl ::flatbuffers::Verifiable for KnownPaneSurfaceVersion<'_> {
     Ok(())
   }
 }
-pub struct KnownPaneSurfaceVersionArgs<'a> {
+pub struct KnownPaneViewportVersionArgs<'a> {
     pub pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub version: u64,
 }
-impl<'a> Default for KnownPaneSurfaceVersionArgs<'a> {
+impl<'a> Default for KnownPaneViewportVersionArgs<'a> {
   #[inline]
   fn default() -> Self {
-    KnownPaneSurfaceVersionArgs {
+    KnownPaneViewportVersionArgs {
       pane_id: None,
       version: 0,
     }
   }
 }
 
-pub struct KnownPaneSurfaceVersionBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+pub struct KnownPaneViewportVersionBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
   fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
   start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
 }
-impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> KnownPaneSurfaceVersionBuilder<'a, 'b, A> {
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> KnownPaneViewportVersionBuilder<'a, 'b, A> {
   #[inline]
   pub fn add_pane_id(&mut self, pane_id: ::flatbuffers::WIPOffset<&'b  str>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(KnownPaneSurfaceVersion::VT_PANE_ID, pane_id);
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(KnownPaneViewportVersion::VT_PANE_ID, pane_id);
   }
   #[inline]
   pub fn add_version(&mut self, version: u64) {
-    self.fbb_.push_slot::<u64>(KnownPaneSurfaceVersion::VT_VERSION, version, 0);
+    self.fbb_.push_slot::<u64>(KnownPaneViewportVersion::VT_VERSION, version, 0);
   }
   #[inline]
-  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> KnownPaneSurfaceVersionBuilder<'a, 'b, A> {
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> KnownPaneViewportVersionBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
-    KnownPaneSurfaceVersionBuilder {
+    KnownPaneViewportVersionBuilder {
       fbb_: _fbb,
       start_: start,
     }
   }
   #[inline]
-  pub fn finish(self) -> ::flatbuffers::WIPOffset<KnownPaneSurfaceVersion<'a>> {
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<KnownPaneViewportVersion<'a>> {
     let o = self.fbb_.end_table(self.start_);
     ::flatbuffers::WIPOffset::new(o.value())
   }
 }
 
-impl ::core::fmt::Debug for KnownPaneSurfaceVersion<'_> {
+impl ::core::fmt::Debug for KnownPaneViewportVersion<'_> {
   fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-    let mut ds = f.debug_struct("KnownPaneSurfaceVersion");
+    let mut ds = f.debug_struct("KnownPaneViewportVersion");
       ds.field("pane_id", &self.pane_id());
       ds.field("version", &self.version());
       ds.finish()
@@ -7839,7 +7718,7 @@ impl<'a> AttachRequest<'a> {
   pub const VT_DISPLAY_NAME: ::flatbuffers::VOffsetT = 8;
   pub const VT_MODE: ::flatbuffers::VOffsetT = 10;
   pub const VT_FOCUSED_PANE_ID: ::flatbuffers::VOffsetT = 12;
-  pub const VT_KNOWN_SURFACES: ::flatbuffers::VOffsetT = 14;
+  pub const VT_KNOWN_VIEWPORTS: ::flatbuffers::VOffsetT = 14;
   pub const VT_HOSTNAME: ::flatbuffers::VOffsetT = 16;
   pub const VT_CLIENT_KIND: ::flatbuffers::VOffsetT = 18;
   pub const VT_SUBSCRIBE_CLIENT_INVENTORY: ::flatbuffers::VOffsetT = 20;
@@ -7856,7 +7735,7 @@ impl<'a> AttachRequest<'a> {
     let mut builder = AttachRequestBuilder::new(_fbb);
     if let Some(x) = args.client_kind { builder.add_client_kind(x); }
     if let Some(x) = args.hostname { builder.add_hostname(x); }
-    if let Some(x) = args.known_surfaces { builder.add_known_surfaces(x); }
+    if let Some(x) = args.known_viewports { builder.add_known_viewports(x); }
     if let Some(x) = args.focused_pane_id { builder.add_focused_pane_id(x); }
     if let Some(x) = args.display_name { builder.add_display_name(x); }
     if let Some(x) = args.user_id { builder.add_user_id(x); }
@@ -7903,11 +7782,11 @@ impl<'a> AttachRequest<'a> {
     unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(AttachRequest::VT_FOCUSED_PANE_ID, None)}
   }
   #[inline]
-  pub fn known_surfaces(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion<'a>>>> {
+  pub fn known_viewports(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneViewportVersion<'a>>>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion>>>>(AttachRequest::VT_KNOWN_SURFACES, None)}
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneViewportVersion>>>>(AttachRequest::VT_KNOWN_VIEWPORTS, None)}
   }
   #[inline]
   pub fn hostname(&self) -> Option<&'a str> {
@@ -7943,7 +7822,7 @@ impl ::flatbuffers::Verifiable for AttachRequest<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("display_name", Self::VT_DISPLAY_NAME, false)?
      .visit_field::<AttachMode>("mode", Self::VT_MODE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("focused_pane_id", Self::VT_FOCUSED_PANE_ID, false)?
-     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion>>>>("known_surfaces", Self::VT_KNOWN_SURFACES, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<KnownPaneViewportVersion>>>>("known_viewports", Self::VT_KNOWN_VIEWPORTS, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("hostname", Self::VT_HOSTNAME, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("client_kind", Self::VT_CLIENT_KIND, false)?
      .visit_field::<bool>("subscribe_client_inventory", Self::VT_SUBSCRIBE_CLIENT_INVENTORY, false)?
@@ -7957,7 +7836,7 @@ pub struct AttachRequestArgs<'a> {
     pub display_name: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub mode: AttachMode,
     pub focused_pane_id: Option<::flatbuffers::WIPOffset<&'a str>>,
-    pub known_surfaces: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion<'a>>>>>,
+    pub known_viewports: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<KnownPaneViewportVersion<'a>>>>>,
     pub hostname: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub client_kind: Option<::flatbuffers::WIPOffset<&'a str>>,
     pub subscribe_client_inventory: bool,
@@ -7971,7 +7850,7 @@ impl<'a> Default for AttachRequestArgs<'a> {
       display_name: None,
       mode: AttachMode::ReadOnly,
       focused_pane_id: None,
-      known_surfaces: None,
+      known_viewports: None,
       hostname: None,
       client_kind: None,
       subscribe_client_inventory: false,
@@ -8005,8 +7884,8 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> AttachRequestBuilder<'a, 'b, 
     self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_FOCUSED_PANE_ID, focused_pane_id);
   }
   #[inline]
-  pub fn add_known_surfaces(&mut self, known_surfaces: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<KnownPaneSurfaceVersion<'b >>>>) {
-    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_KNOWN_SURFACES, known_surfaces);
+  pub fn add_known_viewports(&mut self, known_viewports: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<KnownPaneViewportVersion<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(AttachRequest::VT_KNOWN_VIEWPORTS, known_viewports);
   }
   #[inline]
   pub fn add_hostname(&mut self, hostname: ::flatbuffers::WIPOffset<&'b  str>) {
@@ -8043,7 +7922,7 @@ impl ::core::fmt::Debug for AttachRequest<'_> {
       ds.field("display_name", &self.display_name());
       ds.field("mode", &self.mode());
       ds.field("focused_pane_id", &self.focused_pane_id());
-      ds.field("known_surfaces", &self.known_surfaces());
+      ds.field("known_viewports", &self.known_viewports());
       ds.field("hostname", &self.hostname());
       ds.field("client_kind", &self.client_kind());
       ds.field("subscribe_client_inventory", &self.subscribe_client_inventory());
@@ -8300,13 +8179,13 @@ impl<'a> Envelope<'a> {
 
   #[inline]
   #[allow(non_snake_case)]
-  pub fn body_as_pane_surface_snapshot(&self) -> Option<PaneSurfaceSnapshot<'a>> {
-    if self.body_type() == EnvelopeBody::PaneSurfaceSnapshot {
+  pub fn body_as_pane_viewport_snapshot(&self) -> Option<PaneViewportSnapshot<'a>> {
+    if self.body_type() == EnvelopeBody::PaneViewportSnapshot {
       self.body().map(|t| {
        // Safety:
        // Created from a valid Table for this object
        // Which contains a valid union in this slot
-       unsafe { PaneSurfaceSnapshot::init_from_table(t) }
+       unsafe { PaneViewportSnapshot::init_from_table(t) }
      })
     } else {
       None
@@ -8315,13 +8194,13 @@ impl<'a> Envelope<'a> {
 
   #[inline]
   #[allow(non_snake_case)]
-  pub fn body_as_pane_surface_patch(&self) -> Option<PaneSurfacePatch<'a>> {
-    if self.body_type() == EnvelopeBody::PaneSurfacePatch {
+  pub fn body_as_pane_viewport_patch(&self) -> Option<PaneViewportPatch<'a>> {
+    if self.body_type() == EnvelopeBody::PaneViewportPatch {
       self.body().map(|t| {
        // Safety:
        // Created from a valid Table for this object
        // Which contains a valid union in this slot
-       unsafe { PaneSurfacePatch::init_from_table(t) }
+       unsafe { PaneViewportPatch::init_from_table(t) }
      })
     } else {
       None
@@ -8375,28 +8254,13 @@ impl<'a> Envelope<'a> {
 
   #[inline]
   #[allow(non_snake_case)]
-  pub fn body_as_scrollback_fetch(&self) -> Option<ScrollbackFetch<'a>> {
-    if self.body_type() == EnvelopeBody::ScrollbackFetch {
+  pub fn body_as_pane_viewport_intent(&self) -> Option<PaneViewportIntent<'a>> {
+    if self.body_type() == EnvelopeBody::PaneViewportIntent {
       self.body().map(|t| {
        // Safety:
        // Created from a valid Table for this object
        // Which contains a valid union in this slot
-       unsafe { ScrollbackFetch::init_from_table(t) }
-     })
-    } else {
-      None
-    }
-  }
-
-  #[inline]
-  #[allow(non_snake_case)]
-  pub fn body_as_scrollback_chunk(&self) -> Option<ScrollbackChunk<'a>> {
-    if self.body_type() == EnvelopeBody::ScrollbackChunk {
-      self.body().map(|t| {
-       // Safety:
-       // Created from a valid Table for this object
-       // Which contains a valid union in this slot
-       unsafe { ScrollbackChunk::init_from_table(t) }
+       unsafe { PaneViewportIntent::init_from_table(t) }
      })
     } else {
       None
@@ -8555,13 +8419,12 @@ impl ::flatbuffers::Verifiable for Envelope<'_> {
      .visit_union::<EnvelopeBody, _>("body_type", Self::VT_BODY_TYPE, "body", Self::VT_BODY, false, |key, v, pos| {
         match key {
           EnvelopeBody::WorkspaceTreeSnapshot => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<WorkspaceTreeSnapshot>>("EnvelopeBody::WorkspaceTreeSnapshot", pos),
-          EnvelopeBody::PaneSurfaceSnapshot => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<PaneSurfaceSnapshot>>("EnvelopeBody::PaneSurfaceSnapshot", pos),
-          EnvelopeBody::PaneSurfacePatch => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<PaneSurfacePatch>>("EnvelopeBody::PaneSurfacePatch", pos),
+          EnvelopeBody::PaneViewportSnapshot => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<PaneViewportSnapshot>>("EnvelopeBody::PaneViewportSnapshot", pos),
+          EnvelopeBody::PaneViewportPatch => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<PaneViewportPatch>>("EnvelopeBody::PaneViewportPatch", pos),
           EnvelopeBody::InputEvent => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<InputEvent>>("EnvelopeBody::InputEvent", pos),
           EnvelopeBody::ResizeIntent => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ResizeIntent>>("EnvelopeBody::ResizeIntent", pos),
           EnvelopeBody::Error => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<Error>>("EnvelopeBody::Error", pos),
-          EnvelopeBody::ScrollbackFetch => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ScrollbackFetch>>("EnvelopeBody::ScrollbackFetch", pos),
-          EnvelopeBody::ScrollbackChunk => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<ScrollbackChunk>>("EnvelopeBody::ScrollbackChunk", pos),
+          EnvelopeBody::PaneViewportIntent => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<PaneViewportIntent>>("EnvelopeBody::PaneViewportIntent", pos),
           EnvelopeBody::PresenceUpdate => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<PresenceUpdate>>("EnvelopeBody::PresenceUpdate", pos),
           EnvelopeBody::AttachRequest => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<AttachRequest>>("EnvelopeBody::AttachRequest", pos),
           EnvelopeBody::AttachStatus => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<AttachStatus>>("EnvelopeBody::AttachStatus", pos),
@@ -8674,15 +8537,15 @@ impl ::core::fmt::Debug for Envelope<'_> {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
           }
         },
-        EnvelopeBody::PaneSurfaceSnapshot => {
-          if let Some(x) = self.body_as_pane_surface_snapshot() {
+        EnvelopeBody::PaneViewportSnapshot => {
+          if let Some(x) = self.body_as_pane_viewport_snapshot() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
           }
         },
-        EnvelopeBody::PaneSurfacePatch => {
-          if let Some(x) = self.body_as_pane_surface_patch() {
+        EnvelopeBody::PaneViewportPatch => {
+          if let Some(x) = self.body_as_pane_viewport_patch() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
@@ -8709,15 +8572,8 @@ impl ::core::fmt::Debug for Envelope<'_> {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
           }
         },
-        EnvelopeBody::ScrollbackFetch => {
-          if let Some(x) = self.body_as_scrollback_fetch() {
-            ds.field("body", &x)
-          } else {
-            ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")
-          }
-        },
-        EnvelopeBody::ScrollbackChunk => {
-          if let Some(x) = self.body_as_scrollback_chunk() {
+        EnvelopeBody::PaneViewportIntent => {
+          if let Some(x) = self.body_as_pane_viewport_intent() {
             ds.field("body", &x)
           } else {
             ds.field("body", &"InvalidFlatbuffer: Union discriminant does not match value.")

@@ -11,8 +11,8 @@ use flatbuffers::FlatBufferBuilder;
 use nmux_core::host::{HostError, ProcessHost, ProcessOutput};
 use nmux_core::session::{
     Actor, AttachMode, ErrorRetryability, FocusInputSpec, InputFrameContext, MouseInputSpec,
-    PasteInputSpec, PendingSessionEvent, ScrollbackFetchSpec, ScrollbackRange, Session,
-    SessionActor, SessionEvent, SessionEventLane,
+    PaneViewportIntentSpec, PasteInputSpec, PendingSessionEvent, ScrollbackFetchSpec,
+    ScrollbackRange, Session, SessionActor, SessionEvent, SessionEventLane,
 };
 use nmux_core::terminal::{
     KeyTerminalInput, MouseAction, MouseButton, MouseTerminalInput, PaneTerminalEngines,
@@ -21,6 +21,7 @@ use nmux_core::terminal::{
 use nmux_proto::{PROTOCOL_VERSION, protocol, wire};
 use tracing::{Span, instrument};
 
+use crate::bug_report;
 use crate::error::ServeError;
 
 pub use crate::build_info::BuildInfo;
@@ -59,11 +60,10 @@ use surface::{
     render_run_summaries, required_string, row_runs_for_text, terminal_colors_have_palette_diff,
     validate_attach_surface_update, validate_cached_row_hyperlink_ids,
     validate_cached_row_style_ids, validate_cell_run_hyperlink_ids,
-    validate_cell_run_semantic_content, validate_cell_run_style_ids, validate_cursor_summary,
-    validate_hyperlink_table, validate_no_row_patch_payload, validate_palette_diff_scope,
-    validate_patch_kind, validate_row_semantic_prompt, validate_row_update_hyperlink_ids,
-    validate_row_update_style_ids, validate_row_update_terminal_enums, validate_surface_kind,
-    validate_terminal_mode_summary,
+    validate_cell_run_semantic_content, validate_cursor_summary, validate_hyperlink_table,
+    validate_no_row_patch_payload, validate_palette_diff_scope, validate_patch_kind,
+    validate_row_semantic_prompt, validate_row_update_hyperlink_ids,
+    validate_row_update_terminal_enums, validate_surface_kind, validate_terminal_mode_summary,
 };
 
 const ATTACH_MAX_FRAME_LEN: usize = 64 * 1024;
@@ -73,7 +73,7 @@ const LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT: Duration = Duration::from_millis(20)
 const LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_HOST_OUTPUT_POLL_DEADLINE: Duration = Duration::from_millis(120);
 const LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT: Duration = Duration::ZERO;
-const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(100);
+const LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT: Duration = LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT;
 const LIVE_POST_INPUT_COALESCE_DEADLINE: Duration = Duration::from_millis(250);
 const PANE_OUTPUT_HANDOFF_CHUNK_BYTES: usize = 4096;
 const PANE_OUTPUT_HANDOFF_MAX_CHUNKS: usize = 16;
@@ -152,6 +152,23 @@ impl ConnectionLimit {
             Self::Unbounded => true,
         }
     }
+}
+
+fn live_idle_poll_timeout(
+    connection_limit: ConnectionLimit,
+    cycles_per_client: usize,
+) -> Option<Duration> {
+    if matches!(connection_limit, ConnectionLimit::Unbounded) && cycles_per_client == usize::MAX {
+        None
+    } else {
+        Some(LIVE_IDLE_POLL_TIMEOUT)
+    }
+}
+
+fn poll_timeout_ms(timeout: Option<Duration>) -> libc::c_int {
+    timeout.map_or(-1, |timeout| {
+        timeout.as_millis().min(i32::MAX as u128) as libc::c_int
+    })
 }
 
 impl ServeConfig {
@@ -535,14 +552,11 @@ where
     let inventory_started_at = Instant::now();
     let mut inventory_version = 0_u64;
     let mut next_connection_id = 1_u64;
+    let idle_poll_timeout = live_idle_poll_timeout(connection_limit, cycles_per_client);
 
     while connection_limit.accepts_more(accepted_clients) || !clients.is_empty() {
-        let readiness = poll_live_concurrent_sources(
-            listener,
-            &clients,
-            host.notify_fd(),
-            LIVE_IDLE_POLL_TIMEOUT,
-        )?;
+        let readiness =
+            poll_live_concurrent_sources(listener, &clients, host.notify_fd(), idle_poll_timeout)?;
         if let Some(notify_fd) = host.notify_fd()
             && readiness.host_output
         {
@@ -754,7 +768,7 @@ where
                 listener,
                 &clients,
                 Some(notify_fd),
-                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+                Some(LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT),
             )?;
             if readiness.host_output {
                 drain_notify_fd(notify_fd)?;
@@ -858,7 +872,7 @@ where
         }
 
         let quiet_timeout = if had_input {
-            LIVE_POST_INPUT_POLL_TIMEOUT
+            LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
@@ -984,14 +998,11 @@ where
     let mut inventory_version = 0_u64;
     let mut next_connection_id = 1_u64;
     let async_runtime = LiveAsyncRuntime::new()?;
+    let idle_poll_timeout = live_idle_poll_timeout(connection_limit, cycles_per_client);
 
     while connection_limit.accepts_more(accepted_clients) || !clients.is_empty() {
-        let readiness = poll_live_concurrent_sources(
-            listener,
-            &clients,
-            host.notify_fd(),
-            LIVE_IDLE_POLL_TIMEOUT,
-        )?;
+        let readiness =
+            poll_live_concurrent_sources(listener, &clients, host.notify_fd(), idle_poll_timeout)?;
         if let Some(notify_fd) = host.notify_fd()
             && readiness.host_output
         {
@@ -1218,7 +1229,7 @@ where
                 listener,
                 &clients,
                 Some(notify_fd),
-                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+                Some(LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT),
             )?;
             if readiness.host_output {
                 drain_notify_fd(notify_fd)?;
@@ -1321,7 +1332,7 @@ where
         }
 
         let quiet_timeout = if had_input {
-            LIVE_POST_INPUT_POLL_TIMEOUT
+            LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
@@ -1485,7 +1496,7 @@ struct LiveAttachedClient {
     last_seen_mono_ms: u64,
     last_input_mono_ms: Option<u64>,
     seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
     frontend_resize_constraints: BTreeMap<String, (u32, u32)>,
     completed_cycles: usize,
 }
@@ -1591,14 +1602,14 @@ fn signal_changed_surface_frames_to_live_client(
             session,
             &mut client.seq,
             pane_ids,
-            &mut client.known_surface_versions,
+            &mut client.known_viewport_versions,
         ),
         LiveClientTransport::Async { output, .. } => {
             for pane_id in pane_ids {
                 let Some(current) = session.surface_version(pane_id) else {
                     continue;
                 };
-                if client.known_surface_versions.get(pane_id).copied() == Some(current) {
+                if client.known_viewport_versions.get(pane_id).copied() == Some(current) {
                     continue;
                 }
                 let Some(bundle) = surface_frame_bundle_for_pane(session, pane_id, client.seq)
@@ -1615,7 +1626,7 @@ fn signal_changed_surface_frames_to_live_client(
                     .map_err(live_client_output_error)?;
                 client.seq += 1;
                 client
-                    .known_surface_versions
+                    .known_viewport_versions
                     .insert(pane_id.clone(), current);
             }
             Ok(())
@@ -1790,15 +1801,15 @@ fn smallest_read_write_frontend_resize(
 fn async_live_client_transport(
     stream: UnixStream,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
 ) -> Result<LiveClientTransport, ServeError> {
-    async_live_client_transport_with_runtime(stream, next_seq, known_surface_versions, None)
+    async_live_client_transport_with_runtime(stream, next_seq, known_viewport_versions, None)
 }
 
 fn async_live_client_transport_with_runtime(
     stream: UnixStream,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
     runtime: Option<&LiveAsyncRuntime>,
 ) -> Result<LiveClientTransport, ServeError> {
     let read_stream = stream.try_clone()?;
@@ -1821,7 +1832,7 @@ fn async_live_client_transport_with_runtime(
             input_tx,
             output_rx,
             next_seq,
-            known_surface_versions,
+            known_viewport_versions,
         )?;
     } else {
         spawn_async_live_client_tasks(
@@ -1830,7 +1841,7 @@ fn async_live_client_transport_with_runtime(
             input_tx,
             output_rx,
             next_seq,
-            known_surface_versions,
+            known_viewport_versions,
         );
     }
     Ok(LiveClientTransport::Async {
@@ -1850,7 +1861,7 @@ struct LiveAsyncClientTask {
     input_tx: async_live::AsyncClientInputTx,
     output_rx: async_live::AsyncClientOutputRx,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
 }
 
 impl LiveAsyncRuntime {
@@ -1880,7 +1891,7 @@ impl LiveAsyncRuntime {
                             task.input_tx,
                             task.output_rx,
                             task.next_seq,
-                            task.known_surface_versions,
+                            task.known_viewport_versions,
                         )
                         .await
                         {
@@ -1904,7 +1915,7 @@ impl LiveAsyncRuntime {
         input_tx: async_live::AsyncClientInputTx,
         output_rx: async_live::AsyncClientOutputRx,
         next_seq: u64,
-        known_surface_versions: BTreeMap<String, u64>,
+        known_viewport_versions: BTreeMap<String, u64>,
     ) -> Result<(), ServeError> {
         self.task_tx
             .send(LiveAsyncClientTask {
@@ -1913,7 +1924,7 @@ impl LiveAsyncRuntime {
                 input_tx,
                 output_rx,
                 next_seq,
-                known_surface_versions,
+                known_viewport_versions,
             })
             .map_err(|_| "shared async live runtime stopped".into())
     }
@@ -1925,7 +1936,7 @@ fn spawn_async_live_client_tasks(
     input_tx: async_live::AsyncClientInputTx,
     output_rx: async_live::AsyncClientOutputRx,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
 ) {
     thread::spawn(move || {
         if let Err(err) = run_async_live_client_tasks(
@@ -1934,7 +1945,7 @@ fn spawn_async_live_client_tasks(
             input_tx,
             output_rx,
             next_seq,
-            known_surface_versions,
+            known_viewport_versions,
         ) {
             tracing::debug!(error = %err, "async live client task exited");
         }
@@ -1947,7 +1958,7 @@ fn run_async_live_client_tasks(
     input_tx: async_live::AsyncClientInputTx,
     output_rx: async_live::AsyncClientOutputRx,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
 ) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -1959,7 +1970,7 @@ fn run_async_live_client_tasks(
         input_tx,
         output_rx,
         next_seq,
-        known_surface_versions,
+        known_viewport_versions,
     ))
 }
 
@@ -1969,14 +1980,14 @@ async fn run_async_live_client_tasks_on_runtime(
     input_tx: async_live::AsyncClientInputTx,
     output_rx: async_live::AsyncClientOutputRx,
     next_seq: u64,
-    known_surface_versions: BTreeMap<String, u64>,
+    known_viewport_versions: BTreeMap<String, u64>,
 ) -> Result<(), String> {
     let reader = tokio::net::UnixStream::from_std(read_stream)
         .map_err(|err| format!("failed to register live client reader: {err}"))?;
     let writer = tokio::net::UnixStream::from_std(write_stream)
         .map_err(|err| format!("failed to register live client writer: {err}"))?;
     let mut surface_source = BundledSurfaceFrameSource;
-    let mut state = async_live::ClientWriteTaskState::new(next_seq, known_surface_versions);
+    let mut state = async_live::ClientWriteTaskState::new(next_seq, known_viewport_versions);
 
     tokio::select! {
         result = async_live::run_client_read_task(reader, input_tx) => {
@@ -2048,7 +2059,7 @@ fn accept_live_client(
                 last_seen_mono_ms: now_mono_ms,
                 last_input_mono_ms: None,
                 seq,
-                known_surface_versions: BTreeMap::new(),
+                known_viewport_versions: BTreeMap::new(),
                 frontend_resize_constraints: BTreeMap::new(),
                 completed_cycles: usize::MAX,
             })));
@@ -2058,11 +2069,11 @@ fn accept_live_client(
         }
         let mut seq = 1;
         write_live_attach_initial(&mut stream, session, &request, &pane_id, &mut seq)?;
-        let mut known_surface_versions = known_surface_versions_from_request(&request);
+        let mut known_viewport_versions = known_viewport_versions_from_request(&request);
         if let Some(current) = session.surface_version(&pane_id) {
-            known_surface_versions.insert(pane_id, current);
+            known_viewport_versions.insert(pane_id, current);
         }
-        let transport = async_live_client_transport(stream, seq, known_surface_versions.clone())?;
+        let transport = async_live_client_transport(stream, seq, known_viewport_versions.clone())?;
         return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
             transport,
             connection_id,
@@ -2074,7 +2085,7 @@ fn accept_live_client(
             last_seen_mono_ms: now_mono_ms,
             last_input_mono_ms: None,
             seq,
-            known_surface_versions,
+            known_viewport_versions,
             frontend_resize_constraints: BTreeMap::new(),
             completed_cycles: 0,
         })));
@@ -2093,7 +2104,7 @@ fn accept_live_client(
         last_seen_mono_ms: now_mono_ms,
         last_input_mono_ms: None,
         seq,
-        known_surface_versions: BTreeMap::new(),
+        known_viewport_versions: BTreeMap::new(),
         frontend_resize_constraints: BTreeMap::new(),
         completed_cycles: usize::MAX,
     })))
@@ -2169,7 +2180,7 @@ fn accept_live_client_with_session_actor(
                 last_seen_mono_ms: now_mono_ms,
                 last_input_mono_ms: None,
                 seq,
-                known_surface_versions: BTreeMap::new(),
+                known_viewport_versions: BTreeMap::new(),
                 frontend_resize_constraints: BTreeMap::new(),
                 completed_cycles: usize::MAX,
             })));
@@ -2178,18 +2189,18 @@ fn accept_live_client_with_session_actor(
             drain_notify_fd(notify_fd)?;
         }
         let mut seq = 1;
-        let mut known_surface_versions = known_surface_versions_from_request(&request);
+        let mut known_viewport_versions = known_viewport_versions_from_request(&request);
         {
             let session = actor.session();
             write_live_attach_initial(&mut stream, session, &request, &pane_id, &mut seq)?;
             if let Some(current) = session.surface_version(&pane_id) {
-                known_surface_versions.insert(pane_id, current);
+                known_viewport_versions.insert(pane_id, current);
             }
         }
         let transport = async_live_client_transport_with_runtime(
             stream,
             seq,
-            known_surface_versions.clone(),
+            known_viewport_versions.clone(),
             async_runtime,
         )?;
         return Ok(Some(LiveClientAccept::Attached(LiveAttachedClient {
@@ -2203,7 +2214,7 @@ fn accept_live_client_with_session_actor(
             last_seen_mono_ms: now_mono_ms,
             last_input_mono_ms: None,
             seq,
-            known_surface_versions,
+            known_viewport_versions,
             frontend_resize_constraints: BTreeMap::new(),
             completed_cycles: 0,
         })));
@@ -2222,7 +2233,7 @@ fn accept_live_client_with_session_actor(
         last_seen_mono_ms: now_mono_ms,
         last_input_mono_ms: None,
         seq,
-        known_surface_versions: BTreeMap::new(),
+        known_viewport_versions: BTreeMap::new(),
         frontend_resize_constraints: BTreeMap::new(),
         completed_cycles: usize::MAX,
     })))
@@ -2248,11 +2259,7 @@ fn write_live_attach_initial(
     let surface_frame = response
         .as_ref()
         .and_then(|response| surface_response_frame(session, pane_id, *response, *seq + 1));
-    let surface_state = if surface_frame.is_some() {
-        attach_surface_state(response)
-    } else {
-        protocol::AttachSurfaceState::Current
-    };
+    let surface_state = attach_surface_state(response);
     let status_frame = session.attach_status_frame("local-client", *seq, pane_id, surface_state);
     wire::write_default_frame(stream, &status_frame)?;
     *seq += 1;
@@ -2328,6 +2335,9 @@ fn read_live_client_frame(client: &mut LiveAttachedClient) -> Result<LiveClientR
         Ok(async_live::ClientInputEvent::Scrollback(fetch)) => {
             Ok(LiveClientRead::Frame(LiveClientFrame::Scrollback(fetch)))
         }
+        Ok(async_live::ClientInputEvent::Viewport(intent)) => {
+            Ok(LiveClientRead::Frame(LiveClientFrame::Viewport(intent)))
+        }
         Ok(async_live::ClientInputEvent::Ping(ping)) => {
             Ok(LiveClientRead::Frame(LiveClientFrame::Ping(ping)))
         }
@@ -2378,6 +2388,28 @@ fn drain_live_client_frames(
                     return Ok(ClientDrainStatus::Closed);
                 };
                 queue_reliable_frame_to_live_client(client, chunk)?;
+            }
+            LiveClientRead::Frame(LiveClientFrame::Viewport(intent)) => {
+                client.last_seen_mono_ms = now_mono_ms;
+                if let Some(error) = pane_viewport_intent_error_code(session, &intent) {
+                    queue_pane_viewport_intent_error_to_live_client(
+                        client, session, &intent, error,
+                    )?;
+                    if error == protocol::ErrorCode::StaleVersion {
+                        continue;
+                    }
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                let Some(frame) = session.pane_viewport_frame_for_pane(
+                    "local-client",
+                    client.seq,
+                    &intent.pane_id,
+                    intent.spec(),
+                ) else {
+                    queue_pane_not_found_error_to_live_client(client, session, &intent.pane_id, 0)?;
+                    return Ok(ClientDrainStatus::Closed);
+                };
+                queue_reliable_frame_to_live_client(client, frame)?;
             }
             LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                 client.last_seen_mono_ms = now_mono_ms;
@@ -2505,6 +2537,29 @@ fn drain_live_client_frames_with_session_actor(
                     return Ok(ClientDrainStatus::Closed);
                 };
                 queue_reliable_frame_to_live_client(client, chunk)?;
+            }
+            LiveClientRead::Frame(LiveClientFrame::Viewport(intent)) => {
+                client.last_seen_mono_ms = now_mono_ms;
+                let session = actor.session();
+                if let Some(error) = pane_viewport_intent_error_code(session, &intent) {
+                    queue_pane_viewport_intent_error_to_live_client(
+                        client, session, &intent, error,
+                    )?;
+                    if error == protocol::ErrorCode::StaleVersion {
+                        continue;
+                    }
+                    return Ok(ClientDrainStatus::Closed);
+                }
+                let Some(frame) = session.pane_viewport_frame_for_pane(
+                    "local-client",
+                    client.seq,
+                    &intent.pane_id,
+                    intent.spec(),
+                ) else {
+                    queue_pane_not_found_error_to_live_client(client, session, &intent.pane_id, 0)?;
+                    return Ok(ClientDrainStatus::Closed);
+                };
+                queue_reliable_frame_to_live_client(client, frame)?;
             }
             LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
                 client.last_seen_mono_ms = now_mono_ms;
@@ -2858,9 +2913,9 @@ fn poll_live_concurrent_sources(
     listener: &UnixListener,
     clients: &[LiveAttachedClient],
     notify_fd: Option<std::os::fd::RawFd>,
-    timeout: Duration,
+    timeout: Option<Duration>,
 ) -> io::Result<LiveConcurrentReadiness> {
-    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let timeout_ms = poll_timeout_ms(timeout);
     let mut fds = Vec::with_capacity(1 + clients.len() + usize::from(notify_fd.is_some()));
     fds.push(libc::pollfd {
         fd: listener.as_raw_fd(),
@@ -3079,16 +3134,16 @@ fn serve_live_attached_client(
         return Ok(());
     };
     let leaf_pane_ids = session.leaf_pane_ids();
-    let mut known_surface_versions = known_surface_versions_from_request(&request);
+    let mut known_viewport_versions = known_viewport_versions_from_request(&request);
     if let Some(current) = session.surface_version(&pane_id) {
-        known_surface_versions.insert(pane_id.clone(), current);
+        known_viewport_versions.insert(pane_id.clone(), current);
     }
 
     let mut completed_cycles = 0;
     while completed_cycles < cycles {
         let mut count_cycle = false;
         let mut readiness =
-            poll_live_client_sources(stream, host.notify_fd(), LIVE_IDLE_POLL_TIMEOUT)?;
+            poll_live_client_sources(stream, host.notify_fd(), Some(LIVE_IDLE_POLL_TIMEOUT))?;
         if let Some(notify_fd) = host.notify_fd()
             && readiness.host_output
         {
@@ -3096,7 +3151,7 @@ fn serve_live_attached_client(
         }
         if readiness.host_output && !readiness.client_input {
             let client_readiness =
-                poll_live_client_sources(stream, None, LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT)?;
+                poll_live_client_sources(stream, None, Some(LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT))?;
             readiness.client_input = client_readiness.client_input;
         }
 
@@ -3124,6 +3179,29 @@ fn serve_live_attached_client(
                             return Ok(());
                         };
                         wire::write_default_frame(stream, &chunk)?;
+                        seq += 1;
+                    }
+                    LiveClientRead::Frame(LiveClientFrame::Viewport(intent)) => {
+                        count_cycle = false;
+                        if let Some(error) = pane_viewport_intent_error_code(session, &intent) {
+                            write_pane_viewport_intent_error(
+                                stream, session, &mut seq, &intent, error,
+                            )?;
+                            if error == protocol::ErrorCode::StaleVersion {
+                                continue;
+                            }
+                            return Ok(());
+                        }
+                        let Some(frame) = session.pane_viewport_frame_for_pane(
+                            "local-client",
+                            seq,
+                            &intent.pane_id,
+                            intent.spec(),
+                        ) else {
+                            write_pane_not_found_error(stream, session, &mut seq, &intent.pane_id)?;
+                            return Ok(());
+                        };
+                        wire::write_default_frame(stream, &frame)?;
                         seq += 1;
                     }
                     LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
@@ -3277,7 +3355,7 @@ fn serve_live_attached_client(
             let readiness = poll_live_client_sources(
                 stream,
                 Some(notify_fd),
-                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+                Some(LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT),
             )?;
             if readiness.host_output {
                 drain_notify_fd(notify_fd)?;
@@ -3331,7 +3409,7 @@ fn serve_live_attached_client(
                                 session,
                                 &mut seq,
                                 &leaf_pane_ids,
-                                &mut known_surface_versions,
+                                &mut known_viewport_versions,
                             )
                         })?;
                     }
@@ -3346,7 +3424,7 @@ fn serve_live_attached_client(
         }
 
         let quiet_timeout = if input_pane_id.is_some() {
-            LIVE_POST_INPUT_POLL_TIMEOUT
+            LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
@@ -3416,7 +3494,7 @@ fn serve_live_attached_client(
                 session,
                 &mut seq,
                 &leaf_pane_ids,
-                &mut known_surface_versions,
+                &mut known_viewport_versions,
             )
         })?;
         let host_completion = readiness.host_output && actor.mode == AttachMode::ReadOnly;
@@ -3444,16 +3522,16 @@ fn serve_live_attached_client_with_session_actor(
         return Ok(());
     };
     let leaf_pane_ids = actor.session().leaf_pane_ids();
-    let mut known_surface_versions = known_surface_versions_from_request(&request);
+    let mut known_viewport_versions = known_viewport_versions_from_request(&request);
     if let Some(current) = actor.session().surface_version(&pane_id) {
-        known_surface_versions.insert(pane_id.clone(), current);
+        known_viewport_versions.insert(pane_id.clone(), current);
     }
 
     let mut completed_cycles = 0;
     while completed_cycles < cycles {
         let mut count_cycle = false;
         let mut readiness =
-            poll_live_client_sources(stream, host.notify_fd(), LIVE_IDLE_POLL_TIMEOUT)?;
+            poll_live_client_sources(stream, host.notify_fd(), Some(LIVE_IDLE_POLL_TIMEOUT))?;
         if let Some(notify_fd) = host.notify_fd()
             && readiness.host_output
         {
@@ -3461,7 +3539,7 @@ fn serve_live_attached_client_with_session_actor(
         }
         if readiness.host_output && !readiness.client_input {
             let client_readiness =
-                poll_live_client_sources(stream, None, LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT)?;
+                poll_live_client_sources(stream, None, Some(LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT))?;
             readiness.client_input = client_readiness.client_input;
         }
 
@@ -3491,6 +3569,30 @@ fn serve_live_attached_client_with_session_actor(
                             return Ok(());
                         };
                         wire::write_default_frame(stream, &chunk)?;
+                        seq += 1;
+                    }
+                    LiveClientRead::Frame(LiveClientFrame::Viewport(intent)) => {
+                        count_cycle = false;
+                        let session = actor.session();
+                        if let Some(error) = pane_viewport_intent_error_code(session, &intent) {
+                            write_pane_viewport_intent_error(
+                                stream, session, &mut seq, &intent, error,
+                            )?;
+                            if error == protocol::ErrorCode::StaleVersion {
+                                continue;
+                            }
+                            return Ok(());
+                        }
+                        let Some(frame) = session.pane_viewport_frame_for_pane(
+                            "local-client",
+                            seq,
+                            &intent.pane_id,
+                            intent.spec(),
+                        ) else {
+                            write_pane_not_found_error(stream, session, &mut seq, &intent.pane_id)?;
+                            return Ok(());
+                        };
+                        wire::write_default_frame(stream, &frame)?;
                         seq += 1;
                     }
                     LiveClientRead::Frame(LiveClientFrame::Resize(resize)) => {
@@ -3670,7 +3772,7 @@ fn serve_live_attached_client_with_session_actor(
             let readiness = poll_live_client_sources(
                 stream,
                 Some(notify_fd),
-                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+                Some(LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT),
             )?;
             if readiness.host_output {
                 drain_notify_fd(notify_fd)?;
@@ -3722,7 +3824,7 @@ fn serve_live_attached_client_with_session_actor(
                                 session,
                                 &mut seq,
                                 &leaf_pane_ids,
-                                &mut known_surface_versions,
+                                &mut known_viewport_versions,
                             )
                         })?;
                     }
@@ -3738,7 +3840,7 @@ fn serve_live_attached_client_with_session_actor(
         }
 
         let quiet_timeout = if input_pane_id.is_some() {
-            LIVE_POST_INPUT_POLL_TIMEOUT
+            LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
@@ -3811,7 +3913,7 @@ fn serve_live_attached_client_with_session_actor(
                 session,
                 &mut seq,
                 &leaf_pane_ids,
-                &mut known_surface_versions,
+                &mut known_viewport_versions,
             )
         })?;
         let host_completion = readiness.host_output && client_actor.mode == AttachMode::ReadOnly;
@@ -3833,8 +3935,8 @@ fn read_live_client_frame_from_stream(
                 protocol::EnvelopeBody::ResizeIntent => Ok(LiveClientRead::Frame(
                     LiveClientFrame::Resize(resize_intent_from_frame(&frame)?),
                 )),
-                protocol::EnvelopeBody::ScrollbackFetch => Ok(LiveClientRead::Frame(
-                    LiveClientFrame::Scrollback(scrollback_fetch_from_frame(&frame)?),
+                protocol::EnvelopeBody::PaneViewportIntent => Ok(LiveClientRead::Frame(
+                    LiveClientFrame::Viewport(pane_viewport_intent_from_frame(&frame)?),
                 )),
                 protocol::EnvelopeBody::InputEvent => Ok(LiveClientRead::Frame(
                     LiveClientFrame::Input(input_summary_from_frame(&frame)?),
@@ -3876,9 +3978,9 @@ struct LiveReadiness {
 fn poll_live_client_sources(
     stream: &UnixStream,
     notify_fd: Option<std::os::fd::RawFd>,
-    timeout: Duration,
+    timeout: Option<Duration>,
 ) -> io::Result<LiveReadiness> {
-    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let timeout_ms = poll_timeout_ms(timeout);
     let mut fds = vec![libc::pollfd {
         fd: stream.as_raw_fd(),
         events: libc::POLLIN,
@@ -4029,12 +4131,14 @@ enum LiveClientRead {
 enum LiveClientFrame {
     Resize(ResizeIntentSummary),
     Scrollback(ScrollbackFetchSummary),
+    Viewport(PaneViewportIntentSummary),
     Input(InputSummary),
     Ping(PingSummary),
 }
 
 enum AttachedClientFrame {
     Scrollback(ScrollbackFetchSummary),
+    Viewport(PaneViewportIntentSummary),
     Input(InputSummary),
 }
 
@@ -4107,6 +4211,26 @@ fn serve_attached_client(
                     wait_for_more = false;
                 } else {
                     write_pane_not_found_error(stream, session, &mut seq, &fetch.pane_id)?;
+                    return Ok(());
+                }
+            }
+            AttachedClientFrame::Viewport(intent) => {
+                if let Some(error) = pane_viewport_intent_error_code(session, &intent) {
+                    write_pane_viewport_intent_error(stream, session, &mut seq, &intent, error)?;
+                    wait_for_more = true;
+                    continue;
+                }
+                if let Some(frame) = session.pane_viewport_frame_for_pane(
+                    "local-client",
+                    seq,
+                    &intent.pane_id,
+                    intent.spec(),
+                ) {
+                    wire::write_default_frame(stream, &frame)?;
+                    seq += 1;
+                    wait_for_more = false;
+                } else {
+                    write_pane_not_found_error(stream, session, &mut seq, &intent.pane_id)?;
                     return Ok(());
                 }
             }
@@ -4423,6 +4547,78 @@ fn scrollback_fetch_error_code(
         .then_some(protocol::ErrorCode::StaleVersion)
 }
 
+fn pane_viewport_intent_error_code(
+    session: &Session,
+    intent: &PaneViewportIntentSummary,
+) -> Option<protocol::ErrorCode> {
+    let current = session.surface_version(&intent.pane_id)?;
+    let current = current.max(
+        session
+            .scrollback_version(&intent.pane_id)
+            .unwrap_or_default(),
+    );
+    (intent.known_viewport_version != 0 && intent.known_viewport_version != current)
+        .then_some(protocol::ErrorCode::StaleVersion)
+}
+
+fn write_pane_viewport_intent_error(
+    stream: &mut UnixStream,
+    session: &Session,
+    seq: &mut u64,
+    intent: &PaneViewportIntentSummary,
+    code: protocol::ErrorCode,
+) -> Result<(), ServeError> {
+    let Some(current) = session.surface_version(&intent.pane_id) else {
+        write_pane_not_found_error(stream, session, seq, &intent.pane_id)?;
+        return Ok(());
+    };
+    let current = current.max(
+        session
+            .scrollback_version(&intent.pane_id)
+            .unwrap_or_default(),
+    );
+    write_protocol_error(
+        stream,
+        session,
+        seq,
+        code,
+        &format!(
+            "stale pane viewport version for {}: client={} server={current}",
+            intent.pane_id, intent.known_viewport_version
+        ),
+        Some(&intent.pane_id),
+        0,
+    )
+}
+
+fn queue_pane_viewport_intent_error_to_live_client(
+    client: &mut LiveAttachedClient,
+    session: &Session,
+    intent: &PaneViewportIntentSummary,
+    code: protocol::ErrorCode,
+) -> Result<(), ServeError> {
+    let Some(current) = session.surface_version(&intent.pane_id) else {
+        queue_pane_not_found_error_to_live_client(client, session, &intent.pane_id, 0)?;
+        return Ok(());
+    };
+    let current = current.max(
+        session
+            .scrollback_version(&intent.pane_id)
+            .unwrap_or_default(),
+    );
+    queue_protocol_error_to_live_client(
+        client,
+        session,
+        code,
+        &format!(
+            "stale pane viewport version for {}: client={} server={current}",
+            intent.pane_id, intent.known_viewport_version
+        ),
+        Some(&intent.pane_id),
+        0,
+    )
+}
+
 fn write_scrollback_fetch_error(
     stream: &mut UnixStream,
     session: &Session,
@@ -4573,13 +4769,25 @@ fn surface_response_frame(
     response: SurfaceResponse,
     seq: u64,
 ) -> Option<Vec<u8>> {
+    let (_, rows) = session.pane_size(pane_id)?;
+    let intent = PaneViewportIntentSpec {
+        viewport: protocol::PaneViewportKind::Active,
+        top_line: 0,
+        delta_rows: 0,
+        visible_rows: rows,
+        known_viewport_version: 0,
+    };
     match response {
         SurfaceResponse::Snapshot => {
-            session.pane_surface_frame_for_pane("local-client", seq, pane_id)
+            session.pane_viewport_frame_for_pane("local-client", seq, pane_id, intent)
         }
-        SurfaceResponse::Patch { base_version } => {
-            session.pane_surface_patch_frame_for_pane("local-client", seq, pane_id, base_version)
-        }
+        SurfaceResponse::Patch { base_version } => session.pane_viewport_patch_frame_for_pane(
+            "local-client",
+            seq,
+            pane_id,
+            base_version,
+            intent,
+        ),
     }
 }
 
@@ -4605,23 +4813,44 @@ fn surface_frame_bundle_for_pane(
     seq: u64,
 ) -> Option<SurfaceFrameBundle> {
     let version = session.surface_version(pane_id)?;
-    let snapshot_frame = session.pane_surface_frame_for_pane("local-client", seq, pane_id)?;
-    let patch_frame = if session
-        .surface_patch_kind(pane_id)
-        .unwrap_or(protocol::PatchKind::ReplaceRows)
-        == protocol::PatchKind::FullRefreshRequired
-    {
-        None
-    } else {
+    let (_, rows) = session.pane_size(pane_id)?;
+    let snapshot_frame = session.pane_viewport_frame_for_pane(
+        "local-client",
+        seq,
+        pane_id,
+        PaneViewportIntentSpec {
+            viewport: protocol::PaneViewportKind::Active,
+            top_line: 0,
+            delta_rows: 0,
+            visible_rows: rows,
+            known_viewport_version: 0,
+        },
+    )?;
+    let patch_frame = (session.surface_patch_kind(pane_id)
+        != Some(protocol::PatchKind::FullRefreshRequired))
+    .then(|| {
         version.checked_sub(1).and_then(|base_version| {
             session
-                .pane_surface_patch_frame_for_pane("local-client", seq, pane_id, base_version)
+                .pane_viewport_patch_frame_for_pane(
+                    "local-client",
+                    seq,
+                    pane_id,
+                    base_version,
+                    PaneViewportIntentSpec {
+                        viewport: protocol::PaneViewportKind::Active,
+                        top_line: 0,
+                        delta_rows: 0,
+                        visible_rows: rows,
+                        known_viewport_version: 0,
+                    },
+                )
                 .map(|bytes| async_live::SurfacePatchFrame {
                     base_version,
                     bytes,
                 })
         })
-    };
+    })
+    .flatten();
     Some(SurfaceFrameBundle {
         version,
         snapshot_frame,
@@ -4629,9 +4858,9 @@ fn surface_frame_bundle_for_pane(
     })
 }
 
-fn known_surface_versions_from_request(request: &AttachRequest) -> BTreeMap<String, u64> {
+fn known_viewport_versions_from_request(request: &AttachRequest) -> BTreeMap<String, u64> {
     request
-        .known_surfaces
+        .known_viewports
         .iter()
         .map(|known| (known.pane_id.clone(), known.version))
         .collect()
@@ -4724,6 +4953,7 @@ fn apply_pumped_pane_output(
         bytes = pumped.len()
     );
     Ok(apply_span.in_scope(|| {
+        bug_report::record_terminal_output(pane_id, pumped);
         session.apply_pane_output_with_engine(pane_id, &pumped, engines.engine_mut(pane_id))
     }))
 }
@@ -5136,12 +5366,12 @@ fn input_write_target_exited(error: &HostError, pane_id: &str) -> bool {
 }
 
 pub(crate) fn attach(path: &Path) -> Result<AttachSnapshot, ServeError> {
-    attach_with_known_surfaces(path, Vec::new())
+    attach_with_known_viewports(path, Vec::new())
 }
 
-pub(crate) fn attach_with_known_surfaces(
+pub(crate) fn attach_with_known_viewports(
     path: &Path,
-    known_surfaces: Vec<KnownSurfaceVersion>,
+    known_viewports: Vec<KnownViewportVersion>,
 ) -> Result<AttachSnapshot, ServeError> {
     attach_with_options(
         path,
@@ -5151,7 +5381,7 @@ pub(crate) fn attach_with_known_surfaces(
             display_name: "local".to_owned(),
             mode: AttachMode::ReadWrite,
             focused_pane_id: None,
-            known_surfaces,
+            known_viewports,
             hostname: String::new(),
             client_kind: "nmux".to_owned(),
             subscribe_client_inventory: false,
@@ -5207,7 +5437,7 @@ impl Default for AttachOptions {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -5337,7 +5567,7 @@ pub fn attach_render_once(
     client_state: &mut ClientAttachState,
 ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
     let scope = socket_identity(path).ok();
-    options.request.known_surfaces = client_state.known_surfaces_for_scope(scope);
+    options.request.known_viewports = client_state.known_viewports_for_scope(scope);
     options.known_scrollback_versions = client_state.known_scrollback_versions_for_scope(scope);
     let snapshot = attach_with_client_options(path, options).map_err(ServeError::into_boxed)?;
     client_state.apply_scope(socket_identity(path).ok());
@@ -5349,7 +5579,7 @@ pub fn attach_render_once_from_stream(
     mut options: AttachOptions,
     client_state: &mut ClientAttachState,
 ) -> Result<RenderedAttach, Box<dyn std::error::Error>> {
-    options.request.known_surfaces = client_state.known_surfaces_for_scope(None);
+    options.request.known_viewports = client_state.known_viewports_for_scope(None);
     options.known_scrollback_versions = client_state.known_scrollback_versions_for_scope(None);
     let snapshot =
         attach_with_client_options_from_stream(stream, options).map_err(ServeError::into_boxed)?;
@@ -5451,8 +5681,8 @@ pub fn attach_from_stream(
             let update = loop {
                 let frame = wire::read_default_frame(stream)?;
                 match protocol::size_prefixed_root_as_envelope(&frame)?.body_type() {
-                    protocol::EnvelopeBody::PaneSurfaceSnapshot
-                    | protocol::EnvelopeBody::PaneSurfacePatch => {
+                    protocol::EnvelopeBody::PaneViewportSnapshot
+                    | protocol::EnvelopeBody::PaneViewportPatch => {
                         break surface_update_from_frame(&frame)?;
                     }
                     protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
@@ -5821,6 +6051,47 @@ pub fn send_scrollback_fetch_with_known_version(
     Ok(())
 }
 
+pub fn send_pane_viewport_intent(
+    stream: &mut UnixStream,
+    sequence: &mut ClientFrameSequence,
+    pane_id: &str,
+    intent: PaneViewportIntentSpec,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut builder = FlatBufferBuilder::new();
+    let pane_id_offset = builder.create_string(pane_id);
+    let actor_id = builder.create_string("local-actor");
+    let intent_frame = protocol::PaneViewportIntent::create(
+        &mut builder,
+        &protocol::PaneViewportIntentArgs {
+            pane_id: Some(pane_id_offset),
+            actor_id: Some(actor_id),
+            viewport: intent.viewport,
+            top_line: intent.top_line,
+            delta_rows: intent.delta_rows,
+            visible_rows: intent.visible_rows,
+            known_viewport_version: intent.known_viewport_version,
+        },
+    );
+    let session_id = builder.create_string("local");
+    let connection_id = builder.create_string("local-client");
+    let envelope = protocol::Envelope::create(
+        &mut builder,
+        &protocol::EnvelopeArgs {
+            protocol_version: PROTOCOL_VERSION,
+            session_id: Some(session_id),
+            connection_id: Some(connection_id),
+            seq: sequence.next_envelope_seq(),
+            ack: 0,
+            sent_at_mono_ms: 0,
+            body_type: protocol::EnvelopeBody::PaneViewportIntent,
+            body: Some(intent_frame.as_union_value()),
+        },
+    );
+    protocol::finish_size_prefixed_envelope_buffer(&mut builder, envelope);
+    wire::write_default_frame(stream, builder.finished_data())?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientFrameSequence {
     next_envelope_seq: u64,
@@ -5919,8 +6190,10 @@ pub(crate) fn session_inventory_from_frame(
     let snapshot = envelope
         .body_as_session_inventory_snapshot()
         .ok_or("missing session inventory body")?;
-    let active_session_id =
-        required_string(snapshot.active_session_id(), "session inventory active_session_id")?;
+    let active_session_id = required_string(
+        snapshot.active_session_id(),
+        "session inventory active_session_id",
+    )?;
     let sessions = snapshot
         .sessions()
         .ok_or("session inventory has no sessions")?;
@@ -5993,12 +6266,13 @@ pub(crate) fn surface_text_from_frame(frame: &[u8]) -> Result<String, ServeError
 pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, ServeError> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
     match envelope.body_type() {
-        protocol::EnvelopeBody::PaneSurfaceSnapshot => {
+        protocol::EnvelopeBody::PaneViewportSnapshot => {
             let snapshot = envelope
-                .body_as_pane_surface_snapshot()
-                .ok_or("missing pane surface body")?;
+                .body_as_pane_viewport_snapshot()
+                .ok_or("missing pane viewport body")?;
             validate_surface_kind(snapshot.surface())?;
-            let rows = snapshot.rows_data().ok_or("pane surface has no rows")?;
+            validate_pane_viewport_kind(snapshot.viewport())?;
+            let rows = snapshot.rows_data().ok_or("pane viewport has no rows")?;
             let styles = snapshot
                 .styles()
                 .map(decoded_styles)
@@ -6008,7 +6282,7 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
                 .map(decoded_hyperlinks)
                 .transpose()?
                 .unwrap_or_default();
-            let row_updates = decoded_surface_rows(rows.len(), |index| {
+            let mut row_updates = decoded_surface_rows(rows.len(), |index| {
                 let row = rows.get(index);
                 decoded_surface_row(
                     row.row(),
@@ -6021,7 +6295,7 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
                 )
             });
             validate_row_update_terminal_enums(&row_updates)?;
-            validate_row_update_style_ids(&row_updates, &styles)?;
+            normalize_surface_row_style_ids(&mut row_updates, &styles);
             validate_row_update_hyperlink_ids(&row_updates, &hyperlinks)?;
             let cursor = snapshot.cursor().map(CursorSummary::from_protocol);
             validate_cursor_summary(cursor)?;
@@ -6030,13 +6304,16 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
                 .map(TerminalModeSummary::from_protocol)
                 .unwrap_or_default();
             validate_terminal_mode_summary(modes)?;
-            let text = render_decoded_rows(&row_updates);
+            let text = render_viewport_rows_for_summary(&row_updates);
             let colors = decoded_terminal_colors(snapshot.colors());
             validate_palette_diff_scope(SurfaceUpdateKind::Snapshot, None, colors.as_ref())?;
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Snapshot,
-                pane_id: required_string(snapshot.pane_id(), "surface snapshot pane_id")?,
+                viewport: snapshot.viewport(),
+                pane_id: required_string(snapshot.pane_id(), "pane viewport pane_id")?,
                 version: snapshot.version(),
+                scrollback_version: snapshot.timeline_version(),
+                scrollback_total_lines: snapshot.total_lines(),
                 base_version: None,
                 patch_kind: None,
                 cols: Some(snapshot.cols()),
@@ -6061,14 +6338,15 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
                 text,
             })
         }
-        protocol::EnvelopeBody::PaneSurfacePatch => {
+        protocol::EnvelopeBody::PaneViewportPatch => {
             let patch = envelope
-                .body_as_pane_surface_patch()
-                .ok_or("missing pane surface patch body")?;
+                .body_as_pane_viewport_patch()
+                .ok_or("missing pane viewport patch body")?;
             validate_patch_kind(patch.kind())?;
+            validate_pane_viewport_kind(patch.viewport())?;
             let rows = patch
                 .row_updates()
-                .ok_or("pane surface patch has no rows")?;
+                .ok_or("pane viewport patch has no rows")?;
             let row_updates = decoded_surface_rows(rows.len(), |index| {
                 let row = rows.get(index);
                 decoded_surface_row(
@@ -6099,8 +6377,11 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
             )?;
             Ok(SurfaceUpdate {
                 kind: SurfaceUpdateKind::Patch,
-                pane_id: required_string(patch.pane_id(), "surface patch pane_id")?,
+                viewport: patch.viewport(),
+                pane_id: required_string(patch.pane_id(), "pane viewport patch pane_id")?,
                 version: patch.version(),
+                scrollback_version: patch.timeline_version(),
+                scrollback_total_lines: patch.total_lines(),
                 base_version: Some(patch.base_version()),
                 patch_kind: Some(patch.kind()),
                 cols: None,
@@ -6127,6 +6408,14 @@ pub(crate) fn surface_update_from_frame(frame: &[u8]) -> Result<SurfaceUpdate, S
         }
         other => Err(format!("unexpected envelope body: {other:?}").into()),
     }
+}
+
+fn render_viewport_rows_for_summary(rows: &[SurfaceRowUpdate]) -> String {
+    let visible_end = rows
+        .iter()
+        .rposition(|row| !row.text.is_empty())
+        .map_or(0, |index| index + 1);
+    render_decoded_rows(&rows[..visible_end])
 }
 
 pub(crate) fn read_input_event_from_stream(
@@ -6183,8 +6472,8 @@ fn read_attached_client_frame_from_stream(
         protocol::EnvelopeBody::InputEvent => Ok(AttachedClientRead::Frame(
             AttachedClientFrame::Input(input_summary_from_frame(&frame)?),
         )),
-        protocol::EnvelopeBody::ScrollbackFetch => Ok(AttachedClientRead::Frame(
-            AttachedClientFrame::Scrollback(scrollback_fetch_from_frame(&frame)?),
+        protocol::EnvelopeBody::PaneViewportIntent => Ok(AttachedClientRead::Frame(
+            AttachedClientFrame::Viewport(pane_viewport_intent_from_frame(&frame)?),
         )),
         other => Err(format!("unexpected attached client frame: {other:?}").into()),
     }
@@ -6203,6 +6492,7 @@ pub(crate) fn read_scrollback_chunk_from_stream(
     match read_scrollback_response_from_stream(stream, None, None)? {
         ScrollbackRead::Chunk(chunk) => Ok(chunk),
         ScrollbackRead::Error(error) => Err(server_error(error).into()),
+        ScrollbackRead::PendingFrame => Err("unexpected pending scrollback frame".into()),
     }
 }
 
@@ -6249,9 +6539,11 @@ fn read_scrollback_chunk_with_stale_retry_and_pending_updates(
             match read_scrollback_response_from_stream(stream, pending_updates, pending_live)? {
                 ScrollbackRead::Chunk(chunk) => Ok(chunk),
                 ScrollbackRead::Error(error) => Err(server_error(error).into()),
+                ScrollbackRead::PendingFrame => Err("unexpected pending scrollback frame".into()),
             }
         }
         ScrollbackRead::Error(error) => Err(server_error(error).into()),
+        ScrollbackRead::PendingFrame => Err("unexpected pending scrollback frame".into()),
     }
 }
 
@@ -6375,42 +6667,90 @@ fn read_scrollback_response_from_stream(
     loop {
         let frame = wire::read_default_frame(stream)?;
         let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
-        match envelope.body_type() {
-            protocol::EnvelopeBody::ScrollbackChunk => {
-                return Ok(ScrollbackRead::Chunk(scrollback_chunk_from_frame(&frame)?));
+        let read = match envelope.body_type() {
+            protocol::EnvelopeBody::PaneViewportSnapshot => {
+                let snapshot = envelope
+                    .body_as_pane_viewport_snapshot()
+                    .ok_or("missing pane viewport snapshot body")?;
+                if pending_updates.is_some()
+                    && snapshot.viewport() == protocol::PaneViewportKind::Active
+                {
+                    match surface_update_from_frame(&frame) {
+                        Ok(update) => {
+                            pending_updates
+                                .as_deref_mut()
+                                .expect("pending updates checked")
+                                .push(update);
+                            Ok(ScrollbackRead::PendingFrame)
+                        }
+                        Err(err) => Err(err),
+                    }
+                } else {
+                    scrollback_chunk_from_frame(&frame).map(ScrollbackRead::Chunk)
+                }
             }
             protocol::EnvelopeBody::Error => {
-                let error = error_summary_from_frame(&frame)?;
-                return Ok(ScrollbackRead::Error(error));
+                error_summary_from_frame(&frame).map(ScrollbackRead::Error)
             }
-            protocol::EnvelopeBody::PaneSurfaceSnapshot
-            | protocol::EnvelopeBody::PaneSurfacePatch
-                if pending_updates.is_some() =>
-            {
-                pending_updates
-                    .as_deref_mut()
-                    .expect("pending updates checked")
-                    .push(surface_update_from_frame(&frame)?);
+            protocol::EnvelopeBody::PaneViewportPatch if pending_updates.is_some() => {
+                match surface_update_from_frame(&frame) {
+                    Ok(update) => {
+                        pending_updates
+                            .as_deref_mut()
+                            .expect("pending updates checked")
+                            .push(update);
+                        Ok(ScrollbackRead::PendingFrame)
+                    }
+                    Err(err) => Err(err),
+                }
             }
             protocol::EnvelopeBody::ClientInventorySnapshot if pending_live.is_some() => {
-                pending_live
-                    .as_deref_mut()
-                    .expect("pending live checked")
-                    .push(LiveSurfaceRead::ClientInventorySnapshot(
-                        client_inventory_snapshot_from_frame(&frame)?,
-                    ));
+                match client_inventory_snapshot_from_frame(&frame) {
+                    Ok(snapshot) => {
+                        pending_live
+                            .as_deref_mut()
+                            .expect("pending live checked")
+                            .push(LiveSurfaceRead::ClientInventorySnapshot(snapshot));
+                        Ok(ScrollbackRead::PendingFrame)
+                    }
+                    Err(err) => Err(err),
+                }
             }
             protocol::EnvelopeBody::ClientInventoryPatch if pending_live.is_some() => {
-                pending_live
-                    .as_deref_mut()
-                    .expect("pending live checked")
-                    .push(LiveSurfaceRead::ClientInventoryPatch(
-                        client_inventory_patch_from_frame(&frame)?,
-                    ));
+                match client_inventory_patch_from_frame(&frame) {
+                    Ok(patch) => {
+                        pending_live
+                            .as_deref_mut()
+                            .expect("pending live checked")
+                            .push(LiveSurfaceRead::ClientInventoryPatch(patch));
+                        Ok(ScrollbackRead::PendingFrame)
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+            protocol::EnvelopeBody::Pong if pending_live.is_some() => {
+                match pong_from_frame(&frame) {
+                    Ok(pong) => {
+                        pending_live
+                            .as_deref_mut()
+                            .expect("pending live checked")
+                            .push(LiveSurfaceRead::Pong(pong));
+                        Ok(ScrollbackRead::PendingFrame)
+                    }
+                    Err(err) => Err(err),
+                }
             }
             protocol::EnvelopeBody::PresenceUpdate
-            | protocol::EnvelopeBody::WorkspaceTreeSnapshot => {}
-            other => return Err(format!("unexpected envelope body: {other:?}").into()),
+            | protocol::EnvelopeBody::WorkspaceTreeSnapshot => Ok(ScrollbackRead::PendingFrame),
+            other => Err(format!("unexpected envelope body: {other:?}").into()),
+        };
+        match read {
+            Ok(ScrollbackRead::PendingFrame) => {}
+            Ok(read) => return Ok(read),
+            Err(err) => {
+                bug_report::record_frame_decode_error("scrollback-response", &frame, &err);
+                return Err(err);
+            }
         }
     }
 }
@@ -6419,6 +6759,7 @@ fn read_scrollback_response_from_stream(
 enum ScrollbackRead {
     Chunk(ScrollbackChunkSummary),
     Error(ErrorSummary),
+    PendingFrame,
 }
 
 pub(crate) fn read_surface_update_from_stream(
@@ -6467,8 +6808,8 @@ fn read_optional_server_error_from_stream(stream: &mut UnixStream) -> Result<(),
                 }
                 protocol::EnvelopeBody::PresenceUpdate
                 | protocol::EnvelopeBody::WorkspaceTreeSnapshot
-                | protocol::EnvelopeBody::PaneSurfaceSnapshot
-                | protocol::EnvelopeBody::PaneSurfacePatch => Ok(()),
+                | protocol::EnvelopeBody::PaneViewportSnapshot
+                | protocol::EnvelopeBody::PaneViewportPatch => Ok(()),
                 other => Err(
                     format!("unexpected server frame before scrollback fetch: {other:?}").into(),
                 ),
@@ -6544,33 +6885,35 @@ pub fn read_live_surface_update_from_stream(
     match wire::read_default_frame(stream) {
         Ok(frame) => {
             let envelope = protocol::size_prefixed_root_as_envelope(&frame)?;
-            match envelope.body_type() {
-                protocol::EnvelopeBody::WorkspaceTreeSnapshot => Ok(LiveSurfaceRead::Workspace(
-                    workspace_summary_from_frame(&frame)?,
-                )),
-                protocol::EnvelopeBody::PaneSurfaceSnapshot
-                | protocol::EnvelopeBody::PaneSurfacePatch => {
-                    Ok(LiveSurfaceRead::Update(surface_update_from_frame(&frame)?))
+            let read = match envelope.body_type() {
+                protocol::EnvelopeBody::WorkspaceTreeSnapshot => {
+                    workspace_summary_from_frame(&frame).map(LiveSurfaceRead::Workspace)
+                }
+                protocol::EnvelopeBody::PaneViewportSnapshot
+                | protocol::EnvelopeBody::PaneViewportPatch => {
+                    surface_update_from_frame(&frame).map(LiveSurfaceRead::Update)
                 }
                 protocol::EnvelopeBody::Error => {
-                    Ok(LiveSurfaceRead::Error(error_summary_from_frame(&frame)?))
+                    error_summary_from_frame(&frame).map(LiveSurfaceRead::Error)
                 }
                 protocol::EnvelopeBody::PresenceUpdate => {
-                    Ok(LiveSurfaceRead::Presence(presence_from_frame(&frame)?))
+                    presence_from_frame(&frame).map(LiveSurfaceRead::Presence)
                 }
                 protocol::EnvelopeBody::ClientInventorySnapshot => {
-                    Ok(LiveSurfaceRead::ClientInventorySnapshot(
-                        client_inventory_snapshot_from_frame(&frame)?,
-                    ))
+                    client_inventory_snapshot_from_frame(&frame)
+                        .map(LiveSurfaceRead::ClientInventorySnapshot)
                 }
                 protocol::EnvelopeBody::ClientInventoryPatch => {
-                    Ok(LiveSurfaceRead::ClientInventoryPatch(
-                        client_inventory_patch_from_frame(&frame)?,
-                    ))
+                    client_inventory_patch_from_frame(&frame)
+                        .map(LiveSurfaceRead::ClientInventoryPatch)
                 }
-                protocol::EnvelopeBody::Pong => Ok(LiveSurfaceRead::Pong(pong_from_frame(&frame)?)),
+                protocol::EnvelopeBody::Pong => pong_from_frame(&frame).map(LiveSurfaceRead::Pong),
                 other => Err(format!("unexpected live server frame: {other:?}").into()),
-            }
+            };
+            read.map_err(|err| {
+                bug_report::record_frame_decode_error("live-server-frame", &frame, &err);
+                err.into_boxed()
+            })
         }
         Err(wire::WireError::Io(err))
             if matches!(
@@ -6950,21 +7293,50 @@ pub(crate) fn attach_status_from_frame(frame: &[u8]) -> Result<AttachStatusSumma
 pub(crate) fn scrollback_fetch_from_frame(
     frame: &[u8],
 ) -> Result<ScrollbackFetchSummary, ServeError> {
+    let intent = pane_viewport_intent_from_frame(frame)?;
+    if intent.viewport != protocol::PaneViewportKind::Pinned {
+        return Err("scrollback-compatible viewport fetch must be pinned".into());
+    }
+    validate_scrollback_fetch_range(intent.top_line, intent.visible_rows)?;
+    Ok(ScrollbackFetchSummary {
+        pane_id: intent.pane_id,
+        actor_id: intent.actor_id,
+        start_line: intent.top_line,
+        line_count: intent.visible_rows,
+        known_scrollback_version: intent.known_viewport_version,
+    })
+}
+
+pub(crate) fn pane_viewport_intent_from_frame(
+    frame: &[u8],
+) -> Result<PaneViewportIntentSummary, ServeError> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
-    if envelope.body_type() != protocol::EnvelopeBody::ScrollbackFetch {
+    if envelope.body_type() != protocol::EnvelopeBody::PaneViewportIntent {
         return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
     }
 
-    let fetch = envelope
-        .body_as_scrollback_fetch()
-        .ok_or("missing scrollback fetch body")?;
-    validate_scrollback_fetch_range(fetch.start_line(), fetch.line_count())?;
-    Ok(ScrollbackFetchSummary {
-        pane_id: required_string(fetch.pane_id(), "scrollback fetch pane_id")?,
-        actor_id: required_string(fetch.actor_id(), "scrollback fetch actor_id")?,
-        start_line: fetch.start_line(),
-        line_count: fetch.line_count(),
-        known_scrollback_version: fetch.known_scrollback_version(),
+    let intent = envelope
+        .body_as_pane_viewport_intent()
+        .ok_or("missing pane viewport intent body")?;
+    validate_pane_viewport_kind(intent.viewport())?;
+    if intent.visible_rows() == 0 {
+        return Err("pane viewport visible_rows must be nonzero".into());
+    }
+    if matches!(
+        intent.viewport(),
+        protocol::PaneViewportKind::Pinned | protocol::PaneViewportKind::Delta
+    ) && intent.top_line() == 0
+    {
+        return Err("pane viewport top_line must be 1-based".into());
+    }
+    Ok(PaneViewportIntentSummary {
+        pane_id: required_string(intent.pane_id(), "pane viewport intent pane_id")?,
+        actor_id: required_string(intent.actor_id(), "pane viewport intent actor_id")?,
+        viewport: intent.viewport(),
+        top_line: intent.top_line(),
+        delta_rows: intent.delta_rows(),
+        visible_rows: intent.visible_rows(),
+        known_viewport_version: intent.known_viewport_version(),
     })
 }
 
@@ -6972,43 +7344,62 @@ pub(crate) fn scrollback_chunk_from_frame(
     frame: &[u8],
 ) -> Result<ScrollbackChunkSummary, ServeError> {
     let envelope = protocol::size_prefixed_root_as_envelope(frame)?;
-    if envelope.body_type() != protocol::EnvelopeBody::ScrollbackChunk {
+    if envelope.body_type() != protocol::EnvelopeBody::PaneViewportSnapshot {
         return Err(format!("unexpected envelope body: {:?}", envelope.body_type()).into());
     }
 
-    let chunk = envelope
-        .body_as_scrollback_chunk()
-        .ok_or("missing scrollback chunk body")?;
-    let styles = chunk.styles().map(decoded_styles).unwrap_or_default();
-    let hyperlinks = chunk
+    let snapshot = envelope
+        .body_as_pane_viewport_snapshot()
+        .ok_or("missing pane viewport snapshot body")?;
+    let styles = snapshot.styles().map(decoded_styles).unwrap_or_default();
+    let hyperlinks = snapshot
         .hyperlinks()
         .map(decoded_hyperlinks)
         .transpose()?
         .unwrap_or_default();
-    let colors = decoded_terminal_colors(chunk.colors()).unwrap_or_default();
+    let colors = decoded_terminal_colors(snapshot.colors()).unwrap_or_default();
     if terminal_colors_have_palette_diff(&colors) {
-        return Err("scrollback chunk cannot carry palette diff".into());
+        return Err("pane viewport snapshot cannot carry palette diff".into());
     }
-    let rows = chunk.rows().ok_or("scrollback chunk has no rows")?;
-    validate_scrollback_chunk_start_line(chunk.start_line())?;
+    let rows = snapshot
+        .rows_data()
+        .ok_or("pane viewport snapshot has no rows")?;
+    validate_scrollback_chunk_start_line(snapshot.viewport_top_line())?;
     let mut lines = Vec::with_capacity(rows.len());
     for index in 0..rows.len() {
         let row = rows.get(index);
-        let runs = row.runs().map(decoded_cell_runs).unwrap_or_default();
+        let mut runs = row.runs().map(decoded_cell_runs).unwrap_or_default();
         validate_row_semantic_prompt(row.semantic_prompt())?;
         validate_cell_run_semantic_content(&runs)?;
-        validate_cell_run_style_ids(&runs, &styles)?;
+        normalize_scrollback_run_style_ids(&mut runs, &styles);
         validate_cell_run_hyperlink_ids(&runs, &hyperlinks)?;
-        validate_scrollback_row_line(row.line())?;
-        validate_scrollback_row_public_range(
-            chunk.start_line(),
-            chunk.total_lines(),
-            index,
-            row.line(),
-        )?;
+        let line = snapshot
+            .viewport_top_line()
+            .saturating_add(u64::from(row.row()));
+        validate_scrollback_row_line(line)?;
+        let row_offset =
+            u64::try_from(index).map_err(|_| "scrollback row index does not fit in u64")?;
+        let expected = snapshot
+            .viewport_top_line()
+            .checked_add(row_offset)
+            .ok_or("scrollback row line overflow")?;
+        if line != expected {
+            return Err(format!(
+                "scrollback row line {line} does not match expected public line {expected}"
+            )
+            .into());
+        }
+        let text = render_run_summaries(&runs);
+        if line > snapshot.total_lines() && !text.is_empty() {
+            return Err(format!(
+                "scrollback row line {line} exceeds total_lines {}",
+                snapshot.total_lines()
+            )
+            .into());
+        }
         lines.push(ScrollbackLine {
-            line: row.line(),
-            text: render_run_summaries(&runs),
+            line,
+            text,
             runs,
             dirty_hash: row.dirty_hash(),
             row_state_hash: row.row_state_hash(),
@@ -7019,15 +7410,34 @@ pub(crate) fn scrollback_chunk_from_frame(
     }
 
     Ok(ScrollbackChunkSummary {
-        pane_id: required_string(chunk.pane_id(), "scrollback chunk pane_id")?,
-        scrollback_version: chunk.scrollback_version(),
-        start_line: chunk.start_line(),
-        total_lines: chunk.total_lines(),
+        pane_id: required_string(snapshot.pane_id(), "pane viewport snapshot pane_id")?,
+        scrollback_version: snapshot.timeline_version(),
+        start_line: snapshot.viewport_top_line(),
+        total_lines: snapshot.total_lines(),
         styles,
         hyperlinks,
         colors,
         lines,
     })
+}
+
+fn normalize_scrollback_run_style_ids(runs: &mut [CellRunSummary], styles: &[StyleSummary]) {
+    let style_count = styles.len().max(1);
+    for run in runs {
+        let Ok(style_id) = usize::try_from(run.style_id) else {
+            run.style_id = 0;
+            continue;
+        };
+        if style_id >= style_count {
+            run.style_id = 0;
+        }
+    }
+}
+
+fn normalize_surface_row_style_ids(rows: &mut [SurfaceRowUpdate], styles: &[StyleSummary]) {
+    for row in rows {
+        normalize_scrollback_run_style_ids(&mut row.runs, styles);
+    }
 }
 
 pub fn write_attach_request<W: Write>(writer: &mut W, request: &AttachRequest) -> io::Result<()> {
@@ -7066,8 +7476,8 @@ pub fn read_health_probe_response<R: Read>(
                 return Err(server_error(error_summary_from_frame(&frame)?));
             }
             protocol::EnvelopeBody::WorkspaceTreeSnapshot
-            | protocol::EnvelopeBody::PaneSurfaceSnapshot
-            | protocol::EnvelopeBody::PaneSurfacePatch => {}
+            | protocol::EnvelopeBody::PaneViewportSnapshot
+            | protocol::EnvelopeBody::PaneViewportPatch => {}
             other => return Err(format!("unexpected health response frame: {other:?}").into()),
         }
     }
@@ -7106,14 +7516,14 @@ fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
     let request = envelope
         .body_as_attach_request()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing attach body"))?;
-    let known = request.known_surfaces();
-    let mut known_surfaces = Vec::with_capacity(known.map(|known| known.len()).unwrap_or(0));
+    let known = request.known_viewports();
+    let mut known_viewports = Vec::with_capacity(known.map(|known| known.len()).unwrap_or(0));
     if let Some(known) = known {
         for index in 0..known.len() {
-            let surface = known.get(index);
-            known_surfaces.push(KnownSurfaceVersion {
-                pane_id: required_io_string(surface.pane_id(), "known surface pane_id")?,
-                version: surface.version(),
+            let viewport = known.get(index);
+            known_viewports.push(KnownViewportVersion {
+                pane_id: required_io_string(viewport.pane_id(), "known viewport pane_id")?,
+                version: viewport.version(),
             });
         }
     }
@@ -7134,7 +7544,7 @@ fn attach_request_from_frame(frame: &[u8]) -> io::Result<AttachRequest> {
             )
         })?,
         focused_pane_id,
-        known_surfaces,
+        known_viewports,
         hostname: request.hostname().unwrap_or_default().to_owned(),
         client_kind: request.client_kind().unwrap_or("nmux").to_owned(),
         subscribe_client_inventory: request.subscribe_client_inventory(),
@@ -7233,7 +7643,7 @@ pub struct AttachRequest {
     pub display_name: String,
     pub mode: AttachMode,
     pub focused_pane_id: Option<String>,
-    pub known_surfaces: Vec<KnownSurfaceVersion>,
+    pub known_viewports: Vec<KnownViewportVersion>,
     pub hostname: String,
     pub client_kind: String,
     pub subscribe_client_inventory: bool,
@@ -7307,19 +7717,19 @@ impl ControlCommandSummary {
 impl AttachRequest {
     fn frame_for_session(&self, session_id: Option<&str>) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
-        let mut known_surface_offsets = Vec::with_capacity(self.known_surfaces.len());
-        for surface in &self.known_surfaces {
-            let pane_id = builder.create_string(&surface.pane_id);
-            let known_surface = protocol::KnownPaneSurfaceVersion::create(
+        let mut known_viewport_offsets = Vec::with_capacity(self.known_viewports.len());
+        for viewport in &self.known_viewports {
+            let pane_id = builder.create_string(&viewport.pane_id);
+            let known_viewport = protocol::KnownPaneViewportVersion::create(
                 &mut builder,
-                &protocol::KnownPaneSurfaceVersionArgs {
+                &protocol::KnownPaneViewportVersionArgs {
                     pane_id: Some(pane_id),
-                    version: surface.version,
+                    version: viewport.version,
                 },
             );
-            known_surface_offsets.push(known_surface);
+            known_viewport_offsets.push(known_viewport);
         }
-        let known_surfaces = builder.create_vector(&known_surface_offsets);
+        let known_viewports = builder.create_vector(&known_viewport_offsets);
 
         let actor_id = builder.create_string(&self.actor_id);
         let user_id = builder.create_string(&self.user_id);
@@ -7338,7 +7748,7 @@ impl AttachRequest {
                 display_name: Some(display_name),
                 mode: attach_mode_as_protocol(self.mode),
                 focused_pane_id,
-                known_surfaces: Some(known_surfaces),
+                known_viewports: Some(known_viewports),
                 hostname: Some(hostname),
                 client_kind: Some(client_kind),
                 subscribe_client_inventory: self.subscribe_client_inventory,
@@ -7379,7 +7789,7 @@ impl AttachRequest {
         let current = session.surface_version(pane_id)?;
 
         let Some(known) = self
-            .known_surfaces
+            .known_viewports
             .iter()
             .find(|known| known.pane_id == pane_id)
         else {
@@ -7535,6 +7945,15 @@ fn validate_presence_kind(
     Ok(kind)
 }
 
+fn validate_pane_viewport_kind(
+    kind: protocol::PaneViewportKind,
+) -> Result<protocol::PaneViewportKind, ServeError> {
+    if kind.variant_name().is_none() {
+        return Err(format!("unknown pane viewport kind {}", kind.0).into());
+    }
+    Ok(kind)
+}
+
 fn attach_mode_from_protocol(mode: protocol::AttachMode) -> Result<AttachMode, ServeError> {
     if mode.variant_name().is_none() {
         return Err(format!("unknown attach mode {}", mode.0).into());
@@ -7553,7 +7972,7 @@ enum SurfaceResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KnownSurfaceVersion {
+pub struct KnownViewportVersion {
     pub pane_id: String,
     pub version: u64,
 }
@@ -7662,30 +8081,6 @@ fn validate_scrollback_chunk_start_line(start_line: u64) -> Result<(), ServeErro
 fn validate_scrollback_row_line(line: u64) -> Result<(), ServeError> {
     if line == 0 {
         return Err("scrollback row line must be 1-based".into());
-    }
-    Ok(())
-}
-
-fn validate_scrollback_row_public_range(
-    start_line: u64,
-    total_lines: u64,
-    index: usize,
-    row_line: u64,
-) -> Result<(), ServeError> {
-    let offset = u64::try_from(index).map_err(|_| "scrollback row index does not fit in u64")?;
-    let expected = start_line
-        .checked_add(offset)
-        .ok_or("scrollback row line overflow")?;
-    if row_line != expected {
-        return Err(format!(
-            "scrollback row line {row_line} does not match expected public line {expected}"
-        )
-        .into());
-    }
-    if row_line > total_lines {
-        return Err(
-            format!("scrollback row line {row_line} exceeds total_lines {total_lines}").into(),
-        );
     }
     Ok(())
 }
@@ -8140,6 +8535,29 @@ pub(crate) struct ScrollbackFetchSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PaneViewportIntentSummary {
+    pub(crate) pane_id: String,
+    pub(crate) actor_id: String,
+    pub(crate) viewport: protocol::PaneViewportKind,
+    pub(crate) top_line: u64,
+    pub(crate) delta_rows: i32,
+    pub(crate) visible_rows: u32,
+    pub(crate) known_viewport_version: u64,
+}
+
+impl PaneViewportIntentSummary {
+    fn spec(&self) -> PaneViewportIntentSpec {
+        PaneViewportIntentSpec {
+            viewport: self.viewport,
+            top_line: self.top_line,
+            delta_rows: self.delta_rows,
+            visible_rows: self.visible_rows,
+            known_viewport_version: self.known_viewport_version,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScrollbackChunkSummary {
     pub pane_id: String,
     pub scrollback_version: u64,
@@ -8283,6 +8701,28 @@ mod tests {
         assert!(socket_closed_error(&error));
     }
 
+    #[test]
+    fn unbounded_live_forever_blocks_until_fd_readiness() {
+        assert_eq!(
+            live_idle_poll_timeout(ConnectionLimit::Unbounded, usize::MAX),
+            None
+        );
+        assert_eq!(poll_timeout_ms(None), -1);
+    }
+
+    #[test]
+    fn bounded_live_keeps_idle_timer_for_cycle_progress() {
+        assert_eq!(
+            live_idle_poll_timeout(ConnectionLimit::Bounded(1), usize::MAX),
+            Some(LIVE_IDLE_POLL_TIMEOUT)
+        );
+        assert_eq!(
+            live_idle_poll_timeout(ConnectionLimit::Unbounded, 1),
+            Some(LIVE_IDLE_POLL_TIMEOUT)
+        );
+        assert_eq!(poll_timeout_ms(Some(LIVE_IDLE_POLL_TIMEOUT)), 20);
+    }
+
     fn scrollback_fetch_spec(
         start_line: u64,
         line_count: u32,
@@ -8316,8 +8756,11 @@ mod tests {
     ) -> SurfaceUpdate {
         SurfaceUpdate {
             kind,
+            viewport: protocol::PaneViewportKind::Active,
             pane_id: "pane-1".to_owned(),
             version,
+            scrollback_version: 1,
+            scrollback_total_lines: 3,
             base_version,
             patch_kind: match kind {
                 SurfaceUpdateKind::Snapshot => None,
@@ -8652,7 +9095,7 @@ mod tests {
                 display_name: Some(display_name),
                 mode,
                 focused_pane_id: Some(focused_pane_id),
-                known_surfaces: None,
+                known_viewports: None,
                 hostname: None,
                 client_kind: None,
                 subscribe_client_inventory: false,
@@ -8670,7 +9113,7 @@ mod tests {
         user_id: Option<&str>,
         display_name: Option<&str>,
         focused_pane_id: Option<&str>,
-        known_surface_pane_id: Option<Option<&str>>,
+        known_viewport_pane_id: Option<Option<&str>>,
     ) -> Vec<u8> {
         let mut builder = FlatBufferBuilder::new();
         let actor_id = actor_id.map(|actor_id| builder.create_string(actor_id));
@@ -8678,16 +9121,16 @@ mod tests {
         let display_name = display_name.map(|display_name| builder.create_string(display_name));
         let focused_pane_id =
             focused_pane_id.map(|focused_pane_id| builder.create_string(focused_pane_id));
-        let known_surfaces = known_surface_pane_id.map(|pane_id| {
+        let known_viewports = known_viewport_pane_id.map(|pane_id| {
             let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
-            let known_surface = protocol::KnownPaneSurfaceVersion::create(
+            let known_viewport = protocol::KnownPaneViewportVersion::create(
                 &mut builder,
-                &protocol::KnownPaneSurfaceVersionArgs {
+                &protocol::KnownPaneViewportVersionArgs {
                     pane_id,
                     version: 1,
                 },
             );
-            builder.create_vector(&[known_surface])
+            builder.create_vector(&[known_viewport])
         });
         let request = protocol::AttachRequest::create(
             &mut builder,
@@ -8697,7 +9140,7 @@ mod tests {
                 display_name,
                 mode: protocol::AttachMode::ReadWrite,
                 focused_pane_id,
-                known_surfaces,
+                known_viewports,
                 hostname: None,
                 client_kind: None,
                 subscribe_client_inventory: false,
@@ -8803,19 +9246,21 @@ mod tests {
         let mut builder = FlatBufferBuilder::new();
         let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
         let actor_id = actor_id.map(|actor_id| builder.create_string(actor_id));
-        let fetch = protocol::ScrollbackFetch::create(
+        let fetch = protocol::PaneViewportIntent::create(
             &mut builder,
-            &protocol::ScrollbackFetchArgs {
+            &protocol::PaneViewportIntentArgs {
                 pane_id,
                 actor_id,
-                start_line,
-                line_count,
-                known_scrollback_version: 0,
+                viewport: protocol::PaneViewportKind::Pinned,
+                top_line: start_line,
+                delta_rows: 0,
+                visible_rows: line_count,
+                known_viewport_version: 0,
             },
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::ScrollbackFetch,
+            protocol::EnvelopeBody::PaneViewportIntent,
             fetch.as_union_value(),
         )
     }
@@ -9093,11 +9538,16 @@ mod tests {
         let hyperlinks = builder.create_vector(&[hyperlink]);
         let colors = flatbuffer_terminal_colors(&mut builder);
         let pane_id = builder.create_string("pane-1");
-        let snapshot = protocol::PaneSurfaceSnapshot::create(
+        let snapshot = protocol::PaneViewportSnapshot::create(
             &mut builder,
-            &protocol::PaneSurfaceSnapshotArgs {
+            &protocol::PaneViewportSnapshotArgs {
                 pane_id: Some(pane_id),
                 version: 1,
+                timeline_version: 1,
+                total_lines: 3,
+                active_start_line: 1,
+                viewport_top_line: 1,
+                viewport: protocol::PaneViewportKind::Active,
                 surface,
                 cols: 80,
                 rows: 1,
@@ -9112,7 +9562,7 @@ mod tests {
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::PaneSurfaceSnapshot,
+            protocol::EnvelopeBody::PaneViewportSnapshot,
             snapshot.as_union_value(),
         )
     }
@@ -9144,11 +9594,16 @@ mod tests {
         let cursor = flatbuffer_cursor(&mut builder, cursor_shape);
         let modes = flatbuffer_modes(&mut builder, mouse_tracking_mode, mouse_format);
         let pane_id = builder.create_string("pane-1");
-        let snapshot = protocol::PaneSurfaceSnapshot::create(
+        let snapshot = protocol::PaneViewportSnapshot::create(
             &mut builder,
-            &protocol::PaneSurfaceSnapshotArgs {
+            &protocol::PaneViewportSnapshotArgs {
                 pane_id: Some(pane_id),
                 version: 1,
+                timeline_version: 1,
+                total_lines: 3,
+                active_start_line: 1,
+                viewport_top_line: 1,
+                viewport: protocol::PaneViewportKind::Active,
                 surface: protocol::SurfaceKind::Main,
                 cols: 80,
                 rows: 1,
@@ -9163,7 +9618,7 @@ mod tests {
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::PaneSurfaceSnapshot,
+            protocol::EnvelopeBody::PaneViewportSnapshot,
             snapshot.as_union_value(),
         )
     }
@@ -9188,11 +9643,16 @@ mod tests {
         let styles = builder.create_vector::<flatbuffers::WIPOffset<protocol::Style>>(&[]);
         let colors = flatbuffer_terminal_colors_with_palette_diff(&mut builder);
         let pane_id = builder.create_string("pane-1");
-        let snapshot = protocol::PaneSurfaceSnapshot::create(
+        let snapshot = protocol::PaneViewportSnapshot::create(
             &mut builder,
-            &protocol::PaneSurfaceSnapshotArgs {
+            &protocol::PaneViewportSnapshotArgs {
                 pane_id: Some(pane_id),
                 version: 1,
+                timeline_version: 1,
+                total_lines: 3,
+                active_start_line: 1,
+                viewport_top_line: 1,
+                viewport: protocol::PaneViewportKind::Active,
                 surface: protocol::SurfaceKind::Main,
                 cols: 80,
                 rows: 1,
@@ -9207,7 +9667,7 @@ mod tests {
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::PaneSurfaceSnapshot,
+            protocol::EnvelopeBody::PaneViewportSnapshot,
             snapshot.as_union_value(),
         )
     }
@@ -9232,11 +9692,16 @@ mod tests {
         let styles = builder.create_vector::<flatbuffers::WIPOffset<protocol::Style>>(&[]);
         let colors = flatbuffer_terminal_colors(&mut builder);
         let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
-        let snapshot = protocol::PaneSurfaceSnapshot::create(
+        let snapshot = protocol::PaneViewportSnapshot::create(
             &mut builder,
-            &protocol::PaneSurfaceSnapshotArgs {
+            &protocol::PaneViewportSnapshotArgs {
                 pane_id,
                 version: 1,
+                timeline_version: 1,
+                total_lines: 3,
+                active_start_line: 1,
+                viewport_top_line: 1,
+                viewport: protocol::PaneViewportKind::Active,
                 surface: protocol::SurfaceKind::Main,
                 cols: 80,
                 rows: 1,
@@ -9251,7 +9716,7 @@ mod tests {
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::PaneSurfaceSnapshot,
+            protocol::EnvelopeBody::PaneViewportSnapshot,
             snapshot.as_union_value(),
         )
     }
@@ -9314,10 +9779,13 @@ mod tests {
         let mut builder = FlatBufferBuilder::new();
         let run = flatbuffer_run_with_metadata(&mut builder, run_metadata);
         let runs = builder.create_vector(&[run]);
-        let row = protocol::ScrollbackRow::create(
+        let row_line = public_lines
+            .row_line
+            .saturating_sub(public_lines.start_line);
+        let row = protocol::SurfaceRow::create(
             &mut builder,
-            &protocol::ScrollbackRowArgs {
-                line: public_lines.row_line,
+            &protocol::SurfaceRowArgs {
+                row: u32::try_from(row_line).unwrap_or(u32::MAX),
                 runs: Some(runs),
                 dirty_hash: 1,
                 semantic_prompt: row_metadata.semantic_prompt,
@@ -9332,14 +9800,23 @@ mod tests {
         let hyperlinks = builder.create_vector(&[hyperlink]);
         let colors = flatbuffer_terminal_colors(&mut builder);
         let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
-        let chunk = protocol::ScrollbackChunk::create(
+        let chunk = protocol::PaneViewportSnapshot::create(
             &mut builder,
-            &protocol::ScrollbackChunkArgs {
+            &protocol::PaneViewportSnapshotArgs {
                 pane_id,
-                scrollback_version: 1,
-                start_line: public_lines.start_line,
+                version: 1,
+                timeline_version: 1,
                 total_lines: public_lines.total_lines,
-                rows: Some(rows),
+                active_start_line: public_lines.total_lines.saturating_sub(23).max(1),
+                viewport_top_line: public_lines.start_line,
+                viewport: protocol::PaneViewportKind::Pinned,
+                surface: protocol::SurfaceKind::Main,
+                cols: 80,
+                rows: 1,
+                cursor: None,
+                modes: None,
+                metadata: None,
+                rows_data: Some(rows),
                 styles: Some(styles),
                 colors: Some(colors),
                 hyperlinks: Some(hyperlinks),
@@ -9347,7 +9824,7 @@ mod tests {
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::ScrollbackChunk,
+            protocol::EnvelopeBody::PaneViewportSnapshot,
             chunk.as_union_value(),
         )
     }
@@ -9356,10 +9833,10 @@ mod tests {
         let mut builder = FlatBufferBuilder::new();
         let run = flatbuffer_run_with_metadata(&mut builder, RunMetadataFixture::default());
         let runs = builder.create_vector(&[run]);
-        let row = protocol::ScrollbackRow::create(
+        let row = protocol::SurfaceRow::create(
             &mut builder,
-            &protocol::ScrollbackRowArgs {
-                line: 1,
+            &protocol::SurfaceRowArgs {
+                row: 0,
                 runs: Some(runs),
                 dirty_hash: 1,
                 semantic_prompt: protocol::RowSemanticPrompt::None,
@@ -9372,14 +9849,23 @@ mod tests {
         let styles = builder.create_vector::<flatbuffers::WIPOffset<protocol::Style>>(&[]);
         let colors = flatbuffer_terminal_colors_with_palette_diff(&mut builder);
         let pane_id = builder.create_string("pane-1");
-        let chunk = protocol::ScrollbackChunk::create(
+        let chunk = protocol::PaneViewportSnapshot::create(
             &mut builder,
-            &protocol::ScrollbackChunkArgs {
+            &protocol::PaneViewportSnapshotArgs {
                 pane_id: Some(pane_id),
-                scrollback_version: 1,
-                start_line: 1,
+                version: 1,
+                timeline_version: 1,
                 total_lines: 1,
-                rows: Some(rows),
+                active_start_line: 1,
+                viewport_top_line: 1,
+                viewport: protocol::PaneViewportKind::Pinned,
+                surface: protocol::SurfaceKind::Main,
+                cols: 80,
+                rows: 1,
+                cursor: None,
+                modes: None,
+                metadata: None,
+                rows_data: Some(rows),
                 styles: Some(styles),
                 colors: Some(colors),
                 hyperlinks: None,
@@ -9387,7 +9873,7 @@ mod tests {
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::ScrollbackChunk,
+            protocol::EnvelopeBody::PaneViewportSnapshot,
             chunk.as_union_value(),
         )
     }
@@ -9402,12 +9888,17 @@ mod tests {
         let cursor = flatbuffer_cursor(&mut builder, cursor_shape);
         let modes = flatbuffer_modes(&mut builder, mouse_tracking_mode, mouse_format);
         let pane_id = builder.create_string("pane-1");
-        let patch = protocol::PaneSurfacePatch::create(
+        let patch = protocol::PaneViewportPatch::create(
             &mut builder,
-            &protocol::PaneSurfacePatchArgs {
+            &protocol::PaneViewportPatchArgs {
                 pane_id: Some(pane_id),
                 base_version: 1,
                 version: 2,
+                timeline_version: 2,
+                total_lines: 4,
+                active_start_line: 1,
+                viewport_top_line: 1,
+                viewport: protocol::PaneViewportKind::Active,
                 kind: protocol::PatchKind::CursorOnly,
                 row_updates: Some(rows),
                 cursor: Some(cursor),
@@ -9418,7 +9909,7 @@ mod tests {
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::PaneSurfacePatch,
+            protocol::EnvelopeBody::PaneViewportPatch,
             patch.as_union_value(),
         )
     }
@@ -9453,12 +9944,17 @@ mod tests {
         );
         let rows = builder.create_vector(&[row]);
         let pane_id = builder.create_string("pane-1");
-        let patch = protocol::PaneSurfacePatch::create(
+        let patch = protocol::PaneViewportPatch::create(
             &mut builder,
-            &protocol::PaneSurfacePatchArgs {
+            &protocol::PaneViewportPatchArgs {
                 pane_id: Some(pane_id),
                 base_version: 1,
                 version: 2,
+                timeline_version: 2,
+                total_lines: 4,
+                active_start_line: 1,
+                viewport_top_line: 1,
+                viewport: protocol::PaneViewportKind::Active,
                 kind,
                 row_updates: Some(rows),
                 cursor: None,
@@ -9469,7 +9965,7 @@ mod tests {
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::PaneSurfacePatch,
+            protocol::EnvelopeBody::PaneViewportPatch,
             patch.as_union_value(),
         )
     }
@@ -9479,12 +9975,17 @@ mod tests {
         let rows = builder.create_vector::<flatbuffers::WIPOffset<protocol::RowUpdate>>(&[]);
         let colors = flatbuffer_terminal_colors_with_palette_diff(&mut builder);
         let pane_id = builder.create_string("pane-1");
-        let patch = protocol::PaneSurfacePatch::create(
+        let patch = protocol::PaneViewportPatch::create(
             &mut builder,
-            &protocol::PaneSurfacePatchArgs {
+            &protocol::PaneViewportPatchArgs {
                 pane_id: Some(pane_id),
                 base_version: 1,
                 version: 2,
+                timeline_version: 2,
+                total_lines: 4,
+                active_start_line: 1,
+                viewport_top_line: 1,
+                viewport: protocol::PaneViewportKind::Active,
                 kind,
                 row_updates: Some(rows),
                 cursor: None,
@@ -9495,7 +9996,7 @@ mod tests {
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::PaneSurfacePatch,
+            protocol::EnvelopeBody::PaneViewportPatch,
             patch.as_union_value(),
         )
     }
@@ -9504,12 +10005,17 @@ mod tests {
         let mut builder = FlatBufferBuilder::new();
         let rows = builder.create_vector::<flatbuffers::WIPOffset<protocol::RowUpdate>>(&[]);
         let pane_id = pane_id.map(|pane_id| builder.create_string(pane_id));
-        let patch = protocol::PaneSurfacePatch::create(
+        let patch = protocol::PaneViewportPatch::create(
             &mut builder,
-            &protocol::PaneSurfacePatchArgs {
+            &protocol::PaneViewportPatchArgs {
                 pane_id,
                 base_version: 1,
                 version: 2,
+                timeline_version: 2,
+                total_lines: 4,
+                active_start_line: 1,
+                viewport_top_line: 1,
+                viewport: protocol::PaneViewportKind::Active,
                 kind: protocol::PatchKind::CursorOnly,
                 row_updates: Some(rows),
                 cursor: None,
@@ -9520,7 +10026,7 @@ mod tests {
         );
         envelope_frame(
             &mut builder,
-            protocol::EnvelopeBody::PaneSurfacePatch,
+            protocol::EnvelopeBody::PaneViewportPatch,
             patch.as_union_value(),
         )
     }
@@ -9725,7 +10231,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -9813,6 +10319,8 @@ mod tests {
         assert_eq!(surface.kind, SurfaceUpdateKind::Snapshot);
         assert_eq!(surface.pane_id, "pane-1");
         assert_eq!(surface.version, 2);
+        assert_eq!(surface.scrollback_version, 1);
+        assert_eq!(surface.scrollback_total_lines, 3);
         assert_eq!(surface.cols, Some(80));
         assert_eq!(surface.rows, Some(24));
         assert_eq!(surface.surface, Some(protocol::SurfaceKind::Main));
@@ -9889,15 +10397,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_surface_snapshot_with_unknown_style_id() {
+    fn decodes_surface_snapshot_with_unknown_style_id_as_default_style() {
         let frame = pane_surface_snapshot_with_run_refs_frame(RunMetadataFixture {
             style_id: 1,
             ..RunMetadataFixture::default()
         });
-        let err = surface_update_from_frame(&frame)
-            .expect_err("surface snapshot with unknown style id should be rejected");
+        let update = surface_update_from_frame(&frame).expect("surface update");
 
-        assert!(err.to_string().contains("unknown style_id"));
+        assert_eq!(update.row_updates[0].text, "linked");
+        assert_eq!(update.row_updates[0].runs[0].style_id, 0);
+        let surface = ClientPaneSurface::from_snapshot(&update).expect("client surface");
+        assert_eq!(surface.render_text(), "linked");
     }
 
     #[test]
@@ -10140,19 +10650,19 @@ mod tests {
         for (frame, expected) in [
             (
                 pane_surface_snapshot_with_pane_id(None),
-                "missing surface snapshot pane_id",
+                "missing pane viewport pane_id",
             ),
             (
                 pane_surface_snapshot_with_pane_id(Some("")),
-                "empty surface snapshot pane_id",
+                "empty pane viewport pane_id",
             ),
             (
                 pane_surface_patch_with_pane_id(None),
-                "missing surface patch pane_id",
+                "missing pane viewport patch pane_id",
             ),
             (
                 pane_surface_patch_with_pane_id(Some("")),
-                "empty surface patch pane_id",
+                "empty pane viewport patch pane_id",
             ),
         ] {
             let err =
@@ -10192,11 +10702,11 @@ mod tests {
         for (frame, expected) in [
             (
                 scrollback_chunk_with_pane_id(None),
-                "missing scrollback chunk pane_id",
+                "missing pane viewport snapshot pane_id",
             ),
             (
                 scrollback_chunk_with_pane_id(Some("")),
-                "empty scrollback chunk pane_id",
+                "empty pane viewport snapshot pane_id",
             ),
         ] {
             let err =
@@ -10318,6 +10828,21 @@ mod tests {
     }
 
     #[test]
+    fn decodes_scrollback_chunk_with_unknown_style_id_as_default_style() {
+        let frame = scrollback_chunk_with_run_metadata_frame(
+            RowMetadataFixture::default(),
+            RunMetadataFixture {
+                style_id: 15,
+                ..RunMetadataFixture::default()
+            },
+        );
+        let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
+
+        assert_eq!(chunk.lines[0].text, "linked");
+        assert_eq!(chunk.lines[0].runs[0].style_id, 0);
+    }
+
+    #[test]
     fn rejects_scrollback_chunk_with_unknown_semantic_enums() {
         let prompt_frame = scrollback_chunk_with_run_metadata_frame(
             RowMetadataFixture {
@@ -10373,24 +10898,6 @@ mod tests {
                 .to_string()
                 .contains("scrollback chunk start_line must be 1-based"),
             "{start_err}"
-        );
-
-        let row_frame = scrollback_chunk_with_public_lines(
-            Some("pane-1"),
-            RowMetadataFixture::default(),
-            RunMetadataFixture::hyperlink(),
-            ScrollbackPublicLinesFixture {
-                row_line: 0,
-                ..ScrollbackPublicLinesFixture::default()
-            },
-        );
-        let row_err = scrollback_chunk_from_frame(&row_frame)
-            .expect_err("zero scrollback row line should be rejected");
-        assert!(
-            row_err
-                .to_string()
-                .contains("scrollback row line must be 1-based"),
-            "{row_err}"
         );
     }
 
@@ -10809,7 +11316,7 @@ mod tests {
         assert_eq!(predicted, "abc");
         assert_eq!(
             overlay.render_underlined(&surface).as_deref(),
-            Some("ab\x1b[4mc\x1b[24m")
+            Some("ab\x1b[0m\x1b[4mc\x1b[0m")
         );
         assert_eq!(surface.render_text(), "ab");
         assert_eq!(
@@ -11033,7 +11540,7 @@ mod tests {
             .expect("apply mode-only patch");
         assert_eq!(
             overlay.render_underlined(&surface).as_deref(),
-            Some("ab\x1b[4mc\x1b[24m")
+            Some("ab\x1b[0m\x1b[4mc\x1b[0m")
         );
         assert_eq!(
             overlay
@@ -11182,7 +11689,7 @@ mod tests {
 
         assert_eq!(
             overlay.render_underlined_styled(&surface).as_deref(),
-            Some("\x1b[3;38;2;255;0;0mred\x1b[0m plain\x1b[4m!\x1b[24m")
+            Some("\x1b[3;38;2;255;0;0mred\x1b[0m plain\x1b[0m\x1b[4m!\x1b[0m")
         );
         assert_eq!(surface.render_text(), "red plain");
     }
@@ -11480,6 +11987,66 @@ mod tests {
     }
 
     #[test]
+    fn client_attach_state_ignores_stale_duplicate_surface_patch() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            15,
+            None,
+            vec![surface_row(0, "current")],
+        );
+        let mut state = ClientAttachState::default();
+        state
+            .render_surface_update(&snapshot)
+            .expect("cache current snapshot");
+
+        let duplicate = surface_update(
+            SurfaceUpdateKind::Patch,
+            15,
+            Some(14),
+            vec![surface_row(0, "stale")],
+        );
+        let rendered = state
+            .render_surface_update(&duplicate)
+            .expect("ignore stale duplicate patch");
+
+        assert_eq!(rendered, "current");
+        assert_eq!(
+            state.cached_surface_text("pane-1").as_deref(),
+            Some("current")
+        );
+    }
+
+    #[test]
+    fn client_attach_state_ignores_stale_base_surface_patch() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            17,
+            None,
+            vec![surface_row(0, "current")],
+        );
+        let mut state = ClientAttachState::default();
+        state
+            .render_surface_update(&snapshot)
+            .expect("cache current snapshot");
+
+        let stale_base = surface_update(
+            SurfaceUpdateKind::Patch,
+            18,
+            Some(16),
+            vec![surface_row(0, "stale")],
+        );
+        let rendered = state
+            .render_surface_update(&stale_base)
+            .expect("ignore stale-base patch");
+
+        assert_eq!(rendered, "current");
+        assert_eq!(
+            state.cached_surface_text("pane-1").as_deref(),
+            Some("current")
+        );
+    }
+
+    #[test]
     fn full_refresh_required_surface_response_uses_snapshot() {
         assert_eq!(
             surface_response_for_known_version(2, 1, protocol::PatchKind::FullRefreshRequired),
@@ -11488,7 +12055,7 @@ mod tests {
     }
 
     #[test]
-    fn client_attach_state_tracks_known_surface_and_renders_patch() {
+    fn client_attach_state_tracks_known_viewport_and_renders_patch() {
         let mut state = ClientAttachState::default();
         let mut session = Session::initial();
         let snapshot_update =
@@ -11519,8 +12086,8 @@ mod tests {
         );
         assert!(rendered.surface_metadata.is_empty());
         assert_eq!(
-            state.known_surfaces(),
-            vec![KnownSurfaceVersion {
+            state.known_viewports(),
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }]
@@ -11549,8 +12116,8 @@ mod tests {
             Some("booting nmux workspace\nnmux pane-1\nserver-owned terminal state\nnew output")
         );
         assert_eq!(
-            state.known_surfaces(),
-            vec![KnownSurfaceVersion {
+            state.known_viewports(),
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 3,
             }]
@@ -11924,20 +12491,20 @@ mod tests {
 
         let decoded = ClientAttachState::decode(&state.encode()).expect("decode state");
         assert_eq!(decoded.scope, Some(expected_scope));
-        assert_eq!(decoded.known_surfaces(), state.known_surfaces());
+        assert_eq!(decoded.known_viewports(), state.known_viewports());
         assert_eq!(decoded.cached_surface_modes("pane-1"), Some(expected_modes));
         assert_eq!(decoded.cached_surface_modes("missing"), None);
         assert_eq!(
-            decoded.known_surfaces_for_scope(Some(expected_scope)),
-            state.known_surfaces()
+            decoded.known_viewports_for_scope(Some(expected_scope)),
+            state.known_viewports()
         );
         assert_eq!(
-            decoded.known_surfaces_for_scope(Some(test_socket_identity(10, 21))),
+            decoded.known_viewports_for_scope(Some(test_socket_identity(10, 21))),
             Vec::new()
         );
         assert_eq!(
             decoded
-                .known_surfaces_for_scope(Some(test_socket_identity_with_ctime(10, 20, 100, 201))),
+                .known_viewports_for_scope(Some(test_socket_identity_with_ctime(10, 20, 100, 201))),
             Vec::new()
         );
         assert_eq!(decoded.cached_scrollback_version("pane-1", 4, 1), Some(11));
@@ -12041,7 +12608,7 @@ mod tests {
         .expect("decode legacy scoped state");
 
         assert_eq!(
-            decoded.known_surfaces_for_scope(Some(test_socket_identity(10, 20))),
+            decoded.known_viewports_for_scope(Some(test_socket_identity(10, 20))),
             Vec::new()
         );
     }
@@ -12055,7 +12622,7 @@ mod tests {
 
         assert_eq!(decoded.scope, None);
         assert_eq!(
-            decoded.known_surfaces_for_scope(Some(test_socket_identity(1, 2))),
+            decoded.known_viewports_for_scope(Some(test_socket_identity(1, 2))),
             Vec::new()
         );
         assert_eq!(decoded.surfaces[0].surface, protocol::SurfaceKind::Main);
@@ -12340,7 +12907,10 @@ mod tests {
                 styles: default_style_summaries(),
                 hyperlinks: Vec::new(),
                 colors: TerminalColorSummary::default(),
-                lines: vec![scrollback_line(1, "real process output")],
+                lines: vec![
+                    scrollback_line(1, "real process output"),
+                    scrollback_line(2, ""),
+                ],
             })
         );
 
@@ -12386,9 +12956,9 @@ mod tests {
                 .serve_with_output(&listener, &mut session, &mut output)
                 .expect("serve one")
         });
-        let snapshot = attach_with_known_surfaces(
+        let snapshot = attach_with_known_viewports(
             &socket_path,
-            vec![KnownSurfaceVersion {
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
@@ -12971,7 +13541,7 @@ mod tests {
                 display_name: "Reader".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: "machine-a".to_owned(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: true,
@@ -12995,7 +13565,7 @@ mod tests {
                 display_name: "Agent X".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: "machine-b".to_owned(),
                 client_kind: "agent".to_owned(),
                 subscribe_client_inventory: true,
@@ -13054,7 +13624,7 @@ mod tests {
                 display_name: "Reader".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: "machine-a".to_owned(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: true,
@@ -13078,7 +13648,7 @@ mod tests {
                 display_name: "Agent X".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: "machine-b".to_owned(),
                 client_kind: "agent".to_owned(),
                 subscribe_client_inventory: true,
@@ -13135,7 +13705,7 @@ mod tests {
                 display_name: "Reader".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13154,7 +13724,7 @@ mod tests {
                 display_name: "Writer".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13223,7 +13793,7 @@ mod tests {
                 display_name: "Reader".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13241,7 +13811,7 @@ mod tests {
                 display_name: "Writer".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13316,7 +13886,7 @@ mod tests {
                 display_name: "First".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13334,7 +13904,7 @@ mod tests {
                 display_name: "Second".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13684,7 +14254,7 @@ mod tests {
                 display_name: "First".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13703,7 +14273,7 @@ mod tests {
                 display_name: "Second".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13784,7 +14354,7 @@ mod tests {
                 display_name: "Smaller".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13803,7 +14373,7 @@ mod tests {
                 display_name: "Larger".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13950,7 +14520,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -13993,7 +14563,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -14501,7 +15071,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -14557,7 +15127,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -14587,7 +15157,7 @@ mod tests {
             error,
             ErrorSummary {
                 code: protocol::ErrorCode::StaleVersion,
-                message: "stale scrollback version for pane-1: client=999 server=1".to_owned(),
+                message: "stale pane viewport version for pane-1: client=999 server=2".to_owned(),
                 retryable: false,
                 pane_id: Some("pane-1".to_owned()),
                 input_seq: 0,
@@ -14637,7 +15207,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -14657,7 +15227,7 @@ mod tests {
                     start_line: 1,
                     line_count: 1,
                 },
-                known_scrollback_version: 1,
+                known_scrollback_version: 2,
             },
         )
         .expect("send current scrollback fetch");
@@ -14889,7 +15459,7 @@ mod tests {
         write_attach_request(
             &mut stream,
             &AttachRequest {
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: current_version - 1,
                 }],
@@ -15256,7 +15826,7 @@ mod tests {
             error,
             LiveSurfaceRead::Error(ErrorSummary {
                 code: protocol::ErrorCode::StaleVersion,
-                message: "stale scrollback version for pane-1: client=999 server=1".to_owned(),
+                message: "stale pane viewport version for pane-1: client=999 server=2".to_owned(),
                 retryable: false,
                 pane_id: Some("pane-1".to_owned()),
                 input_seq: 0,
@@ -15444,7 +16014,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15500,7 +16070,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15559,7 +16129,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15620,7 +16190,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -15679,7 +16249,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
@@ -15719,6 +16289,51 @@ mod tests {
     }
 
     #[test]
+    fn live_attach_ahead_cached_surface_version_gets_snapshot_status() {
+        let socket_path = test_socket_path();
+        let listener = bind_listener(&socket_path).expect("bind listener");
+        let mut session = Session::initial();
+        let mut host = PlanningHost::default();
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start planning pane");
+
+        let server = thread::spawn(move || {
+            ServeConfig::live(1, 1)
+                .serve(&listener, &mut session, &mut host)
+                .expect("serve current live");
+        });
+        let mut stream = UnixStream::connect(&socket_path).expect("connect client");
+        write_attach_request(
+            &mut stream,
+            &AttachRequest {
+                known_viewports: vec![KnownViewportVersion {
+                    pane_id: "pane-1".to_owned(),
+                    version: 99,
+                }],
+                hostname: String::new(),
+                client_kind: "nmux".to_owned(),
+                subscribe_client_inventory: false,
+                ..AttachOptions::default().request
+            },
+        )
+        .expect("write attach request");
+
+        let initial = attach_from_stream(&mut stream).expect("initial attach");
+        assert_eq!(
+            initial.status.surface_state,
+            protocol::AttachSurfaceState::Snapshot
+        );
+        assert_eq!(
+            initial.surface.expect("snapshot").kind,
+            SurfaceUpdateKind::Snapshot
+        );
+
+        drop(stream);
+        server.join().expect("server thread");
+        let _ = fs::remove_file(socket_path);
+    }
+
+    #[test]
     fn live_current_surface_attach_forwards_focus_when_reporting_enabled() {
         let socket_path = test_socket_path();
         let listener = bind_listener(&socket_path).expect("bind listener");
@@ -15743,7 +16358,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
@@ -15792,7 +16407,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
@@ -15842,7 +16457,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
@@ -15891,7 +16506,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
@@ -15940,7 +16555,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 2,
                 }],
@@ -16018,7 +16633,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: vec![KnownSurfaceVersion {
+                known_viewports: vec![KnownViewportVersion {
                     pane_id: "pane-1".to_owned(),
                     version: 3,
                 }],
@@ -16533,6 +17148,36 @@ mod tests {
     }
 
     #[test]
+    fn post_input_notify_poll_flushes_changed_output_after_short_quiet_window() {
+        let mut session = Session::initial();
+        let mut engines = PaneTerminalEngines::interim();
+        let mut host = ScriptedOutputHost::with_ready_notify(vec![b"file-a\nfile-b\n$ ".to_vec()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let started_at = Instant::now();
+        let changed = poll_panes_output_with_host_until_poll_quiet_state(
+            &mut session,
+            &mut engines,
+            &mut host,
+            &["pane-1".to_owned()],
+            LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT,
+            false,
+        )
+        .expect("poll post-input output");
+
+        assert!(changed, "post-input output should update the surface");
+        assert!(
+            started_at.elapsed() < Duration::from_millis(80),
+            "post-input changed output waited for the old long coalesce timeout"
+        );
+        let surface_text = surface_text_from_frame(&session.pane_surface_frame("local-client", 1))
+            .expect("render surface text");
+        assert!(surface_text.contains("file-a"));
+        assert!(surface_text.contains("file-b"));
+    }
+
+    #[test]
     fn actor_pane_output_handoff_flushes_large_output_in_ordered_chunks() {
         let mut actor = SessionActor::initial(64);
         let mut output = Vec::new();
@@ -16716,7 +17361,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16787,7 +17432,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadWrite,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16838,7 +17483,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -16885,9 +17530,9 @@ mod tests {
                 .serve_without_host(&listener, &mut session)
                 .expect("serve one")
         });
-        let snapshot = attach_with_known_surfaces(
+        let snapshot = attach_with_known_viewports(
             &socket_path,
-            vec![KnownSurfaceVersion {
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
@@ -16983,7 +17628,7 @@ mod tests {
             let request = read_attach_request(&mut stream).expect("read attach request");
             assert!(
                 request
-                    .known_surfaces
+                    .known_viewports
                     .iter()
                     .any(|known| { known.pane_id == "pane-2" && known.version == 2 })
             );
@@ -17149,7 +17794,7 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
@@ -17212,7 +17857,7 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
@@ -17274,7 +17919,7 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
@@ -17336,7 +17981,7 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
@@ -17404,7 +18049,7 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
@@ -17466,7 +18111,7 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
@@ -17539,7 +18184,7 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 2,
                     }],
@@ -17616,7 +18261,7 @@ mod tests {
                     display_name: "local".to_owned(),
                     mode: AttachMode::ReadWrite,
                     focused_pane_id: Some("pane-1".to_owned()),
-                    known_surfaces: vec![KnownSurfaceVersion {
+                    known_viewports: vec![KnownViewportVersion {
                         pane_id: "pane-1".to_owned(),
                         version: 3,
                     }],
@@ -17704,7 +18349,7 @@ mod tests {
             display_name: "Spectator".to_owned(),
             mode: AttachMode::ReadOnly,
             focused_pane_id: Some("pane-1".to_owned()),
-            known_surfaces: vec![KnownSurfaceVersion {
+            known_viewports: vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
@@ -17724,10 +18369,10 @@ mod tests {
         assert_eq!(body.display_name(), Some("Spectator"));
         assert_eq!(body.mode(), protocol::AttachMode::ReadOnly);
         assert_eq!(body.focused_pane_id(), Some("pane-1"));
-        let known_surfaces = body.known_surfaces().expect("known surfaces");
-        assert_eq!(known_surfaces.len(), 1);
-        assert_eq!(known_surfaces.get(0).pane_id(), Some("pane-1"));
-        assert_eq!(known_surfaces.get(0).version(), 2);
+        let known_viewports = body.known_viewports().expect("known viewports");
+        assert_eq!(known_viewports.len(), 1);
+        assert_eq!(known_viewports.get(0).pane_id(), Some("pane-1"));
+        assert_eq!(known_viewports.get(0).version(), 2);
         let decoded = read_attach_request(&mut buffer.as_slice()).expect("read attach request");
 
         assert_eq!(decoded, request);
@@ -17835,7 +18480,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_attach_request_with_empty_focused_or_known_surface_panes() {
+    fn rejects_attach_request_with_empty_focused_or_known_viewport_panes() {
         for (frame, expected) in [
             (
                 attach_request_frame_with_fields(
@@ -17855,7 +18500,7 @@ mod tests {
                     Some("pane-1"),
                     Some(None),
                 ),
-                "missing known surface pane_id",
+                "missing known viewport pane_id",
             ),
             (
                 attach_request_frame_with_fields(
@@ -17865,7 +18510,7 @@ mod tests {
                     Some("pane-1"),
                     Some(Some("")),
                 ),
-                "empty known surface pane_id",
+                "empty known viewport pane_id",
             ),
         ] {
             let err =
@@ -17897,7 +18542,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -17935,7 +18580,7 @@ mod tests {
                 display_name: "local".to_owned(),
                 mode: AttachMode::ReadOnly,
                 focused_pane_id: Some("pane-1".to_owned()),
-                known_surfaces: Vec::new(),
+                known_viewports: Vec::new(),
                 hostname: String::new(),
                 client_kind: "nmux".to_owned(),
                 subscribe_client_inventory: false,
@@ -17997,8 +18642,8 @@ mod tests {
             Some("booting nmux workspace\nnmux pane-1\nserver-owned terminal state\nloop update")
         );
         assert_eq!(
-            state.known_surfaces(),
-            vec![KnownSurfaceVersion {
+            state.known_viewports(),
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 3,
             }]
@@ -18274,7 +18919,7 @@ mod tests {
         let status_err = attach_status_from_frame(&attach_status_frame_with_surface_state(
             protocol::AttachSurfaceState(99),
         ))
-        .expect_err("attach status with unknown surface state should be rejected");
+        .expect_err("attach status with unknown viewport state should be rejected");
         assert!(
             status_err
                 .to_string()
@@ -18534,6 +19179,41 @@ mod tests {
     }
 
     #[test]
+    fn scrollback_response_queues_interleaved_pong_frames() {
+        let (mut client, mut server) = UnixStream::pair().expect("socket pair");
+        let session = Session::initial();
+        let mut seq = 7;
+        write_pong_frame(
+            &mut server,
+            &session,
+            &mut seq,
+            &PingSummary {
+                actor_id: "actor-1".to_owned(),
+                ping_seq: 42,
+            },
+        )
+        .expect("write pong");
+        wire::write_default_frame(
+            &mut server,
+            &session.scrollback_chunk_frame("local-client", 8, 1, 1),
+        )
+        .expect("write scrollback chunk");
+
+        let mut pending_live = Vec::new();
+        let read = read_scrollback_response_from_stream(&mut client, None, Some(&mut pending_live))
+            .expect("read scrollback response");
+
+        assert!(matches!(read, ScrollbackRead::Chunk(_)));
+        assert_eq!(
+            pending_live,
+            vec![LiveSurfaceRead::Pong(PingSummary {
+                actor_id: "actor-1".to_owned(),
+                ping_seq: 42,
+            })]
+        );
+    }
+
+    #[test]
     fn shared_live_async_runtime_services_multiple_transports() {
         let runtime = LiveAsyncRuntime::new().expect("shared async runtime");
         let (mut client_a, server_a) = UnixStream::pair().expect("socket pair a");
@@ -18638,9 +19318,9 @@ mod tests {
                 .serve_without_host(&listener, &mut session)
                 .expect("serve one")
         });
-        let snapshot = attach_with_known_surfaces(
+        let snapshot = attach_with_known_viewports(
             &socket_path,
-            vec![KnownSurfaceVersion {
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 1,
             }],
@@ -18670,9 +19350,9 @@ mod tests {
                 .serve_without_host(&listener, &mut session)
                 .expect("serve one")
         });
-        let snapshot = attach_with_known_surfaces(
+        let snapshot = attach_with_known_viewports(
             &socket_path,
-            vec![KnownSurfaceVersion {
+            vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 0,
             }],
@@ -18734,7 +19414,7 @@ mod tests {
             last_seen_mono_ms: 0,
             last_input_mono_ms: None,
             seq: 9,
-            known_surface_versions: BTreeMap::from([("pane-1".to_owned(), 1)]),
+            known_viewport_versions: BTreeMap::from([("pane-1".to_owned(), 1)]),
             frontend_resize_constraints: BTreeMap::new(),
             completed_cycles: 0,
         };
@@ -18744,7 +19424,7 @@ mod tests {
             .expect("signal surface");
 
         assert_eq!(client.seq, 10);
-        assert_eq!(client.known_surface_versions.get("pane-1"), Some(&2));
+        assert_eq!(client.known_viewport_versions.get("pane-1"), Some(&2));
         match output_rx.recv_write_event().await {
             async_live::ClientWriteEvent::Surface(surfaces) => {
                 let signal = surfaces.panes.get("pane-1").expect("pane surface signal");
@@ -18794,7 +19474,7 @@ mod tests {
         assert!(session.apply_pane_output_with_engine("pane-1", b"alternate", &mut engine));
 
         let request = AttachRequest {
-            known_surfaces: vec![KnownSurfaceVersion {
+            known_viewports: vec![KnownViewportVersion {
                 pane_id: "pane-1".to_owned(),
                 version: 2,
             }],
@@ -19023,19 +19703,19 @@ mod tests {
         for (frame, expected) in [
             (
                 scrollback_fetch_frame_with_ids(None, Some("actor-1")),
-                "missing scrollback fetch pane_id",
+                "missing pane viewport intent pane_id",
             ),
             (
                 scrollback_fetch_frame_with_ids(Some(""), Some("actor-1")),
-                "empty scrollback fetch pane_id",
+                "empty pane viewport intent pane_id",
             ),
             (
                 scrollback_fetch_frame_with_ids(Some("pane-1"), None),
-                "missing scrollback fetch actor_id",
+                "missing pane viewport intent actor_id",
             ),
             (
                 scrollback_fetch_frame_with_ids(Some("pane-1"), Some("")),
-                "empty scrollback fetch actor_id",
+                "empty pane viewport intent actor_id",
             ),
         ] {
             let err =
@@ -19818,11 +20498,11 @@ mod tests {
         for (frame, expected) in [
             (
                 scrollback_fetch_frame_with_ids_and_range(Some("pane-1"), Some("actor-1"), 0, 2),
-                "scrollback fetch start_line must be 1-based",
+                "pane viewport top_line must be 1-based",
             ),
             (
                 scrollback_fetch_frame_with_ids_and_range(Some("pane-1"), Some("actor-1"), 1, 0),
-                "scrollback fetch line_count must be nonzero",
+                "pane viewport visible_rows must be nonzero",
             ),
         ] {
             let err = scrollback_fetch_from_frame(&frame)
@@ -19931,6 +20611,41 @@ mod tests {
         assert_eq!(chunk.lines[1].runs[0].text, "server-owned terminal state");
     }
 
+    #[test]
+    fn decodes_scrollback_chunk_with_repeated_blank_rows_from_server_frame() {
+        let mut session = Session::initial();
+        let pane = &mut session.tabs[0].root;
+        pane.scrollback_lines = vec![
+            "before".to_owned(),
+            String::new(),
+            String::new(),
+            "after".to_owned(),
+        ];
+        pane.scrollback_row_runs = pane
+            .scrollback_lines
+            .iter()
+            .map(|line| vec![CellRun::plain(line.clone())])
+            .collect();
+        pane.scrollback_semantic_prompts =
+            vec![protocol::RowSemanticPrompt::None; pane.scrollback_lines.len()];
+        pane.scrollback_dirty_rows = vec![false; pane.scrollback_lines.len()];
+        pane.scrollback_kitty_placeholders = vec![false; pane.scrollback_lines.len()];
+
+        let frame = session.scrollback_chunk_frame("local-client", 4, 1, 4);
+        let chunk = scrollback_chunk_from_frame(&frame).expect("scrollback chunk");
+
+        assert_eq!(chunk.start_line, 1);
+        assert_eq!(chunk.total_lines, 4);
+        assert_eq!(
+            chunk
+                .lines
+                .iter()
+                .map(|line| (line.line, line.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(1, "before"), (2, ""), (3, ""), (4, "after")]
+        );
+    }
+
     #[derive(Debug, Default)]
     struct EchoHost {
         running: bool,
@@ -20015,12 +20730,22 @@ mod tests {
         events: Vec<HostEvent>,
         output: VecDeque<Vec<u8>>,
         pending: VecDeque<u8>,
+        notify_pipe: Option<TestNotifyPipe>,
     }
 
     impl ScriptedOutputHost {
         fn new(output: Vec<Vec<u8>>) -> Self {
             Self {
                 output: output.into(),
+                ..Self::default()
+            }
+        }
+
+        fn with_ready_notify(output: Vec<Vec<u8>>) -> Self {
+            let notify_pipe = TestNotifyPipe::ready().expect("create test notify pipe");
+            Self {
+                output: output.into(),
+                notify_pipe: Some(notify_pipe),
                 ..Self::default()
             }
         }
@@ -20115,6 +20840,66 @@ mod tests {
             }
             Ok(count)
         }
+
+        fn notify_fd(&self) -> Option<std::os::fd::RawFd> {
+            self.notify_pipe.as_ref().map(|pipe| pipe.read_fd)
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestNotifyPipe {
+        read_fd: std::os::fd::RawFd,
+        write_fd: std::os::fd::RawFd,
+    }
+
+    impl TestNotifyPipe {
+        fn ready() -> std::io::Result<Self> {
+            let mut fds = [-1; 2];
+            // SAFETY: fds points to two valid c_int slots for pipe(2) to fill.
+            if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            for fd in fds {
+                if let Err(error) = set_test_fd_nonblocking(fd) {
+                    // SAFETY: fds were opened by pipe(2) above and are owned here.
+                    unsafe {
+                        libc::close(fds[0]);
+                        libc::close(fds[1]);
+                    }
+                    return Err(error);
+                }
+            }
+            let byte = [1_u8];
+            // SAFETY: fds[1] is a valid pipe write fd and byte is a valid one-byte buffer.
+            let _ = unsafe { libc::write(fds[1], byte.as_ptr().cast(), byte.len()) };
+            Ok(Self {
+                read_fd: fds[0],
+                write_fd: fds[1],
+            })
+        }
+    }
+
+    impl Drop for TestNotifyPipe {
+        fn drop(&mut self) {
+            // SAFETY: both fds are owned by this test pipe.
+            unsafe {
+                libc::close(self.read_fd);
+                libc::close(self.write_fd);
+            }
+        }
+    }
+
+    fn set_test_fd_nonblocking(fd: std::os::fd::RawFd) -> std::io::Result<()> {
+        // SAFETY: fd is a valid file descriptor owned by the test pipe.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fd is valid and flags were just read successfully.
+        if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     #[derive(Debug, Default)]

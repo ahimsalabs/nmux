@@ -98,16 +98,16 @@ SGR mouse/scroll input through the same daemon-owned gates used by explicit
 `--key-name` and `--mouse` input.
 
 Each attach starts with an `AttachRequest` carrying actor identity, attach mode,
-focused pane, and known pane surface versions. The daemon polls process output
+focused pane, and known pane viewport versions. The daemon polls process output
 into backend-owned pane state, then sends a `WorkspaceTreeSnapshot`,
 `PresenceUpdate`, `AttachStatus`, and, when needed, either a
-`PaneSurfaceSnapshot` or a `PaneSurfacePatch`. Decoded workspace, surface,
+`PaneViewportSnapshot` or a `PaneViewportPatch`. Decoded workspace, viewport,
 attach-status, and scrollback state requires non-empty session, tab, and pane
 IDs before it can update client render/cache state. `AttachStatus` identifies
-the attached pane and says whether the client is already current or a surface
+the attached pane and says whether the client is already current or a viewport
 frame follows. `nmux` applies those state objects to a client-side pane surface
 render state before printing, then can send post-attach control frames and
-render returned `ScrollbackChunk` objects.
+render returned viewport snapshots.
 
 Run the default-engine checks:
 
@@ -260,13 +260,13 @@ ping
 echo:ping
 ```
 
-To keep one local frontend process polling for server-owned surface updates, run a bounded follow loop:
+To keep one local frontend process polling for server-owned viewport updates, run a bounded follow loop:
 
 ```sh
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --follow --iterations 3 --interval-ms 500 --state /tmp/nmux-follow.state --scrollback-start 1 --scrollback-count 1
 ```
 
-`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane surface versions on each reconnect, applies snapshots or patches when the daemon has newer state, and renders the scoped cached surface when `AttachStatus` reports the attached pane is already current. Follow mode is read-only for now, so it rejects input flags instead of repeatedly sending input.
+`--follow` is a local reconnect loop over the current request/response protocol. It keeps one in-process client render state, sends known pane viewport versions on each reconnect, applies snapshots or patches when the daemon has newer state, and renders the scoped cached surface when `AttachStatus` reports the attached pane is already current. Follow mode is read-only for now, so it rejects input flags instead of repeatedly sending input.
 
 Inspect a persisted client cache without connecting to a daemon:
 
@@ -398,7 +398,7 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nm
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nmux-live.state --live --no-input --iterations 1 --scrollback-start 1 --scrollback-count 8
 ```
 
-The second live client attaches to the same backend-owned pane state and can observe output produced by the first live client. With `--state`, it sends its known pane surface version and renders the cached current surface when the daemon has no newer surface update to send.
+The second live client attaches to the same backend-owned pane state and can observe output produced by the first live client. With `--state`, it sends its known pane viewport version and renders the cached current surface when the daemon has no newer viewport update to send.
 
 Attach a bounded live client:
 
@@ -409,7 +409,7 @@ nix develop . -c cargo run --bin nmux -- --live --iterations 2 --key $'ping\n' -
 Expected output includes the initial surface and two streamed updates ending in `echo:ping`. The client uses `--interval-ms` as a read timeout for optional update frames. If no output is produced for a cycle, the client continues until the bounded iteration count is reached. Bounded live and follow loops reject `--iterations 0` before connecting, and `--interval-ms` must be greater than zero.
 For scripts, add `--json` to one-shot or follow attach to print machine-readable
 attach objects instead of renderer text, or add it to live mode to print
-newline-delimited attach, workspace, and surface update events. Attach and
+newline-delimited attach, workspace, and viewport update events. Attach and
 surface events include structured terminal state, row payloads, style tables,
 and hyperlink tables for scripts that need more than rendered fallback text.
 Successful live JSON sessions end with a `detach` event whose reason is
@@ -423,11 +423,11 @@ and for protocol errors after attach.
 Add `--record PATH` to live mode to write the same structured event stream to a
 newline-delimited JSON file with an `elapsed_ms` timestamp on each event. The
 record includes the initial attach surface, presence, streamed workspace and
-surface updates, protocol errors, and detach reason. `nmux replay PATH` reads
+viewport updates, protocol errors, and detach reason. `nmux replay PATH` reads
 that file and prints recorded attach/surface text frames in order; it is a
 surface-state playback aid, not raw PTY replay.
 
-Live mode renders the requested initial scrollback range after the first attached surface, using `--scrollback-start`/`--scrollback-count` or `--scrollback-tail`, unless `--no-scrollback` asks for a current-surface-only attach; the printed header reports the actual returned row range and includes the total when the response is not the tail. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane surface versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. State saves write a temporary file in the target directory and rename it into place. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
+Live mode renders the requested initial scrollback range after the first attached viewport, using `--scrollback-start`/`--scrollback-count` or `--scrollback-tail`, unless `--no-scrollback` asks for a current-surface-only attach; the printed header reports the actual returned row range and includes the total when the response is not the tail. In `--redraw` mode, that initial scrollback context is included in the first repaint buffer before the current pane surface. Live mode can also use `--state` to persist the client-side pane surface cache. On attach, the client sends known pane viewport versions from that file; streamed snapshots and patches update the same cache, and a current-version attach renders the cached surface without PTY byte replay. If the state file is corrupt or cannot be written, `nmux` reports the state path in the error. State saves write a temporary file in the target directory and rename it into place. In non-redraw mode, metadata-only `CursorOnly` updates carry no row changes and print changed title or working-directory lines without reprinting unchanged pane text.
 
 By default, live mode prints each rendered update as plain text. Add `--redraw` to repaint the current client-side pane surface on each update. When stdout is a TTY, `--redraw` uses differential rendering: only rows that actually changed are rewritten via cursor-addressed updates, eliminating full-screen flicker. A latency counter overlay in the top-right corner (inverse video) shows milliseconds between frames. When the `libghostty-vt` engine produces structured style data, the client reconstructs ANSI SGR escape sequences (bold, italic, 24-bit RGB colors) from the protocol's structured `StyleSummary` objects — the client never parses a raw VT byte. Styled output and the latency overlay persist across detach/reattach through the state file. Cursor-only and mode-only patches with unchanged metadata are no-ops in redraw mode. `--redraw` also uses the alternate screen and hides the cursor for the live session, restoring both on exit. Captured or piped stdout falls back to plain clear/home escape output without differential rendering or styling:
 
@@ -439,7 +439,7 @@ Add `--speculative-echo` only with `--redraw` and `--key` to enable the
 experimental client-local local echo overlay. It predicts one outstanding
 printable single-cell append at the confirmed cursor position, repaints the
 redraw buffer immediately with the predicted glyph underlined, and then
-replaces that overlay with the next daemon-owned surface update. It does not
+replaces that overlay with the next daemon-owned viewport update. It does not
 change the confirmed client cache,
 protocol frames, scrollback, or daemon terminal state, and it deliberately skips
 raw stdin-byte mode, line-streamed stdin, paste, named keys, control input, wide
@@ -495,7 +495,7 @@ present.
 One-shot clients also check for an input or output-polling error before
 requesting scrollback, so unsafe paste, encoding failures, host input failures,
 and host output polling failures are reported directly.
-Pane-scoped input, resize, and scrollback requests for unknown panes return a
+Pane-scoped input, resize, and viewport requests for unknown panes return a
 `PaneNotFound` error instead of waiting for a response that will never arrive.
 If the daemon cannot resolve its active tab or active pane while setting up an
 attach, it also returns `PaneNotFound` instead of guessing `pane-1`.
@@ -510,7 +510,7 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --live --no-inp
 
 When an unbounded live client exits because the daemon closes the live socket, the client reports `nmux: live server closed connection` on stderr.
 
-The read-only client attaches once, sends no input or resize control intents, and prints streamed surface updates when the daemon observes process output. If `--iterations` is omitted, it keeps polling until the daemon closes the live connection.
+The read-only client attaches once, sends no input or resize control intents, and prints streamed viewport updates when the daemon observes process output. If `--iterations` is omitted, it keeps polling until the daemon closes the live connection.
 
 The default engine is `libghostty-vt` when nmux is built with default Cargo
 features. PTY bytes stay in `nmux daemon`, and daemon-owned Ghostty VT state is
@@ -585,7 +585,7 @@ For interim-only validation, run `nix develop . -c just check-interim`.
 
 ## Presence And Attach Modes
 
-The FlatBuffers `AttachRequest` carries actor ID, user metadata, focused pane, attach mode, and known pane surface versions. Decoded attach requests and presence updates reject missing or empty identity strings, empty focused pane IDs when present, and missing or empty known-surface pane IDs. The daemon replies with `PresenceUpdate` and `AttachStatus`. `AttachStatus.surface_state = Current` is the explicit no-surface-update attach barrier; `Snapshot` and `Patch` mean the corresponding surface frame follows immediately.
+The FlatBuffers `AttachRequest` carries actor ID, user metadata, focused pane, attach mode, and known pane viewport versions. Decoded attach requests and presence updates reject missing or empty identity strings, empty focused pane IDs when present, and missing or empty known-viewport pane IDs. The daemon replies with `PresenceUpdate` and `AttachStatus`. `AttachStatus.surface_state = Current` is the explicit no-viewport-update attach barrier; `Snapshot` and `Patch` mean the corresponding viewport frame follows immediately.
 
 Current behavior:
 
@@ -600,27 +600,27 @@ The local skeleton currently accepts clients sequentially. Simultaneous multi-cl
 
 ## Reconnect Behavior
 
-Reconnect metadata is carried by `AttachRequest.known_surfaces`.
+Reconnect metadata is carried by `AttachRequest.known_viewports`.
 
 Current behavior:
 
-- no known surface version: daemon sends a full `PaneSurfaceSnapshot`
-- known surface version for the attached pane is current: daemon sends `AttachStatus.surface_state = Current` and no surface frame
-- known surface version for the attached pane is patchable: daemon sends `AttachStatus.surface_state = Patch` followed by a `PaneSurfacePatch`
-- known surface version for the attached pane has a latest `FullRefreshRequired` update:
+- no known viewport version: daemon sends a full `PaneViewportSnapshot`
+- known viewport version for the attached pane is current: daemon sends `AttachStatus.surface_state = Current` and no viewport frame
+- known viewport version for the attached pane is patchable: daemon sends `AttachStatus.surface_state = Patch` followed by a `PaneViewportPatch`
+- known viewport version for the attached pane has a latest `FullRefreshRequired` update:
   daemon recovers during attach with `AttachStatus.surface_state = Snapshot`
-  followed immediately by a full `PaneSurfaceSnapshot`
-- known surface version for the attached pane is stale: daemon sends `AttachStatus.surface_state = Snapshot` followed by a full `PaneSurfaceSnapshot`
+  followed immediately by a full `PaneViewportSnapshot`
+- known viewport version for the attached pane is stale: daemon sends `AttachStatus.surface_state = Snapshot` followed by a full `PaneViewportSnapshot`
 
 The CLI can persist its local render state with `--state`. This records the
 rendered pane surface, terminal title, OSC 7 working directory, terminal modes
 including mouse tracking mode/format,
 cached row runs, the cached style table, terminal color state, OSC 133 row/run
 semantic metadata, row dirty flags, row state hashes, Kitty placeholder row
-metadata, last known surface version, and last seen scrollback range/version
+metadata, last known viewport version, and last seen scrollback range/version
 metadata, so a later process can request a surface patch, apply it to the
 cached surface, or render the cached current surface when the daemon has no
-newer surface frame, instead of replaying raw PTY bytes. The state file is scoped to
+newer viewport frame, instead of replaying raw PTY bytes. The state file is scoped to
 the daemon socket identity, so a recreated socket path forces a fresh snapshot
 instead of reusing stale rows from an older daemon. Older state files that only
 contain rendered row text still load as default-style rows with default
@@ -633,7 +633,7 @@ retries once without that precondition if the daemon reports `StaleVersion`.
 Explicit one-shot text, paste, named-key, focus, and mouse input is still
 forwarded before the scrollback fetch when the visible surface is already
 current. When a scoped state file is already current and the daemon sends no
-surface frame, explicit live key, paste, named-key, focus, and mouse input is
+viewport frame, explicit live key, paste, named-key, focus, and mouse input is
 still sent to daemon-owned input handling; disabled focus or mouse modes return
 protocol `Error` frames instead of relying on cached client mode state.
 Use `nmux --state PATH --state-info-json` to inspect this cache shape from a
@@ -660,9 +660,9 @@ nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --key $'ping\n'
 nix develop . -c cargo run --bin nmux -- --socket /tmp/nmux.sock --state /tmp/nmux-client.state --no-input --scrollback-start 1 --scrollback-count 4
 ```
 
-The final attach sends the cached surface version for the attached pane in
-`AttachRequest`. If the daemon has exactly one newer surface version, it sends
-`PaneSurfacePatch`; `nmux` applies that patch to the persisted client surface
+The final attach sends the cached viewport version for the attached pane in
+`AttachRequest`. If the daemon has exactly one newer viewport version, it sends
+`PaneViewportPatch`; `nmux` applies that patch to the persisted client surface
 and updates `/tmp/nmux-client.state`. `AttachStatus.pane_id` remains the
 authority for the attached pane; post-attach input, resize, and scrollback
 control use that pane ID instead of assuming a fixed local pane name.
@@ -671,12 +671,13 @@ This proves the reconnect decision and client-side patch rendering through the p
 
 ## Scrollback Behavior
 
-The prototype keeps scrollback separate from the visible pane surface. Clients
-request explicit 1-based ranges with `--scrollback-start` and
-`--scrollback-count`, or ask the client to resolve the latest retained rows with
-`--scrollback-tail COUNT`. The daemon replies with a `ScrollbackChunk` for the
-attached pane. Persisted client state records last-seen scrollback range/version
-metadata, still fetches daemon-owned scrollback when the visible surface is
-current, and retries once without a version precondition if the daemon reports a
-stale scrollback version. Tests assert that visible surfaces and scrollback
-chunks stay backend-owned state objects rather than raw PTY replay.
+Scrollback is rendered as a daemon-owned pane viewport. Clients request explicit
+1-based ranges with `--scrollback-start` and `--scrollback-count`, or ask the
+client to resolve the latest retained rows with `--scrollback-tail COUNT`. The
+client sends a pinned `PaneViewportIntent`, and the daemon replies with a
+`PaneViewportSnapshot` for the attached pane. Persisted client state records
+last-seen scrollback range/version metadata, still fetches daemon-owned
+scrollback when the visible surface is current, and retries once without a
+version precondition if the daemon reports a stale viewport version. Tests
+assert that visible surfaces and scrollback stay backend-owned state objects
+rather than raw PTY replay.

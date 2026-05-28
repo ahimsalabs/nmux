@@ -48,9 +48,26 @@ pub enum HitTarget {
     Menu(MenuAction),
     Pane(String),
     PaneContent(String),
+    PaneScroll {
+        pane_id: String,
+        direction: ScrollDirection,
+        visible_rows: u16,
+    },
+    PaneScrollTrack {
+        pane_id: String,
+        visible_rows: u16,
+        track_position: u16,
+        track_len: u16,
+    },
     WindowTreePane(String),
     Overlay(OverlayAction),
     Background,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollDirection {
+    Up,
+    Down,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +127,14 @@ pub struct WorkspaceFrameInput<'a> {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PaneChromeState {
     pub read_only: bool,
-    pub scrollback: bool,
+    pub scrollback: Option<PaneScrollChrome>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneScrollChrome {
+    pub offset_from_bottom: u64,
+    pub viewport_rows: u16,
+    pub total_history_lines: u64,
 }
 
 pub fn render_workspace_frame(input: WorkspaceFrameInput<'_>, cols: u16, rows: u16) -> TuiFrame {
@@ -576,6 +600,40 @@ fn render_leaf_pane(
         rect: inner,
         target: HitTarget::PaneContent(pane_id.to_owned()),
     });
+    if chrome_state.scrollback.is_some() && chrome.height >= 4 {
+        let x = chrome.x + chrome.width.saturating_sub(1);
+        hits.push(HitRegion {
+            rect: Rect::new(x, chrome.y + 1, 1, 1),
+            target: HitTarget::PaneScroll {
+                pane_id: pane_id.to_owned(),
+                direction: ScrollDirection::Up,
+                visible_rows: inner.height.max(1),
+            },
+        });
+        hits.push(HitRegion {
+            rect: Rect::new(x, chrome.y + chrome.height - 2, 1, 1),
+            target: HitTarget::PaneScroll {
+                pane_id: pane_id.to_owned(),
+                direction: ScrollDirection::Down,
+                visible_rows: inner.height.max(1),
+            },
+        });
+        if chrome.height >= 5 {
+            let track_y = chrome.y + 2;
+            let track_height = chrome.height.saturating_sub(4);
+            for offset in 0..track_height {
+                hits.push(HitRegion {
+                    rect: Rect::new(x, track_y + offset, 1, 1),
+                    target: HitTarget::PaneScrollTrack {
+                        pane_id: pane_id.to_owned(),
+                        visible_rows: inner.height.max(1),
+                        track_position: offset,
+                        track_len: track_height.max(1),
+                    },
+                });
+            }
+        }
+    }
     if let Some(surface) = surface_summary {
         render_structured_surface(buffer, inner, surface);
         return;
@@ -616,7 +674,7 @@ fn render_structured_surface(
         };
         if let Some(runs) = runs {
             for run in runs {
-                x = render_cell_run(buffer, x, y, area, run, &surface.styles);
+                x = render_cell_run(buffer, x, y, area, run, &surface.styles, &surface.colors);
                 if x >= area.x.saturating_add(area.width) {
                     break;
                 }
@@ -641,9 +699,10 @@ fn render_cell_run(
     area: Rect,
     run: &local::CellRunSummary,
     styles: &[local::StyleSummary],
+    colors: &local::TerminalColorSummary,
 ) -> u16 {
     let max_x = area.x.saturating_add(area.width);
-    let style = run_style(run, styles);
+    let style = run_style(run, styles, colors);
     for (index, ch) in run.text.chars().enumerate() {
         if x >= max_x {
             break;
@@ -660,15 +719,17 @@ fn render_cell_run(
     x
 }
 
-fn run_style(run: &local::CellRunSummary, styles: &[local::StyleSummary]) -> Style {
+fn run_style(
+    run: &local::CellRunSummary,
+    styles: &[local::StyleSummary],
+    colors: &local::TerminalColorSummary,
+) -> Style {
     let Some(style) = styles.get(run.style_id as usize) else {
-        return Style::default().fg(Color::White);
+        return terminal_default_style(colors);
     };
-    let mut rendered = Style::default();
+    let mut rendered = terminal_default_style(colors);
     if style.fg_rgba != 0 {
         rendered = rendered.fg(rgba_color(style.fg_rgba));
-    } else {
-        rendered = rendered.fg(Color::White);
     }
     if style.bg_rgba != 0 {
         rendered = rendered.bg(rgba_color(style.bg_rgba));
@@ -699,6 +760,17 @@ fn run_style(run: &local::CellRunSummary, styles: &[local::StyleSummary]) -> Sty
         rendered = rendered.add_modifier(Modifier::UNDERLINED);
     }
     rendered
+}
+
+fn terminal_default_style(colors: &local::TerminalColorSummary) -> Style {
+    let mut style = Style::default();
+    if colors.default_fg_rgba != 0 {
+        style = style.fg(rgba_color(colors.default_fg_rgba));
+    }
+    if colors.default_bg_rgba != 0 {
+        style = style.bg(rgba_color(colors.default_bg_rgba));
+    }
+    style
 }
 
 fn rgba_color(rgba: u32) -> Color {
@@ -814,9 +886,6 @@ fn draw_box(
         if active {
             badges.push("active");
         }
-        if chrome_state.scrollback {
-            badges.push("scroll");
-        }
         if chrome_state.read_only {
             badges.push("ro");
         }
@@ -840,12 +909,66 @@ fn draw_box(
             .border_style(border_style)
             .render(area, buffer);
     }
+    if let Some(scroll) = chrome_state.scrollback {
+        draw_right_scrollbar(buffer, area, scroll);
+    }
 }
 
 fn clipped_box_title(title: &str, width: u16) -> String {
     let max = width.saturating_sub(4) as usize;
     let label = truncate_chars(title, max);
     format!(" {label} ")
+}
+
+fn draw_right_scrollbar(buffer: &mut Buffer, area: Rect, scroll: PaneScrollChrome) {
+    if area.width == 0 || area.height < 4 {
+        return;
+    }
+    let x = area.x + area.width - 1;
+    let control_style = Style::default()
+        .fg(Color::Rgb(250, 204, 21))
+        .bg(Color::Rgb(17, 19, 24))
+        .add_modifier(Modifier::BOLD);
+    let track_style = Style::default()
+        .fg(Color::Rgb(100, 116, 139))
+        .bg(Color::Rgb(17, 19, 24));
+    let thumb_style = Style::default()
+        .fg(Color::Rgb(250, 204, 21))
+        .bg(Color::Rgb(17, 19, 24));
+
+    set_cell(buffer, x, area.y + 1, "▲", control_style);
+    set_cell(buffer, x, area.y + area.height - 2, "▼", control_style);
+    if area.height < 5 {
+        return;
+    }
+
+    let track_y = area.y + 2;
+    let track_height = area.height.saturating_sub(4);
+    for offset in 0..track_height {
+        set_cell(buffer, x, track_y + offset, "│", track_style);
+    }
+    let total_content_rows = scroll.total_history_lines;
+    let viewport_rows = u64::from(scroll.viewport_rows.max(1)).min(total_content_rows);
+    let thumb_height = if total_content_rows == 0 {
+        1
+    } else {
+        ((u64::from(track_height) * viewport_rows) / total_content_rows)
+            .max(1)
+            .min(u64::from(track_height)) as u16
+    };
+    let range = scroll
+        .total_history_lines
+        .saturating_sub(u64::from(scroll.viewport_rows.max(1)));
+    let progress_from_top = range.saturating_sub(scroll.offset_from_bottom.min(range));
+    let available = track_height.saturating_sub(thumb_height);
+    let thumb_offset = if range == 0 || available == 0 {
+        0
+    } else {
+        ((u64::from(available) * progress_from_top) / range) as u16
+    };
+    for offset in 0..thumb_height {
+        set_cell(buffer, x, track_y + thumb_offset + offset, "▐", thumb_style);
+    }
 }
 
 fn draw_vertical_rule(buffer: &mut Buffer, x: u16, y: u16, height: u16) {
@@ -975,6 +1098,19 @@ fn buffer_to_string(buffer: &Buffer, area: Rect) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn single_pane_workspace() -> local::WorkspaceSummary {
+        local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        }
+    }
 
     fn split_workspace() -> local::WorkspaceSummary {
         local::WorkspaceSummary {
@@ -1189,6 +1325,53 @@ mod tests {
     }
 
     #[test]
+    fn structured_default_style_uses_terminal_default_colors() {
+        let default_run = local::CellRunSummary {
+            text: "default".to_owned(),
+            cell_widths: vec![1; 7],
+            style_id: 0,
+            flags: 0,
+            hyperlink_id: 0,
+            semantic_content: protocol::CellSemanticContent::Output,
+        };
+        let colors = local::TerminalColorSummary {
+            default_fg_rgba: 0xced5e1ff,
+            default_bg_rgba: 0x111318ff,
+            cursor_rgba: 0,
+            cursor_rgba_set: false,
+            palette_rgba: Vec::new(),
+            palette_diff_start: None,
+            palette_diff_rgba: Vec::new(),
+        };
+        let default_style = run_style(
+            &default_run,
+            &[local::StyleSummary {
+                fg_rgba: 0,
+                bg_rgba: 0,
+                underline_rgba: 0,
+                flags: 0,
+            }],
+            &colors,
+        );
+        assert_eq!(default_style.fg, Some(Color::Rgb(0xce, 0xd5, 0xe1)));
+        assert_eq!(default_style.bg, Some(Color::Rgb(0x11, 0x13, 0x18)));
+
+        let colored_style = run_style(
+            &default_run,
+            &[local::StyleSummary {
+                fg_rgba: 0x112233ff,
+                bg_rgba: 0x445566ff,
+                underline_rgba: 0,
+                flags: 1 << 0,
+            }],
+            &colors,
+        );
+        assert_eq!(colored_style.fg, Some(Color::Rgb(0x11, 0x22, 0x33)));
+        assert_eq!(colored_style.bg, Some(Color::Rgb(0x44, 0x55, 0x66)));
+        assert!(colored_style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
     fn pane_content_uses_structured_surface_runs_when_available() {
         let workspace = split_workspace();
         let mut surfaces = BTreeMap::new();
@@ -1197,6 +1380,8 @@ mod tests {
             local::RenderedSurfaceSummary {
                 pane_id: "pane-2".to_owned(),
                 version: 1,
+                scrollback_version: 1,
+                scrollback_total_lines: 24,
                 cols: 40,
                 rows: 24,
                 colors: local::TerminalColorSummary::default(),
@@ -1285,7 +1470,11 @@ mod tests {
             workspace.pane_id.clone(),
             PaneChromeState {
                 read_only: true,
-                scrollback: true,
+                scrollback: Some(PaneScrollChrome {
+                    offset_from_bottom: 3,
+                    viewport_rows: 2,
+                    total_history_lines: 9,
+                }),
             },
         );
 
@@ -1302,13 +1491,80 @@ mod tests {
             12,
         );
 
-        assert!(frame.text.contains("scroll"), "{:?}", frame.text);
+        assert!(
+            !frame.text.contains("scroll"),
+            "scroll mode should not change the pane title: {:?}",
+            frame.text
+        );
         assert!(frame.text.contains("ro"), "{:?}", frame.text);
+        assert!(
+            frame
+                .text
+                .lines()
+                .any(|line| line.chars().last() == Some('▐')),
+            "scrollbar thumb should mark the right border: {:?}",
+            frame.text
+        );
+        assert!(frame.text.contains('▲'), "{:?}", frame.text);
+        assert!(frame.text.contains('▼'), "{:?}", frame.text);
         for line in frame.text.lines() {
             assert!(
                 line.chars().count() <= 72,
                 "pane labels must stay within the frame: {line:?}"
             );
         }
+    }
+
+    #[test]
+    fn live_bottom_scrollbar_thumb_is_proportional_and_bottom_anchored() {
+        let workspace = single_pane_workspace();
+        let mut chrome = BTreeMap::new();
+        chrome.insert(
+            workspace.pane_id.clone(),
+            PaneChromeState {
+                read_only: false,
+                scrollback: Some(PaneScrollChrome {
+                    offset_from_bottom: 0,
+                    viewport_rows: 4,
+                    total_history_lines: 100,
+                }),
+            },
+        );
+
+        let frame = render_workspace_frame(
+            WorkspaceFrameInput {
+                workspace: &workspace,
+                active_surface_text: "one\ntwo\nthree\nfour",
+                pane_surfaces: None,
+                pane_surface_summaries: None,
+                pane_chrome: Some(&chrome),
+                overlay: None,
+            },
+            60,
+            12,
+        );
+        let right_edge: Vec<char> = frame
+            .text
+            .lines()
+            .filter_map(|line| line.chars().last())
+            .collect();
+
+        assert!(
+            right_edge.iter().any(|ch| *ch == '│'),
+            "track should remain visible when scrollback exceeds viewport: {:?}",
+            frame.text
+        );
+        assert_eq!(
+            right_edge.get(9),
+            Some(&'▐'),
+            "thumb should be anchored at the bottom of the track at live bottom: {:?}",
+            frame.text
+        );
+        assert_eq!(
+            right_edge.iter().filter(|ch| **ch == '▐').count(),
+            1,
+            "thumb should be proportional, not the whole track: {:?}",
+            frame.text
+        );
     }
 }

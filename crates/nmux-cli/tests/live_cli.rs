@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -20,11 +20,178 @@ struct PtyCommandOutput {
     output: String,
 }
 
+#[derive(Debug)]
+struct LinuxProcStat {
+    pgrp: i32,
+    session: i32,
+    tty_nr: i32,
+}
+
+struct TestScreen {
+    cols: usize,
+    rows: usize,
+    cursor_col: usize,
+    cursor_row: usize,
+    cells: Vec<Vec<char>>,
+}
+
+impl TestScreen {
+    fn new(cols: usize, rows: usize) -> Self {
+        Self {
+            cols,
+            rows,
+            cursor_col: 0,
+            cursor_row: 0,
+            cells: vec![vec![' '; cols]; rows],
+        }
+    }
+
+    fn replay(bytes: &[u8], cols: usize, rows: usize) -> Self {
+        let mut screen = Self::new(cols, rows);
+        let text = String::from_utf8_lossy(bytes);
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\x1b' => screen.consume_escape(&mut chars),
+                '\r' => screen.cursor_col = 0,
+                '\n' => screen.newline(),
+                '\x08' => screen.cursor_col = screen.cursor_col.saturating_sub(1),
+                ch if ch.is_control() => {}
+                ch => screen.put_char(ch),
+            }
+        }
+        screen
+    }
+
+    fn text(&self) -> String {
+        self.cells
+            .iter()
+            .map(|row| row.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn put_char(&mut self, ch: char) {
+        if self.cursor_row >= self.rows || self.cursor_col >= self.cols {
+            return;
+        }
+        self.cells[self.cursor_row][self.cursor_col] = ch;
+        self.cursor_col += 1;
+        if self.cursor_col >= self.cols {
+            self.cursor_col = self.cols.saturating_sub(1);
+        }
+    }
+
+    fn newline(&mut self) {
+        self.cursor_col = 0;
+        self.cursor_row += 1;
+        if self.cursor_row >= self.rows {
+            self.cells.remove(0);
+            self.cells.push(vec![' '; self.cols]);
+            self.cursor_row = self.rows.saturating_sub(1);
+        }
+    }
+
+    fn consume_escape(&mut self, chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+        match chars.next() {
+            Some('[') => self.consume_csi(chars),
+            Some(']') | Some('P') | Some('_') | Some('^') | Some('X') | Some('G') => {
+                let mut escape_pending = false;
+                for ch in chars.by_ref() {
+                    if escape_pending {
+                        if ch == '\\' {
+                            break;
+                        }
+                        escape_pending = ch == '\x1b';
+                        continue;
+                    }
+                    if ch == '\u{7}' {
+                        break;
+                    }
+                    escape_pending = ch == '\x1b';
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn consume_csi(&mut self, chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+        let mut params = String::new();
+        let mut private = false;
+        let mut final_ch = None;
+        for ch in chars.by_ref() {
+            if ch == '?' {
+                private = true;
+                params.push(ch);
+                continue;
+            }
+            if ('\u{40}'..='\u{7e}').contains(&ch) {
+                final_ch = Some(ch);
+                break;
+            }
+            params.push(ch);
+        }
+        match final_ch {
+            Some('H') | Some('f') => {
+                let values = csi_numbers(&params);
+                let row = values.first().copied().unwrap_or(1).saturating_sub(1);
+                let col = values.get(1).copied().unwrap_or(1).saturating_sub(1);
+                self.cursor_row = row.min(self.rows.saturating_sub(1));
+                self.cursor_col = col.min(self.cols.saturating_sub(1));
+            }
+            Some('J') if params == "2" => {
+                self.cells = vec![vec![' '; self.cols]; self.rows];
+                self.cursor_col = 0;
+                self.cursor_row = 0;
+            }
+            Some('J') if params.is_empty() || params == "0" => {
+                if self.cursor_row < self.rows {
+                    for col in self.cursor_col..self.cols {
+                        self.cells[self.cursor_row][col] = ' ';
+                    }
+                    for row in self.cursor_row.saturating_add(1)..self.rows {
+                        for col in 0..self.cols {
+                            self.cells[row][col] = ' ';
+                        }
+                    }
+                }
+            }
+            Some('K') => {
+                if self.cursor_row < self.rows {
+                    for col in self.cursor_col..self.cols {
+                        self.cells[self.cursor_row][col] = ' ';
+                    }
+                }
+            }
+            Some('h') if private && params.contains("1049") => {
+                self.cells = vec![vec![' '; self.cols]; self.rows];
+                self.cursor_col = 0;
+                self.cursor_row = 0;
+            }
+            Some('l') if private && params.contains("1049") => {
+                self.cells = vec![vec![' '; self.cols]; self.rows];
+                self.cursor_col = 0;
+                self.cursor_row = 0;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn csi_numbers(params: &str) -> Vec<usize> {
+    params
+        .trim_start_matches('?')
+        .split(';')
+        .filter_map(|part| part.parse::<usize>().ok())
+        .collect()
+}
+
 struct PtyCommand {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     output_rx: mpsc::Receiver<Vec<u8>>,
+    output: Arc<Mutex<Vec<u8>>>,
     reader_thread: thread::JoinHandle<()>,
 }
 
@@ -80,9 +247,25 @@ fn spawn_nmux_client_in_pty_with_env(args: &[&str], env: &[(&str, &str)]) -> Pty
     let mut reader = pair.master.try_clone_reader().expect("clone pty reader");
     let writer = pair.master.take_writer().expect("take pty writer");
     let (output_tx, output_rx) = mpsc::channel();
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let reader_output = Arc::clone(&output);
     let reader_thread = thread::spawn(move || {
         let mut output = Vec::new();
-        reader.read_to_end(&mut output).expect("read pty output");
+        let mut buf = [0_u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    output.extend_from_slice(&buf[..n]);
+                    reader_output
+                        .lock()
+                        .expect("lock pty output")
+                        .extend_from_slice(&buf[..n]);
+                }
+                Err(err) if err.raw_os_error() == Some(libc::EIO) => break,
+                Err(err) => panic!("read pty output: {err}"),
+            }
+        }
         output_tx.send(output).ok();
     });
 
@@ -91,6 +274,7 @@ fn spawn_nmux_client_in_pty_with_env(args: &[&str], env: &[(&str, &str)]) -> Pty
         master: pair.master,
         writer,
         output_rx,
+        output,
         reader_thread,
     }
 }
@@ -101,10 +285,76 @@ fn daemon_command() -> Command {
     command
 }
 
+fn find_daemon_pid_for_socket(socket_path: &Path) -> Option<i32> {
+    let socket = socket_path.to_string_lossy();
+    for entry in fs::read_dir("/proc").ok()? {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let pid = match entry.file_name().to_string_lossy().parse::<i32>() {
+            Ok(pid) => pid,
+            Err(_) => continue,
+        };
+        let cmdline = match fs::read(entry.path().join("cmdline")) {
+            Ok(cmdline) => cmdline,
+            Err(_) => continue,
+        };
+        if cmdline.is_empty() {
+            continue;
+        }
+        let args = cmdline
+            .split(|byte| *byte == 0)
+            .map(|arg| String::from_utf8_lossy(arg))
+            .collect::<Vec<_>>();
+        if args
+            .iter()
+            .any(|arg| arg.ends_with("/nmux") || *arg == "nmux")
+            && args.iter().any(|arg| *arg == "daemon")
+            && args.iter().any(|arg| *arg == "--socket")
+            && args.iter().any(|arg| arg.as_ref() == socket.as_ref())
+        {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+fn linux_proc_stat(pid: i32) -> LinuxProcStat {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).expect("read daemon proc stat");
+    let close_paren = stat.rfind(')').expect("proc stat command terminator");
+    let fields = stat[close_paren + 2..]
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    LinuxProcStat {
+        pgrp: fields[2].parse().expect("parse daemon process group"),
+        session: fields[3].parse().expect("parse daemon session"),
+        tty_nr: fields[4].parse().expect("parse daemon tty"),
+    }
+}
+
 impl PtyCommand {
+    fn process_id(&self) -> u32 {
+        self.child.process_id().expect("pty child process id")
+    }
+
     fn detach(&mut self) {
         let _ = self.writer.write_all(&[STDIN_BYTES_DETACH]);
         let _ = self.writer.flush();
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) {
+        self.writer.write_all(bytes).expect("write to pty");
+        self.writer.flush().expect("flush pty");
+    }
+
+    fn is_running(&mut self) -> bool {
+        self.child.try_wait().expect("poll nmux in pty").is_none()
+    }
+
+    fn output_snapshot(&self) -> String {
+        let output = self.output.lock().expect("lock pty output").clone();
+        String::from_utf8_lossy(&output).into_owned()
     }
 
     fn resize(&mut self, cols: u16, rows: u16) {
@@ -135,6 +385,159 @@ impl PtyCommand {
             output: String::from_utf8_lossy(&output).into_owned(),
         }
     }
+}
+
+#[test]
+fn live_redraw_tty_holding_enter_does_not_detach() {
+    let socket_path = test_socket_path();
+    let socket = socket_path.to_str().expect("socket path");
+    let _ = fs::remove_file(&socket_path);
+
+    let mut daemon = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live",
+            "--command",
+            "printf 'ready\\n'; while IFS= read -r line; do printf 'line:%s\\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--live", "--redraw", "--stdin-bytes", "--interval-ms", "20"],
+        &[("NMUX_SOCKET", socket)],
+    );
+    thread::sleep(Duration::from_millis(300));
+    client.write_all(&vec![b'\r'; 256]);
+    thread::sleep(Duration::from_millis(500));
+    client.write_all(b"l");
+    thread::sleep(Duration::from_millis(20));
+    client.write_all(b"s");
+    thread::sleep(Duration::from_millis(20));
+    client.write_all(b"\r");
+    thread::sleep(Duration::from_millis(500));
+    assert!(client.is_running(), "client exited after held Enter");
+    let snapshot = client.output_snapshot();
+    let screen = TestScreen::replay(snapshot.as_bytes(), 100, 24).text();
+    assert!(
+        screen.contains("ls"),
+        "latest input after held Enter did not render:\n{screen}\nraw:\n{snapshot}"
+    );
+    client.kill();
+    let output = client.wait();
+
+    let _kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill daemon");
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        !output.output.contains("stdin EOF; detached"),
+        "held Enter detached through stdin EOF:\n{}",
+        output.output
+    );
+    assert!(
+        output.output.matches("\x1b[2J").count() <= 2,
+        "held Enter should not repeatedly full-clear the TUI:\n{}",
+        output.output
+    );
+    assert!(
+        !output.output.contains("detached by local Ctrl-]"),
+        "held Enter should not be treated as local detach:\n{}",
+        output.output
+    );
+}
+
+#[test]
+fn live_redraw_tty_scrolled_holding_enter_does_not_detach() {
+    let socket_path = test_socket_path();
+    let socket = socket_path.to_str().expect("socket path");
+    let _ = fs::remove_file(&socket_path);
+
+    let mut daemon = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live",
+            "--command",
+            "for i in $(seq 1 120); do printf 'line:%04d\\n' \"$i\"; done; while IFS= read -r line; do printf 'echo:%s\\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--live", "--redraw", "--stdin-bytes", "--interval-ms", "20"],
+        &[("NMUX_SOCKET", socket)],
+    );
+    thread::sleep(Duration::from_millis(500));
+    client.write_all(b"\x1b[<64;20;10M");
+    thread::sleep(Duration::from_millis(300));
+    for _ in 0..80 {
+        client.write_all(&vec![b'\r'; 32]);
+        thread::sleep(Duration::from_millis(25));
+        let snapshot = client.output_snapshot();
+        assert!(
+            !snapshot.contains("\x1b[?25h\x1b[?1049l"),
+            "client left alternate screen during held Enter while scrolled:\n{snapshot}"
+        );
+    }
+    client.write_all(b"ls\r");
+    thread::sleep(Duration::from_millis(500));
+    let snapshot = client.output_snapshot();
+    assert!(
+        snapshot.contains("\x1b[?1049h\x1b[?25l"),
+        "client never entered alternate screen:\n{snapshot}"
+    );
+    assert!(
+        !snapshot.contains("\x1b[?25h\x1b[?1049l"),
+        "client left alternate screen before test shutdown:\n{snapshot}"
+    );
+    assert!(
+        snapshot.matches("\x1b[2J").count() <= 2,
+        "held Enter while scrolled should not repeatedly full-clear the TUI:\n{snapshot}"
+    );
+    let screen = TestScreen::replay(snapshot.as_bytes(), 100, 24).text();
+    assert!(
+        screen.contains("Sessions"),
+        "menu disappeared after held Enter while scrolled:\n{screen}\nraw:\n{snapshot}"
+    );
+    assert!(
+        screen.contains("pane-1 active"),
+        "pane frame disappeared after held Enter while scrolled:\n{screen}\nraw:\n{snapshot}"
+    );
+    assert!(
+        client.is_running(),
+        "client exited after held Enter while scrolled"
+    );
+    client.detach();
+    let output = client.wait();
+
+    let _kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill daemon");
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        !output.output.contains("stdin EOF; detached"),
+        "held Enter while scrolled detached through stdin EOF:\n{}",
+        output.output
+    );
+    assert!(
+        output.output.contains("detached by local Ctrl-]"),
+        "client should still respond to local detach after held Enter while scrolled:\n{}",
+        output.output
+    );
 }
 
 #[test]
@@ -2229,6 +2632,21 @@ fn bare_tty_nmux_starts_shared_default_session_and_can_reattach() {
         spawn_nmux_client_in_pty_with_env(&[], &[("NMUX_SOCKET", socket), ("SHELL", shell)]);
     wait_for_socket(&socket_path);
     thread::sleep(Duration::from_millis(200));
+    let daemon_pid =
+        find_daemon_pid_for_socket(&socket_path).expect("find shared default daemon process");
+    let daemon_stat = linux_proc_stat(daemon_pid);
+    assert_eq!(
+        daemon_stat.tty_nr, 0,
+        "shared default daemon should not keep the client PTY as a controlling terminal: {daemon_stat:?}"
+    );
+    assert_eq!(
+        daemon_stat.session, daemon_pid,
+        "shared default daemon should be a new session leader: {daemon_stat:?}"
+    );
+    assert_eq!(
+        daemon_stat.pgrp, daemon_pid,
+        "shared default daemon should own its process group: {daemon_stat:?}"
+    );
     client.kill();
     let _ = client.wait();
     thread::sleep(Duration::from_millis(200));
@@ -2267,6 +2685,198 @@ fn bare_tty_nmux_starts_shared_default_session_and_can_reattach() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&shell_path);
 
+    assert!(
+        kill.status.success(),
+        "kill failed: {}\n{}",
+        String::from_utf8_lossy(&kill.stderr),
+        String::from_utf8_lossy(&kill.stdout)
+    );
+}
+
+#[test]
+fn bare_tty_nmux_sigusr1_writes_live_bug_report() {
+    let socket_path = test_socket_path();
+    let shell_path = socket_path.with_extension("shell");
+    let bug_report_dir = socket_path.with_extension("bugs");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+    let _ = fs::remove_dir_all(&bug_report_dir);
+    fs::create_dir_all(&bug_report_dir).expect("create bug report dir");
+    fs::write(
+        &shell_path,
+        "#!/bin/sh\nprintf 'sigusr-ready\\n'\nwhile :; do sleep 1; done\n",
+    )
+    .expect("write test shell");
+    fs::set_permissions(&shell_path, fs::Permissions::from_mode(0o755)).expect("chmod test shell");
+    let socket = socket_path.to_str().expect("socket path");
+    let shell = shell_path.to_str().expect("shell path");
+    let bug_report = bug_report_dir.to_str().expect("bug report dir");
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--bug-report-dir", bug_report],
+        &[("NMUX_SOCKET", socket), ("SHELL", shell)],
+    );
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(500));
+    let client_pid = client.process_id() as libc::pid_t;
+    assert_eq!(
+        unsafe { libc::kill(client_pid, libc::SIGUSR1) },
+        0,
+        "send SIGUSR1 to nmux client"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let report_path = loop {
+        let report = fs::read_dir(&bug_report_dir)
+            .expect("read bug report dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with("-live-interrupt.json"))
+            });
+        if let Some(path) = report {
+            break path;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "SIGUSR1 did not write a live bug report; output so far:\n{}",
+            client.output_snapshot()
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        client.is_running(),
+        "client exited after SIGUSR1; output so far:\n{}",
+        client.output_snapshot()
+    );
+
+    client.detach();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !client
+        .output_snapshot()
+        .contains("detached by local Ctrl-]")
+    {
+        assert!(
+            Instant::now() < deadline,
+            "client did not render local detach after SIGUSR1:\n{}",
+            client.output_snapshot()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill bare nmux daemon");
+    let output = client.wait();
+    let report = fs::read_to_string(report_path).expect("read live interrupt report");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+    let _ = fs::remove_dir_all(&bug_report_dir);
+
+    assert!(
+        report.contains("\"kind\":\"live-interrupt\""),
+        "wrong report:\n{report}"
+    );
+    assert!(output.success, "client detach failed:\n{}", output.output);
+    assert!(
+        kill.status.success(),
+        "kill failed: {}\n{}",
+        String::from_utf8_lossy(&kill.stderr),
+        String::from_utf8_lossy(&kill.stdout)
+    );
+}
+
+#[test]
+fn bare_tty_nmux_passes_bug_report_dir_to_persistent_daemon() {
+    let socket_path = test_socket_path();
+    let shell_path = socket_path.with_extension("shell");
+    let bug_report_dir = socket_path.with_extension("bugs");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+    let _ = fs::remove_dir_all(&bug_report_dir);
+    fs::create_dir_all(&bug_report_dir).expect("create bug report dir");
+    fs::write(
+        &shell_path,
+        "#!/bin/sh\nprintf 'daemon-sigusr-ready\\n'\nwhile :; do sleep 1; done\n",
+    )
+    .expect("write test shell");
+    fs::set_permissions(&shell_path, fs::Permissions::from_mode(0o755)).expect("chmod test shell");
+    let socket = socket_path.to_str().expect("socket path");
+    let shell = shell_path.to_str().expect("shell path");
+    let bug_report = bug_report_dir.to_str().expect("bug report dir");
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--bug-report-dir", bug_report],
+        &[("NMUX_SOCKET", socket), ("SHELL", shell)],
+    );
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(500));
+    let daemon_pid =
+        find_daemon_pid_for_socket(&socket_path).expect("find shared default daemon process");
+    assert_eq!(
+        unsafe { libc::kill(daemon_pid, libc::SIGUSR1) },
+        0,
+        "send SIGUSR1 to nmux daemon"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let report_path = loop {
+        let report = fs::read_dir(&bug_report_dir)
+            .expect("read bug report dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with("-signal-interrupt.json"))
+            });
+        if let Some(path) = report {
+            break path;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "SIGUSR1 to daemon did not write a signal report; output so far:\n{}",
+            client.output_snapshot()
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    assert!(
+        find_daemon_pid_for_socket(&socket_path).is_some(),
+        "daemon exited after SIGUSR1"
+    );
+    client.detach();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !client
+        .output_snapshot()
+        .contains("detached by local Ctrl-]")
+    {
+        assert!(
+            Instant::now() < deadline,
+            "client did not render local detach after daemon SIGUSR1:\n{}",
+            client.output_snapshot()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill bare nmux daemon");
+    let output = client.wait();
+    let report = fs::read_to_string(report_path).expect("read daemon signal report");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+    let _ = fs::remove_dir_all(&bug_report_dir);
+
+    assert!(
+        report.contains("\"kind\":\"signal-interrupt\""),
+        "wrong report:\n{report}"
+    );
+    assert!(output.success, "client detach failed:\n{}", output.output);
     assert!(
         kill.status.success(),
         "kill failed: {}\n{}",
@@ -5484,6 +6094,59 @@ fn live_libghostty_vt_cli_forwards_sgr_mouse_press() {
 
 #[cfg(feature = "libghostty-vt")]
 #[test]
+fn live_libghostty_vt_cli_forwards_legacy_mouse_wheel_from_fullscreen_app() {
+    let socket_path = test_socket_path();
+    let _ = fs::remove_file(&socket_path);
+
+    let mut server = daemon_command()
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--terminal-engine",
+            "libghostty-vt",
+            "--command",
+            "stty -icanon -echo min 6 time 20; printf '\\033[?1049h\\033[?1000hready\n'; bytes=$(dd bs=6 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'); printf 'wheel:%s\n' \"$bytes\"",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+
+    wait_for_socket(&socket_path);
+
+    let client = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .args([
+            "--socket",
+            socket_path.to_str().expect("socket path"),
+            "--live",
+            "--iterations",
+            "1",
+            "--mouse",
+            "press:wheel-down:1:1",
+            "--interval-ms",
+            "1000",
+        ])
+        .output()
+        .expect("run nmux");
+
+    let server_status = server.wait().expect("wait for daemon");
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        client.status.success(),
+        "nmux failed: {}",
+        String::from_utf8_lossy(&client.stderr)
+    );
+    assert!(server_status.success(), "daemon failed: {server_status}");
+
+    let stdout = String::from_utf8_lossy(&client.stdout);
+    assert!(
+        stdout.contains("wheel:1b5b4d612121"),
+        "missing legacy wheel bytes for fullscreen mouse app:\n{stdout}"
+    );
+}
+
+#[cfg(feature = "libghostty-vt")]
+#[test]
 fn live_libghostty_vt_cli_forwards_sgr_mouse_modifiers() {
     let socket_path = test_socket_path();
     let _ = fs::remove_file(&socket_path);
@@ -6273,7 +6936,7 @@ fn live_cli_speculative_echo_repaints_before_server_confirmation() {
         "missing redraw sequence:\n{stdout:?}"
     );
     assert!(
-        stdout.contains("ready\x1b[4mx\x1b[24m"),
+        stdout.contains("ready\x1b[0m\x1b[4mx\x1b[0m"),
         "missing underlined speculative echo repaint before server confirmation:\n{stdout:?}"
     );
 }
@@ -6334,7 +6997,7 @@ fn live_cli_stdin_bytes_speculative_echo_repaints_before_server_confirmation() {
 
     let stdout = String::from_utf8_lossy(&client.stdout);
     assert!(
-        stdout.contains("ready\x1b[4mx\x1b[24m"),
+        stdout.contains("ready\x1b[0m\x1b[4mx\x1b[0m"),
         "missing stdin-byte speculative echo repaint before server confirmation:\n{stdout:?}"
     );
 }

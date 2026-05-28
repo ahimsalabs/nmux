@@ -113,6 +113,7 @@ pub struct TerminalUpdate {
     pub patch_kind: protocol::PatchKind,
     pub surface: protocol::SurfaceKind,
     pub preserve_scrollback: bool,
+    pub scrollback_replace_from: Option<usize>,
     pub cursor: TerminalCursor,
     pub modes: TerminalModes,
     pub title: String,
@@ -143,6 +144,7 @@ impl TerminalUpdate {
             patch_kind,
             surface,
             preserve_scrollback: false,
+            scrollback_replace_from: None,
             cursor,
             modes: TerminalModes::default(),
             title: String::new(),
@@ -756,12 +758,15 @@ fn merge_interim_pty_output(
     };
     let mut saw_output = false;
     let mut ended_with_newline = false;
+    let mut skipped_leading_newline = false;
 
     for ch in text.chars() {
         saw_output = true;
         if ch == '\n' {
             if appending {
                 appending = false;
+            } else if current.is_empty() && lines.is_empty() && !skipped_leading_newline {
+                skipped_leading_newline = true;
             } else {
                 lines.push(std::mem::take(&mut current));
             }
@@ -807,9 +812,9 @@ mod ghostty_vt {
     use libghostty_vt::{
         RenderState, Terminal, TerminalOptions, key, mouse,
         render::{CellIterator, CursorVisualStyle, RowIterator, Snapshot as RenderSnapshot},
-        screen::{CellSemanticContent, CellWide},
+        screen::{CellSemanticContent, CellWide, TrackedGridRef},
         style::{RgbColor, Style, StyleColor, Underline},
-        terminal::{Mode, ScrollViewport},
+        terminal::{Mode, Point, PointCoordinate, PointSpace, ScrollViewport},
     };
     use nmux_proto::protocol;
 
@@ -819,6 +824,9 @@ mod ghostty_vt {
         TerminalUpdate,
     };
 
+    const DEFAULT_MAX_SCROLLBACK_LINES: usize = 1_000_000;
+    const VT_WRITE_CHUNK_BYTES: usize = 4096;
+    const LIVE_SCROLLBACK_INCREMENTAL_THRESHOLD_ROWS: usize = 32;
     pub struct LibghosttyVtTerminalEngine {
         state: Option<GhosttyVtState>,
     }
@@ -831,8 +839,13 @@ mod ghostty_vt {
         row_iterator: RowIterator<'static>,
         cell_iterator: CellIterator<'static>,
         osc7: Osc7Tracker,
+        scrollback_parser: super::InterimAnsiParser,
+        scrollback_style_parser: IncrementalSgrRowParser,
+        main_scrollback_lines: Vec<String>,
+        main_scrollback_row_runs: Vec<Vec<CellRun>>,
         pending_decrqm: Vec<u8>,
         pty_writes: Rc<RefCell<Vec<Vec<u8>>>>,
+        main_tail_ref: Option<TrackedGridRef>,
     }
 
     #[derive(Default)]
@@ -969,22 +982,38 @@ mod ghostty_vt {
         false
     }
 
+    fn vt_output_may_change_style_colors(output: &[u8]) -> bool {
+        output.windows(4).any(|window| window == b"\x1b]4;")
+            || output
+                .windows(5)
+                .any(|window| matches!(window, b"\x1b]10;" | b"\x1b]11;" | b"\x1b]12;"))
+    }
+
     impl TerminalEngine for LibghosttyVtTerminalEngine {
         fn apply_output(
             &mut self,
             input: TerminalInput<'_>,
             output: &[u8],
         ) -> Option<TerminalUpdate> {
-            let state = self.state_mut(&input)?;
-            state.osc7.ingest(output);
-            let pty_write_count = state.pty_writes.borrow().len();
-            let saw_wraparound_query = state.ingest_decrqm_query(output);
-            let vt_write_span = tracing::trace_span!("terminal.libghostty.vt_write");
-            vt_write_span.in_scope(|| state.terminal.vt_write(output));
-            if saw_wraparound_query && state.pty_writes.borrow().len() == pty_write_count {
-                state.pty_writes.borrow_mut().push(b"\x1b[?7;1$y".to_vec());
+            let chunks = vt_write_chunks(output, input.cols, input.rows);
+            if chunks.len() > 1 {
+                let mut update = None;
+                for chunk in chunks {
+                    let chunk_input = update.as_ref().map_or_else(
+                        || input.clone(),
+                        |update| terminal_input_from_update(input.cols, input.rows, update),
+                    );
+                    let chunk_update = self.apply_output_chunk(chunk_input, chunk)?;
+                    update = Some(chunk_update);
+                }
+                if let Some(update) = update.as_mut() {
+                    self.rebase_scrollback_range_update(update, input.scrollback_lines.len());
+                }
+                return update;
             }
-            state.extract_update(input, false, !vt_output_may_change_rows(output))
+            let mut update = self.apply_output_chunk(input.clone(), output)?;
+            self.rebase_scrollback_range_update(&mut update, input.scrollback_lines.len());
+            Some(update)
         }
 
         fn resize(
@@ -993,11 +1022,23 @@ mod ghostty_vt {
             cols: u32,
             rows: u32,
         ) -> Option<TerminalUpdate> {
+            if input.cursor.col >= cols
+                || input.cursor.row >= rows
+                || self
+                    .state
+                    .as_ref()
+                    .is_some_and(ghostty_state_cursor_out_of_bounds)
+            {
+                self.state = None;
+                let mut fallback = super::InterimTextTerminalEngine::default();
+                return fallback.resize(input, cols, rows);
+            }
             let state = self.state_mut(&input)?;
             let cols = u16::try_from(cols).ok()?;
             let rows = u16::try_from(rows).ok()?;
+            state.main_tail_ref = None;
             state.terminal.resize(cols, rows, 8, 16).ok()?;
-            state.extract_update(input, true, false)
+            state.extract_update(input, None, true, false, None)
         }
 
         fn encode_mouse_input(&mut self, input: MouseTerminalInput) -> Option<Vec<u8>> {
@@ -1018,6 +1059,169 @@ mod ghostty_vt {
         }
     }
 
+    fn ghostty_state_cursor_out_of_bounds(state: &GhosttyVtState) -> bool {
+        let Ok(cols) = state.terminal.cols() else {
+            return true;
+        };
+        let Ok(rows) = state.terminal.rows() else {
+            return true;
+        };
+        let Ok(cursor_x) = state.terminal.cursor_x() else {
+            return true;
+        };
+        let Ok(cursor_y) = state.terminal.cursor_y() else {
+            return true;
+        };
+        cursor_x >= cols || cursor_y >= rows
+    }
+
+    impl LibghosttyVtTerminalEngine {
+        fn rebase_scrollback_range_update(
+            &self,
+            update: &mut TerminalUpdate,
+            original_scrollback_len: usize,
+        ) {
+            if update.scrollback_replace_from.is_none()
+                || update.scrollback_replace_from <= Some(original_scrollback_len)
+            {
+                return;
+            }
+            let Some(state) = self.state.as_ref() else {
+                return;
+            };
+            let suffix_start = original_scrollback_len.min(state.main_scrollback_lines.len());
+            let suffix = state.main_scrollback_lines[suffix_start..].to_vec();
+            let suffix_row_runs =
+                if state.main_scrollback_row_runs.len() == state.main_scrollback_lines.len() {
+                    state.main_scrollback_row_runs[suffix_start..].to_vec()
+                } else {
+                    super::plain_row_runs(&suffix)
+                };
+            update.scrollback_replace_from = Some(suffix_start);
+            update.scrollback_row_runs = suffix_row_runs;
+            update.scrollback_semantic_prompts = super::plain_row_semantic_prompts(&suffix);
+            update.scrollback_dirty_rows = super::plain_row_dirty_flags(&suffix);
+            update.scrollback_kitty_placeholders = super::plain_row_kitty_placeholders(&suffix);
+            update.scrollback_lines = suffix;
+        }
+
+        fn apply_output_chunk(
+            &mut self,
+            input: TerminalInput<'_>,
+            output: &[u8],
+        ) -> Option<TerminalUpdate> {
+            let state = self.state_mut(&input)?;
+            state.osc7.ingest(output);
+            let pty_write_count = state.pty_writes.borrow().len();
+            let saw_wraparound_query = state.ingest_decrqm_query(output);
+            let previous_main_tail_ref = state.main_tail_ref.take();
+            let vt_write_span = tracing::trace_span!("terminal.libghostty.vt_write");
+            vt_write_span.in_scope(|| {
+                state.terminal.vt_write(output);
+            });
+            let previous_main_tail_screen_y = previous_main_tail_ref
+                .as_ref()
+                .and_then(|tail_ref| tail_ref.point(PointSpace::Screen).ok().flatten())
+                .and_then(|point| usize::try_from(point.y).ok());
+            if saw_wraparound_query && state.pty_writes.borrow().len() == pty_write_count {
+                state.pty_writes.borrow_mut().push(b"\x1b[?7;1$y".to_vec());
+            }
+            state.extract_update(
+                input,
+                Some(output),
+                false,
+                !vt_output_may_change_rows(output) && !vt_output_may_change_style_colors(output),
+                previous_main_tail_screen_y,
+            )
+        }
+    }
+
+    fn terminal_input_from_update<'a>(
+        cols: u32,
+        rows: u32,
+        update: &'a TerminalUpdate,
+    ) -> TerminalInput<'a> {
+        TerminalInput {
+            pane_id: "",
+            cols,
+            rows,
+            surface: update.surface,
+            cursor: update.cursor,
+            modes: update.modes,
+            title: &update.title,
+            working_directory: &update.working_directory,
+            colors: update.colors.clone(),
+            styles: &update.styles,
+            surface_lines: &update.surface_lines,
+            surface_row_runs: &update.surface_row_runs,
+            surface_semantic_prompts: &update.surface_semantic_prompts,
+            surface_dirty_rows: &update.surface_dirty_rows,
+            surface_kitty_placeholders: &update.surface_kitty_placeholders,
+            scrollback_lines: &update.scrollback_lines,
+            scrollback_row_runs: &update.scrollback_row_runs,
+            scrollback_semantic_prompts: &update.scrollback_semantic_prompts,
+            scrollback_dirty_rows: &update.scrollback_dirty_rows,
+            scrollback_kitty_placeholders: &update.scrollback_kitty_placeholders,
+        }
+    }
+
+    fn vt_write_chunks(output: &[u8], cols: u32, rows: u32) -> Vec<&[u8]> {
+        if output.len() <= VT_WRITE_CHUNK_BYTES {
+            return vec![output];
+        }
+
+        // Large PTY reads can outrun the backend's extractable viewport/history
+        // window. Feed them in screen-sized slices so each intermediate state is
+        // extracted from the backend-owned transcript before the backend advances.
+        let row_budget = (rows / 2).clamp(1, 12) as usize;
+        let col_budget = cols.max(1) as usize;
+        let mut chunks = Vec::new();
+        let mut start = 0;
+        let mut estimated_rows = 0;
+        let mut estimated_cols = 0;
+        let mut escape = false;
+
+        for (index, byte) in output.iter().copied().enumerate() {
+            if escape {
+                escape = false;
+            } else {
+                match byte {
+                    0x1b => escape = true,
+                    b'\n' => {
+                        estimated_rows += 1;
+                        estimated_cols = 0;
+                    }
+                    b'\r' => estimated_cols = 0,
+                    b'\t' => {
+                        estimated_cols += 8 - (estimated_cols % 8);
+                    }
+                    0x20..=0x7e | 0x80..=0xff => {
+                        estimated_cols += 1;
+                    }
+                    _ => {}
+                }
+                if estimated_cols >= col_budget {
+                    estimated_rows += estimated_cols / col_budget;
+                    estimated_cols %= col_budget;
+                }
+            }
+
+            let chunk_len = index + 1 - start;
+            if estimated_rows >= row_budget || chunk_len >= VT_WRITE_CHUNK_BYTES {
+                chunks.push(&output[start..=index]);
+                start = index + 1;
+                estimated_rows = 0;
+                estimated_cols = 0;
+                escape = false;
+            }
+        }
+
+        if start < output.len() {
+            chunks.push(&output[start..]);
+        }
+        chunks
+    }
+
     impl GhosttyVtState {
         fn new(cols: u32, rows: u32) -> Option<Self> {
             let pty_writes = Rc::new(RefCell::new(Vec::new()));
@@ -1025,7 +1229,7 @@ mod ghostty_vt {
                 Terminal::new(TerminalOptions {
                     cols: u16::try_from(cols).ok()?,
                     rows: u16::try_from(rows).ok()?,
-                    max_scrollback: 10000,
+                    max_scrollback: DEFAULT_MAX_SCROLLBACK_LINES,
                 })
                 .ok()?,
             );
@@ -1046,8 +1250,13 @@ mod ghostty_vt {
                 row_iterator: RowIterator::new().ok()?,
                 cell_iterator: CellIterator::new().ok()?,
                 osc7: Osc7Tracker::default(),
+                scrollback_parser: super::InterimAnsiParser::default(),
+                scrollback_style_parser: IncrementalSgrRowParser::default(),
+                main_scrollback_lines: Vec::new(),
+                main_scrollback_row_runs: Vec::new(),
                 pending_decrqm: Vec::new(),
                 pty_writes,
+                main_tail_ref: None,
             })
         }
 
@@ -1077,11 +1286,13 @@ mod ghostty_vt {
         fn extract_update(
             &mut self,
             input: TerminalInput<'_>,
+            output: Option<&[u8]>,
             force_rows: bool,
             preserve_input_rows: bool,
+            previous_main_tail_screen_y: Option<usize>,
         ) -> Option<TerminalUpdate> {
             let surface = surface_kind(&self.terminal)?;
-            let mut styles = if surface == protocol::SurfaceKind::Main || input.styles.is_empty() {
+            let mut styles = if input.styles.is_empty() {
                 vec![PaneStyle::default()]
             } else {
                 input.styles.to_vec()
@@ -1095,11 +1306,13 @@ mod ghostty_vt {
             let surface_span = tracing::trace_span!("terminal.libghostty.extract_surface_rows");
             let surface_guard = surface_span.enter();
             let snapshot = self.render_state.update(&self.terminal).ok()?;
+            let colors = terminal_colors(&snapshot)?;
             let mut surface_rows = extract_rows(
                 &snapshot,
                 &mut self.row_iterator,
                 &mut self.cell_iterator,
                 &mut styles,
+                &colors,
             )?;
             drop(surface_guard);
             if preserve_input_rows && surface == input.surface {
@@ -1117,9 +1330,24 @@ mod ghostty_vt {
             let surface_dirty_rows = surface_rows.dirty_rows.clone();
             let surface_kitty_placeholders = surface_rows.kitty_placeholders.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
-            let colors = terminal_colors(&snapshot)?;
-            let mut preserve_scrollback = false;
-            let scrollback_rows = if preserve_input_rows && surface == input.surface {
+            let use_incremental_scrollback = !force_rows
+                && surface == protocol::SurfaceKind::Main
+                && total_main_rows.is_some_and(|total_rows| {
+                    total_rows > surface_rows.lines.len()
+                        && total_rows >= LIVE_SCROLLBACK_INCREMENTAL_THRESHOLD_ROWS
+                })
+                && output.is_some();
+            let mut scrollback_replace_from = None;
+            let scrollback_rows = if use_incremental_scrollback {
+                let (base_len, rows) = self.incremental_main_scrollback_rows(
+                    &input,
+                    output.expect("checked output"),
+                    &mut styles,
+                    &colors,
+                );
+                scrollback_replace_from = Some(base_len);
+                rows
+            } else if preserve_input_rows && surface == input.surface {
                 ExtractedRows {
                     lines: input.scrollback_lines.to_vec(),
                     row_runs: input.scrollback_row_runs.to_vec(),
@@ -1130,57 +1358,20 @@ mod ghostty_vt {
             } else if let Some(total_rows) = total_main_rows {
                 if total_rows <= surface_rows.lines.len() {
                     surface_rows.truncated(total_rows)
-                } else if let Some(scrollback_rows) =
-                    cached_main_scrollback_rows(&input, total_rows, &surface_rows)
-                {
-                    let cached_span = tracing::trace_span!(
-                        "terminal.libghostty.cached_scrollback_rows",
-                        total_rows,
-                        surface_rows = surface_rows.lines.len(),
-                        input_scrollback_rows = input.scrollback_lines.len()
-                    );
-                    cached_span.in_scope(|| scrollback_rows)
-                } else if input.scrollback_lines.is_empty() {
+                } else {
                     let full_span = tracing::trace_span!(
                         "terminal.libghostty.extract_full_scrollback_rows",
                         total_rows,
                         surface_rows = surface_rows.lines.len(),
                         input_scrollback_rows = input.scrollback_lines.len()
                     );
-                    full_span.in_scope(|| self.scrollback_rows(total_rows, &mut styles))?
-                } else {
-                    let full_span = tracing::trace_span!(
-                        "terminal.libghostty.defer_full_scrollback_rows",
-                        total_rows,
-                        surface_rows = surface_rows.lines.len(),
-                        input_scrollback_rows = input.scrollback_lines.len()
-                    );
-                    full_span.in_scope(|| {
-                        preserve_scrollback = true;
-                        ExtractedRows {
-                            lines: input.scrollback_lines.to_vec(),
-                            row_runs: row_runs_prefix_or_plain(
-                                input.scrollback_lines,
-                                input.scrollback_row_runs,
-                                input.scrollback_lines.len(),
-                            ),
-                            semantic_prompts: row_values_prefix_or_default(
-                                input.scrollback_semantic_prompts,
-                                input.scrollback_lines.len(),
-                                protocol::RowSemanticPrompt::None,
-                            ),
-                            dirty_rows: row_values_prefix_or_default(
-                                input.scrollback_dirty_rows,
-                                input.scrollback_lines.len(),
-                                false,
-                            ),
-                            kitty_placeholders: row_values_prefix_or_default(
-                                input.scrollback_kitty_placeholders,
-                                input.scrollback_lines.len(),
-                                false,
-                            ),
-                        }
-                    })
+                    let scrollback_rows =
+                        full_span.in_scope(|| self.scrollback_rows(total_rows, &mut styles))?;
+                    merge_tracked_main_scrollback_rows(
+                        &input,
+                        scrollback_rows,
+                        previous_main_tail_screen_y,
+                    )
                 }
             } else {
                 ExtractedRows {
@@ -1195,6 +1386,11 @@ mod ghostty_vt {
                     kitty_placeholders: input.scrollback_kitty_placeholders.to_vec(),
                 }
             };
+            if !use_incremental_scrollback && surface == protocol::SurfaceKind::Main {
+                self.main_scrollback_lines = scrollback_rows.lines.clone();
+                self.main_scrollback_row_runs = scrollback_rows.row_runs.clone();
+            }
+            self.track_main_tail(surface, !scrollback_rows.lines.is_empty());
             let modes = modes(&self.terminal)?;
             let title = self.terminal.title().ok()?;
             let terminal_working_directory = self.terminal.pwd().ok()?.to_owned();
@@ -1243,7 +1439,8 @@ mod ghostty_vt {
             Some(TerminalUpdate {
                 patch_kind,
                 surface,
-                preserve_scrollback,
+                preserve_scrollback: use_incremental_scrollback,
+                scrollback_replace_from,
                 cursor,
                 modes,
                 title: title.to_owned(),
@@ -1263,6 +1460,99 @@ mod ghostty_vt {
             })
         }
 
+        fn incremental_main_scrollback_rows(
+            &mut self,
+            input: &TerminalInput<'_>,
+            output: &[u8],
+            styles: &mut Vec<PaneStyle>,
+            colors: &TerminalColors,
+        ) -> (usize, ExtractedRows) {
+            if self.main_scrollback_lines.is_empty() && !input.scrollback_lines.is_empty() {
+                self.main_scrollback_lines = input.scrollback_lines.to_vec();
+                self.main_scrollback_row_runs =
+                    if input.scrollback_row_runs.len() == input.scrollback_lines.len() {
+                        input.scrollback_row_runs.to_vec()
+                    } else {
+                        super::plain_row_runs(input.scrollback_lines)
+                    };
+            }
+            let parsed = self.scrollback_parser.consume(output, input.modes);
+            if parsed.text.is_empty() {
+                return (
+                    self.main_scrollback_lines.len(),
+                    ExtractedRows {
+                        lines: Vec::new(),
+                        row_runs: Vec::new(),
+                        semantic_prompts: Vec::new(),
+                        dirty_rows: Vec::new(),
+                        kitty_placeholders: Vec::new(),
+                    },
+                );
+            }
+
+            let starts_new_line = parsed
+                .text
+                .first()
+                .is_some_and(|byte| matches!(byte, b'\r' | b'\n'));
+            let append_to_previous_line =
+                input.cursor.col > 0 && !starts_new_line && !self.main_scrollback_lines.is_empty();
+            let base_len = if append_to_previous_line {
+                self.main_scrollback_lines.len().saturating_sub(1)
+            } else {
+                self.main_scrollback_lines.len()
+            };
+            let seed = if append_to_previous_line {
+                self.main_scrollback_lines[base_len..].to_vec()
+            } else {
+                Vec::new()
+            };
+            let (suffix, _) =
+                super::merge_interim_pty_output(&seed, append_to_previous_line, &parsed.text);
+            let seed_runs = if append_to_previous_line {
+                self.main_scrollback_row_runs
+                    .get(base_len)
+                    .cloned()
+                    .or_else(|| input.scrollback_row_runs.get(base_len).cloned())
+                    .unwrap_or_else(|| super::plain_row_runs(&seed).pop().unwrap_or_default())
+            } else {
+                Vec::new()
+            };
+            let styled_rows = self.scrollback_style_parser.consume(
+                output,
+                append_to_previous_line
+                    .then(|| (seed.first().cloned().unwrap_or_default(), seed_runs)),
+                styles,
+                colors,
+            );
+            let suffix_row_runs =
+                rows_or_plain_row_runs(&suffix, styled_rows.lines, styled_rows.row_runs);
+            self.main_scrollback_lines.truncate(base_len);
+            self.main_scrollback_row_runs.truncate(base_len);
+            self.main_scrollback_lines.extend(suffix.iter().cloned());
+            self.main_scrollback_row_runs
+                .extend(suffix_row_runs.iter().cloned());
+            if self.main_scrollback_lines.len() > DEFAULT_MAX_SCROLLBACK_LINES {
+                let drop_count = self.main_scrollback_lines.len() - DEFAULT_MAX_SCROLLBACK_LINES;
+                self.main_scrollback_lines.drain(..drop_count);
+                if self.main_scrollback_row_runs.len() > drop_count {
+                    self.main_scrollback_row_runs.drain(..drop_count);
+                } else {
+                    self.main_scrollback_row_runs.clear();
+                }
+            }
+
+            (
+                base_len,
+                ExtractedRows {
+                    row_runs: suffix_row_runs,
+                    semantic_prompts: super::plain_row_semantic_prompts(&suffix),
+                    dirty_rows: super::plain_row_dirty_flags(&suffix),
+                    kitty_placeholders: super::plain_row_kitty_placeholders(&suffix),
+                    lines: suffix,
+                },
+            )
+        }
+
         fn scrollback_rows(
             &mut self,
             total_rows: usize,
@@ -1280,22 +1570,26 @@ mod ghostty_vt {
 
             self.terminal.scroll_viewport(ScrollViewport::Top);
             let snapshot = self.render_state.update(&self.terminal).ok()?;
+            let colors = terminal_colors(&snapshot)?;
             let mut rows = extract_rows(
                 &snapshot,
                 &mut self.row_iterator,
                 &mut self.cell_iterator,
                 styles,
+                &colors,
             )?;
             rows.truncate(total_rows);
 
             while rows.lines.len() < total_rows {
                 self.terminal.scroll_viewport(ScrollViewport::Delta(1));
                 let snapshot = self.render_state.update(&self.terminal).ok()?;
+                let colors = terminal_colors(&snapshot)?;
                 let viewport_lines = extract_rows(
                     &snapshot,
                     &mut self.row_iterator,
                     &mut self.cell_iterator,
                     styles,
+                    &colors,
                 )?;
                 let Some(next_line) = viewport_lines.lines.last() else {
                     break;
@@ -1320,6 +1614,26 @@ mod ghostty_vt {
             }
 
             Some(rows)
+        }
+
+        fn track_main_tail(&mut self, surface: protocol::SurfaceKind, has_scrollback: bool) {
+            self.main_tail_ref = None;
+            if surface != protocol::SurfaceKind::Main || !has_scrollback {
+                return;
+            }
+            let Some(screen_y) = self
+                .terminal
+                .total_rows()
+                .ok()
+                .and_then(|rows| rows.checked_sub(1))
+                .and_then(|row| u32::try_from(row).ok())
+            else {
+                return;
+            };
+            self.main_tail_ref = self
+                .terminal
+                .track_grid_ref(Point::Screen(PointCoordinate { x: 0, y: screen_y }))
+                .ok();
         }
     }
 
@@ -1347,49 +1661,378 @@ mod ghostty_vt {
         }
     }
 
-    fn cached_main_scrollback_rows(
-        input: &TerminalInput<'_>,
-        total_rows: usize,
-        surface_rows: &ExtractedRows,
-    ) -> Option<ExtractedRows> {
-        let history_len = total_rows.checked_sub(surface_rows.lines.len())?;
-        if history_len > input.scrollback_lines.len() {
-            return None;
+    #[derive(Debug, Default)]
+    struct IncrementalSgrRowParser {
+        state: IncrementalSgrState,
+        current_style: PaneStyle,
+        pending_text: Vec<u8>,
+        pending_cr: bool,
+    }
+
+    #[derive(Debug, Default)]
+    enum IncrementalSgrState {
+        #[default]
+        Ground,
+        Escape,
+        Csi(Vec<u8>),
+        Osc {
+            escape_pending: bool,
+        },
+        StringControl {
+            escape_pending: bool,
+        },
+    }
+
+    impl IncrementalSgrRowParser {
+        fn consume(
+            &mut self,
+            bytes: &[u8],
+            seed: Option<(String, Vec<CellRun>)>,
+            styles: &mut Vec<PaneStyle>,
+            colors: &TerminalColors,
+        ) -> ExtractedRows {
+            let mut lines = Vec::new();
+            let mut row_runs = Vec::new();
+            let (mut current_line, mut current_runs) = seed.unwrap_or_default();
+            let mut skipped_leading_newline = false;
+
+            for byte in bytes.iter().copied() {
+                match &mut self.state {
+                    IncrementalSgrState::Ground => match byte {
+                        b'\r' => {
+                            self.flush_text(&mut current_line, &mut current_runs, styles);
+                            if current_line.is_empty()
+                                && current_runs.is_empty()
+                                && lines.is_empty()
+                                && !skipped_leading_newline
+                            {
+                                skipped_leading_newline = true;
+                            } else {
+                                lines.push(std::mem::take(&mut current_line));
+                                row_runs.push(std::mem::take(&mut current_runs));
+                            }
+                            self.pending_cr = true;
+                        }
+                        b'\n' => {
+                            self.flush_text(&mut current_line, &mut current_runs, styles);
+                            if self.pending_cr {
+                                self.pending_cr = false;
+                            } else if current_line.is_empty()
+                                && current_runs.is_empty()
+                                && lines.is_empty()
+                                && !skipped_leading_newline
+                            {
+                                skipped_leading_newline = true;
+                            } else {
+                                lines.push(std::mem::take(&mut current_line));
+                                row_runs.push(std::mem::take(&mut current_runs));
+                            }
+                        }
+                        0x1b => {
+                            self.flush_text(&mut current_line, &mut current_runs, styles);
+                            self.pending_cr = false;
+                            self.state = IncrementalSgrState::Escape;
+                        }
+                        0x9b => {
+                            self.flush_text(&mut current_line, &mut current_runs, styles);
+                            self.pending_cr = false;
+                            self.state = IncrementalSgrState::Csi(Vec::new());
+                        }
+                        b'\t' => {
+                            self.pending_cr = false;
+                            self.pending_text.push(byte);
+                        }
+                        0x20..=0x7e | 0x80..=0xff => {
+                            self.pending_cr = false;
+                            self.pending_text.push(byte);
+                        }
+                        _ => {}
+                    },
+                    IncrementalSgrState::Escape => match byte {
+                        b'[' => self.state = IncrementalSgrState::Csi(Vec::new()),
+                        b']' => {
+                            self.state = IncrementalSgrState::Osc {
+                                escape_pending: false,
+                            }
+                        }
+                        b'P' | b'X' | b'^' | b'_' => {
+                            self.state = IncrementalSgrState::StringControl {
+                                escape_pending: false,
+                            };
+                        }
+                        0x1b => self.state = IncrementalSgrState::Escape,
+                        _ => self.state = IncrementalSgrState::Ground,
+                    },
+                    IncrementalSgrState::Csi(buffer) => {
+                        if byte == 0x1b {
+                            self.state = IncrementalSgrState::Escape;
+                        } else if (0x40..=0x7e).contains(&byte) {
+                            let params = std::mem::take(buffer);
+                            if byte == b'm' {
+                                apply_incremental_sgr(&mut self.current_style, &params, colors);
+                            }
+                            self.state = IncrementalSgrState::Ground;
+                        } else {
+                            buffer.push(byte);
+                        }
+                    }
+                    IncrementalSgrState::Osc { escape_pending } => {
+                        if *escape_pending {
+                            if byte == b'\\' {
+                                self.state = IncrementalSgrState::Ground;
+                            } else {
+                                *escape_pending = byte == 0x1b;
+                            }
+                        } else if byte == 0x07 {
+                            self.state = IncrementalSgrState::Ground;
+                        } else if byte == 0x1b {
+                            *escape_pending = true;
+                        }
+                    }
+                    IncrementalSgrState::StringControl { escape_pending } => {
+                        if *escape_pending {
+                            if byte == b'\\' {
+                                self.state = IncrementalSgrState::Ground;
+                            } else {
+                                *escape_pending = byte == 0x1b;
+                            }
+                        } else if byte == 0x1b {
+                            *escape_pending = true;
+                        }
+                    }
+                }
+            }
+
+            self.flush_text(&mut current_line, &mut current_runs, styles);
+            if !current_line.is_empty() || !current_runs.is_empty() {
+                lines.push(current_line);
+                row_runs.push(current_runs);
+            }
+
+            ExtractedRows {
+                semantic_prompts: super::plain_row_semantic_prompts(&lines),
+                dirty_rows: super::plain_row_dirty_flags(&lines),
+                kitty_placeholders: super::plain_row_kitty_placeholders(&lines),
+                lines,
+                row_runs,
+            }
         }
 
-        let history_lines = input.scrollback_lines[..history_len].to_vec();
-        let mut rows = ExtractedRows {
-            row_runs: row_runs_prefix_or_plain(
-                &history_lines,
-                input.scrollback_row_runs,
-                history_len,
-            ),
+        fn flush_text(
+            &mut self,
+            current_line: &mut String,
+            current_runs: &mut Vec<CellRun>,
+            styles: &mut Vec<PaneStyle>,
+        ) {
+            if self.pending_text.is_empty() {
+                return;
+            }
+            let text = String::from_utf8_lossy(&self.pending_text).into_owned();
+            self.pending_text.clear();
+            let style_id = style_id(styles, self.current_style.clone());
+            append_incremental_run(current_line, current_runs, text, style_id);
+        }
+    }
+
+    fn append_incremental_run(
+        current_line: &mut String,
+        current_runs: &mut Vec<CellRun>,
+        text: String,
+        style_id: u32,
+    ) {
+        if text.is_empty() {
+            return;
+        }
+        current_line.push_str(&text);
+        let widths = vec![1_u8; text.chars().count()];
+        if let Some(last) = current_runs.last_mut()
+            && last.style_id == style_id
+            && last.flags == 0
+            && last.hyperlink_id == 0
+            && last.semantic_content == protocol::CellSemanticContent::Output
+        {
+            last.text.push_str(&text);
+            last.cell_widths.extend(widths);
+            return;
+        }
+        current_runs.push(CellRun {
+            text,
+            cell_widths: widths,
+            style_id,
+            flags: 0,
+            hyperlink_id: 0,
+            semantic_content: protocol::CellSemanticContent::Output,
+        });
+    }
+
+    fn apply_incremental_sgr(style: &mut PaneStyle, params: &[u8], colors: &TerminalColors) {
+        let parsed = parse_sgr_params(params);
+        let params = if parsed.is_empty() { vec![0] } else { parsed };
+        let mut index = 0;
+        while index < params.len() {
+            let code = params[index];
+            match code {
+                0 => *style = PaneStyle::default(),
+                1 => style.flags |= 1 << 0,
+                2 => style.flags |= 1 << 2,
+                3 => style.flags |= 1 << 1,
+                4 => style.flags |= 1 << 8,
+                5 => style.flags |= 1 << 3,
+                7 => style.flags |= 1 << 4,
+                8 => style.flags |= 1 << 5,
+                9 => style.flags |= 1 << 6,
+                22 => style.flags &= !((1 << 0) | (1 << 2)),
+                23 => style.flags &= !(1 << 1),
+                24 => style.flags &= !((1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | (1 << 12)),
+                25 => style.flags &= !(1 << 3),
+                27 => style.flags &= !(1 << 4),
+                28 => style.flags &= !(1 << 5),
+                29 => style.flags &= !(1 << 6),
+                30..=37 => style.fg_rgba = palette_color(colors, code - 30),
+                39 => style.fg_rgba = 0,
+                40..=47 => style.bg_rgba = palette_color(colors, code - 40),
+                49 => style.bg_rgba = 0,
+                53 => style.flags |= 1 << 7,
+                55 => style.flags &= !(1 << 7),
+                90..=97 => style.fg_rgba = palette_color(colors, code - 90 + 8),
+                100..=107 => style.bg_rgba = palette_color(colors, code - 100 + 8),
+                38 | 48 | 58 => {
+                    index += apply_extended_sgr_color(style, colors, &params[index..]);
+                    continue;
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+
+    fn apply_extended_sgr_color(
+        style: &mut PaneStyle,
+        colors: &TerminalColors,
+        params: &[u32],
+    ) -> usize {
+        if params.len() < 3 {
+            return 1;
+        }
+        let target = params[0];
+        match params[1] {
+            5 => {
+                let rgba = palette_color(colors, params[2]);
+                set_extended_style_color(style, target, rgba);
+                3
+            }
+            2 if params.len() >= 5 => {
+                let rgba = u32::from_be_bytes([
+                    params[2].min(255) as u8,
+                    params[3].min(255) as u8,
+                    params[4].min(255) as u8,
+                    0xff,
+                ]);
+                set_extended_style_color(style, target, rgba);
+                5
+            }
+            _ => 1,
+        }
+    }
+
+    fn set_extended_style_color(style: &mut PaneStyle, target: u32, rgba: u32) {
+        match target {
+            38 => style.fg_rgba = rgba,
+            48 => style.bg_rgba = rgba,
+            58 => style.underline_rgba = rgba,
+            _ => {}
+        }
+    }
+
+    fn palette_color(colors: &TerminalColors, index: u32) -> u32 {
+        colors
+            .palette_rgba
+            .get(index as usize)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn parse_sgr_params(params: &[u8]) -> Vec<u32> {
+        params
+            .split(|byte| *byte == b';' || *byte == b':')
+            .filter_map(|param| {
+                if param.is_empty() {
+                    return Some(0);
+                }
+                std::str::from_utf8(param).ok()?.parse::<u32>().ok()
+            })
+            .collect()
+    }
+
+    fn rows_or_plain_row_runs(
+        lines: &[String],
+        styled_lines: Vec<String>,
+        row_runs: Vec<Vec<CellRun>>,
+    ) -> Vec<Vec<CellRun>> {
+        if styled_lines == lines {
+            row_runs
+        } else {
+            super::plain_row_runs(lines)
+        }
+    }
+
+    fn merge_tracked_main_scrollback_rows(
+        input: &TerminalInput<'_>,
+        backend_rows: ExtractedRows,
+        previous_main_tail_screen_y: Option<usize>,
+    ) -> ExtractedRows {
+        let backend_len = backend_rows.lines.len();
+        if backend_len >= input.scrollback_lines.len() {
+            return backend_rows;
+        }
+        let Some(suffix_start) = previous_main_tail_screen_y else {
+            return backend_rows;
+        };
+        if suffix_start > backend_len {
+            return input_scrollback_rows(input);
+        }
+
+        let prefix_len = input.scrollback_lines.len().saturating_sub(1);
+        let mut rows = input_scrollback_prefix_rows(input, prefix_len);
+        rows.lines
+            .extend(backend_rows.lines.into_iter().skip(suffix_start));
+        rows.row_runs
+            .extend(backend_rows.row_runs.into_iter().skip(suffix_start));
+        rows.semantic_prompts
+            .extend(backend_rows.semantic_prompts.into_iter().skip(suffix_start));
+        rows.dirty_rows
+            .extend(backend_rows.dirty_rows.into_iter().skip(suffix_start));
+        rows.kitty_placeholders.extend(
+            backend_rows
+                .kitty_placeholders
+                .into_iter()
+                .skip(suffix_start),
+        );
+        rows
+    }
+
+    fn input_scrollback_rows(input: &TerminalInput<'_>) -> ExtractedRows {
+        input_scrollback_prefix_rows(input, input.scrollback_lines.len())
+    }
+
+    fn input_scrollback_prefix_rows(input: &TerminalInput<'_>, len: usize) -> ExtractedRows {
+        let len = len.min(input.scrollback_lines.len());
+        let lines = input.scrollback_lines[..len].to_vec();
+        ExtractedRows {
+            row_runs: row_runs_prefix_or_plain(&lines, input.scrollback_row_runs, len),
             semantic_prompts: row_values_prefix_or_default(
                 input.scrollback_semantic_prompts,
-                history_len,
+                len,
                 protocol::RowSemanticPrompt::None,
             ),
-            dirty_rows: row_values_prefix_or_default(
-                input.scrollback_dirty_rows,
-                history_len,
-                false,
-            ),
+            dirty_rows: row_values_prefix_or_default(input.scrollback_dirty_rows, len, false),
             kitty_placeholders: row_values_prefix_or_default(
                 input.scrollback_kitty_placeholders,
-                history_len,
+                len,
                 false,
             ),
-            lines: history_lines,
-        };
-        rows.lines.extend(surface_rows.lines.iter().cloned());
-        rows.row_runs.extend(surface_rows.row_runs.iter().cloned());
-        rows.semantic_prompts
-            .extend(surface_rows.semantic_prompts.iter().copied());
-        rows.dirty_rows
-            .extend(surface_rows.dirty_rows.iter().copied());
-        rows.kitty_placeholders
-            .extend(surface_rows.kitty_placeholders.iter().copied());
-        Some(rows)
+            lines,
+        }
     }
 
     fn row_runs_prefix_or_plain(
@@ -1417,6 +2060,7 @@ mod ghostty_vt {
         row_iterator: &mut RowIterator<'alloc>,
         cell_iterator: &mut CellIterator<'alloc>,
         styles: &mut Vec<PaneStyle>,
+        colors: &TerminalColors,
     ) -> Option<ExtractedRows> {
         let mut rows = row_iterator.update(snapshot).ok()?;
         let mut row_runs = Vec::new();
@@ -1440,7 +2084,7 @@ mod ghostty_vt {
                 };
 
                 let text = cell_text(&cells)?;
-                let style_id = style_id(styles, pane_style(&cells)?);
+                let style_id = style_id(styles, pane_style(&cells, colors)?);
                 let semantic_content = cell_semantic_content(raw_cell.semantic_content().ok()?);
                 let flags = cell_run_flags(raw_cell)?;
                 if let Some(last) = runs.last_mut()
@@ -1515,12 +2159,15 @@ mod ghostty_vt {
         }
     }
 
-    fn pane_style(cells: &libghostty_vt::render::CellIteration<'_, '_>) -> Option<PaneStyle> {
+    fn pane_style(
+        cells: &libghostty_vt::render::CellIteration<'_, '_>,
+        colors: &TerminalColors,
+    ) -> Option<PaneStyle> {
         let style = cells.style().ok()?;
         Some(PaneStyle {
-            fg_rgba: cells.fg_color().ok().flatten().map_or(0, rgba),
-            bg_rgba: cells.bg_color().ok().flatten().map_or(0, rgba),
-            underline_rgba: style_color_rgba(style.underline_color),
+            fg_rgba: style_color_rgba(style.fg_color, colors),
+            bg_rgba: style_color_rgba(style.bg_color, colors),
+            underline_rgba: style_color_rgba(style.underline_color, colors),
             flags: style_flags(style),
         })
     }
@@ -1538,9 +2185,14 @@ mod ghostty_vt {
         u32::from_be_bytes([color.r, color.g, color.b, 0xff])
     }
 
-    fn style_color_rgba(color: StyleColor) -> u32 {
+    fn style_color_rgba(color: StyleColor, colors: &TerminalColors) -> u32 {
         match color {
             StyleColor::Rgb(rgb) => rgba(rgb),
+            StyleColor::Palette(index) => colors
+                .palette_rgba
+                .get(usize::from(index.0))
+                .copied()
+                .unwrap_or(0),
             _ => 0,
         }
     }
@@ -1945,6 +2597,51 @@ mod tests {
             scrollback_semantic_prompts: &update.scrollback_semantic_prompts,
             scrollback_dirty_rows: &update.scrollback_dirty_rows,
             scrollback_kitty_placeholders: &update.scrollback_kitty_placeholders,
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn numbered_output(start: usize, end_exclusive: usize) -> String {
+        (start..end_exclusive)
+            .map(|index| {
+                if index + 1 == end_exclusive {
+                    format!("line {index:04}")
+                } else {
+                    format!("line {index:04}\r\n")
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn numbered_rows(lines: &[String]) -> Vec<usize> {
+        lines
+            .iter()
+            .filter_map(|line| {
+                let start = line.find("line ")?;
+                line.get(start + "line ".len()..start + "line ".len() + 4)?
+                    .parse()
+                    .ok()
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn assert_run_style_ids_are_valid(update: &super::TerminalUpdate) {
+        let style_count = update.styles.len().max(1);
+        for (row_index, row) in update
+            .scrollback_row_runs
+            .iter()
+            .chain(update.surface_row_runs.iter())
+            .enumerate()
+        {
+            for run in row {
+                assert!(
+                    (run.style_id as usize) < style_count,
+                    "row {row_index} references unknown style {} of {style_count}",
+                    run.style_id
+                );
+            }
         }
     }
 
@@ -4873,6 +5570,420 @@ mod tests {
         assert_ne!(
             style.fg_rgba, 0,
             "styled scrollback should reference a resolved style table entry"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_engine_expands_seeded_scrollback_from_backend_history() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let initial_surface = vec!["nmux pane-1".to_owned()];
+        let initial_scrollback = vec![
+            "booting nmux workspace".to_owned(),
+            "nmux pane-1".to_owned(),
+            "server-owned terminal state".to_owned(),
+        ];
+
+        let output = (0..80)
+            .map(|index| format!("line {index:04}\r\n"))
+            .collect::<String>();
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &initial_surface, &initial_scrollback),
+                output.as_bytes(),
+            )
+            .expect("terminal update");
+
+        assert!(
+            update.scrollback_lines.len() > update.surface_lines.len(),
+            "seeded scrollback did not grow from backend history: {:?}",
+            update.scrollback_lines
+        );
+        for expected in ["line 0000", "line 0056", "line 0079"] {
+            assert!(
+                update
+                    .scrollback_lines
+                    .iter()
+                    .any(|line| line.contains(expected)),
+                "scrollback missing {expected}: {:?}",
+                update.scrollback_lines
+            );
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_main_transcript_is_contiguous_for_large_output() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let output = numbered_output(0, 1000);
+
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &empty, &empty),
+                output.as_bytes(),
+            )
+            .expect("terminal update");
+
+        assert_eq!(update.surface, protocol::SurfaceKind::Main);
+        assert!(
+            update.preserve_scrollback,
+            "large live output should send a scrollback range update"
+        );
+        assert!(update.scrollback_replace_from.is_some());
+        let suffix = numbered_rows(&update.scrollback_lines);
+        assert_eq!(suffix.last(), Some(&999));
+        assert_eq!(
+            suffix,
+            (*suffix.first().expect("suffix start")..=999).collect::<Vec<_>>()
+        );
+        assert!(
+            numbered_rows(&update.surface_lines).contains(&999),
+            "visible surface should still track the latest output: {:?}",
+            update.surface_lines
+        );
+        assert_run_style_ids_are_valid(&update);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_main_transcript_retains_deep_ls_sized_output() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let output = numbered_output(0, 2_000);
+
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 24, &empty, &empty),
+                output.as_bytes(),
+            )
+            .expect("terminal update");
+
+        assert_eq!(update.surface, protocol::SurfaceKind::Main);
+        assert!(
+            update.preserve_scrollback,
+            "large ls-sized output should send a scrollback range update"
+        );
+        assert!(update.scrollback_replace_from.is_some());
+        let suffix = numbered_rows(&update.scrollback_lines);
+        assert_eq!(suffix.last(), Some(&1_999));
+        assert_eq!(
+            suffix,
+            (*suffix.first().expect("suffix start")..=1_999).collect::<Vec<_>>()
+        );
+        assert!(
+            numbered_rows(&update.surface_lines).contains(&1_999),
+            "visible surface should still track the latest output: {:?}",
+            update.surface_lines
+        );
+        assert_run_style_ids_are_valid(&update);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_incremental_scrollback_preserves_sgr_styles_across_chunks() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let mut output = numbered_output(0, 900);
+        output.push_str("\x1b[34;1mblue-dir\x1b[0m\r\nplain-tail");
+
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 10, &empty, &empty),
+                output.as_bytes(),
+            )
+            .expect("terminal update");
+
+        assert!(
+            update.preserve_scrollback,
+            "large colored output should use an incremental range update"
+        );
+        assert!(update.scrollback_replace_from.is_some());
+        assert!(
+            update
+                .scrollback_lines
+                .iter()
+                .any(|line| line.contains("blue-dir")),
+            "colored row missing from scrollback: {:?}",
+            update.scrollback_lines
+        );
+        let styled_run = update
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("blue-dir"))
+            .expect("styled scrollback run");
+        assert_ne!(
+            styled_run.style_id, 0,
+            "incremental scrollback should preserve SGR style runs: {:?}",
+            update.scrollback_row_runs
+        );
+        let style = update
+            .styles
+            .get(styled_run.style_id as usize)
+            .expect("style table entry");
+        assert_ne!(style.fg_rgba, 0, "styled run should resolve a foreground");
+        assert_ne!(style.flags & (1 << 0), 0, "styled run should preserve bold");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_incremental_newline_after_prompt_keeps_previous_row() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let mut output = numbered_output(0, 80);
+        output.push_str("prompt ls");
+        let first = engine
+            .apply_output(
+                terminal_input_with_size(80, 10, &empty, &empty),
+                output.as_bytes(),
+            )
+            .expect("initial terminal update");
+        assert!(
+            first
+                .scrollback_lines
+                .iter()
+                .any(|line| line.contains("prompt ls")),
+            "initial prompt row missing: {:?}",
+            first.scrollback_lines
+        );
+
+        let mut input = terminal_input_from_update(&first);
+        input.cursor.col = "prompt ls".len() as u32;
+        let update = engine
+            .apply_output(input, b"\r\n\x1b[32mdir\x1b[0m  file")
+            .expect("newline terminal update");
+
+        let replace_from = update
+            .scrollback_replace_from
+            .expect("incremental range replacement");
+        let mut combined_lines = first.scrollback_lines[..replace_from].to_vec();
+        combined_lines.extend(update.scrollback_lines.iter().cloned());
+
+        assert!(
+            combined_lines.iter().any(|line| line.contains("prompt ls")),
+            "newline chunk replaced the previous prompt row: {:?}",
+            combined_lines
+        );
+        assert!(
+            combined_lines.iter().any(|line| line.contains("dir  file")),
+            "post-newline output missing: {:?}",
+            combined_lines
+        );
+        assert!(
+            update.scrollback_lines.iter().all(|line| !line.is_empty())
+                && combined_lines.iter().all(|line| !line.contains('\u{1b}')),
+            "control bytes leaked into scrollback text: {:?}",
+            combined_lines
+        );
+        let styled_run = update
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("dir"))
+            .expect("styled newline run");
+        assert_ne!(
+            styled_run.style_id, 0,
+            "newline output should retain SGR style runs"
+        );
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_main_transcript_is_contiguous_across_small_chunks_and_resize() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let mut update = engine
+            .apply_output(
+                terminal_input_with_size(80, 12, &empty, &empty),
+                numbered_output(0, 1).as_bytes(),
+            )
+            .expect("initial terminal update");
+
+        for index in 1..250 {
+            let input = terminal_input_from_update_with_size(80, 12, &update);
+            update = engine
+                .apply_output(input, format!("\r\nline {index:04}").as_bytes())
+                .expect("chunked terminal update");
+        }
+
+        update = engine
+            .resize(
+                terminal_input_from_update_with_size(80, 12, &update),
+                100,
+                30,
+            )
+            .expect("resize update");
+
+        for index in 250..500 {
+            let input = terminal_input_from_update_with_size(100, 30, &update);
+            update = engine
+                .apply_output(input, format!("\r\nline {index:04}").as_bytes())
+                .expect("post-resize terminal update");
+        }
+
+        assert_eq!(update.surface, protocol::SurfaceKind::Main);
+        assert!(
+            update.preserve_scrollback,
+            "post-threshold live output should send a scrollback range update"
+        );
+        assert!(update.scrollback_replace_from.is_some());
+        let suffix = numbered_rows(&update.scrollback_lines);
+        assert_eq!(suffix.last(), Some(&499));
+        assert_eq!(
+            suffix,
+            (*suffix.first().expect("suffix start")..=499).collect::<Vec<_>>()
+        );
+        assert!(
+            numbered_rows(&update.surface_lines).contains(&499),
+            "visible surface should still reach the latest post-resize output: {:?}",
+            update.surface_lines
+        );
+        assert_run_style_ids_are_valid(&update);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_repeated_empty_rows_survive_later_output() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let mut update = engine
+            .apply_output(terminal_input_with_size(80, 4, &empty, &empty), b"")
+            .expect("initial prompt");
+
+        for _ in 0..20 {
+            update = engine
+                .apply_output(
+                    terminal_input_from_update_with_size(80, 4, &update),
+                    b"\r\n",
+                )
+                .expect("empty row");
+        }
+
+        update = engine
+            .apply_output(
+                terminal_input_from_update_with_size(80, 4, &update),
+                b"ls\r\nalpha\r\nbeta\r\n",
+            )
+            .expect("ls output");
+
+        let blank_rows = update
+            .scrollback_lines
+            .iter()
+            .filter(|line| line.is_empty())
+            .count();
+        assert_eq!(
+            blank_rows, 21,
+            "repeated blank prompt rows were collapsed: {:?}",
+            update.scrollback_lines
+        );
+        for expected in ["ls", "alpha", "beta"] {
+            assert!(
+                update.scrollback_lines.iter().any(|line| line == expected),
+                "missing {expected:?} after prompt burst: {:?}",
+                update.scrollback_lines
+            );
+        }
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_main_transcript_survives_palette_change_and_alternate_screen() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let mut update = engine
+            .apply_output(
+                terminal_input_with_size(80, 10, &empty, &empty),
+                numbered_output(0, 80).as_bytes(),
+            )
+            .expect("initial main update");
+        update = engine
+            .apply_output(
+                terminal_input_from_update_with_size(80, 10, &update),
+                b"\x1b]4;1;rgb:00/ff/00\x07\x1b[31m\r\nline 0080\x1b[0m",
+            )
+            .expect("palette update");
+        let before_alternate = update.scrollback_lines.clone();
+
+        let alternate = engine
+            .apply_output(
+                terminal_input_from_update_with_size(80, 10, &update),
+                b"\x1b[?1049halt-0\r\nalt-1\r\nalt-2",
+            )
+            .expect("alternate update");
+        assert_eq!(alternate.surface, protocol::SurfaceKind::Alternate);
+        assert_eq!(
+            alternate.scrollback_lines, before_alternate,
+            "alternate output must not mutate main transcript"
+        );
+        assert!(
+            alternate
+                .scrollback_lines
+                .iter()
+                .all(|line| !line.contains("alt-")),
+            "alternate-screen output leaked into main transcript: {:?}",
+            alternate.scrollback_lines
+        );
+
+        update = engine
+            .apply_output(
+                terminal_input_from_update_with_size(80, 10, &alternate),
+                b"\x1b[?1049l\r\nline 0081",
+            )
+            .expect("restored main update");
+
+        assert_eq!(update.surface, protocol::SurfaceKind::Main);
+        let suffix = numbered_rows(&update.scrollback_lines);
+        assert_eq!(suffix.last(), Some(&81));
+        assert!(
+            update
+                .scrollback_lines
+                .iter()
+                .all(|line| !line.contains("alt-")),
+            "alternate-screen output leaked into restored main transcript: {:?}",
+            update.scrollback_lines
+        );
+        assert_run_style_ids_are_valid(&update);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_cached_scrollback_keeps_existing_style_table() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+
+        let first = engine
+            .apply_output(
+                terminal_input_with_size(20, 2, &empty, &empty),
+                b"\x1b[36mcolored-history\x1b[0m\r\nplain\r\nlive",
+            )
+            .expect("initial styled update");
+        let history_run = first
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("colored-history"))
+            .expect("styled history run");
+        assert_ne!(history_run.style_id, 0);
+
+        let second = engine
+            .apply_output(terminal_input_from_update(&first), b"\r\nnext")
+            .expect("cached scrollback update");
+        let preserved_run = second
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("colored-history"))
+            .expect("preserved styled history run");
+        let preserved_style = second
+            .styles
+            .get(preserved_run.style_id as usize)
+            .expect("preserved style table entry");
+
+        assert_ne!(
+            preserved_style.fg_rgba, 0,
+            "cached scrollback should keep style IDs backed by the carried style table"
         );
     }
 }

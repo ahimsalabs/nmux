@@ -113,6 +113,13 @@ enum AttachSurfaceState : byte {
   Patch = 2,
 }
 
+enum PaneViewportKind : byte {
+  Active = 0,
+  Top = 1,
+  Pinned = 2,
+  Delta = 3,
+}
+
 enum RowSemanticPrompt : byte {
   None = 0,
   Prompt = 1,
@@ -168,9 +175,14 @@ table PaneNode {
   resize_policy:ResizePolicy = Fixed;
 }
 
-table PaneSurfaceSnapshot {
+table PaneViewportSnapshot {
   pane_id:string;
   version:ulong;
+  timeline_version:ulong;
+  total_lines:ulong;
+  active_start_line:ulong;
+  viewport_top_line:ulong;
+  viewport:PaneViewportKind = Active;
   surface:SurfaceKind = Main;
   cols:uint;
   rows:uint;
@@ -183,10 +195,15 @@ table PaneSurfaceSnapshot {
   hyperlinks:[Hyperlink];
 }
 
-table PaneSurfacePatch {
+table PaneViewportPatch {
   pane_id:string;
   base_version:ulong;
   version:ulong;
+  timeline_version:ulong;
+  total_lines:ulong;
+  active_start_line:ulong;
+  viewport_top_line:ulong;
+  viewport:PaneViewportKind = Active;
   kind:PatchKind = ReplaceRows;
   row_updates:[RowUpdate];
   cursor:CursorState;
@@ -334,33 +351,14 @@ table ControlCommand {
   session_id:string;
 }
 
-table ScrollbackFetch {
+table PaneViewportIntent {
   pane_id:string;
   actor_id:string;
-  start_line:ulong;
-  line_count:uint;
-  known_scrollback_version:ulong;
-}
-
-table ScrollbackChunk {
-  pane_id:string;
-  scrollback_version:ulong;
-  start_line:ulong;
-  total_lines:ulong;
-  rows:[ScrollbackRow];
-  styles:[Style];
-  colors:TerminalColorState;
-  hyperlinks:[Hyperlink];
-}
-
-table ScrollbackRow {
-  line:ulong;
-  runs:[CellRun];
-  dirty_hash:ulong;
-  semantic_prompt:RowSemanticPrompt = None;
-  dirty:bool;
-  kitty_virtual_placeholder:bool;
-  row_state_hash:ulong;
+  viewport:PaneViewportKind = Active;
+  top_line:ulong;
+  delta_rows:int;
+  visible_rows:uint;
+  known_viewport_version:ulong;
 }
 
 table PresenceUpdate {
@@ -418,7 +416,7 @@ table Error {
   input_seq:ulong;
 }
 
-table KnownPaneSurfaceVersion {
+table KnownPaneViewportVersion {
   pane_id:string;
   version:ulong;
 }
@@ -429,7 +427,7 @@ table AttachRequest {
   display_name:string;
   mode:AttachMode = ReadOnly;
   focused_pane_id:string;
-  known_surfaces:[KnownPaneSurfaceVersion];
+  known_viewports:[KnownPaneViewportVersion];
   hostname:string;
   client_kind:string;
   subscribe_client_inventory:bool;
@@ -443,13 +441,12 @@ table AttachStatus {
 
 union EnvelopeBody {
   WorkspaceTreeSnapshot,
-  PaneSurfaceSnapshot,
-  PaneSurfacePatch,
+  PaneViewportSnapshot,
+  PaneViewportPatch,
   InputEvent,
   ResizeIntent,
   Error,
-  ScrollbackFetch,
-  ScrollbackChunk,
+  PaneViewportIntent,
   PresenceUpdate,
   AttachRequest,
   AttachStatus,

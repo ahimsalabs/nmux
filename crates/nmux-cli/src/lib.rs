@@ -1,3 +1,4 @@
+pub mod bug_report;
 pub mod build_info;
 pub mod daemon;
 pub(crate) mod error;

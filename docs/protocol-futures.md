@@ -29,7 +29,7 @@ needs a separate ADR first:
 
 | Track | Current protocol surface | Withheld until ADR |
 | --- | --- | --- |
-| Hyperlinks | Hyperlink table on full surface snapshots and scrollback chunks; run-level presence flag. | Stable URI identity, ID lifetime, patch-table diffs, and nonzero run references from the backend. |
+| Hyperlinks | Hyperlink table on full pane viewport snapshots; run-level presence flag. | Stable URI identity, ID lifetime, patch-table diffs, and nonzero run references from the backend. |
 | Images and graphics | Kitty virtual placeholder presence on rows. | Placement objects, dimensions, pixel payload transfer, persistence, cache limits, and render security policy. |
 | Damage | Row replacement, cursor/mode/color-only patches, row dirty flags, and row state hashes. | Cell/run/region/object damage shapes and compatibility recovery rules beyond `FullRefreshRequired`. |
 | Command lifecycle | OSC 133 row prompt metadata and per-run semantic content. | Command IDs, prompt/input/output ranges, exit status, duration, and lifecycle ownership. |
@@ -37,9 +37,9 @@ needs a separate ADR first:
 
 ## Hyperlink Identity
 
-Current state: `PaneSurfaceSnapshot` and `ScrollbackChunk` carry a `Hyperlink`
-table, and `CellRun.flags` records backend hyperlink presence. `hyperlink_id`
-remains zero until the backend can provide stable URI identity.
+Current state: `PaneViewportSnapshot` carries a `Hyperlink` table, and
+`CellRun.flags` records backend hyperlink presence. `hyperlink_id` remains zero
+until the backend can provide stable URI identity.
 
 Before schema or behavior changes:
 
@@ -48,7 +48,7 @@ Before schema or behavior changes:
 - Define whether OSC 8 ID and parameter strings are normalized, preserved raw,
   or both.
 - Define patch behavior for new or removed identities. Current
-  `PaneSurfacePatch` objects intentionally do not carry hyperlink-table diffs.
+  `PaneViewportPatch` objects intentionally do not carry hyperlink-table diffs.
 - Keep the upstream/API blocker in
   [libghostty-vt hyperlink identity access](upstream/libghostty-vt-hyperlink-identity.md)
   current until backend identity access is available.

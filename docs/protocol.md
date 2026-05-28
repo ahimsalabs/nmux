@@ -12,12 +12,11 @@ state-sync envelope bodies:
 - `Envelope` for versioning, sequencing, acknowledgements, and body dispatch.
 - `WorkspaceTreeSnapshot` for sessions, tabs, panes, split layout, pane sizes, and resize policy.
 - `SessionInventorySnapshot` for daemon-scoped named session discovery.
-- `PaneSurfaceSnapshot` for a full visible or alternate screen surface.
-- `PaneSurfacePatch` for row, cursor, or terminal-mode updates against a known
-  surface version.
+- `PaneViewportIntent`, `PaneViewportSnapshot`, and `PaneViewportPatch` for the
+  daemon-owned render viewport over a pane timeline. This is the visible
+  surface, live scroll, and explicit scrollback path in protocol v2.
 - Decoded workspace, surface, attach-status, and scrollback state rejects missing
   or empty session, tab, and pane IDs instead of creating empty client cache keys.
-- `ScrollbackFetch` and `ScrollbackChunk` for pane-scoped history ranges.
 - `InputEvent` for key, raw byte, paste, focus, and mouse input from an actor
   to a pane.
 - `ResizeIntent` for client-originated size requests.
@@ -26,13 +25,14 @@ state-sync envelope bodies:
 - `PresenceUpdate` for actor join/leave-style presence events. Decoders require
   non-empty actor, user, display, and present focused-pane IDs.
 - `AttachRequest` for actor identity, attach mode, focused pane, and known pane
-  surface versions at attach time. `Envelope.session_id` is an optional attach
+  viewport versions at attach time.
+  `Envelope.session_id` is an optional attach
   target; absent means the daemon default/current session, while a present
   non-empty value must identify the daemon-owned session or attach returns
   `ErrorCode::SessionNotFound`. Decoded attach requests reject missing or empty
-  identity strings and known-surface pane IDs instead of substituting local
+  identity strings and known-viewport pane IDs instead of substituting local
   defaults.
-- `AttachStatus` for the daemon-selected pane and whether a surface frame
+- `AttachStatus` for the daemon-selected pane and whether a viewport frame
   follows the attach response.
 - `Error` for protocol-level failures.
 
@@ -50,33 +50,56 @@ compatibility plans before schema fields are added.
 
 This keeps frontend behavior consistent across native, web, mobile, and automation clients. It also makes reconnect a protocol feature: a client can resume from its last known object versions instead of replaying terminal output.
 
+## Viewport Model
+
+Protocol v2 renders pane history through daemon-owned viewports. A pane has one
+timeline; the daemon selects the visible window over that timeline and returns
+rows in the same render shape used by active surfaces.
+
+- `PaneViewportIntent.viewport = Active` asks for the active bottom viewport.
+  `Top` asks for the oldest retained line. `Pinned` asks for a specific
+  1-based `top_line`. `Delta` asks the daemon to move from `top_line` by
+  `delta_rows` and clamp the result.
+- `PaneViewportSnapshot.total_lines` is the retained timeline length.
+  `active_start_line` is the 1-based timeline line where the active screen
+  starts. `viewport_top_line` is the 1-based line rendered as row 0.
+- The daemon clamps invalid viewport requests and pads short timelines with
+  blank rows so `rows_data` can describe a stable visible rectangle.
+- Cursor visibility is relative to the selected viewport. If the terminal
+  cursor is outside the viewport, the daemon marks it hidden.
+- `timeline_version` changes when retained pane history changes. `version`
+  changes when any rendered viewport state changes.
+
+Clients should treat viewport snapshots as authoritative for live rendering and
+scrolling. They should not splice active surface rows with independently fetched
+history while displaying a scrolled viewport.
+
 ## Surface Model
 
-Pane surfaces and scrollback chunks are encoded as rows of runs:
+Pane viewports are encoded as rows of runs:
 
+- `PaneViewportSnapshot` and `PaneViewportPatch` carry the full renderable
+  viewport for clients.
 - `SurfaceRow` and `RowUpdate` identify rows by index and include both a
   stable text-only `dirty_hash`, a `row_state_hash` covering runs and row
   metadata, the backend row `dirty` flag, and Kitty virtual placeholder
   presence.
-- `ScrollbackRow` identifies history rows by absolute scrollback line and
-  includes both a stable text-only `dirty_hash`, a `row_state_hash` covering
-  runs and row metadata, the backend row `dirty` flag, and Kitty virtual
-  placeholder presence.
 - `CellRun` stores UTF-8 text, per-cell widths, a style table reference,
   flags, optional hyperlink reference, and per-run semantic content. Bit 0 in
   `CellRun.flags` means backend hyperlink presence for the run. Nonzero
   `hyperlink_id` values resolve through the `Hyperlink` table carried by the
-  same `PaneSurfaceSnapshot` or `ScrollbackChunk`; the current extractor still
-  leaves IDs zero until URI identity is wired. `cell_widths` is one byte per
-  rendered cell in the run, so wide characters carry a width of 2 at their
-  rendered cell position.
-- `Hyperlink` stores table-backed hyperlink identity for full snapshots and
-  scrollback chunks: numeric ID, target URI, optional OSC 8 identifier, and
-  optional raw parameter string. `PaneSurfacePatch` does not carry hyperlink
-  table diffs yet, so patches must not introduce references to unknown IDs.
-- `Style` is a compact table referenced by run IDs. Full `PaneSurfaceSnapshot`
-  objects and `ScrollbackChunk` objects carry the style table needed by their
-  rows. `fg_rgba`, `bg_rgba`, and `underline_rgba` use `0xRRGGBBAA` packing;
+  same `PaneViewportSnapshot`; the current extractor still leaves IDs zero
+  until URI identity is wired.
+  `cell_widths` is one byte per rendered cell in the run, so wide characters
+  carry a width of 2 at their rendered cell position.
+- `Hyperlink` stores table-backed hyperlink identity for full snapshots:
+  numeric ID, target URI, optional OSC 8 identifier, and optional raw parameter
+  string. Patch objects do not carry hyperlink table diffs yet, so patches must
+  not introduce references to unknown IDs.
+- `Style` is a compact table referenced by run IDs. Full `PaneViewportSnapshot`
+  objects carry the style table needed by their rows. `fg_rgba`, `bg_rgba`, and
+  `underline_rgba` use
+  `0xRRGGBBAA` packing;
   zero means the backend did not publish an explicit color for that field.
   `Style.flags` currently reserves bits 0-7 for bold, italic, faint, blink,
   inverse, invisible, strikethrough, and overline, and bits 8-12 for single,
@@ -92,8 +115,8 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
   scrollback chunks carry full palettes. Color-only patches may carry a
   palette diff using `palette_diff_start` and `palette_diff_rgba` against the
   patch base version instead of a full `palette_rgba` vector. Clients reject
-  palette diffs on snapshots, scrollback chunks, and non-color patches because
-  those objects must be self-contained or row/state compatible. Row, style-table,
+  palette diffs on snapshots and non-color patches because those objects must
+  be self-contained or row/state compatible. Row, style-table,
   or surface-kind changes that also affect colors still require a full surface
   refresh. All terminal color fields use the same `0xRRGGBBAA` packing as style
   colors; `cursor_rgba_set` distinguishes an unset cursor
@@ -112,24 +135,26 @@ Pane surfaces and scrollback chunks are encoded as rows of runs:
 
 This avoids freezing a simplistic per-cell ABI before the project has enough implementation feedback about graphemes, combining marks, double-width characters, terminal modes, hyperlinks, and image protocols.
 
-Clients should maintain a pane-surface render state keyed by pane ID and version. A snapshot initializes the local surface buffer and style table, and a patch is applied only when its `base_version` matches the client's current version. Clients reject unknown terminal-state enum values in snapshots and patches, including `SurfaceKind`, `PatchKind`, cursor shape, mouse tracking mode, and mouse encoding format, instead of treating them as compatible fallback states. Control-plane frames likewise reject unknown `PaneKind`, `SplitAxis`, `AttachMode`, `PresenceKind`, `AttachSurfaceState`, `ResizePolicy`, `ResizeReason`, and `ErrorCode` values instead of coercing them to defaults. Decoded error frames require a non-empty message and reject an empty optional pane ID. Row patches are applied by encoded row index, not by vector order. Cursor-only patches update cursor state without row updates.
+Clients should maintain a pane viewport render state keyed by pane ID and version. A snapshot initializes the local surface buffer and style table, and a patch is applied only when its `base_version` matches the client's current version. Clients reject unknown terminal-state enum values in snapshots and patches, including `SurfaceKind`, `PatchKind`, cursor shape, mouse tracking mode, and mouse encoding format, instead of treating them as compatible fallback states. Control-plane frames likewise reject unknown `PaneKind`, `SplitAxis`, `AttachMode`, `PresenceKind`, `AttachSurfaceState`, `ResizePolicy`, `ResizeReason`, and `ErrorCode` values instead of coercing them to defaults. Decoded error frames require a non-empty message and reject an empty optional pane ID. Row patches are applied by encoded row index, not by vector order. Cursor-only patches update cursor state without row updates.
 
 Attach responses send `WorkspaceTreeSnapshot`, `PresenceUpdate`, and then
 `AttachStatus`. `AttachStatus.pane_id` is the daemon-selected attached pane.
 `AttachStatus.surface_state` is `Current` when the client already has the
-current surface and no surface frame follows; otherwise it is `Snapshot` or
-`Patch` and the next frame is the matching pane surface object. Clients should
+current viewport and no viewport frame follows; otherwise it is `Snapshot` or
+`Patch` and the next frame is the matching pane viewport object in the live
+protocol v2 path. Clients should
 use the status pane ID, not a guessed default or the workspace root pane, for
-current-surface cache lookup and post-attach input, resize, and scrollback
-requests. Clients render `Current` only when their cached surface for
+current-viewport cache lookup and post-attach input, resize, and viewport
+requests. Clients render `Current` only when their cached viewport for
 `AttachStatus.pane_id` exactly matches `AttachStatus.surface_version`;
 otherwise they reject the response instead of showing stale or missing state.
-`Current` must not include a surface frame. `Snapshot` and `Patch` must be
-followed by the matching surface frame type, and that frame must carry the same
-pane ID as `AttachStatus.pane_id`; clients reject mismatches instead of applying
-state to the wrong pane or recovering from the wrong object kind. If the daemon
-cannot resolve its active tab or active pane, it sends a `PaneNotFound` `Error`
-instead of publishing an `AttachStatus` for a guessed pane.
+`Current` must not include a viewport frame. `Snapshot` and `Patch` must be
+followed by the matching viewport frame type, and that frame must
+carry the same pane ID as `AttachStatus.pane_id`; clients reject mismatches
+instead of applying state to the wrong pane or recovering from the wrong object
+kind. If the daemon cannot resolve its active tab or active pane, it sends a
+`PaneNotFound` `Error` instead of publishing an `AttachStatus` for a guessed
+pane.
 
 Cursor-only, mode-only, and color-only patches can also update
 `TerminalMetadataState` without row updates. Metadata-only updates are therefore
@@ -142,26 +167,16 @@ absolute palette. These are versioned surface changes because future input
 encoding, renderer behavior, and pane chrome can depend on terminal state even
 when visible text does not change.
 
-`PaneSurfacePatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, if a row update would reference a new hyperlink ID that is absent from the client's cached table, if color changes are coupled to row/style changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired`. `FullRefreshRequired` is a recovery marker, not a row patch, and clients reject it when it carries row updates. During attach, `AttachStatus.surface_state = Snapshot` is the recovery signal and the daemon immediately follows it with a full `PaneSurfaceSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
+`PaneViewportPatch` intentionally does not carry a style table or hyperlink table. If the daemon's style table changes, if a row update would reference a new hyperlink ID that is absent from the client's cached table, if color changes are coupled to row/style changes, or if terminal state changes in a way the current patch schema cannot express, the daemon must use `PatchKind::FullRefreshRequired`. `FullRefreshRequired` is a recovery marker, not a row patch, and clients reject it when it carries row updates. During attach, `AttachStatus.surface_state = Snapshot` is the recovery signal and the daemon immediately follows it with a full `PaneViewportSnapshot`. Clients must reject unsupported patch kinds instead of treating them as cursor-only updates. They must not recover by replaying raw PTY bytes.
 
-Scrollback is a separate versioned object. Clients request ranges with
-`ScrollbackFetch`; the daemon replies with `ScrollbackChunk` rows and the
-corresponding style and hyperlink tables for that chunk.
-`ScrollbackFetch.start_line`, `ScrollbackChunk.start_line`, and
-`ScrollbackRow.line` are 1-based public line numbers, so line 1 is the oldest
-retained row in the chunk's pane history. Clients and daemons reject zero
-scrollback start lines, zero fetch counts, and zero row line numbers instead of
-normalizing them to the oldest row. Non-empty chunks must carry a contiguous
-public range: row `i` has line `start_line + i`, and no row line may exceed
-`total_lines`.
-Out-of-range fetches may return a valid zero-row `ScrollbackChunk`; clients can
-render that empty result, but should not persist it as a cached range/version
-precondition because the original requested count is not represented in the
-chunk rows.
-`ScrollbackFetch.known_scrollback_version = 0` means the client is not asserting
-a cached scrollback version. Nonzero known versions must match the daemon's
-current pane scrollback version; mismatches return `ErrorCode::StaleVersion`
-instead of serving a range from a different history version.
+Explicit scrollback is a viewport request. Clients send `PaneViewportIntent`
+with `viewport = Pinned`, a 1-based `top_line`, `visible_rows`, and optional
+`known_viewport_version`; the daemon replies with a `PaneViewportSnapshot`.
+Row `i` has public line `viewport_top_line + i`, and rows beyond
+`total_lines` are blank viewport padding. `known_viewport_version = 0` means
+the client is not asserting a cached viewport version. Nonzero known versions
+must match the daemon's current pane viewport version; mismatches return
+`ErrorCode::StaleVersion`.
 
 ## Resize Model
 

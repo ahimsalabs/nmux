@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -20,7 +21,7 @@ use crossterm::{
 };
 use nmux_cli::{daemon, local};
 use nmux_core::session::AttachMode;
-use nmux_proto::protocol;
+use nmux_proto::{protocol, wire};
 use ratatui::{
     TerminalOptions, Viewport,
     buffer::Buffer,
@@ -34,6 +35,8 @@ mod tui;
 
 const STDIN_BYTES_DETACH: u8 = 0x1d;
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
+static SIGUSR1_BUG_REPORT_FD: AtomicI32 = AtomicI32::new(-1);
+static SIGUSR1_LIVE_BUG_REPORT_REQUESTED: AtomicBool = AtomicBool::new(false);
 const SUPPORTED_KEY_NAMES: &[&str] = &[
     "numpad-enter",
     "numpad-0",
@@ -125,9 +128,13 @@ const DEFAULT_REMOTE_PORT: u16 = 7007;
 const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
 const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
+const LIVE_SCROLL_WHEEL_ROWS: u64 = 3;
+const LIVE_STREAM_FRAMES_PER_CYCLE: usize = 64;
+const STDIN_BYTE_READ_CHUNK: usize = 32;
 
 fn main() {
     if let Err(err) = run() {
+        nmux_cli::bug_report::record_process_error("nmux", err.as_ref(), std::env::args_os());
         eprintln!("nmux: {err}");
         std::process::exit(1);
     }
@@ -140,6 +147,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return result;
     }
     let args = args()?;
+    if let Some(path) = args.bug_report_dir.clone() {
+        nmux_cli::bug_report::set_bug_report_dir(path);
+    }
+    let _signal_bug_report = if args.bug_report_dir.is_some() {
+        Some(SignalBugReportGuard::install(
+            std::env::args_os()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect(),
+        )?)
+    } else {
+        None
+    };
     if args.help {
         print!("{}", usage());
         return Ok(());
@@ -285,6 +304,7 @@ fn start_default_daemon(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         &args.socket_path,
         args.target_session_id.as_deref(),
         &command,
+        args.bug_report_dir.as_deref(),
         terminal_size()?,
         Duration::from_millis(args.startup_timeout_ms),
     )
@@ -306,7 +326,7 @@ fn wait_for_default_daemon_attach(args: &Args) -> Result<(), Box<dyn std::error:
             .target_pane_id
             .clone()
             .or_else(|| args.target_tab_id.clone()),
-        known_surfaces: Vec::new(),
+        known_viewports: Vec::new(),
         hostname: resolve_short_hostname(),
         client_kind: "nmux".to_owned(),
         subscribe_client_inventory: false,
@@ -376,9 +396,46 @@ fn error_summary_needs_default_restart(error: &local::ErrorSummary) -> bool {
 }
 
 fn default_live_error_needs_restart(error: &(dyn std::error::Error + 'static)) -> bool {
-    error.to_string().contains("pane process is not running")
-        || error.to_string().contains("failed to fill whole buffer")
-        || error.to_string().contains("Broken pipe")
+    let mut current = Some(error);
+    while let Some(err) = current {
+        if err
+            .downcast_ref::<local::ServerError>()
+            .is_some_and(|server| error_summary_needs_default_restart(&server.error))
+        {
+            return true;
+        }
+        if let Some(wire::WireError::Io(io_err)) = err.downcast_ref::<wire::WireError>()
+            && matches!(
+                io_err.kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::TimedOut
+                    | io::ErrorKind::WouldBlock
+            )
+        {
+            return true;
+        }
+        if let Some(io_err) = err.downcast_ref::<io::Error>()
+            && matches!(
+                io_err.kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::TimedOut
+                    | io::ErrorKind::WouldBlock
+            )
+        {
+            return true;
+        }
+        current = err.source();
+    }
+
+    let message = error.to_string();
+    message.contains("pane process is not running")
+        || message.contains("failed to fill whole buffer")
+        || message.contains("Broken pipe")
+        || message.contains("Resource temporarily unavailable")
 }
 
 fn replace_default_daemon_socket(args: &Args) {
@@ -568,14 +625,66 @@ fn collect_leaf_panes(
     }
 }
 
+fn extract_builtin_bug_report_dir(
+    raw_args: &[std::ffi::OsString],
+) -> Result<(Vec<std::ffi::OsString>, Option<PathBuf>), Box<dyn std::error::Error>> {
+    let mut stripped = Vec::new();
+    let mut bug_report_dir = None;
+    let mut index = 1;
+    while index < raw_args.len() {
+        let arg = &raw_args[index];
+        if arg == "--bug-report-dir" {
+            let Some(value) = raw_args.get(index + 1) else {
+                return Err("--bug-report-dir requires a directory path".into());
+            };
+            if value.is_empty() {
+                return Err("--bug-report-dir requires a non-empty directory path".into());
+            }
+            bug_report_dir = Some(PathBuf::from(value));
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg
+            .to_str()
+            .and_then(|arg| arg.strip_prefix("--bug-report-dir="))
+        {
+            if value.is_empty() {
+                return Err("--bug-report-dir requires a non-empty directory path".into());
+            }
+            bug_report_dir = Some(PathBuf::from(value));
+            index += 1;
+            continue;
+        }
+        stripped.push(arg.clone());
+        index += 1;
+    }
+    Ok((stripped, bug_report_dir))
+}
+
 fn run_builtin_subcommand(
     raw_args: &[std::ffi::OsString],
 ) -> Option<Result<(), Box<dyn std::error::Error>>> {
     let first = raw_args.first()?.to_str()?;
     match first {
         "daemon" => {
-            let argv = std::iter::once(std::ffi::OsString::from("nmux daemon"))
-                .chain(raw_args.iter().skip(1).cloned());
+            let (daemon_args, bug_report_dir) = match extract_builtin_bug_report_dir(raw_args) {
+                Ok(result) => result,
+                Err(err) => return Some(Err(err)),
+            };
+            let _signal_bug_report = if let Some(path) = bug_report_dir {
+                nmux_cli::bug_report::set_bug_report_dir(path);
+                match SignalBugReportGuard::install(
+                    std::env::args_os()
+                        .map(|arg| arg.to_string_lossy().into_owned())
+                        .collect(),
+                ) {
+                    Ok(guard) => Some(guard),
+                    Err(err) => return Some(Err(Box::new(err))),
+                }
+            } else {
+                None
+            };
+            let argv = std::iter::once(std::ffi::OsString::from("nmux daemon")).chain(daemon_args);
             Some(daemon::run_from_iter(argv))
         }
         "version" => {
@@ -745,6 +854,8 @@ fn run_attach_loop(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    let stdin_tty = stdin_is_tty();
+    let stdout_tty = stdout_is_tty();
     let mut recorder = match LiveRecorder::open(args.record_path.as_deref()) {
         Ok(recorder) => recorder,
         Err(err) => {
@@ -755,7 +866,8 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let _raw_terminal = match RawTerminalGuard::enable_if_needed(
         RawTerminalModeContext {
             stdin_bytes: args.stdin_bytes,
-            stdin_is_tty: stdin_is_tty(),
+            stdin_is_tty: stdin_tty,
+            stdout_is_tty: stdout_tty,
         },
         args.local_echo,
     ) {
@@ -767,7 +879,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     };
     let _redraw_terminal = match RedrawTerminalGuard::enable_if_needed(RedrawTerminalContext {
         redraw: args.redraw,
-        stdout_is_tty: stdout_is_tty(),
+        stdout_is_tty: stdout_tty,
     }) {
         Ok(guard) => guard,
         Err(err) => {
@@ -804,10 +916,9 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let socket_scope = local::socket_identity(&args.socket_path).ok();
     let live_poll_timeout = Duration::from_millis(args.interval_ms);
     let live_socket_read_timeout = live_poll_timeout;
-    let stdout_tty = stdout_is_tty();
     let post_input_stream_grace = if stdout_tty && stdin_bytes_speculative_echo_enabled(args) {
         Duration::ZERO
-    } else if args.stdin_bytes && !stdin_is_tty() {
+    } else if args.stdin_bytes && !stdin_tty {
         live_poll_timeout
     } else {
         live_poll_timeout.min(Duration::from_millis(2))
@@ -878,7 +989,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         options.request.mode = AttachMode::ReadOnly;
     }
 
-    options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
+    options.request.known_viewports = client_state.known_viewports_for_scope(socket_scope);
     if let Err(err) = local::write_attach_request_for_session(
         &mut stream,
         &options.request,
@@ -951,15 +1062,26 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut initial_pane_modes = BTreeMap::new();
     initial_pane_modes.insert(attached_pane_id.clone(), rendered.modes);
     seed_cached_pane_modes(&mut initial_pane_modes, &current_workspace, &client_state);
+    let mut initial_pane_surface_kinds = BTreeMap::new();
+    initial_pane_surface_kinds.insert(attached_pane_id.clone(), rendered.surface_kind);
+    seed_cached_pane_surface_kinds(
+        &mut initial_pane_surface_kinds,
+        &current_workspace,
+        &client_state,
+    );
     let mut surface_state = LiveSurfaceState {
         current_surface_metadata: rendered.surface_metadata.clone(),
+        current_surface_kind: rendered.surface_kind,
         current_modes: rendered.modes,
         current_surface_text: initial_surface_text,
         current_pane_surfaces: initial_pane_surfaces,
         current_pane_surface_summaries: initial_pane_surface_summaries,
         current_pane_modes: initial_pane_modes,
+        current_pane_surface_kinds: initial_pane_surface_kinds,
+        current_pane_scrollback_totals: BTreeMap::new(),
         scrollback_views: BTreeMap::new(),
     };
+    record_live_surface_scrollback_total(&mut surface_state, &rendered.surface);
     let (scrollback, pending_surface_updates, pending_live_reads) = match initial_live_scrollback(
         args,
         &mut stream,
@@ -987,6 +1109,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
+        record_live_scrollback_total(&mut surface_state, scrollback);
     }
     if args.live_resize.is_none()
         && let Some((cols, rows)) = sigwinch_resize.current_resize()?
@@ -1021,6 +1144,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     reader.wake_reader(),
                     live_poll_timeout,
                     false,
+                    stdin_tty,
                 )? {
                     LiveLoopReadiness::Stdin | LiveLoopReadiness::Timeout => break,
                     LiveLoopReadiness::Stream => {}
@@ -1053,9 +1177,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     surface_state
                         .current_pane_modes
                         .insert(update.pane_id.clone(), update.modes);
+                    if let Some(surface_kind) = update.surface {
+                        surface_state
+                            .current_pane_surface_kinds
+                            .insert(update.pane_id.clone(), surface_kind);
+                    }
                     surface_state.scrollback_views.remove(&update.pane_id);
                     if update.pane_id == current_workspace.pane_id {
                         surface_state.current_surface_metadata = update_metadata;
+                        if let Some(surface_kind) = update.surface {
+                            surface_state.current_surface_kind = surface_kind;
+                        }
                         surface_state.current_modes = update.modes;
                         surface_state.current_surface_text = update_surface_text;
                     }
@@ -1123,6 +1255,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             redraw_state.as_mut(),
             Some(&surface_state.current_pane_surfaces),
             Some(&surface_state.current_pane_surface_summaries),
+            Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
         );
     }
     flush_stdout()?;
@@ -1139,6 +1272,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
             &current_workspace,
             args,
             use_styled,
+            true,
         )?;
     }
     if let Err(err) = stream.set_read_timeout(Some(live_socket_read_timeout)) {
@@ -1154,6 +1288,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let mut sent_explicit_live_resize = false;
     let mut active_overlay: Option<tui::TuiOverlay> = None;
     let mut active_menu_index: Option<usize> = None;
+    let mut pending_stdin_bytes = Vec::new();
     let detach_reason = loop {
         if cycle_limit.is_some_and(|iterations| cycles >= iterations) {
             break LiveDetachReason::IterationLimit;
@@ -1213,6 +1348,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         redraw_state.as_mut(),
                         Some(&surface_state.current_pane_surfaces),
                         Some(&surface_state.current_pane_surface_summaries),
+                        Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
                         active_overlay.as_ref(),
                     );
                 } else {
@@ -1220,15 +1356,39 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 flush_stdout()?;
             }
+            record_live_signal_bug_report_if_needed(
+                args,
+                &current_workspace,
+                &attached_pane_id,
+                &surface_state,
+                redraw_state.as_ref(),
+            );
             let input_text = if let Some(receiver) = stdin_bytes.as_ref() {
                 match receiver.try_recv() {
                     Ok(StdinByteRead::Input(input)) => {
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
-                            for forward in stdin_byte_forwards(&input) {
+                            let tui_enter_enabled =
+                                active_overlay.is_some() || active_menu_index.is_some();
+                            for forward in stdin_byte_forwards_with_pending(
+                                &input,
+                                StdinForwardOptions { tui_enter_enabled },
+                                &mut pending_stdin_bytes,
+                            ) {
                                 match forward {
                                     StdinByteForward::Raw(input) => {
+                                        if restore_live_pane_surface_before_input(
+                                            &attached_pane_id,
+                                            &mut surface_state,
+                                            &client_state,
+                                            &current_workspace,
+                                            args,
+                                            &mut redraw_state,
+                                            use_styled,
+                                        ) {
+                                            flush_stdout()?;
+                                        }
                                         let input_span = tracing::trace_span!(
                                             "live.stdin_bytes.forward_input",
                                             bytes = input.len(),
@@ -1251,14 +1411,30 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 input_seq,
                                                 text,
                                                 &current_workspace,
-                                                &surface_state.current_surface_metadata,
-                                                &mut surface_state.current_surface_text,
+                                                &mut surface_state,
                                                 &mut redraw_state,
                                                 use_styled,
                                             )?;
                                         }
+                                        repaint_live_surface_after_input(
+                                            &current_workspace,
+                                            &surface_state,
+                                            &mut redraw_state,
+                                            args,
+                                        )?;
                                     }
                                     StdinByteForward::Paste(text) => {
+                                        if restore_live_pane_surface_before_input(
+                                            &attached_pane_id,
+                                            &mut surface_state,
+                                            &client_state,
+                                            &current_workspace,
+                                            args,
+                                            &mut redraw_state,
+                                            use_styled,
+                                        ) {
+                                            flush_stdout()?;
+                                        }
                                         let input_span = tracing::trace_span!(
                                             "live.stdin_bytes.forward_paste",
                                             bytes = text.len(),
@@ -1272,6 +1448,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 &text,
                                             )
                                         })?;
+                                        repaint_live_surface_after_input(
+                                            &current_workspace,
+                                            &surface_state,
+                                            &mut redraw_state,
+                                            args,
+                                        )?;
                                     }
                                     StdinByteForward::Key(key) => {
                                         match handle_live_tui_key(
@@ -1300,6 +1482,17 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                 flush_stdout()?;
                                             }
                                             LiveKeyHandling::Forward(bytes) => {
+                                                if restore_live_pane_surface_before_input(
+                                                    &attached_pane_id,
+                                                    &mut surface_state,
+                                                    &client_state,
+                                                    &current_workspace,
+                                                    args,
+                                                    &mut redraw_state,
+                                                    use_styled,
+                                                ) {
+                                                    flush_stdout()?;
+                                                }
                                                 let input_span = tracing::trace_span!(
                                                     "live.stdin_bytes.forward_input",
                                                     bytes = bytes.len(),
@@ -1322,23 +1515,35 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                         input_seq,
                                                         text,
                                                         &current_workspace,
-                                                        &surface_state.current_surface_metadata,
-                                                        &mut surface_state.current_surface_text,
+                                                        &mut surface_state,
                                                         &mut redraw_state,
                                                         use_styled,
                                                     )?;
                                                 }
+                                                repaint_live_surface_after_input(
+                                                    &current_workspace,
+                                                    &surface_state,
+                                                    &mut redraw_state,
+                                                    args,
+                                                )?;
                                             }
                                         }
                                     }
                                     StdinByteForward::Mouse(mouse) => {
+                                        let pane_chrome = live_pane_chrome_state(
+                                            &surface_state,
+                                            &current_workspace,
+                                        );
                                         match live_mouse_dispatch_for_workspace(
                                             mouse,
                                             &current_workspace,
                                             &surface_state.current_surface_text,
                                             Some(&surface_state.current_pane_surfaces),
                                             Some(&surface_state.current_pane_modes),
+                                            Some(&surface_state.current_pane_surface_kinds),
+                                            Some(&pane_chrome),
                                             surface_state.current_modes,
+                                            surface_state.current_surface_kind,
                                             active_overlay.as_ref(),
                                         ) {
                                             Some(LiveMouseDispatch::FocusPane(pane_id)) => {
@@ -1396,6 +1601,36 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                     flush_stdout()?;
                                                 }
                                             }
+                                            Some(LiveMouseDispatch::PaneScrollTo {
+                                                pane_id,
+                                                track_position,
+                                                track_len,
+                                                visible_rows,
+                                            }) => {
+                                                active_overlay = None;
+                                                active_menu_index = None;
+                                                if scroll_live_pane_to_track(
+                                                    &mut stream,
+                                                    &mut client_sequence,
+                                                    &pane_id,
+                                                    track_position,
+                                                    track_len,
+                                                    visible_rows,
+                                                    &mut surface_state,
+                                                    &mut client_state,
+                                                    &mut speculative_echo,
+                                                    &mut host_mouse_modes,
+                                                    &mut client_inventory,
+                                                    &mut recorder,
+                                                    socket_scope,
+                                                    &current_workspace,
+                                                    args,
+                                                    redraw_state.as_mut(),
+                                                    use_styled,
+                                                )? {
+                                                    flush_stdout()?;
+                                                }
+                                            }
                                             Some(LiveMouseDispatch::Menu(action)) => {
                                                 active_menu_index = menu_index(action);
                                                 if action == tui::MenuAction::NewSession {
@@ -1428,6 +1663,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                 &surface_state
                                                                     .current_pane_surface_summaries,
                                                             ),
+                                                            Some(&live_pane_chrome_state(
+                                                                &surface_state,
+                                                                &current_workspace,
+                                                            )),
                                                         );
                                                         flush_stdout()?;
                                                     }
@@ -1470,6 +1709,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                 &surface_state
                                                                     .current_pane_surface_summaries,
                                                             ),
+                                                            Some(&live_pane_chrome_state(
+                                                                &surface_state,
+                                                                &current_workspace,
+                                                            )),
                                                             active_overlay.as_ref(),
                                                         );
                                                         flush_stdout()?;
@@ -1511,6 +1754,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                                     &surface_state
                                                                         .current_pane_surface_summaries,
                                                                 ),
+                                                                Some(&live_pane_chrome_state(
+                                                                    &surface_state,
+                                                                    &current_workspace,
+                                                                )),
                                                             );
                                                             flush_stdout()?;
                                                         }
@@ -1584,6 +1831,10 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                                             &surface_state
                                                                 .current_pane_surface_summaries,
                                                         ),
+                                                        Some(&live_pane_chrome_state(
+                                                            &surface_state,
+                                                            &current_workspace,
+                                                        )),
                                                     );
                                                     flush_stdout()?;
                                                 }
@@ -1685,14 +1936,16 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     input_seq,
                     input_text,
                     &current_workspace,
-                    &surface_state.current_surface_metadata,
-                    &mut surface_state.current_surface_text,
+                    &mut surface_state,
                     &mut redraw_state,
                     use_styled,
                 )?;
             }
         }
 
+        let mut stream_frames_this_cycle = 0_usize;
+        let mut deferred_surface_render = false;
+        let mut stream_limit_reached = false;
         loop {
             if let Some(reader) = stdin_bytes.as_ref()
                 && (!sent_stdin_bytes_this_cycle || read_after_stdin_bytes_this_cycle)
@@ -1713,6 +1966,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             reader.wake_reader(),
                             timeout,
                             sent_stdin_bytes_this_cycle,
+                            prefer_stdin_for_live_poll(sent_stdin_bytes_this_cycle, stdin_tty),
                         )
                     })?
                 };
@@ -1745,6 +1999,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             redraw_state.as_mut(),
                             Some(&surface_state.current_pane_surfaces),
                             Some(&surface_state.current_pane_surface_summaries),
+                            Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
                             active_overlay.as_ref(),
                         );
                     } else {
@@ -1772,6 +2027,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
                             Some(&surface_state.current_pane_surface_summaries),
+                            Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
                             active_overlay.as_ref(),
                         );
                         flush_stdout()?;
@@ -1790,6 +2046,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             Some(state),
                             Some(&surface_state.current_pane_surfaces),
                             Some(&surface_state.current_pane_surface_summaries),
+                            Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
                             active_overlay.as_ref(),
                         );
                         flush_stdout()?;
@@ -1809,6 +2066,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                                 Some(state),
                                 Some(&surface_state.current_pane_surfaces),
                                 Some(&surface_state.current_pane_surface_summaries),
+                                Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
                                 active_overlay.as_ref(),
                             );
                             flush_stdout()?;
@@ -1816,6 +2074,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 local::LiveSurfaceRead::Update(update) => {
+                    let render_update = args.output_json || stdin_bytes.is_none() || !stdin_tty;
                     process_surface_update(
                         &update,
                         &mut surface_state,
@@ -1827,7 +2086,11 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         &current_workspace,
                         args,
                         use_styled,
+                        render_update,
                     )?;
+                    if !render_update {
+                        deferred_surface_render = true;
+                    }
                 }
                 local::LiveSurfaceRead::Error(error) => {
                     let event = format_live_error_json(&error);
@@ -1849,6 +2112,27 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
             }
+            if stdin_bytes.is_some() {
+                stream_frames_this_cycle += 1;
+                if stream_frames_this_cycle >= LIVE_STREAM_FRAMES_PER_CYCLE {
+                    stream_limit_reached = true;
+                    break;
+                }
+            }
+        }
+        if deferred_surface_render && !stream_limit_reached && args.redraw && !args.output_json {
+            print_live_surface_with_overlay(
+                &current_workspace,
+                &surface_state.current_surface_metadata,
+                &surface_state.current_surface_text,
+                args.redraw,
+                redraw_state.as_mut(),
+                Some(&surface_state.current_pane_surfaces),
+                Some(&surface_state.current_pane_surface_summaries),
+                Some(&live_pane_chrome_state(&surface_state, &current_workspace)),
+                active_overlay.as_ref(),
+            );
+            flush_stdout()?;
         }
         if detach_requested {
             eprintln!("nmux: detached by local Ctrl-]");
@@ -1874,11 +2158,14 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 /// helpers that process surface updates.
 struct LiveSurfaceState {
     current_surface_metadata: local::TerminalMetadataSummary,
+    current_surface_kind: protocol::SurfaceKind,
     current_modes: local::TerminalModeSummary,
     current_surface_text: String,
     current_pane_surfaces: BTreeMap<String, String>,
     current_pane_surface_summaries: BTreeMap<String, local::RenderedSurfaceSummary>,
     current_pane_modes: BTreeMap<String, local::TerminalModeSummary>,
+    current_pane_surface_kinds: BTreeMap<String, protocol::SurfaceKind>,
+    current_pane_scrollback_totals: BTreeMap<String, u64>,
     scrollback_views: BTreeMap<String, LiveScrollbackView>,
 }
 
@@ -1892,9 +2179,134 @@ struct LiveSessionSwitch {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LiveScrollbackView {
-    start_line: u64,
-    line_count: u32,
-    total_lines: u64,
+    offset_from_bottom: u64,
+    viewport_rows: u16,
+    total_history_lines: u64,
+}
+
+fn live_pane_chrome_state(
+    surface_state: &LiveSurfaceState,
+    workspace: &local::WorkspaceSummary,
+) -> BTreeMap<String, tui::PaneChromeState> {
+    let mut pane_ids = Vec::new();
+    collect_workspace_pane_ids(workspace.pane_tree.as_ref(), &mut pane_ids);
+    if pane_ids.is_empty() {
+        pane_ids.push(workspace.pane_id.clone());
+    }
+    for pane_id in surface_state.current_pane_surfaces.keys() {
+        if !pane_ids.iter().any(|existing| existing == pane_id) {
+            pane_ids.push(pane_id.clone());
+        }
+    }
+
+    pane_ids
+        .into_iter()
+        .map(|pane_id| {
+            let scrollback = surface_state
+                .scrollback_views
+                .get(&pane_id)
+                .map(|view| tui::PaneScrollChrome {
+                    offset_from_bottom: view.offset_from_bottom,
+                    viewport_rows: view.viewport_rows,
+                    total_history_lines: view.total_history_lines,
+                })
+                .unwrap_or_else(|| {
+                    let viewport_rows = surface_state
+                        .current_pane_surface_summaries
+                        .get(&pane_id)
+                        .and_then(|summary| u16::try_from(summary.rows).ok())
+                        .or_else(|| {
+                            surface_state
+                                .current_pane_surfaces
+                                .get(&pane_id)
+                                .and_then(|text| u16::try_from(text.lines().count()).ok())
+                        })
+                        .unwrap_or(1)
+                        .max(1);
+                    let total_history_lines = surface_state
+                        .current_pane_scrollback_totals
+                        .get(&pane_id)
+                        .copied()
+                        .unwrap_or_else(|| u64::from(viewport_rows))
+                        .max(u64::from(viewport_rows));
+                    tui::PaneScrollChrome {
+                        offset_from_bottom: 0,
+                        viewport_rows,
+                        total_history_lines,
+                    }
+                });
+            (
+                pane_id,
+                tui::PaneChromeState {
+                    scrollback: Some(scrollback),
+                    ..tui::PaneChromeState::default()
+                },
+            )
+        })
+        .collect()
+}
+
+fn record_live_scrollback_total(
+    surface_state: &mut LiveSurfaceState,
+    scrollback: &local::ScrollbackChunkSummary,
+) {
+    surface_state
+        .current_pane_scrollback_totals
+        .insert(scrollback.pane_id.clone(), scrollback.total_lines);
+}
+
+fn record_live_surface_scrollback_total(
+    surface_state: &mut LiveSurfaceState,
+    surface: &local::RenderedSurfaceSummary,
+) {
+    if surface.scrollback_total_lines == 0 {
+        return;
+    }
+    surface_state
+        .current_pane_scrollback_totals
+        .insert(surface.pane_id.clone(), surface.scrollback_total_lines);
+}
+
+fn record_live_update_scrollback_total(
+    surface_state: &mut LiveSurfaceState,
+    update: &local::SurfaceUpdate,
+) {
+    if update.scrollback_total_lines == 0 {
+        return;
+    }
+    if let Some(view) = surface_state.scrollback_views.get_mut(&update.pane_id) {
+        if update.scrollback_total_lines > view.total_history_lines {
+            let added = update
+                .scrollback_total_lines
+                .saturating_sub(view.total_history_lines);
+            view.offset_from_bottom = view.offset_from_bottom.saturating_add(added);
+        } else {
+            view.offset_from_bottom = view.offset_from_bottom.min(max_scroll_offset(
+                update.scrollback_total_lines,
+                view.viewport_rows,
+            ));
+        }
+        view.total_history_lines = update.scrollback_total_lines;
+    }
+    surface_state
+        .current_pane_scrollback_totals
+        .insert(update.pane_id.clone(), update.scrollback_total_lines);
+}
+
+fn collect_workspace_pane_ids(
+    root: Option<&local::WorkspacePaneSummary>,
+    pane_ids: &mut Vec<String>,
+) {
+    let Some(root) = root else {
+        return;
+    };
+    if root.children.is_empty() {
+        pane_ids.push(root.pane_id.clone());
+        return;
+    }
+    for child in &root.children {
+        collect_workspace_pane_ids(Some(child), pane_ids);
+    }
 }
 
 /// Process a single surface update: reconcile speculative echo, render the
@@ -1913,6 +2325,7 @@ fn process_surface_update(
     current_workspace: &local::WorkspaceSummary,
     args: &Args,
     use_styled: bool,
+    render_update: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let decode_start = Instant::now();
     speculative_echo.reconcile_update(update);
@@ -1922,25 +2335,38 @@ fn process_surface_update(
         working_directory: update.working_directory.clone(),
     };
     let update_surface_text = client_state.render_surface_update_styled(update, use_styled)?;
-    state
-        .current_pane_surfaces
-        .insert(update.pane_id.clone(), update_surface_text.clone());
-    if let Some(summary) = client_state.cached_rendered_surface_summary(&update.pane_id) {
+    record_live_update_scrollback_total(state, update);
+    let pane_is_scrolled = state.scrollback_views.contains_key(&update.pane_id);
+    if !pane_is_scrolled {
         state
-            .current_pane_surface_summaries
-            .insert(update.pane_id.clone(), summary);
+            .current_pane_surfaces
+            .insert(update.pane_id.clone(), update_surface_text.clone());
+        if let Some(summary) = client_state.cached_rendered_surface_summary(&update.pane_id) {
+            state
+                .current_pane_surface_summaries
+                .insert(update.pane_id.clone(), summary);
+        }
     }
     state
         .current_pane_modes
         .insert(update.pane_id.clone(), update.modes);
-    state.scrollback_views.remove(&update.pane_id);
+    if let Some(surface_kind) = update.surface {
+        state
+            .current_pane_surface_kinds
+            .insert(update.pane_id.clone(), surface_kind);
+    }
     if update.pane_id == current_workspace.pane_id {
         state.current_surface_metadata = update_metadata.clone();
+        if let Some(surface_kind) = update.surface {
+            state.current_surface_kind = surface_kind;
+        }
         state.current_modes = update.modes;
         if let Some(mouse_modes) = host_mouse_modes.as_mut() {
             mouse_modes.sync(state.current_modes)?;
         }
-        state.current_surface_text = update_surface_text.clone();
+        if !pane_is_scrolled {
+            state.current_surface_text = update_surface_text.clone();
+        }
     } else if let Some(active_text) = state.current_pane_surfaces.get(&current_workspace.pane_id) {
         state.current_surface_text = active_text.clone();
     }
@@ -1963,17 +2389,34 @@ fn process_surface_update(
             &update_surface_text,
             update,
         ))?;
-        print_live_update(
-            current_workspace,
-            &previous_metadata,
-            &state.current_surface_metadata,
-            &state.current_surface_text,
-            update,
-            args.redraw,
-            redraw_state.as_mut(),
-            Some(&state.current_pane_surfaces),
-            Some(&state.current_pane_surface_summaries),
-        );
+        if !render_update {
+            return Ok(());
+        }
+        if pane_is_scrolled {
+            print_live_surface(
+                current_workspace,
+                &state.current_surface_metadata,
+                &state.current_surface_text,
+                args.redraw,
+                redraw_state.as_mut(),
+                Some(&state.current_pane_surfaces),
+                Some(&state.current_pane_surface_summaries),
+                Some(&live_pane_chrome_state(state, current_workspace)),
+            );
+        } else {
+            print_live_update(
+                current_workspace,
+                &previous_metadata,
+                &state.current_surface_metadata,
+                &state.current_surface_text,
+                update,
+                args.redraw,
+                redraw_state.as_mut(),
+                Some(&state.current_pane_surfaces),
+                Some(&state.current_pane_surface_summaries),
+                Some(&live_pane_chrome_state(state, current_workspace)),
+            );
+        }
     }
     flush_stdout()?;
     Ok(())
@@ -2165,6 +2608,7 @@ impl PersistentDaemon {
         socket_path: &Path,
         session_id: Option<&str>,
         command: &str,
+        bug_report_dir: Option<&Path>,
         initial_size: Option<(u32, u32)>,
         startup_timeout: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -2172,14 +2616,21 @@ impl PersistentDaemon {
         let socket_arg = socket_path
             .to_str()
             .ok_or("daemon socket path is not UTF-8")?;
-        let mut command_args = vec![
-            "daemon".to_owned(),
+        let mut command_args = vec!["daemon".to_owned()];
+        if let Some(bug_report_dir) = bug_report_dir {
+            let bug_report_dir = bug_report_dir
+                .to_str()
+                .ok_or("bug report directory path is not UTF-8")?;
+            command_args.push("--bug-report-dir".to_owned());
+            command_args.push(bug_report_dir.to_owned());
+        }
+        command_args.extend([
             "--socket".to_owned(),
             socket_arg.to_owned(),
             "--live-forever".to_owned(),
             "--command".to_owned(),
             command.to_owned(),
-        ];
+        ]);
         if let Some(session_id) = session_id {
             command_args.push("--session".to_owned());
             command_args.push(session_id.to_owned());
@@ -2190,28 +2641,31 @@ impl PersistentDaemon {
             command_args.push("--rows".to_owned());
             command_args.push(rows.to_string());
         }
-        let args = command_args
-            .into_iter()
-            .map(|arg| shell_quote_for_sh(&arg))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let script = format!(
-            "nohup {} {args} >/dev/null 2>&1 &",
-            shell_quote_for_sh(&nmux.display().to_string())
-        );
-        let status = Command::new("sh")
-            .arg("-c")
-            .arg(script)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|err| format!("failed to start daemon launcher: {err}"))?;
-        if !status.success() {
-            return Err(format!("daemon launcher failed: {status}").into());
+        // SAFETY: pre_exec only calls async-signal-safe setsid and returns the OS error.
+        let mut child = unsafe {
+            let mut command = Command::new(nmux);
+            command
+                .args(command_args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .pre_exec(|| {
+                    if libc::setsid() == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            command.spawn()
         }
-        wait_for_daemon_socket(socket_path, startup_timeout)?;
-        Ok(Self)
+        .map_err(|err| format!("failed to start daemon: {err}"))?;
+        match wait_for_daemon_socket(socket_path, startup_timeout) {
+            Ok(()) => Ok(Self),
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                Err(err)
+            }
+        }
     }
 }
 
@@ -2501,67 +2955,96 @@ fn repaint_speculative_echo(
     input_seq: u64,
     text: &str,
     workspace: &local::WorkspaceSummary,
-    metadata: &local::TerminalMetadataSummary,
-    current_surface_text: &mut String,
+    surface_state: &mut LiveSurfaceState,
     redraw_state: &mut Option<RedrawState>,
     use_styled: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !enabled {
         return Ok(());
     }
-    let Some(predicted) =
-        client_state.render_speculative_echo(overlay, pane_id, input_seq, text, use_styled)
+    let Some(text) = speculative_echo_printable_prefix(text) else {
+        return Ok(());
+    };
+    let Some(predicted) = client_state
+        .render_speculative_echo(overlay, pane_id, input_seq, text, use_styled)
+        .or_else(|| render_fallback_speculative_echo(&surface_state.current_surface_text, text))
     else {
         return Ok(());
     };
-    let prediction = overlay.prediction().cloned();
-    *current_surface_text = predicted;
+    surface_state.current_surface_text = predicted.clone();
+    surface_state
+        .current_pane_surfaces
+        .insert(pane_id.to_owned(), predicted);
+    let pane_chrome = live_pane_chrome_state(surface_state, workspace);
     match redraw_state {
         Some(state) => {
             if state.terminal.is_some() {
                 print_live_surface(
                     workspace,
-                    metadata,
-                    current_surface_text,
+                    &surface_state.current_surface_metadata,
+                    &surface_state.current_surface_text,
                     true,
                     Some(state),
-                    None,
-                    None,
+                    Some(&surface_state.current_pane_surfaces),
+                    Some(&surface_state.current_pane_surface_summaries),
+                    Some(&pane_chrome),
                 );
-            } else if let Some(prediction) = prediction.as_ref()
-                && let Some(text) = state.render_speculative_append_text(
-                    workspace,
-                    current_surface_text,
-                    prediction,
-                )
-            {
-                print!("{text}");
             } else {
                 print_live_surface(
                     workspace,
-                    metadata,
-                    current_surface_text,
+                    &surface_state.current_surface_metadata,
+                    &surface_state.current_surface_text,
                     true,
                     Some(state),
-                    None,
-                    None,
+                    Some(&surface_state.current_pane_surfaces),
+                    Some(&surface_state.current_pane_surface_summaries),
+                    Some(&pane_chrome),
                 );
             }
         }
         None => {
             print_live_surface(
                 workspace,
-                metadata,
-                current_surface_text,
+                &surface_state.current_surface_metadata,
+                &surface_state.current_surface_text,
                 true,
                 None,
-                None,
-                None,
+                Some(&surface_state.current_pane_surfaces),
+                Some(&surface_state.current_pane_surface_summaries),
+                Some(&pane_chrome),
             );
         }
     }
     flush_stdout()?;
     Ok(())
+}
+
+fn speculative_echo_printable_prefix(text: &str) -> Option<&str> {
+    let mut run_start = None;
+    let mut last_run = None;
+    for (index, ch) in text.char_indices() {
+        if ch.is_ascii() && !ch.is_control() {
+            run_start.get_or_insert(index);
+            continue;
+        }
+        if let Some(start) = run_start.take() {
+            last_run = Some(&text[start..index]);
+        }
+    }
+    if let Some(start) = run_start {
+        last_run = Some(&text[start..]);
+    }
+    last_run
+}
+
+fn render_fallback_speculative_echo(surface_text: &str, text: &str) -> Option<String> {
+    if text.is_empty() || text.chars().any(|ch| ch.is_control() || !ch.is_ascii()) {
+        return None;
+    }
+    let mut rows = surface_text.lines().map(str::to_owned).collect::<Vec<_>>();
+    let row = rows.last_mut()?;
+    row.push_str(text);
+    Some(rows.join("\n"))
 }
 
 fn stdin_bytes_speculative_echo_enabled(args: &Args) -> bool {
@@ -2658,6 +3141,59 @@ fn initial_live_scrollback(
     Ok((Some(scrollback), pending_updates, pending_live))
 }
 
+fn record_live_signal_bug_report_if_needed(
+    args: &Args,
+    workspace: &local::WorkspaceSummary,
+    attached_pane_id: &str,
+    surface_state: &LiveSurfaceState,
+    redraw_state: Option<&RedrawState>,
+) {
+    if args.bug_report_dir.is_none()
+        || !SIGUSR1_LIVE_BUG_REPORT_REQUESTED.swap(false, Ordering::SeqCst)
+    {
+        return;
+    }
+    let process_args = std::env::args_os()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let active_surface = surface_state
+        .current_pane_surface_summaries
+        .get(attached_pane_id);
+    let scrollback_total_lines = surface_state
+        .current_pane_scrollback_totals
+        .get(attached_pane_id)
+        .copied()
+        .or_else(|| active_surface.map(|surface| surface.scrollback_total_lines));
+    let stats = redraw_state.map(|state| &state.last_stats);
+    let socket_path = args.socket_path.display().to_string();
+    let report = nmux_cli::bug_report::LiveInterruptReport {
+        binary: "nmux",
+        signal: "SIGUSR1",
+        args: &process_args,
+        socket_path: &socket_path,
+        session_id: &workspace.session_id,
+        tab_id: &workspace.tab_id,
+        pane_id: attached_pane_id,
+        cols: workspace.cols,
+        rows: workspace.rows,
+        surface_kind: surface_kind_name(surface_state.current_surface_kind),
+        surface_version: active_surface.map(|surface| surface.version),
+        scrollback_version: active_surface.map(|surface| surface.scrollback_version),
+        scrollback_total_lines,
+        visible_surface_rows: surface_state.current_surface_text.lines().count(),
+        cached_pane_surfaces: surface_state.current_pane_surfaces.len(),
+        scrollback_views: surface_state.scrollback_views.len(),
+        rtt_micros: stats.and_then(|stats| stats.rtt.map(|rtt| rtt.as_micros())),
+        rendered_fps: stats.and_then(|stats| stats.rendered_fps),
+        rows_changed: stats.map(|stats| stats.rows_changed),
+        rows_total: stats.map(|stats| stats.rows_total),
+        decode_micros: stats.map(|stats| stats.decode_time.as_micros()),
+        render_micros: stats.map(|stats| stats.render_time.as_micros()),
+        client_count: stats.and_then(|stats| stats.client_count),
+    };
+    nmux_cli::bug_report::record_live_interrupt(&report);
+}
+
 fn spawn_stdin_line_reader() -> mpsc::Receiver<StdinLineRead> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -2707,7 +3243,7 @@ fn spawn_stdin_byte_reader() -> io::Result<StdinByteReader> {
     wake_writer.set_nonblocking(true)?;
     thread::spawn(move || {
         let mut stdin = io::stdin().lock();
-        let mut buffer = [0_u8; 1024];
+        let mut buffer = [0_u8; STDIN_BYTE_READ_CHUNK];
         loop {
             match stdin.read(&mut buffer) {
                 Ok(0) => {
@@ -2767,6 +3303,7 @@ fn poll_live_stream_or_stdin(
     stdin_wake_reader: &UnixStream,
     timeout: Duration,
     wait_for_stream_on_stdin: bool,
+    prefer_stdin: bool,
 ) -> io::Result<LiveLoopReadiness> {
     let mut fds = [
         libc::pollfd {
@@ -2784,10 +3321,15 @@ fn poll_live_stream_or_stdin(
     loop {
         let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
         if ready > 0 {
-            if fds[0].revents != 0 {
+            let stream_ready = fds[0].revents != 0;
+            let stdin_ready = fds[1].revents != 0;
+            if stdin_ready && prefer_stdin {
+                return Ok(LiveLoopReadiness::Stdin);
+            }
+            if stream_ready {
                 return Ok(LiveLoopReadiness::Stream);
             }
-            if fds[1].revents != 0 {
+            if stdin_ready {
                 if wait_for_stream_on_stdin
                     && poll_live_stream(stream, timeout)? == LiveLoopReadiness::Stream
                 {
@@ -2805,6 +3347,10 @@ fn poll_live_stream_or_stdin(
             return Err(err);
         }
     }
+}
+
+fn prefer_stdin_for_live_poll(sent_stdin_bytes_this_cycle: bool, stdin_tty: bool) -> bool {
+    stdin_tty && !sent_stdin_bytes_this_cycle
 }
 
 fn poll_live_stream(stream: &UnixStream, timeout: Duration) -> io::Result<LiveLoopReadiness> {
@@ -2893,14 +3439,27 @@ fn split_stdin_bytes_for_detach(input: &[u8], detach_byte: Option<u8>) -> (Optio
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct StdinForwardOptions {
+    tui_enter_enabled: bool,
+}
+
+#[cfg(test)]
 fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
+    stdin_byte_forwards_with_options(input, StdinForwardOptions::default())
+}
+
+fn stdin_byte_forwards_with_options(
+    input: &[u8],
+    options: StdinForwardOptions,
+) -> Vec<StdinByteForward> {
     let mut forwards = Vec::new();
     let mut offset = 0;
     while offset < input.len() {
         let paste = find_bytes(&input[offset..], BRACKETED_PASTE_START);
         let mouse = find_sgr_mouse_sequence(&input[offset..])
             .map(|(start, mouse, end)| (start, StdinByteForward::Mouse(mouse), end));
-        let key = find_tui_key_sequence(&input[offset..])
+        let key = find_tui_key_sequence(&input[offset..], options)
             .map(|(start, key, end)| (start, StdinByteForward::Key(key), end));
         let Some((start_rel, forward, end_rel)) = next_structured_stdin_forward(
             paste.map(|start| (start, StdinByteForward::Raw(Vec::new()), 0)),
@@ -2945,6 +3504,82 @@ fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
     forwards
 }
 
+fn stdin_byte_forwards_with_pending(
+    input: &[u8],
+    options: StdinForwardOptions,
+    pending: &mut Vec<u8>,
+) -> Vec<StdinByteForward> {
+    let mut bytes = if pending.is_empty() {
+        input.to_vec()
+    } else {
+        let mut bytes = std::mem::take(pending);
+        bytes.extend_from_slice(input);
+        bytes
+    };
+    let pending_start = structured_stdin_pending_suffix_start(&bytes);
+    if let Some(start) = pending_start {
+        pending.extend_from_slice(&bytes[start..]);
+        bytes.truncate(start);
+    }
+    stdin_byte_forwards_with_options(&bytes, options)
+}
+
+fn structured_stdin_pending_suffix_start(input: &[u8]) -> Option<usize> {
+    for start in (0..input.len()).rev() {
+        if input[start] != b'\x1b' {
+            continue;
+        }
+        let suffix = &input[start..];
+        if is_pending_bracketed_paste_suffix(suffix)
+            || is_pending_sgr_mouse_suffix(suffix)
+            || is_pending_tui_key_suffix(suffix)
+        {
+            return Some(start);
+        }
+        return None;
+    }
+    None
+}
+
+fn is_pending_bracketed_paste_suffix(suffix: &[u8]) -> bool {
+    if suffix.len() <= 1 {
+        return false;
+    }
+    if BRACKETED_PASTE_START.starts_with(suffix) {
+        return true;
+    }
+    suffix.starts_with(BRACKETED_PASTE_START)
+        && find_bytes(&suffix[BRACKETED_PASTE_START.len()..], BRACKETED_PASTE_END).is_none()
+}
+
+fn is_pending_sgr_mouse_suffix(suffix: &[u8]) -> bool {
+    if suffix.len() <= 1 {
+        return false;
+    }
+    if SGR_MOUSE_START.starts_with(suffix) {
+        return true;
+    }
+    if !suffix.starts_with(SGR_MOUSE_START) || parse_sgr_mouse_sequence(suffix).is_some() {
+        return false;
+    }
+    suffix[SGR_MOUSE_START.len()..]
+        .iter()
+        .all(|byte| byte.is_ascii_digit() || *byte == b';')
+}
+
+fn is_pending_tui_key_suffix(suffix: &[u8]) -> bool {
+    if suffix.len() <= 1 {
+        return false;
+    }
+    const TUI_KEY_SEQUENCES: &[&[u8]] = &[
+        b"\x1b[A", b"\x1b[B", b"\x1b[C", b"\x1b[D", b"\x1b[Z", b"\x1bs", b"\x1bn", b"\x1bw",
+        b"\x1bc",
+    ];
+    TUI_KEY_SEQUENCES
+        .iter()
+        .any(|sequence| sequence.starts_with(suffix) && suffix.len() < sequence.len())
+}
+
 fn next_structured_stdin_forward(
     paste: Option<(usize, StdinByteForward, usize)>,
     mouse: Option<(usize, StdinByteForward, usize)>,
@@ -2956,24 +3591,28 @@ fn next_structured_stdin_forward(
         .min_by_key(|candidate| candidate.0)
 }
 
-fn find_tui_key_sequence(input: &[u8]) -> Option<(usize, StdinKeyInput, usize)> {
+fn find_tui_key_sequence(
+    input: &[u8],
+    options: StdinForwardOptions,
+) -> Option<(usize, StdinKeyInput, usize)> {
     for start in 0..input.len() {
-        if let Some((key, len)) = parse_tui_key_sequence(&input[start..]) {
+        if let Some((key, len)) = parse_tui_key_sequence(&input[start..], options) {
             return Some((start, key, start + len));
         }
     }
     None
 }
 
-fn parse_tui_key_sequence(input: &[u8]) -> Option<(StdinKeyInput, usize)> {
-    let candidates: &[(&[u8], StdinKey)] = &[
+fn parse_tui_key_sequence(
+    input: &[u8],
+    options: StdinForwardOptions,
+) -> Option<(StdinKeyInput, usize)> {
+    const BASE_CANDIDATES: &[(&[u8], StdinKey)] = &[
         (b"\x1b[A", StdinKey::Up),
         (b"\x1b[B", StdinKey::Down),
         (b"\x1b[C", StdinKey::Right),
         (b"\x1b[D", StdinKey::Left),
         (b"\x1b[Z", StdinKey::BackTab),
-        (b"\r", StdinKey::Enter),
-        (b"\n", StdinKey::Enter),
         (b"\t", StdinKey::Tab),
         (b"\x1bs", StdinKey::OpenMenu(tui::MenuAction::Sessions)),
         (b"\x1bn", StdinKey::OpenMenu(tui::MenuAction::NewSession)),
@@ -2981,9 +3620,22 @@ fn parse_tui_key_sequence(input: &[u8]) -> Option<(StdinKeyInput, usize)> {
         (b"\x1bc", StdinKey::OpenMenu(tui::MenuAction::Clipboard)),
         (b"\x1b", StdinKey::Escape),
     ];
-    let (bytes, key) = candidates
-        .iter()
-        .find(|(bytes, _)| input.starts_with(bytes))?;
+    const ENTER_CANDIDATES: &[(&[u8], StdinKey)] =
+        &[(b"\r", StdinKey::Enter), (b"\n", StdinKey::Enter)];
+
+    let enter_match = options
+        .tui_enter_enabled
+        .then(|| {
+            ENTER_CANDIDATES
+                .iter()
+                .find(|(bytes, _)| input.starts_with(bytes))
+        })
+        .flatten();
+    let (bytes, key) = enter_match.or_else(|| {
+        BASE_CANDIDATES
+            .iter()
+            .find(|(bytes, _)| input.starts_with(bytes))
+    })?;
     Some((
         StdinKeyInput {
             key: *key,
@@ -3080,6 +3732,12 @@ enum LiveMouseDispatch {
         direction: LiveScrollDirection,
         visible_rows: u16,
     },
+    PaneScrollTo {
+        pane_id: String,
+        track_position: u16,
+        track_len: u16,
+        visible_rows: u16,
+    },
     ClearOverlay,
 }
 
@@ -3087,6 +3745,12 @@ enum LiveMouseDispatch {
 enum LiveScrollDirection {
     Up,
     Down,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveScrollIntent {
+    Wheel(LiveScrollDirection),
+    Track { track_position: u16, track_len: u16 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3132,6 +3796,7 @@ fn handle_live_tui_key(
                 redraw_state.as_mut(),
                 Some(&surface_state.current_pane_surfaces),
                 Some(&surface_state.current_pane_surface_summaries),
+                Some(&live_pane_chrome_state(surface_state, current_workspace)),
             );
             return Ok(LiveKeyHandling::Handled);
         }
@@ -3448,6 +4113,7 @@ fn repaint_live_overlay(
         redraw_state.as_mut(),
         Some(&surface_state.current_pane_surfaces),
         Some(&surface_state.current_pane_surface_summaries),
+        Some(&live_pane_chrome_state(surface_state, current_workspace)),
         active_overlay,
     );
 }
@@ -3458,7 +4124,10 @@ fn live_mouse_dispatch_for_workspace(
     active_surface_text: &str,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_modes: Option<&BTreeMap<String, local::TerminalModeSummary>>,
+    pane_surface_kinds: Option<&BTreeMap<String, protocol::SurfaceKind>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
     active_modes: local::TerminalModeSummary,
+    active_surface_kind: protocol::SurfaceKind,
     overlay: Option<&tui::TuiOverlay>,
 ) -> Option<LiveMouseDispatch> {
     let (cols, rows) = terminal_size().ok().flatten().unwrap_or((80, 24));
@@ -3468,7 +4137,10 @@ fn live_mouse_dispatch_for_workspace(
         active_surface_text,
         pane_surfaces,
         pane_modes,
+        pane_surface_kinds,
+        pane_chrome,
         active_modes,
+        active_surface_kind,
         overlay,
         cols.max(1).min(u16::MAX as u32) as u16,
         rows.max(1).min(u16::MAX as u32) as u16,
@@ -3482,7 +4154,10 @@ fn live_mouse_dispatch_for_workspace_size(
     active_surface_text: &str,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_modes: Option<&BTreeMap<String, local::TerminalModeSummary>>,
+    pane_surface_kinds: Option<&BTreeMap<String, protocol::SurfaceKind>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
     active_modes: local::TerminalModeSummary,
+    active_surface_kind: protocol::SurfaceKind,
     overlay: Option<&tui::TuiOverlay>,
     cols: u16,
     rows: u16,
@@ -3494,7 +4169,7 @@ fn live_mouse_dispatch_for_workspace_size(
             active_surface_text,
             pane_surfaces,
             pane_surface_summaries: None,
-            pane_chrome: None,
+            pane_chrome,
             overlay,
         },
         cols.max(1),
@@ -3516,7 +4191,21 @@ fn live_mouse_dispatch_for_workspace_size(
                         local::TerminalModeSummary::default()
                     }
                 });
-            if target_modes.mouse_tracking {
+            let target_surface_kind = pane_surface_kinds
+                .and_then(|surface_kinds| surface_kinds.get(pane_id))
+                .copied()
+                .unwrap_or_else(|| {
+                    if pane_id == &workspace.pane_id {
+                        active_surface_kind
+                    } else {
+                        protocol::SurfaceKind::Main
+                    }
+                });
+            let scroll_direction = sgr_mouse_scroll_direction(mouse);
+            if target_modes.mouse_tracking
+                && (scroll_direction.is_none()
+                    || target_surface_kind == protocol::SurfaceKind::Alternate)
+            {
                 return Some(LiveMouseDispatch::PaneMouse(
                     pane_id.clone(),
                     local::AttachMouseInput {
@@ -3530,7 +4219,7 @@ fn live_mouse_dispatch_for_workspace_size(
                     },
                 ));
             }
-            if let Some(direction) = sgr_mouse_scroll_direction(mouse) {
+            if let Some(direction) = scroll_direction {
                 return Some(LiveMouseDispatch::PaneScroll {
                     pane_id: pane_id.clone(),
                     direction,
@@ -3542,10 +4231,66 @@ fn live_mouse_dispatch_for_workspace_size(
             }
             None
         }
-        tui::HitTarget::Pane(pane_id) | tui::HitTarget::WindowTreePane(pane_id)
-            if sgr_mouse_is_primary_press(mouse) =>
-        {
+        tui::HitTarget::Pane(pane_id) => {
+            if let Some(direction) = sgr_mouse_scroll_direction(mouse) {
+                return Some(LiveMouseDispatch::PaneScroll {
+                    pane_id: pane_id.clone(),
+                    direction,
+                    visible_rows: hit.rect.height.max(1),
+                });
+            }
+            if sgr_mouse_is_primary_press(mouse) {
+                return Some(LiveMouseDispatch::FocusPane(pane_id.clone()));
+            }
+            None
+        }
+        tui::HitTarget::WindowTreePane(pane_id) if sgr_mouse_is_primary_press(mouse) => {
             Some(LiveMouseDispatch::FocusPane(pane_id.clone()))
+        }
+        tui::HitTarget::PaneScroll {
+            pane_id,
+            direction,
+            visible_rows,
+        } => {
+            if let Some(direction) = sgr_mouse_scroll_direction(mouse) {
+                return Some(LiveMouseDispatch::PaneScroll {
+                    pane_id: pane_id.clone(),
+                    direction,
+                    visible_rows: *visible_rows,
+                });
+            }
+            if sgr_mouse_is_primary_press(mouse) {
+                return Some(LiveMouseDispatch::PaneScroll {
+                    pane_id: pane_id.clone(),
+                    direction: match direction {
+                        tui::ScrollDirection::Up => LiveScrollDirection::Up,
+                        tui::ScrollDirection::Down => LiveScrollDirection::Down,
+                    },
+                    visible_rows: *visible_rows,
+                });
+            }
+            None
+        }
+        tui::HitTarget::PaneScrollTrack {
+            pane_id,
+            visible_rows,
+            track_position,
+            track_len,
+        } => {
+            if mouse.button == protocol::MouseButton::Left
+                && matches!(
+                    mouse.action,
+                    protocol::MouseAction::Press | protocol::MouseAction::Motion
+                )
+            {
+                return Some(LiveMouseDispatch::PaneScrollTo {
+                    pane_id: pane_id.clone(),
+                    track_position: *track_position,
+                    track_len: *track_len,
+                    visible_rows: *visible_rows,
+                });
+            }
+            None
         }
         tui::HitTarget::Menu(action) if sgr_mouse_is_primary_press(mouse) => {
             Some(LiveMouseDispatch::Menu(*action))
@@ -3771,7 +4516,7 @@ fn switch_live_session(
     stream.set_read_timeout(Some(setup_read_timeout))?;
     let mut switch_options = options.clone();
     switch_options.target_session_id = Some(session_id.to_owned());
-    switch_options.request.known_surfaces = client_state.known_surfaces_for_scope(socket_scope);
+    switch_options.request.known_viewports = client_state.known_viewports_for_scope(socket_scope);
     switch_options.known_scrollback_versions =
         client_state.known_scrollback_versions_for_scope(socket_scope);
     local::write_attach_request_for_session(
@@ -3813,15 +4558,22 @@ fn switch_live_session(
     let mut pane_modes = BTreeMap::new();
     pane_modes.insert(attached_pane_id.clone(), rendered.modes);
     seed_cached_pane_modes(&mut pane_modes, &workspace, client_state);
+    let mut pane_surface_kinds = BTreeMap::new();
+    pane_surface_kinds.insert(attached_pane_id.clone(), rendered.surface_kind);
+    seed_cached_pane_surface_kinds(&mut pane_surface_kinds, &workspace, client_state);
     let mut surface_state = LiveSurfaceState {
         current_surface_metadata: rendered.surface_metadata.clone(),
+        current_surface_kind: rendered.surface_kind,
         current_modes: rendered.modes,
         current_surface_text: initial_surface_text,
         current_pane_surfaces: pane_surfaces,
         current_pane_surface_summaries: pane_surface_summaries,
         current_pane_modes: pane_modes,
+        current_pane_surface_kinds: pane_surface_kinds,
+        current_pane_scrollback_totals: BTreeMap::new(),
         scrollback_views: BTreeMap::new(),
     };
+    record_live_surface_scrollback_total(&mut surface_state, &rendered.surface);
 
     let mut client_sequence = local::ClientFrameSequence::default();
     let (scrollback, pending_surface_updates, pending_live_reads) = initial_live_scrollback(
@@ -3845,6 +4597,7 @@ fn switch_live_session(
     }
     if let Some(scrollback) = scrollback.as_ref() {
         client_state.cache_scrollback_chunk(scrollback);
+        record_live_scrollback_total(&mut surface_state, scrollback);
     }
     if let Some(mouse_modes) = host_mouse_modes.as_mut() {
         mouse_modes.sync(surface_state.current_modes)?;
@@ -3863,6 +4616,7 @@ fn switch_live_session(
             redraw_state.as_mut(),
             Some(&surface_state.current_pane_surfaces),
             Some(&surface_state.current_pane_surface_summaries),
+            Some(&live_pane_chrome_state(&surface_state, &workspace)),
         );
     }
     recorder.record(&format_live_workspace_json(&workspace))?;
@@ -3878,6 +4632,7 @@ fn switch_live_session(
             &workspace,
             args,
             use_styled,
+            true,
         )?;
     }
     stream.set_read_timeout(Some(live_socket_read_timeout))?;
@@ -3906,22 +4661,148 @@ fn scroll_live_pane_view(
     socket_scope: Option<local::SocketIdentity>,
     workspace: &local::WorkspaceSummary,
     args: &Args,
+    redraw_state: Option<&mut RedrawState>,
+    use_styled: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    scroll_live_pane_with_intent(
+        stream,
+        sequence,
+        pane_id,
+        LiveScrollIntent::Wheel(direction),
+        visible_rows,
+        surface_state,
+        client_state,
+        speculative_echo,
+        host_mouse_modes,
+        client_inventory,
+        recorder,
+        socket_scope,
+        workspace,
+        args,
+        redraw_state,
+        use_styled,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scroll_live_pane_to_track(
+    stream: &mut UnixStream,
+    sequence: &mut local::ClientFrameSequence,
+    pane_id: &str,
+    track_position: u16,
+    track_len: u16,
+    visible_rows: u16,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &mut local::ClientAttachState,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    workspace: &local::WorkspaceSummary,
+    args: &Args,
+    redraw_state: Option<&mut RedrawState>,
+    use_styled: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    scroll_live_pane_with_intent(
+        stream,
+        sequence,
+        pane_id,
+        LiveScrollIntent::Track {
+            track_position,
+            track_len,
+        },
+        visible_rows,
+        surface_state,
+        client_state,
+        speculative_echo,
+        host_mouse_modes,
+        client_inventory,
+        recorder,
+        socket_scope,
+        workspace,
+        args,
+        redraw_state,
+        use_styled,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scroll_live_pane_with_intent(
+    stream: &mut UnixStream,
+    sequence: &mut local::ClientFrameSequence,
+    pane_id: &str,
+    intent: LiveScrollIntent,
+    visible_rows: u16,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &mut local::ClientAttachState,
+    speculative_echo: &mut local::SpeculativeEchoOverlay,
+    host_mouse_modes: &mut Option<HostMouseModeMirror>,
+    client_inventory: &mut ClientInventoryCache,
+    recorder: &mut LiveRecorder,
+    socket_scope: Option<local::SocketIdentity>,
+    workspace: &local::WorkspaceSummary,
+    args: &Args,
     mut redraw_state: Option<&mut RedrawState>,
     use_styled: bool,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     if args.output_json || !args.redraw {
         return Ok(false);
     }
-    let line_count = u32::from(visible_rows.max(1));
+    let viewport_rows = visible_rows.max(1);
+    let _ = socket_scope;
     let existing = surface_state.scrollback_views.get(pane_id).copied();
-    let (start_line, tail_count) = match (direction, existing) {
-        (LiveScrollDirection::Up, None) => (1, Some(line_count)),
-        (LiveScrollDirection::Up, Some(view)) if view.start_line > 1 => (view.start_line - 1, None),
-        (LiveScrollDirection::Up, Some(_)) => return Ok(false),
-        (LiveScrollDirection::Down, None) => return Ok(false),
-        (LiveScrollDirection::Down, Some(view)) => {
-            let max_start = scrollback_max_start(view.total_lines, view.line_count);
-            if view.start_line >= max_start {
+    let known_total = || {
+        surface_state
+            .current_pane_scrollback_totals
+            .get(pane_id)
+            .copied()
+            .or_else(|| {
+                surface_state
+                    .current_pane_surface_summaries
+                    .get(pane_id)
+                    .map(|summary| summary.scrollback_total_lines)
+            })
+            .unwrap_or(0)
+    };
+    let (offset_from_bottom, total_history_lines) = match (intent, existing) {
+        (LiveScrollIntent::Wheel(LiveScrollDirection::Up), None) => {
+            let total_history_lines = known_total();
+            let offset = next_scroll_offset(
+                0,
+                LiveScrollDirection::Up,
+                LIVE_SCROLL_WHEEL_ROWS,
+                total_history_lines,
+                viewport_rows,
+            );
+            if offset == 0 {
+                return Ok(false);
+            }
+            (offset, total_history_lines)
+        }
+        (LiveScrollIntent::Wheel(LiveScrollDirection::Up), Some(view)) => {
+            let offset = next_scroll_offset(
+                view.offset_from_bottom,
+                LiveScrollDirection::Up,
+                LIVE_SCROLL_WHEEL_ROWS,
+                view.total_history_lines,
+                view.viewport_rows,
+            );
+            if offset == view.offset_from_bottom {
+                return Ok(false);
+            }
+            (offset, view.total_history_lines)
+        }
+        (LiveScrollIntent::Wheel(LiveScrollDirection::Down), None) => return Ok(false),
+        (LiveScrollIntent::Wheel(LiveScrollDirection::Down), Some(view)) => {
+            let offset = next_scroll_offset(
+                view.offset_from_bottom,
+                LiveScrollDirection::Down,
+                LIVE_SCROLL_WHEEL_ROWS,
+                view.total_history_lines,
+                view.viewport_rows,
+            );
+            if offset == 0 {
                 restore_live_pane_surface(
                     pane_id,
                     surface_state,
@@ -3937,108 +4818,180 @@ fn scroll_live_pane_view(
                     redraw_state.as_deref_mut(),
                     Some(&surface_state.current_pane_surfaces),
                     Some(&surface_state.current_pane_surface_summaries),
+                    Some(&live_pane_chrome_state(surface_state, workspace)),
                 );
                 return Ok(true);
             }
-            (view.start_line + 1, None)
+            (offset, view.total_history_lines)
+        }
+        (
+            LiveScrollIntent::Track {
+                track_position,
+                track_len,
+            },
+            existing,
+        ) => {
+            let total_history_lines =
+                existing.map_or_else(known_total, |view| view.total_history_lines);
+            let offset = scrollbar_offset_from_track(
+                track_position,
+                track_len,
+                total_history_lines,
+                viewport_rows,
+            );
+            if offset == 0 {
+                restore_live_pane_surface(
+                    pane_id,
+                    surface_state,
+                    client_state,
+                    workspace,
+                    use_styled,
+                );
+                print_live_surface(
+                    workspace,
+                    &surface_state.current_surface_metadata,
+                    &surface_state.current_surface_text,
+                    args.redraw,
+                    redraw_state.as_deref_mut(),
+                    Some(&surface_state.current_pane_surfaces),
+                    Some(&surface_state.current_pane_surface_summaries),
+                    Some(&live_pane_chrome_state(surface_state, workspace)),
+                );
+                return Ok(true);
+            }
+            (offset, total_history_lines)
         }
     };
 
-    let mut pending_updates = Vec::new();
-    let mut pending_live = Vec::new();
-    let scrollback = local::fetch_scrollback_chunk_with_selection_and_pending_live(
+    let viewport =
+        scrollback_viewport_range(total_history_lines, viewport_rows, offset_from_bottom);
+    if viewport.history_line_count == 0 {
+        return Ok(false);
+    }
+    local::send_pane_viewport_intent(
         stream,
         sequence,
         pane_id,
-        start_line,
-        line_count,
-        tail_count,
-        |range_start, range_count| {
-            client_state
-                .cached_scrollback_version_for_scope(
-                    socket_scope,
-                    pane_id,
-                    range_start,
-                    range_count,
-                )
-                .unwrap_or(0)
+        nmux_core::session::PaneViewportIntentSpec {
+            viewport: protocol::PaneViewportKind::Pinned,
+            top_line: viewport.history_start_line,
+            delta_rows: 0,
+            visible_rows: u32::from(viewport_rows),
+            known_viewport_version: 0,
         },
-        Some(&mut pending_updates),
-        Some(&mut pending_live),
     )?;
-    for pending in pending_live {
-        match pending {
+    let update = loop {
+        match local::read_live_surface_update_from_stream(stream)? {
+            local::LiveSurfaceRead::Update(update)
+                if is_requested_scrollback_view_update(&update, pane_id) =>
+            {
+                break update;
+            }
+            local::LiveSurfaceRead::Update(update) => {
+                speculative_echo.reconcile_update(&update);
+                let update_surface_text =
+                    client_state.render_surface_update_styled(&update, use_styled)?;
+                record_live_update_scrollback_total(surface_state, &update);
+                if !surface_state.scrollback_views.contains_key(&update.pane_id) {
+                    surface_state
+                        .current_pane_surfaces
+                        .insert(update.pane_id.clone(), update_surface_text.clone());
+                    if let Some(summary) =
+                        client_state.cached_rendered_surface_summary(&update.pane_id)
+                    {
+                        surface_state
+                            .current_pane_surface_summaries
+                            .insert(update.pane_id.clone(), summary);
+                    }
+                }
+                surface_state
+                    .current_pane_modes
+                    .insert(update.pane_id.clone(), update.modes);
+                if let Some(surface_kind) = update.surface {
+                    surface_state
+                        .current_pane_surface_kinds
+                        .insert(update.pane_id.clone(), surface_kind);
+                }
+                if update.pane_id == workspace.pane_id {
+                    surface_state.current_surface_metadata = local::TerminalMetadataSummary {
+                        title: update.title.clone(),
+                        working_directory: update.working_directory.clone(),
+                    };
+                    if let Some(surface_kind) = update.surface {
+                        surface_state.current_surface_kind = surface_kind;
+                    }
+                    surface_state.current_modes = update.modes;
+                    if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+                        mouse_modes.sync(surface_state.current_modes)?;
+                    }
+                    if !surface_state.scrollback_views.contains_key(&update.pane_id) {
+                        surface_state.current_surface_text = update_surface_text;
+                    }
+                }
+                recorder.record(&format_live_surface_update_json(
+                    workspace,
+                    &local::TerminalMetadataSummary {
+                        title: update.title.clone(),
+                        working_directory: update.working_directory.clone(),
+                    },
+                    &surface_state.current_surface_text,
+                    &update,
+                ))?;
+            }
             local::LiveSurfaceRead::ClientInventorySnapshot(snapshot) => {
                 client_inventory.apply_snapshot(snapshot);
             }
             local::LiveSurfaceRead::ClientInventoryPatch(patch) => {
                 let _ = client_inventory.apply_patch(patch);
             }
-            _ => {}
+            local::LiveSurfaceRead::Error(error) => return Err(format!("{error}").into()),
+            local::LiveSurfaceRead::Closed => return Err("live server closed connection".into()),
+            _ => continue,
         }
-    }
+    };
     if let Some(state) = redraw_state.as_deref_mut() {
         state.record_client_count(client_inventory.count());
     }
-    for update in pending_updates {
-        speculative_echo.reconcile_update(&update);
-        let update_metadata = local::TerminalMetadataSummary {
-            title: update.title.clone(),
-            working_directory: update.working_directory.clone(),
-        };
-        let update_surface_text = client_state.render_surface_update_styled(&update, use_styled)?;
-        surface_state
-            .current_pane_surfaces
-            .insert(update.pane_id.clone(), update_surface_text.clone());
-        if let Some(summary) = client_state.cached_rendered_surface_summary(&update.pane_id) {
-            surface_state
-                .current_pane_surface_summaries
-                .insert(update.pane_id.clone(), summary);
-        }
-        surface_state
-            .current_pane_modes
-            .insert(update.pane_id.clone(), update.modes);
-        surface_state.scrollback_views.remove(&update.pane_id);
-        if update.pane_id == workspace.pane_id {
-            surface_state.current_surface_metadata = update_metadata.clone();
-            surface_state.current_modes = update.modes;
-            if let Some(mouse_modes) = host_mouse_modes.as_mut() {
-                mouse_modes.sync(surface_state.current_modes)?;
-            }
-            surface_state.current_surface_text = update_surface_text.clone();
-        } else if let Some(active_text) =
-            surface_state.current_pane_surfaces.get(&workspace.pane_id)
-        {
-            surface_state.current_surface_text = active_text.clone();
-        }
-        recorder.record(&format_live_surface_update_json(
-            workspace,
-            &update_metadata,
-            &update_surface_text,
-            &update,
-        ))?;
-    }
-    if scrollback.lines.is_empty() {
-        return Ok(false);
-    }
-    client_state.cache_scrollback_chunk(&scrollback);
-    let rendered = render_scrollback_view_text(&scrollback);
-    let rendered_summary = render_scrollback_view_summary(&scrollback);
+    speculative_echo.reconcile_update(&update);
+    let update_metadata = local::TerminalMetadataSummary {
+        title: update.title.clone(),
+        working_directory: update.working_directory.clone(),
+    };
+    let rendered = client_state.render_surface_update_styled(&update, use_styled)?;
+    let rendered_summary = client_state.cached_rendered_surface_summary(&update.pane_id);
     surface_state
         .current_pane_surfaces
         .insert(pane_id.to_owned(), rendered.clone());
-    surface_state
-        .current_pane_surface_summaries
-        .insert(pane_id.to_owned(), rendered_summary);
+    if let Some(summary) = rendered_summary {
+        surface_state
+            .current_pane_surface_summaries
+            .insert(pane_id.to_owned(), summary);
+    } else {
+        surface_state.current_pane_surface_summaries.remove(pane_id);
+    }
     if pane_id == workspace.pane_id {
+        surface_state.current_surface_metadata = update_metadata.clone();
+        if let Some(surface_kind) = update.surface {
+            surface_state.current_surface_kind = surface_kind;
+        }
+        surface_state.current_modes = update.modes;
+        if let Some(mouse_modes) = host_mouse_modes.as_mut() {
+            mouse_modes.sync(surface_state.current_modes)?;
+        }
         surface_state.current_surface_text = rendered;
     }
+    recorder.record(&format_live_surface_update_json(
+        workspace,
+        &update_metadata,
+        &surface_state.current_surface_text,
+        &update,
+    ))?;
     surface_state.scrollback_views.insert(
         pane_id.to_owned(),
         LiveScrollbackView {
-            start_line: scrollback.start_line,
-            line_count: u32::try_from(scrollback.lines.len()).unwrap_or(u32::MAX),
-            total_lines: scrollback.total_lines,
+            offset_from_bottom,
+            viewport_rows,
+            total_history_lines,
         },
     );
     print_live_surface(
@@ -4049,16 +5002,82 @@ fn scroll_live_pane_view(
         redraw_state.as_deref_mut(),
         Some(&surface_state.current_pane_surfaces),
         Some(&surface_state.current_pane_surface_summaries),
+        Some(&live_pane_chrome_state(surface_state, workspace)),
     );
     Ok(true)
 }
 
-fn scrollback_max_start(total_lines: u64, line_count: u32) -> u64 {
-    let line_count = u64::from(line_count.max(1));
-    if total_lines > line_count {
-        total_lines - line_count + 1
-    } else {
-        1
+fn is_requested_scrollback_view_update(update: &local::SurfaceUpdate, pane_id: &str) -> bool {
+    update.pane_id == pane_id
+        && update.kind == local::SurfaceUpdateKind::Snapshot
+        && update.viewport == protocol::PaneViewportKind::Pinned
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScrollbackViewportRange {
+    history_start_line: u64,
+    history_line_count: u32,
+}
+
+fn next_scroll_offset(
+    current: u64,
+    direction: LiveScrollDirection,
+    wheel_rows: u64,
+    total_lines: u64,
+    viewport_rows: u16,
+) -> u64 {
+    let max_offset = max_scroll_offset(total_lines, viewport_rows);
+    match direction {
+        LiveScrollDirection::Up => current.saturating_add(wheel_rows).min(max_offset),
+        LiveScrollDirection::Down => current.saturating_sub(wheel_rows),
+    }
+}
+
+fn max_scroll_offset(total_lines: u64, viewport_rows: u16) -> u64 {
+    total_lines.saturating_sub(u64::from(viewport_rows.max(1)))
+}
+
+fn scrollbar_offset_from_track(
+    track_position: u16,
+    track_len: u16,
+    total_lines: u64,
+    viewport_rows: u16,
+) -> u64 {
+    let max_offset = max_scroll_offset(total_lines, viewport_rows);
+    if max_offset == 0 {
+        return 0;
+    }
+    let track_max = u64::from(track_len.saturating_sub(1).max(1));
+    let progress_from_top =
+        (u64::from(track_position.min(track_len.saturating_sub(1))) * max_offset) / track_max;
+    max_offset.saturating_sub(progress_from_top.min(max_offset))
+}
+
+fn scrollback_viewport_range(
+    total_lines: u64,
+    viewport_rows: u16,
+    offset_from_bottom: u64,
+) -> ScrollbackViewportRange {
+    let viewport_rows_u64 = u64::from(viewport_rows.max(1));
+    if total_lines == 0 {
+        return ScrollbackViewportRange {
+            history_start_line: 1,
+            history_line_count: 0,
+        };
+    }
+    let offset = offset_from_bottom.min(max_scroll_offset(total_lines, viewport_rows));
+    let end = total_lines.saturating_sub(offset).max(1);
+    let start = end
+        .saturating_sub(viewport_rows_u64.saturating_sub(1))
+        .max(1);
+    let history_line_count = end
+        .saturating_sub(start)
+        .saturating_add(1)
+        .min(u64::from(u32::MAX));
+
+    ScrollbackViewportRange {
+        history_start_line: start,
+        history_line_count: history_line_count as u32,
     }
 }
 
@@ -4086,10 +5105,47 @@ fn restore_live_pane_surface(
     }
 }
 
-fn render_scrollback_view_text(scrollback: &local::ScrollbackChunkSummary) -> String {
+fn restore_live_pane_surface_before_input(
+    pane_id: &str,
+    surface_state: &mut LiveSurfaceState,
+    client_state: &local::ClientAttachState,
+    workspace: &local::WorkspaceSummary,
+    args: &Args,
+    redraw_state: &mut Option<RedrawState>,
+    use_styled: bool,
+) -> bool {
+    if !args.redraw || !surface_state.scrollback_views.contains_key(pane_id) {
+        return false;
+    }
+
+    restore_live_pane_surface(pane_id, surface_state, client_state, workspace, use_styled);
+    print_live_surface(
+        workspace,
+        &surface_state.current_surface_metadata,
+        &surface_state.current_surface_text,
+        args.redraw,
+        redraw_state.as_mut(),
+        Some(&surface_state.current_pane_surfaces),
+        Some(&surface_state.current_pane_surface_summaries),
+        Some(&live_pane_chrome_state(surface_state, workspace)),
+    );
+    true
+}
+
+fn repaint_live_surface_after_input(
+    workspace: &local::WorkspaceSummary,
+    surface_state: &LiveSurfaceState,
+    redraw_state: &mut Option<RedrawState>,
+    args: &Args,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = (workspace, surface_state, redraw_state, args);
+    Ok(())
+}
+
+fn render_scrollback_view_text(scrollback: Option<&local::ScrollbackChunkSummary>) -> String {
     scrollback
-        .lines
-        .iter()
+        .into_iter()
+        .flat_map(|scrollback| scrollback.lines.iter())
         .map(|line| line.text.as_str())
         .collect::<Vec<_>>()
         .join("\n")
@@ -4112,17 +5168,18 @@ fn render_scrollback_view_summary(
             dirty: line.dirty,
             kitty_virtual_placeholder: line.kitty_virtual_placeholder,
         })
-        .collect();
-    let cols = scrollback
-        .lines
+        .collect::<Vec<_>>();
+    let cols = row_updates
         .iter()
-        .map(|line| line.text.chars().count())
+        .map(|row| row.text.chars().count())
         .max()
         .unwrap_or(0);
 
     local::RenderedSurfaceSummary {
         pane_id: scrollback.pane_id.clone(),
         version: scrollback.scrollback_version,
+        scrollback_version: scrollback.scrollback_version,
+        scrollback_total_lines: scrollback.total_lines,
         cols: u32::try_from(cols).unwrap_or(u32::MAX),
         rows: u32::try_from(scrollback.lines.len()).unwrap_or(u32::MAX),
         colors: scrollback.colors.clone(),
@@ -4157,12 +5214,20 @@ fn switch_live_surface_to_workspace_pane(
         .cached_surface_metadata(pane_id)
         .unwrap_or_default();
     if let Some(surface) = client_state.cached_surface_summary(pane_id) {
+        surface_state.current_surface_kind = surface.surface_kind;
         surface_state.current_modes = surface.modes;
+        surface_state
+            .current_pane_surface_kinds
+            .insert(pane_id.clone(), surface.surface_kind);
         surface_state
             .current_pane_modes
             .insert(pane_id.clone(), surface.modes);
     } else {
+        surface_state.current_surface_kind = protocol::SurfaceKind::Main;
         surface_state.current_modes = local::TerminalModeSummary::default();
+        surface_state
+            .current_pane_surface_kinds
+            .insert(pane_id.clone(), protocol::SurfaceKind::Main);
         surface_state
             .current_pane_modes
             .insert(pane_id.clone(), local::TerminalModeSummary::default());
@@ -4216,6 +5281,7 @@ fn focus_live_client_pane(
             redraw_state,
             Some(&surface_state.current_pane_surfaces),
             Some(&surface_state.current_pane_surface_summaries),
+            Some(&live_pane_chrome_state(surface_state, workspace)),
         );
     } else {
         println!("{}", workspace.display_line());
@@ -4241,7 +5307,10 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-struct RawTerminalGuard;
+struct RawTerminalGuard {
+    stdin_termios: Option<libc::termios>,
+    tty_termios: Option<(File, libc::termios)>,
+}
 
 impl RawTerminalGuard {
     fn enable_if_needed(
@@ -4253,18 +5322,59 @@ impl RawTerminalGuard {
         }
 
         terminal::enable_raw_mode()?;
-        if let Err(err) = apply_raw_terminal_fixups(local_echo) {
-            let _ = terminal::disable_raw_mode();
-            return Err(err);
-        }
+        let mut tty_termios = None;
+        let stdin_termios = match read_stdin_termios() {
+            Ok(termios) => {
+                if let Err(err) = apply_stdin_raw_terminal_mode(termios, local_echo) {
+                    let _ = terminal::disable_raw_mode();
+                    return Err(err);
+                }
+                Some(termios)
+            }
+            Err(err) if context.stdout_is_tty => {
+                tracing::debug!(error = %err, "stdin termios unavailable after raw mode enabled");
+                if let Ok(tty) = File::options().read(true).write(true).open("/dev/tty") {
+                    match read_fd_termios(tty.as_raw_fd()) {
+                        Ok(termios) => {
+                            let raw = raw_terminal_mode_termios(termios, local_echo);
+                            if let Err(err) = set_fd_termios(tty.as_raw_fd(), &raw) {
+                                let _ = terminal::disable_raw_mode();
+                                return Err(err);
+                            }
+                            tty_termios = Some((tty, termios));
+                        }
+                        Err(err) => {
+                            tracing::debug!(
+                                error = %err,
+                                "controlling tty termios unavailable after raw mode enabled"
+                            );
+                        }
+                    }
+                }
+                None
+            }
+            Err(err) => {
+                let _ = terminal::disable_raw_mode();
+                return Err(err);
+            }
+        };
 
-        Ok(Some(Self))
+        Ok(Some(Self {
+            stdin_termios,
+            tty_termios,
+        }))
     }
 }
 
 impl Drop for RawTerminalGuard {
     fn drop(&mut self) {
         let _ = terminal::disable_raw_mode();
+        if let Some(termios) = self.stdin_termios.take() {
+            let _ = set_stdin_termios(&termios);
+        }
+        if let Some((tty, termios)) = self.tty_termios.take() {
+            let _ = set_fd_termios(tty.as_raw_fd(), &termios);
+        }
     }
 }
 
@@ -4272,10 +5382,11 @@ impl Drop for RawTerminalGuard {
 struct RawTerminalModeContext {
     stdin_bytes: bool,
     stdin_is_tty: bool,
+    stdout_is_tty: bool,
 }
 
 fn raw_terminal_mode_needed(context: RawTerminalModeContext) -> bool {
-    context.stdin_bytes && context.stdin_is_tty
+    context.stdin_bytes && (context.stdin_is_tty || context.stdout_is_tty)
 }
 
 struct RedrawTerminalGuard;
@@ -4297,6 +5408,113 @@ impl Drop for RedrawTerminalGuard {
         let mut stdout = io::stdout();
         let _ = execute!(stdout, cursor::Show, LeaveAlternateScreen);
     }
+}
+
+struct SignalBugReportGuard {
+    previous: libc::sighandler_t,
+    write_fd: libc::c_int,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl SignalBugReportGuard {
+    fn install(args: Vec<String>) -> io::Result<Self> {
+        let mut fds = [-1; 2];
+        // SAFETY: fds points to two valid c_int slots for pipe to fill.
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if let Err(err) = set_fd_nonblocking(fds[1]) {
+            close_fd(fds[0]);
+            close_fd(fds[1]);
+            return Err(err);
+        }
+
+        let handler = handle_sigusr1_bug_report as *const () as libc::sighandler_t;
+        // SAFETY: installing a process signal handler is inherently global.
+        // The handler only writes one byte to a pre-opened nonblocking pipe.
+        let previous = unsafe { libc::signal(libc::SIGUSR1, handler) };
+        if previous == libc::SIG_ERR {
+            let err = io::Error::last_os_error();
+            close_fd(fds[0]);
+            close_fd(fds[1]);
+            return Err(err);
+        }
+
+        SIGUSR1_BUG_REPORT_FD.store(fds[1], Ordering::SeqCst);
+        let read_fd = fds[0];
+        let thread = thread::spawn(move || watch_sigusr1_bug_report(read_fd, args));
+        Ok(Self {
+            previous,
+            write_fd: fds[1],
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for SignalBugReportGuard {
+    fn drop(&mut self) {
+        SIGUSR1_BUG_REPORT_FD.store(-1, Ordering::SeqCst);
+        // SAFETY: previous was returned by signal during install. Drop must not
+        // panic, so restoration errors are intentionally ignored.
+        let _ = unsafe { libc::signal(libc::SIGUSR1, self.previous) };
+        close_fd(self.write_fd);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn set_fd_nonblocking(fd: libc::c_int) -> io::Result<()> {
+    // SAFETY: fd is an open file descriptor owned by the caller.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fd is open and flags came from F_GETFL.
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn close_fd(fd: libc::c_int) {
+    if fd >= 0 {
+        // SAFETY: close is safe for any integer fd; errors are ignored.
+        let _ = unsafe { libc::close(fd) };
+    }
+}
+
+fn watch_sigusr1_bug_report(read_fd: libc::c_int, args: Vec<String>) {
+    let mut byte = [0_u8; 1];
+    loop {
+        // SAFETY: byte is a valid one-byte buffer and read_fd is owned by this thread.
+        let count = unsafe { libc::read(read_fd, byte.as_mut_ptr().cast(), byte.len()) };
+        if count > 0 {
+            nmux_cli::bug_report::record_signal_interrupt("nmux", "SIGUSR1", &args);
+            continue;
+        }
+        if count == 0 {
+            close_fd(read_fd);
+            return;
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
+            close_fd(read_fd);
+            return;
+        }
+    }
+}
+
+extern "C" fn handle_sigusr1_bug_report(_: libc::c_int) {
+    SIGUSR1_LIVE_BUG_REPORT_REQUESTED.store(true, Ordering::SeqCst);
+    let fd = SIGUSR1_BUG_REPORT_FD.load(Ordering::SeqCst);
+    if fd < 0 {
+        return;
+    }
+    let byte = [1_u8; 1];
+    // SAFETY: fd is a pre-opened nonblocking pipe write end. write is
+    // async-signal-safe; errors are intentionally ignored.
+    let _ = unsafe { libc::write(fd, byte.as_ptr().cast(), byte.len()) };
 }
 
 struct HostMouseModeMirror {
@@ -4347,7 +5565,7 @@ fn host_mouse_mode_disable_sequence() -> &'static str {
 
 fn host_mouse_mode_enable_sequence(modes: local::TerminalModeSummary) -> &'static str {
     if !modes.mouse_tracking {
-        return "\x1b[?1000h\x1b[?1006h";
+        return "\x1b[?1002h\x1b[?1006h";
     }
     match (modes.mouse_tracking_mode, modes.mouse_format) {
         (protocol::MouseTrackingMode::X10, protocol::MouseFormat::Sgr) => "\x1b[?1000h\x1b[?1006h",
@@ -4370,10 +5588,10 @@ fn host_mouse_mode_enable_sequence(modes: local::TerminalModeSummary) -> &'stati
         (protocol::MouseTrackingMode::Any, protocol::MouseFormat::SgrPixels) => {
             "\x1b[?1003h\x1b[?1006h\x1b[?1016h"
         }
-        (protocol::MouseTrackingMode::X10, _) => "\x1b[?1000h",
-        (protocol::MouseTrackingMode::Normal, _) => "\x1b[?1000h",
-        (protocol::MouseTrackingMode::Button, _) => "\x1b[?1002h",
-        (protocol::MouseTrackingMode::Any, _) => "\x1b[?1003h",
+        (protocol::MouseTrackingMode::X10, _) => "\x1b[?1000h\x1b[?1006h",
+        (protocol::MouseTrackingMode::Normal, _) => "\x1b[?1000h\x1b[?1006h",
+        (protocol::MouseTrackingMode::Button, _) => "\x1b[?1002h\x1b[?1006h",
+        (protocol::MouseTrackingMode::Any, _) => "\x1b[?1003h\x1b[?1006h",
         _ => "",
     }
 }
@@ -4537,30 +5755,44 @@ fn terminal_size_from_fd(fd: i32) -> io::Result<Option<(u32, u32)>> {
     Ok(Some((u32::from(size.ws_col), u32::from(size.ws_row))))
 }
 
-fn apply_raw_terminal_fixups(local_echo: LocalEcho) -> io::Result<()> {
-    let mut termios = read_stdin_termios()?;
-    termios = raw_terminal_fixup_termios(termios, local_echo);
+fn apply_stdin_raw_terminal_mode(original: libc::termios, local_echo: LocalEcho) -> io::Result<()> {
+    let termios = raw_terminal_mode_termios(original, local_echo);
+    set_stdin_termios(&termios)
+}
 
+fn set_stdin_termios(termios: &libc::termios) -> io::Result<()> {
     // SAFETY: termios was fetched from STDIN_FILENO and only adjusted by this
     // process before being applied back to the same descriptor.
-    if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) } != 0 {
+    set_fd_termios(libc::STDIN_FILENO, termios)
+}
+
+fn set_fd_termios(fd: libc::c_int, termios: &libc::termios) -> io::Result<()> {
+    // SAFETY: fd is expected to reference a terminal and termios points to a
+    // valid termios value previously read from that terminal.
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, termios) } != 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
 }
 
 fn read_stdin_termios() -> io::Result<libc::termios> {
+    read_fd_termios(libc::STDIN_FILENO)
+}
+
+fn read_fd_termios(fd: libc::c_int) -> io::Result<libc::termios> {
     let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
     // SAFETY: STDIN_FILENO is a valid process file descriptor when raw mode is
     // enabled, and termios points to writable storage initialized by tcgetattr.
-    if unsafe { libc::tcgetattr(libc::STDIN_FILENO, termios.as_mut_ptr()) } != 0 {
+    if unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: successful tcgetattr initialized the termios storage.
     Ok(unsafe { termios.assume_init() })
 }
 
-fn raw_terminal_fixup_termios(mut termios: libc::termios, local_echo: LocalEcho) -> libc::termios {
+fn raw_terminal_mode_termios(mut termios: libc::termios, local_echo: LocalEcho) -> libc::termios {
+    // SAFETY: cfmakeraw only mutates the provided termios struct.
+    unsafe { libc::cfmakeraw(&mut termios) };
     termios.c_iflag &= !libc::IXOFF;
     match local_echo {
         LocalEcho::Off => {}
@@ -4701,6 +5933,7 @@ fn print_live_rendered(
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
 ) {
     if redraw {
         let surface_text = rendered
@@ -4712,6 +5945,7 @@ fn print_live_rendered(
                 &surface_text,
                 pane_surfaces,
                 pane_surface_summaries,
+                pane_chrome,
                 None,
             ) {
                 return;
@@ -4723,6 +5957,7 @@ fn print_live_rendered(
                 initial_scrollback,
                 false,
                 pane_surfaces,
+                pane_chrome,
                 None,
             );
             state.render_initial(&rendered.workspace, &redraw_text);
@@ -4734,6 +5969,7 @@ fn print_live_rendered(
                 initial_scrollback,
                 false,
                 pane_surfaces,
+                pane_chrome,
                 None,
             );
             redraw_terminal(&redraw_text);
@@ -4755,6 +5991,7 @@ fn print_live_surface(
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
 ) {
     print_live_surface_with_overlay(
         workspace,
@@ -4764,6 +6001,7 @@ fn print_live_surface(
         redraw_state,
         pane_surfaces,
         pane_surface_summaries,
+        pane_chrome,
         None,
     )
 }
@@ -4777,6 +6015,7 @@ fn print_live_surface_with_overlay(
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
     overlay: Option<&tui::TuiOverlay>,
 ) {
     if redraw {
@@ -4786,6 +6025,7 @@ fn print_live_surface_with_overlay(
                 surface_text,
                 pane_surfaces,
                 pane_surface_summaries,
+                pane_chrome,
                 overlay,
             ) {
                 return;
@@ -4797,6 +6037,7 @@ fn print_live_surface_with_overlay(
                 None,
                 false,
                 pane_surfaces,
+                pane_chrome,
                 overlay,
             );
             state.render_diff(workspace, &text);
@@ -4808,6 +6049,7 @@ fn print_live_surface_with_overlay(
                 None,
                 false,
                 pane_surfaces,
+                pane_chrome,
                 overlay,
             );
             redraw_terminal(&text);
@@ -4829,6 +6071,7 @@ fn print_live_update(
     redraw_state: Option<&mut RedrawState>,
     pane_surfaces: Option<&BTreeMap<String, String>>,
     pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
 ) {
     match live_update_print_kind(previous_metadata, metadata, update, redraw) {
         LiveUpdatePrintKind::Surface => print_live_surface(
@@ -4839,6 +6082,7 @@ fn print_live_update(
             redraw_state,
             pane_surfaces,
             pane_surface_summaries,
+            pane_chrome,
         ),
         LiveUpdatePrintKind::Metadata => {
             if redraw {
@@ -4848,6 +6092,7 @@ fn print_live_update(
                         surface_text,
                         pane_surfaces,
                         pane_surface_summaries,
+                        pane_chrome,
                         None,
                     );
                 }
@@ -5130,6 +6375,7 @@ impl RedrawState {
         surface_text: &str,
         pane_surfaces: Option<&BTreeMap<String, String>>,
         pane_surface_summaries: Option<&BTreeMap<String, local::RenderedSurfaceSummary>>,
+        pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
         overlay: Option<&tui::TuiOverlay>,
     ) -> bool {
         let render_start = Instant::now();
@@ -5143,7 +6389,7 @@ impl RedrawState {
                 active_surface_text: surface_text,
                 pane_surfaces,
                 pane_surface_summaries,
-                pane_chrome: None,
+                pane_chrome,
                 overlay,
             },
             area.width.max(1),
@@ -5200,7 +6446,7 @@ impl RedrawState {
                     active_surface_text: surface_text,
                     pane_surfaces,
                     pane_surface_summaries,
-                    pane_chrome: None,
+                    pane_chrome,
                     overlay,
                 },
             );
@@ -5370,11 +6616,12 @@ impl RedrawState {
         let status_row = self.status_row();
         let mut output = String::new();
         output.push_str(&format!(
-            "{}{}{}{}",
+            "{}{}{}{}{}",
             cursor::MoveTo(terminal_col, terminal_row_index),
+            SetAttribute(Attribute::Reset),
             SetAttribute(Attribute::Underlined),
             prediction.text,
-            SetAttribute(Attribute::NoUnderline)
+            SetAttribute(Attribute::Reset)
         ));
         output.push_str(&format!("{}", cursor::MoveTo(0, status_row)));
         Some(output)
@@ -5545,6 +6792,7 @@ fn redraw_text_with_context(
     scrollback: Option<local::ScrollbackChunkSummary>,
     has_status_bar: bool,
     pane_surfaces: Option<&BTreeMap<String, String>>,
+    pane_chrome: Option<&BTreeMap<String, tui::PaneChromeState>>,
     overlay: Option<&tui::TuiOverlay>,
 ) -> String {
     if has_status_bar {
@@ -5557,7 +6805,7 @@ fn redraw_text_with_context(
                 active_surface_text: surface_text,
                 pane_surfaces,
                 pane_surface_summaries: None,
-                pane_chrome: None,
+                pane_chrome,
                 overlay,
             },
             cols,
@@ -5797,6 +7045,39 @@ fn seed_cached_pane_modes_from_node(
     }
 }
 
+fn seed_cached_pane_surface_kinds(
+    surface_kinds: &mut BTreeMap<String, protocol::SurfaceKind>,
+    workspace: &local::WorkspaceSummary,
+    client_state: &local::ClientAttachState,
+) {
+    if let Some(root) = workspace.pane_tree.as_ref() {
+        seed_cached_pane_surface_kinds_from_node(surface_kinds, root, client_state);
+    } else if !surface_kinds.contains_key(&workspace.pane_id)
+        && let Some(summary) = client_state.cached_surface_summary(&workspace.pane_id)
+    {
+        surface_kinds.insert(workspace.pane_id.clone(), summary.surface_kind);
+    }
+}
+
+fn seed_cached_pane_surface_kinds_from_node(
+    surface_kinds: &mut BTreeMap<String, protocol::SurfaceKind>,
+    pane: &local::WorkspacePaneSummary,
+    client_state: &local::ClientAttachState,
+) {
+    if pane.children.is_empty() {
+        if !surface_kinds.contains_key(&pane.pane_id)
+            && let Some(summary) = client_state.cached_surface_summary(&pane.pane_id)
+        {
+            surface_kinds.insert(pane.pane_id.clone(), summary.surface_kind);
+        }
+        return;
+    }
+
+    for child in &pane.children {
+        seed_cached_pane_surface_kinds_from_node(surface_kinds, child, client_state);
+    }
+}
+
 fn print_terminal_metadata(metadata: &local::TerminalMetadataSummary) {
     for line in metadata.display_lines() {
         println!("{line}");
@@ -5877,6 +7158,7 @@ struct Args {
     no_scrollback: bool,
     state_path: Option<PathBuf>,
     record_path: Option<PathBuf>,
+    bug_report_dir: Option<PathBuf>,
     follow: bool,
     live: bool,
     start: bool,
@@ -6032,6 +7314,8 @@ struct RawArgs {
     state_path: Option<PathBuf>,
     #[arg(long = "record", value_name = "PATH")]
     record_path: Option<PathBuf>,
+    #[arg(long = "bug-report-dir", value_name = "DIR")]
+    bug_report_dir: Option<PathBuf>,
     #[arg(long = "follow", action = ArgAction::SetTrue)]
     follow: bool,
     #[arg(long = "live", action = ArgAction::SetTrue)]
@@ -6235,7 +7519,7 @@ where
     S: Into<std::ffi::OsString>,
 {
     let input_args = args.into_iter().map(Into::into).collect::<Vec<_>>();
-    let auto_default = input_args.is_empty();
+    let auto_default = input_args_are_only_default_safe_flags(&input_args);
     let args = preprocess_args(input_args)?;
     let mut raw =
         RawArgs::try_parse_from(std::iter::once(std::ffi::OsString::from("nmux")).chain(args))
@@ -6301,6 +7585,13 @@ where
         }
         value => value,
     };
+    if raw
+        .bug_report_dir
+        .as_ref()
+        .is_some_and(|path| path.as_os_str().is_empty())
+    {
+        return Err("--bug-report-dir requires a non-empty directory path".into());
+    }
     if raw.target_pane_id.as_deref().is_some_and(str::is_empty) {
         return Err("--pane requires a non-empty pane ID".into());
     }
@@ -6483,6 +7774,7 @@ where
         no_scrollback: raw.no_scrollback,
         state_path: raw.state_path,
         record_path: raw.record_path,
+        bug_report_dir: raw.bug_report_dir,
         follow: raw.follow,
         live,
         start,
@@ -6532,6 +7824,32 @@ where
     )?));
     normalized.extend(raw.into_iter().skip(1));
     Ok(normalized)
+}
+
+fn input_args_are_only_default_safe_flags(args: &[std::ffi::OsString]) -> bool {
+    if args.is_empty() {
+        return true;
+    }
+    let mut index = 0;
+    while index < args.len() {
+        let Some(arg) = args[index].to_str() else {
+            return false;
+        };
+        if arg == "--bug-report-dir" {
+            index += 2;
+            if index > args.len() {
+                return false;
+            }
+        } else if arg
+            .strip_prefix("--bug-report-dir=")
+            .is_some_and(|value| !value.is_empty())
+        {
+            index += 1;
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 fn known_command(value: &str) -> bool {
@@ -8056,6 +9374,7 @@ Options:
   --no-scrollback            Skip the post-attach scrollback fetch
   --state PATH               Persist client-side pane surface cache
   --record PATH              Write timestamped live JSON events to PATH
+  --bug-report-dir DIR       Opt-in raw terminal/crash/decode reports
   --follow                   Reconnect in a polling loop
   --live                     Keep one attach connection open
   --start                    Start a private local daemon before attaching
@@ -8336,12 +9655,14 @@ mod tests {
         AttachMode, BRACKETED_PASTE_END, BRACKETED_PASTE_START, ClientModeArgs,
         DEFAULT_REMOTE_PORT, DetachKey, ExplicitInputModeArgs, FocusEvent, FrameStats,
         HostMouseModeContext, InterimSurfaceFidelityWarningContext, KEY_NAME_ALIASES,
-        LiveDetachReason, LiveMouseDispatch, LiveScrollDirection, LiveSurfaceState,
-        LiveUpdatePrintKind, LocalEcho, MouseEvent, NoInputResizeArgs, PositiveNumericArgs,
-        RawTerminalModeContext, RedrawState, RedrawTerminalContext, STDIN_BYTES_DETACH,
+        LIVE_SCROLL_WHEEL_ROWS, LiveDetachReason, LiveMouseDispatch, LiveScrollDirection,
+        LiveScrollbackView, LiveSurfaceState, LiveUpdatePrintKind, LocalEcho, MouseEvent,
+        NoInputResizeArgs, PositiveNumericArgs, RawTerminalModeContext, RedrawState,
+        RedrawTerminalContext, SIGUSR1_LIVE_BUG_REPORT_REQUESTED, STDIN_BYTES_DETACH,
         SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags, SgrMouseInput,
-        SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward, StdinKey, StdinKeyInput,
-        args_from_iter, configure_default_live_args, default_attach_error_needs_restart,
+        SignalBugReportGuard, SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward,
+        StdinForwardOptions, StdinKey, StdinKeyInput, args_from_iter, configure_default_live_args,
+        default_attach_error_needs_restart, default_live_error_needs_restart,
         format_cli_error_json, format_context_json, format_input_choices_json,
         format_key_names_json, format_live_attach_json, format_live_cli_error_json,
         format_live_detach_json, format_live_error_json, format_live_presence_json,
@@ -8349,27 +9670,56 @@ mod tests {
         format_scrollback, format_state_info_json, format_state_info_text, format_stats_right,
         frontend_resize_pane_size, host_mouse_mode_disable_sequence,
         host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
-        interim_surface_fidelity_warning_needed, live_mouse_dispatch_for_workspace_size,
+        interim_surface_fidelity_warning_needed, is_requested_scrollback_view_update,
+        live_mouse_dispatch_for_workspace_size, live_pane_chrome_state,
         live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
-        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory, parse_detach_key,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
-        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        render_scrollback_view_summary, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, tui, usage,
-        validate_explicit_input_modes as super_validate_explicit_input_modes,
+        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory,
+        next_scroll_offset, parse_detach_key, parse_env_assignment, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, prefer_stdin_for_live_poll, preprocess_args,
+        raw_terminal_mode_needed, raw_terminal_mode_termios, record_live_surface_scrollback_total,
+        record_live_update_scrollback_total, redraw_terminal_guard_needed,
+        redraw_text_with_context, redraw_workspace_surface_text, render_fallback_speculative_echo,
+        render_scrollback_view_summary, render_scrollback_view_text,
+        restore_live_pane_surface_before_input, scrollback_viewport_range,
+        scrollbar_offset_from_track, sigwinch_resize_needed, speculative_echo_printable_prefix,
+        split_stdin_bytes_for_detach, stdin_byte_forwards, stdin_byte_forwards_with_options,
+        stdin_byte_forwards_with_pending, terminal_size_from_fds, terminal_size_unavailable, tui,
+        usage, validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
     };
     use nmux_cli::local;
-    use nmux_proto::protocol;
+    use nmux_proto::{protocol, wire};
     use std::collections::BTreeMap;
+    use std::fs;
     use std::io;
     use std::path::Path;
+    use std::sync::atomic::Ordering;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn live_poll_prefers_stream_after_forwarding_stdin_bytes() {
+        assert!(prefer_stdin_for_live_poll(false, true));
+        assert!(!prefer_stdin_for_live_poll(false, false));
+        assert!(!prefer_stdin_for_live_poll(true, true));
+    }
+
+    #[test]
+    fn speculative_echo_uses_printable_prefix_before_enter() {
+        assert_eq!(speculative_echo_printable_prefix("ls\r"), Some("ls"));
+        assert_eq!(speculative_echo_printable_prefix("\r\r\nls\r"), Some("ls"));
+        assert_eq!(speculative_echo_printable_prefix("\r"), None);
+        assert_eq!(speculative_echo_printable_prefix("abc"), Some("abc"));
+        assert_eq!(
+            render_fallback_speculative_echo("echo:\n", "ls").as_deref(),
+            Some("echo:ls")
+        );
+    }
 
     fn zero_termios() -> libc::termios {
-        // SAFETY: tests assign the termios fields read by raw_terminal_fixup_termios
+        // SAFETY: tests assign the termios fields read by raw_terminal_mode_termios
         // before asserting against the returned value.
         unsafe { std::mem::zeroed() }
     }
@@ -8399,8 +9749,11 @@ mod tests {
     ) -> local::SurfaceUpdate {
         local::SurfaceUpdate {
             kind,
+            viewport: protocol::PaneViewportKind::Active,
             pane_id: "pane-1".to_owned(),
             version: 7,
+            scrollback_version: 2,
+            scrollback_total_lines: 24,
             base_version: (kind == local::SurfaceUpdateKind::Patch).then_some(6),
             patch_kind,
             cols: (kind == local::SurfaceUpdateKind::Snapshot).then_some(80),
@@ -8417,6 +9770,75 @@ mod tests {
             hyperlinks: Vec::new(),
             text: String::new(),
         }
+    }
+
+    fn temp_signal_bug_report_dir() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "nmux-signal-guard-test-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create signal bug report dir");
+        dir
+    }
+
+    #[test]
+    fn sigusr1_bug_report_guard_writes_signal_report() {
+        let dir = temp_signal_bug_report_dir();
+        let prior_env = std::env::var_os("NMUX_BUG_REPORT_DIR");
+        unsafe {
+            std::env::set_var("NMUX_BUG_REPORT_DIR", &dir);
+        }
+        SIGUSR1_LIVE_BUG_REPORT_REQUESTED.store(false, Ordering::SeqCst);
+        let guard = SignalBugReportGuard::install(vec![
+            "nmux".to_owned(),
+            "--bug-report-dir".to_owned(),
+            dir.display().to_string(),
+        ])
+        .expect("install signal bug report guard");
+
+        // SAFETY: sending SIGUSR1 to the current process is the behavior under test.
+        assert_eq!(unsafe { libc::kill(libc::getpid(), libc::SIGUSR1) }, 0);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let report_path = loop {
+            let report = fs::read_dir(&dir)
+                .expect("read signal bug report dir")
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .find(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.ends_with("-signal-interrupt.json"))
+                });
+            if let Some(path) = report {
+                break path;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "SIGUSR1 did not write a signal-interrupt report in {}",
+                dir.display()
+            );
+            thread::sleep(Duration::from_millis(20));
+        };
+
+        drop(guard);
+        match prior_env {
+            Some(value) => unsafe {
+                std::env::set_var("NMUX_BUG_REPORT_DIR", value);
+            },
+            None => unsafe {
+                std::env::remove_var("NMUX_BUG_REPORT_DIR");
+            },
+        }
+        let metadata = fs::read_to_string(report_path).expect("read signal report");
+        assert!(metadata.contains("\"kind\":\"signal-interrupt\""));
+        assert!(metadata.contains("\"signal\":\"SIGUSR1\""));
+        assert!(SIGUSR1_LIVE_BUG_REPORT_REQUESTED.load(Ordering::SeqCst));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn positive_numeric_defaults() -> PositiveNumericArgs {
@@ -8864,6 +10286,8 @@ mod tests {
             surface: local::RenderedSurfaceSummary {
                 pane_id: "pane-1".to_owned(),
                 version: 17,
+                scrollback_version: 9,
+                scrollback_total_lines: 42,
                 cols: 80,
                 rows: 24,
                 colors: local::TerminalColorSummary {
@@ -9003,6 +10427,8 @@ mod tests {
             surface: local::RenderedSurfaceSummary {
                 pane_id: "pane-1".to_owned(),
                 version: 7,
+                scrollback_version: 1,
+                scrollback_total_lines: 24,
                 cols: 80,
                 rows: 24,
                 colors: local::TerminalColorSummary::default(),
@@ -9342,15 +10768,22 @@ mod tests {
     }
 
     #[test]
-    fn raw_terminal_mode_is_only_needed_for_stdin_bytes_on_tty() {
+    fn raw_terminal_mode_is_needed_for_stdin_bytes_on_any_attached_tty() {
         let interactive_byte_mode = RawTerminalModeContext {
             stdin_bytes: true,
             stdin_is_tty: true,
+            stdout_is_tty: false,
         };
 
         assert!(raw_terminal_mode_needed(interactive_byte_mode));
+        assert!(raw_terminal_mode_needed(RawTerminalModeContext {
+            stdin_is_tty: false,
+            stdout_is_tty: true,
+            ..interactive_byte_mode
+        }));
         assert!(!raw_terminal_mode_needed(RawTerminalModeContext {
             stdin_is_tty: false,
+            stdout_is_tty: false,
             ..interactive_byte_mode
         }));
         assert!(!raw_terminal_mode_needed(RawTerminalModeContext {
@@ -9597,8 +11030,8 @@ mod tests {
             .expect("fast speculative render");
 
         assert!(
-            update.contains("\x1b[1;6H\x1b[4mx\x1b[24m"),
-            "fast path should only paint predicted cell at cursor: {update:?}"
+            update.contains("\x1b[1;6H\x1b[0m\x1b[4mx\x1b[0m"),
+            "fast path should reset terminal style before painting predicted input: {update:?}"
         );
         assert_eq!(state.previous_rows[0], "ready\x1b[4mx\x1b[24m");
     }
@@ -9621,7 +11054,7 @@ mod tests {
         };
 
         let status_bar_text =
-            redraw_text_with_context(&ws, &metadata, "pane output", None, true, None, None);
+            redraw_text_with_context(&ws, &metadata, "pane output", None, true, None, None, None);
         assert!(
             !status_bar_text.contains("title=") && !status_bar_text.contains("working-directory="),
             "status-bar redraw should not inject metadata rows: {status_bar_text:?}"
@@ -9636,7 +11069,7 @@ mod tests {
         assert!(status_bar_text.contains("pane output"));
 
         let fallback_text =
-            redraw_text_with_context(&ws, &metadata, "pane output", None, false, None, None);
+            redraw_text_with_context(&ws, &metadata, "pane output", None, false, None, None, None);
         assert!(
             fallback_text.contains("title=shell title")
                 && fallback_text.contains("working-directory=file://localhost/tmp/nmux"),
@@ -9740,23 +11173,23 @@ mod tests {
     }
 
     #[test]
-    fn raw_terminal_mode_fixup_clears_flow_control_and_handles_local_echo() {
+    fn raw_terminal_mode_termios_enables_raw_input_and_handles_local_echo() {
         let mut original = zero_termios();
         original.c_lflag = libc::ICANON | libc::ISIG | libc::IEXTEN;
         original.c_iflag = libc::IXON | libc::IXOFF | libc::ICRNL;
         original.c_oflag = libc::OPOST;
 
-        let raw = raw_terminal_fixup_termios(original, LocalEcho::Off);
-        assert_eq!(raw.c_lflag & libc::ICANON, libc::ICANON);
+        let raw = raw_terminal_mode_termios(original, LocalEcho::Off);
+        assert_eq!(raw.c_lflag & libc::ICANON, 0);
         assert_eq!(raw.c_lflag & libc::ECHO, 0);
-        assert_eq!(raw.c_lflag & libc::ISIG, libc::ISIG);
-        assert_eq!(raw.c_lflag & libc::IEXTEN, libc::IEXTEN);
-        assert_eq!(raw.c_iflag & libc::IXON, libc::IXON);
+        assert_eq!(raw.c_lflag & libc::ISIG, 0);
+        assert_eq!(raw.c_lflag & libc::IEXTEN, 0);
+        assert_eq!(raw.c_iflag & libc::IXON, 0);
         assert_eq!(raw.c_iflag & libc::IXOFF, 0);
-        assert_eq!(raw.c_iflag & libc::ICRNL, libc::ICRNL);
-        assert_eq!(raw.c_oflag & libc::OPOST, libc::OPOST);
+        assert_eq!(raw.c_iflag & libc::ICRNL, 0);
+        assert_eq!(raw.c_oflag & libc::OPOST, 0);
 
-        let raw = raw_terminal_fixup_termios(original, LocalEcho::Tty);
+        let raw = raw_terminal_mode_termios(original, LocalEcho::Tty);
         assert_eq!(raw.c_lflag & libc::ECHO, libc::ECHO);
         assert_eq!(raw.c_iflag & libc::IXOFF, 0);
     }
@@ -9798,16 +11231,25 @@ mod tests {
                 mouse_format: protocol::MouseFormat::X10,
                 ..local::TerminalModeSummary::default()
             }),
-            "\x1b[?1000h\x1b[?1006h"
+            "\x1b[?1002h\x1b[?1006h"
         );
         assert_eq!(
             host_mouse_mode_enable_sequence(local::TerminalModeSummary {
                 mouse_tracking: true,
                 mouse_tracking_mode: protocol::MouseTrackingMode::Normal,
-                mouse_format: protocol::MouseFormat::Sgr,
+                mouse_format: protocol::MouseFormat::X10,
                 ..local::TerminalModeSummary::default()
             }),
             "\x1b[?1000h\x1b[?1006h"
+        );
+        assert_eq!(
+            host_mouse_mode_enable_sequence(local::TerminalModeSummary {
+                mouse_tracking: true,
+                mouse_tracking_mode: protocol::MouseTrackingMode::Button,
+                mouse_format: protocol::MouseFormat::X10,
+                ..local::TerminalModeSummary::default()
+            }),
+            "\x1b[?1002h\x1b[?1006h"
         );
         assert_eq!(
             host_mouse_mode_enable_sequence(local::TerminalModeSummary {
@@ -10635,6 +12077,42 @@ mod tests {
     }
 
     #[test]
+    fn bug_report_dir_arg_is_explicit_opt_in() {
+        let args = args_from_iter(["--bug-report-dir", "/tmp/nmux-bugs"])
+            .expect("parse bug report dir args");
+        assert_eq!(
+            args.bug_report_dir,
+            Some(std::path::PathBuf::from("/tmp/nmux-bugs"))
+        );
+        assert!(args.auto_default);
+
+        let err = match args_from_iter(["--bug-report-dir", ""]) {
+            Ok(_) => panic!("empty bug report dir should fail"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("--bug-report-dir"));
+    }
+
+    #[test]
+    fn bug_report_dir_flag_does_not_disable_default_attach_mode() {
+        let equals_args =
+            args_from_iter(["--bug-report-dir=/tmp/nmux-bugs"]).expect("parse equals args");
+        assert!(equals_args.auto_default);
+
+        let explicit_mode_args = args_from_iter(["--bug-report-dir", "/tmp/nmux-bugs", "--live"])
+            .expect("parse live args");
+        assert!(!explicit_mode_args.auto_default);
+        assert!(explicit_mode_args.live);
+    }
+
+    #[test]
+    fn default_live_restart_covers_setup_wire_would_block() {
+        let error = wire::WireError::Io(io::Error::from(io::ErrorKind::WouldBlock));
+
+        assert!(default_live_error_needs_restart(&error));
+    }
+
+    #[test]
     fn speculative_echo_arg_is_live_redraw_only() {
         let args = args_from_iter(["--live", "--redraw", "--key", "x", "--speculative-echo"])
             .expect("parse speculative echo args");
@@ -10732,6 +12210,7 @@ mod tests {
         assert!(usage.contains("--mouse-modifiers MODS"));
         assert!(usage.contains("--mouse-pixels X:Y"));
         assert!(usage.contains("--redraw"));
+        assert!(usage.contains("--bug-report-dir DIR"));
         assert!(usage.contains("--cols COUNT"));
         assert!(usage.contains("pane send PANE_ID TEXT"));
         assert!(usage.contains("pane ls [--json]"));
@@ -10767,8 +12246,516 @@ mod tests {
     }
 
     #[test]
-    fn scrollback_view_summary_preserves_runs_and_styles() {
-        let mut scrollback = scrollback_summary(4, 9, &[(4, "four"), (5, "five")]);
+    fn live_pane_chrome_marks_scrollback_views() {
+        let current_workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: String::new(),
+            current_pane_surfaces: BTreeMap::new(),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
+            scrollback_views: BTreeMap::new(),
+        };
+        surface_state.scrollback_views.insert(
+            "pane-1".to_owned(),
+            LiveScrollbackView {
+                offset_from_bottom: 3,
+                viewport_rows: 2,
+                total_history_lines: 9,
+            },
+        );
+
+        let chrome = live_pane_chrome_state(&surface_state, &current_workspace);
+
+        assert_eq!(
+            chrome.get("pane-1"),
+            Some(&tui::PaneChromeState {
+                read_only: false,
+                scrollback: Some(tui::PaneScrollChrome {
+                    offset_from_bottom: 3,
+                    viewport_rows: 2,
+                    total_history_lines: 9,
+                }),
+            })
+        );
+        assert!(!chrome.contains_key("pane-2"));
+    }
+
+    #[test]
+    fn live_pane_chrome_shows_scrollbar_for_live_panes() {
+        let current_workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: "one\ntwo\nthree".to_owned(),
+            current_pane_surfaces: BTreeMap::new(),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
+            scrollback_views: BTreeMap::new(),
+        };
+        surface_state
+            .current_pane_surfaces
+            .insert("pane-1".to_owned(), "one\ntwo\nthree".to_owned());
+
+        let chrome = live_pane_chrome_state(&surface_state, &current_workspace);
+
+        assert_eq!(
+            chrome.get("pane-1"),
+            Some(&tui::PaneChromeState {
+                read_only: false,
+                scrollback: Some(tui::PaneScrollChrome {
+                    offset_from_bottom: 0,
+                    viewport_rows: 3,
+                    total_history_lines: 3,
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn live_pane_chrome_uses_known_scrollback_total_at_live_bottom() {
+        let current_workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: "one\ntwo\nthree".to_owned(),
+            current_pane_surfaces: BTreeMap::new(),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
+            scrollback_views: BTreeMap::new(),
+        };
+        surface_state
+            .current_pane_surfaces
+            .insert("pane-1".to_owned(), "one\ntwo\nthree".to_owned());
+        surface_state
+            .current_pane_scrollback_totals
+            .insert("pane-1".to_owned(), 100);
+
+        let chrome = live_pane_chrome_state(&surface_state, &current_workspace);
+
+        assert_eq!(
+            chrome.get("pane-1"),
+            Some(&tui::PaneChromeState {
+                read_only: false,
+                scrollback: Some(tui::PaneScrollChrome {
+                    offset_from_bottom: 0,
+                    viewport_rows: 3,
+                    total_history_lines: 100,
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn live_pane_chrome_updates_scrollback_total_from_surface_update_trace_before_scroll() {
+        let current_workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: "one\ntwo\nthree".to_owned(),
+            current_pane_surfaces: BTreeMap::new(),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
+            scrollback_views: BTreeMap::new(),
+        };
+        surface_state
+            .current_pane_surfaces
+            .insert("pane-1".to_owned(), "one\ntwo\nthree".to_owned());
+
+        let mut initial = local::RenderedSurfaceSummary {
+            pane_id: "pane-1".to_owned(),
+            version: 1,
+            scrollback_version: 1,
+            scrollback_total_lines: 3,
+            cols: 80,
+            rows: 24,
+            colors: local::TerminalColorSummary::default(),
+            styles: Vec::new(),
+            hyperlinks: Vec::new(),
+            row_updates: Vec::new(),
+        };
+        record_live_surface_scrollback_total(&mut surface_state, &initial);
+        assert_eq!(
+            live_pane_chrome_state(&surface_state, &current_workspace)
+                .get("pane-1")
+                .and_then(|chrome| chrome.scrollback)
+                .map(|scroll| scroll.total_history_lines),
+            Some(3)
+        );
+
+        let mut update = test_surface_update(
+            local::SurfaceUpdateKind::Patch,
+            Some(protocol::PatchKind::ReplaceRows),
+        );
+        update.scrollback_version = 2;
+        update.scrollback_total_lines = 803;
+        record_live_update_scrollback_total(&mut surface_state, &update);
+        assert_eq!(
+            live_pane_chrome_state(&surface_state, &current_workspace)
+                .get("pane-1")
+                .and_then(|chrome| chrome.scrollback)
+                .map(|scroll| scroll.total_history_lines),
+            Some(803),
+            "surface updates must refresh scrollbar proportions before any user scroll"
+        );
+
+        initial.scrollback_total_lines = 1200;
+        record_live_surface_scrollback_total(&mut surface_state, &initial);
+        assert_eq!(
+            live_pane_chrome_state(&surface_state, &current_workspace)
+                .get("pane-1")
+                .and_then(|chrome| chrome.scrollback)
+                .map(|scroll| scroll.total_history_lines),
+            Some(1200)
+        );
+    }
+
+    #[test]
+    fn active_scrollback_view_tracks_total_growth_without_jumping() {
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: String::new(),
+            current_pane_surfaces: BTreeMap::new(),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
+            scrollback_views: BTreeMap::new(),
+        };
+        surface_state.scrollback_views.insert(
+            "pane-1".to_owned(),
+            LiveScrollbackView {
+                offset_from_bottom: 3,
+                viewport_rows: 20,
+                total_history_lines: 80,
+            },
+        );
+
+        let mut update = test_surface_update(
+            local::SurfaceUpdateKind::Patch,
+            Some(protocol::PatchKind::ReplaceRows),
+        );
+        update.scrollback_total_lines = 86;
+        record_live_update_scrollback_total(&mut surface_state, &update);
+
+        assert_eq!(
+            surface_state.scrollback_views.get("pane-1"),
+            Some(&LiveScrollbackView {
+                offset_from_bottom: 9,
+                viewport_rows: 20,
+                total_history_lines: 86,
+            }),
+            "new output below a scrolled viewport should preserve the same historical rows"
+        );
+        assert_eq!(
+            surface_state.current_pane_scrollback_totals.get("pane-1"),
+            Some(&86)
+        );
+
+        update.scrollback_total_lines = 12;
+        record_live_update_scrollback_total(&mut surface_state, &update);
+
+        assert_eq!(
+            surface_state.scrollback_views.get("pane-1"),
+            Some(&LiveScrollbackView {
+                offset_from_bottom: 0,
+                viewport_rows: 20,
+                total_history_lines: 12,
+            }),
+            "shrinking history should clamp the viewport back to a valid offset"
+        );
+    }
+
+    #[test]
+    fn input_into_scrolled_pane_restores_live_surface_before_forwarding() {
+        let current_workspace = local::WorkspaceSummary {
+            session_id: "local".to_owned(),
+            tab_id: "tab-1".to_owned(),
+            pane_id: "pane-1".to_owned(),
+            cols: 80,
+            rows: 24,
+            resize_policy: protocol::ResizePolicy::Fixed,
+            pane_tree: None,
+            tabs: Vec::new(),
+        };
+        let mut surface_state = LiveSurfaceState {
+            current_surface_metadata: local::TerminalMetadataSummary::default(),
+            current_surface_kind: protocol::SurfaceKind::Main,
+            current_modes: local::TerminalModeSummary::default(),
+            current_surface_text: "pinned-history".to_owned(),
+            current_pane_surfaces: BTreeMap::from([(
+                "pane-1".to_owned(),
+                "pinned-history".to_owned(),
+            )]),
+            current_pane_surface_summaries: BTreeMap::new(),
+            current_pane_modes: BTreeMap::new(),
+            current_pane_surface_kinds: BTreeMap::new(),
+            current_pane_scrollback_totals: BTreeMap::new(),
+            scrollback_views: BTreeMap::from([(
+                "pane-1".to_owned(),
+                LiveScrollbackView {
+                    offset_from_bottom: 12,
+                    viewport_rows: 20,
+                    total_history_lines: 80,
+                },
+            )]),
+        };
+        let mut client_state = local::ClientAttachState::default();
+        let mut snapshot = test_surface_update(local::SurfaceUpdateKind::Snapshot, None);
+        snapshot.row_updates.push(local::SurfaceRowUpdate {
+            row: 0,
+            text: "live-surface".to_owned(),
+            runs: Vec::new(),
+            dirty_hash: 0,
+            row_state_hash: 0,
+            semantic_prompt: protocol::RowSemanticPrompt::None,
+            dirty: true,
+            kitty_virtual_placeholder: false,
+        });
+        client_state
+            .render_surface_update_styled(&snapshot, false)
+            .expect("cache live surface");
+        let args = args_from_iter(["--live", "--redraw"]).expect("redraw args");
+        let mut redraw_state = None;
+
+        assert!(restore_live_pane_surface_before_input(
+            "pane-1",
+            &mut surface_state,
+            &client_state,
+            &current_workspace,
+            &args,
+            &mut redraw_state,
+            false,
+        ));
+
+        assert!(
+            !surface_state.scrollback_views.contains_key("pane-1"),
+            "typing into a scrolled pane should return it to the live surface"
+        );
+        assert_eq!(surface_state.current_surface_text, "live-surface");
+        assert_eq!(
+            surface_state.current_pane_surfaces.get("pane-1"),
+            Some(&"live-surface".to_owned())
+        );
+    }
+
+    #[test]
+    fn scrollback_viewport_math_uses_bottom_offset() {
+        assert_eq!(
+            next_scroll_offset(0, LiveScrollDirection::Up, LIVE_SCROLL_WHEEL_ROWS, 2, 20),
+            0,
+            "short transcript cannot scroll beyond the viewport"
+        );
+        assert_eq!(
+            next_scroll_offset(0, LiveScrollDirection::Up, LIVE_SCROLL_WHEEL_ROWS, 80, 20),
+            3,
+            "first entry into scrollback should use one normal wheel step"
+        );
+        assert_eq!(
+            next_scroll_offset(2, LiveScrollDirection::Down, 3, 80, 20),
+            0
+        );
+        assert_eq!(
+            next_scroll_offset(58, LiveScrollDirection::Up, 3, 80, 20),
+            60
+        );
+
+        assert_eq!(
+            scrollback_viewport_range(80, 20, 3),
+            super::ScrollbackViewportRange {
+                history_start_line: 58,
+                history_line_count: 20,
+            }
+        );
+        assert_eq!(
+            scrollback_viewport_range(2, 20, 2),
+            super::ScrollbackViewportRange {
+                history_start_line: 1,
+                history_line_count: 2,
+            }
+        );
+        assert_eq!(
+            scrollback_viewport_range(80, 20, 0),
+            super::ScrollbackViewportRange {
+                history_start_line: 61,
+                history_line_count: 20,
+            }
+        );
+        assert_eq!(scrollbar_offset_from_track(0, 10, 80, 20), 60);
+        assert_eq!(scrollbar_offset_from_track(9, 10, 80, 20), 0);
+    }
+
+    #[test]
+    fn first_wheel_scroll_on_large_scrollback_starts_three_rows_above_live_bottom() {
+        const TOTAL_LINES: u64 = 1000;
+        const TERMINAL_ROWS: u16 = 24;
+
+        let offset = next_scroll_offset(
+            0,
+            LiveScrollDirection::Up,
+            LIVE_SCROLL_WHEEL_ROWS,
+            TOTAL_LINES,
+            TERMINAL_ROWS,
+        );
+        assert_eq!(offset, LIVE_SCROLL_WHEEL_ROWS);
+
+        let viewport = scrollback_viewport_range(TOTAL_LINES, TERMINAL_ROWS, offset);
+        let expected_top_line_number = TOTAL_LINES - u64::from(TERMINAL_ROWS) - offset;
+        assert_eq!(expected_top_line_number, 973);
+        assert_eq!(
+            viewport,
+            super::ScrollbackViewportRange {
+                history_start_line: expected_top_line_number + 1,
+                history_line_count: u32::from(TERMINAL_ROWS),
+            }
+        );
+
+        let transcript = (1..=TOTAL_LINES)
+            .map(|public_line| {
+                let printed_line_number = public_line - 1;
+                (
+                    public_line,
+                    format!("line {printed_line_number:04}").into_boxed_str(),
+                    deterministic_scrollback_bg(
+                        u32::try_from(printed_line_number).expect("line number fits u32"),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        let line_refs = transcript
+            .iter()
+            .skip(usize::try_from(viewport.history_start_line - 1).expect("start fits usize"))
+            .take(usize::try_from(viewport.history_line_count).expect("count fits usize"))
+            .map(|(line, text, _bg)| (*line, text.as_ref()))
+            .collect::<Vec<_>>();
+        let mut scrollback =
+            scrollback_summary(viewport.history_start_line, TOTAL_LINES, &line_refs);
+        scrollback.styles = transcript
+            .iter()
+            .skip(usize::try_from(viewport.history_start_line - 1).expect("start fits usize"))
+            .take(usize::try_from(viewport.history_line_count).expect("count fits usize"))
+            .map(|(_line, _text, bg)| local::StyleSummary {
+                fg_rgba: 0xffffffff,
+                bg_rgba: *bg,
+                underline_rgba: 0,
+                flags: 0,
+            })
+            .collect();
+        for (index, line) in scrollback.lines.iter_mut().enumerate() {
+            line.runs = vec![local::CellRunSummary {
+                text: line.text.clone(),
+                cell_widths: vec![1; line.text.chars().count()],
+                style_id: u32::try_from(index).expect("style index fits u32"),
+                flags: 0,
+                hyperlink_id: 0,
+                semantic_content: protocol::CellSemanticContent::Output,
+            }];
+        }
+
+        let rendered = render_scrollback_view_summary(&scrollback);
+
+        assert_eq!(rendered.rows, u32::from(TERMINAL_ROWS));
+        assert_eq!(rendered.row_updates[0].text, "line 0973");
+        assert_eq!(
+            rendered.row_updates[0].runs[0].style_id, 0,
+            "first visible row should keep its deterministic background style"
+        );
+        assert_eq!(rendered.styles[0].bg_rgba, deterministic_scrollback_bg(973));
+        assert_eq!(rendered.row_updates[23].text, "line 0996");
+        assert_eq!(
+            rendered.styles[23].bg_rgba,
+            deterministic_scrollback_bg(996)
+        );
+    }
+
+    #[test]
+    fn scrollback_view_waits_for_pinned_snapshot_not_live_surface() {
+        let mut active = test_surface_update(local::SurfaceUpdateKind::Snapshot, None);
+        active.viewport = protocol::PaneViewportKind::Active;
+        let mut pinned = active.clone();
+        pinned.viewport = protocol::PaneViewportKind::Pinned;
+        let mut other_pane = pinned.clone();
+        other_pane.pane_id = "pane-2".to_owned();
+        let mut patch = pinned.clone();
+        patch.kind = local::SurfaceUpdateKind::Patch;
+
+        assert!(!is_requested_scrollback_view_update(&active, "pane-1"));
+        assert!(!is_requested_scrollback_view_update(&other_pane, "pane-1"));
+        assert!(!is_requested_scrollback_view_update(&patch, "pane-1"));
+        assert!(is_requested_scrollback_view_update(&pinned, "pane-1"));
+    }
+
+    #[test]
+    fn scrollback_view_renders_daemon_range_without_splicing_live_rows() {
+        let scrollback = scrollback_summary(78, 80, &[(78, "h78"), (79, "h79"), (80, "h80")]);
+        let rendered = render_scrollback_view_text(Some(&scrollback));
+
+        assert_eq!(rendered, "h78\nh79\nh80");
+    }
+
+    #[test]
+    fn scrollback_view_renders_repeated_blank_daemon_rows() {
+        let scrollback =
+            scrollback_summary(10, 13, &[(10, "before"), (11, ""), (12, ""), (13, "after")]);
+        let rendered = render_scrollback_view_text(Some(&scrollback));
+
+        assert_eq!(rendered, "before\n\n\nafter");
+    }
+
+    #[test]
+    fn scrollback_view_summary_preserves_daemon_styles() {
+        let mut scrollback = scrollback_summary(80, 80, &[(80, "history")]);
         scrollback.styles.push(local::StyleSummary {
             fg_rgba: 0xff0000ff,
             bg_rgba: 0,
@@ -10776,34 +12763,19 @@ mod tests {
             flags: 1,
         });
         scrollback.lines[0].runs = vec![local::CellRunSummary {
-            text: "four".to_owned(),
-            cell_widths: vec![1, 1, 1, 1],
+            text: "history".to_owned(),
+            cell_widths: vec![1; 7],
             style_id: 0,
             flags: 0,
             hyperlink_id: 0,
             semantic_content: protocol::CellSemanticContent::Output,
         }];
-        scrollback.lines[0].dirty_hash = 12;
-        scrollback.lines[0].row_state_hash = 13;
-        scrollback.lines[0].semantic_prompt = protocol::RowSemanticPrompt::Prompt;
-        scrollback.lines[0].dirty = true;
 
         let summary = render_scrollback_view_summary(&scrollback);
 
-        assert_eq!(summary.pane_id, "pane-1");
-        assert_eq!(summary.version, 1);
-        assert_eq!(summary.rows, 2);
         assert_eq!(summary.styles, scrollback.styles);
         assert_eq!(summary.row_updates[0].row, 0);
-        assert_eq!(summary.row_updates[0].text, "four");
-        assert_eq!(summary.row_updates[0].runs, scrollback.lines[0].runs);
-        assert_eq!(summary.row_updates[0].dirty_hash, 12);
-        assert_eq!(summary.row_updates[0].row_state_hash, 13);
-        assert_eq!(
-            summary.row_updates[0].semantic_prompt,
-            protocol::RowSemanticPrompt::Prompt
-        );
-        assert!(summary.row_updates[0].dirty);
+        assert_eq!(summary.row_updates[0].runs[0].style_id, 0);
     }
 
     #[test]
@@ -10891,9 +12863,112 @@ mod tests {
     }
 
     #[test]
+    fn stdin_bytes_buffer_split_sgr_mouse_before_forwarding() {
+        let mut pending = Vec::new();
+        assert_eq!(
+            stdin_byte_forwards_with_pending(
+                b"\x1b[<64;72;",
+                StdinForwardOptions::default(),
+                &mut pending
+            ),
+            Vec::<StdinByteForward>::new()
+        );
+        assert_eq!(pending, b"\x1b[<64;72;");
+
+        assert_eq!(
+            stdin_byte_forwards_with_pending(b"31M", StdinForwardOptions::default(), &mut pending),
+            vec![StdinByteForward::Mouse(SgrMouseInput {
+                row: 30,
+                col: 71,
+                button: protocol::MouseButton::WheelUp,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            })]
+        );
+        assert!(pending.is_empty());
+
+        assert_eq!(
+            stdin_byte_forwards_with_pending(
+                b"\x1b[<64;72;31M\x1b[<65;96;",
+                StdinForwardOptions::default(),
+                &mut pending
+            ),
+            vec![StdinByteForward::Mouse(SgrMouseInput {
+                row: 30,
+                col: 71,
+                button: protocol::MouseButton::WheelUp,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            })]
+        );
+        assert_eq!(pending, b"\x1b[<65;96;");
+        assert_eq!(
+            stdin_byte_forwards_with_pending(b"40M", StdinForwardOptions::default(), &mut pending),
+            vec![StdinByteForward::Mouse(SgrMouseInput {
+                row: 39,
+                col: 95,
+                button: protocol::MouseButton::WheelDown,
+                action: protocol::MouseAction::Press,
+                modifiers: 0,
+            })]
+        );
+    }
+
+    #[test]
+    fn stdin_bytes_buffer_split_structured_escape_without_hiding_escape_key() {
+        let mut pending = Vec::new();
+        assert_eq!(
+            stdin_byte_forwards_with_pending(b"\x1b", StdinForwardOptions::default(), &mut pending),
+            vec![StdinByteForward::Key(StdinKeyInput {
+                key: StdinKey::Escape,
+                bytes: b"\x1b".to_vec(),
+            })]
+        );
+        assert!(pending.is_empty());
+
+        assert_eq!(
+            stdin_byte_forwards_with_pending(
+                b"\x1b[",
+                StdinForwardOptions::default(),
+                &mut pending
+            ),
+            Vec::<StdinByteForward>::new()
+        );
+        assert_eq!(pending, b"\x1b[");
+        assert_eq!(
+            stdin_byte_forwards_with_pending(b"A", StdinForwardOptions::default(), &mut pending),
+            vec![StdinByteForward::Key(StdinKeyInput {
+                key: StdinKey::Up,
+                bytes: b"\x1b[A".to_vec(),
+            })]
+        );
+    }
+
+    #[test]
     fn stdin_bytes_decode_tui_keyboard_navigation_for_forwarding() {
         assert_eq!(
             stdin_byte_forwards(b"before\x1b[A\x1bw\rafter"),
+            vec![
+                StdinByteForward::Raw(b"before".to_vec()),
+                StdinByteForward::Key(StdinKeyInput {
+                    key: StdinKey::Up,
+                    bytes: b"\x1b[A".to_vec(),
+                }),
+                StdinByteForward::Key(StdinKeyInput {
+                    key: StdinKey::OpenMenu(tui::MenuAction::Windows),
+                    bytes: b"\x1bw".to_vec(),
+                }),
+                StdinByteForward::Raw(b"\rafter".to_vec()),
+            ]
+        );
+
+        assert_eq!(
+            stdin_byte_forwards_with_options(
+                b"before\x1b[A\x1bw\rafter",
+                StdinForwardOptions {
+                    tui_enter_enabled: true,
+                },
+            ),
             vec![
                 StdinByteForward::Raw(b"before".to_vec()),
                 StdinByteForward::Key(StdinKeyInput {
@@ -10944,7 +13019,10 @@ mod tests {
                 "ready",
                 None,
                 None,
+                None,
+                None,
                 modes,
+                protocol::SurfaceKind::Alternate,
                 None,
                 80,
                 24,
@@ -10971,7 +13049,39 @@ mod tests {
                 "ready",
                 None,
                 None,
+                None,
+                None,
+                modes,
+                protocol::SurfaceKind::Main,
+                None,
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::PaneScroll {
+                pane_id: "pane-1".to_owned(),
+                direction: LiveScrollDirection::Up,
+                visible_rows: 20,
+            }),
+            "pane content wheel scrolls nmux-owned scrollback on the main surface even when stale app mouse tracking remains enabled"
+        );
+
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 2,
+                    col: 2,
+                    button: protocol::MouseButton::WheelUp,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                None,
+                None,
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 None,
                 80,
                 24,
@@ -10997,13 +13107,86 @@ mod tests {
                 "ready",
                 None,
                 None,
+                None,
+                None,
                 modes,
+                protocol::SurfaceKind::Main,
                 None,
                 80,
                 24,
             ),
             Some(LiveMouseDispatch::FocusPane("pane-1".to_owned())),
             "pane chrome clicks select the pane"
+        );
+
+        let mut pane_chrome = BTreeMap::new();
+        pane_chrome.insert(
+            "pane-1".to_owned(),
+            tui::PaneChromeState {
+                read_only: false,
+                scrollback: Some(tui::PaneScrollChrome {
+                    offset_from_bottom: 3,
+                    viewport_rows: 20,
+                    total_history_lines: 80,
+                }),
+            },
+        );
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 2,
+                    col: 79,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Press,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                None,
+                Some(&pane_chrome),
+                local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
+                None,
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::PaneScroll {
+                pane_id: "pane-1".to_owned(),
+                direction: LiveScrollDirection::Up,
+                visible_rows: 20,
+            }),
+            "scrollbar arrow clicks scroll the pane"
+        );
+        assert_eq!(
+            live_mouse_dispatch_for_workspace_size(
+                SgrMouseInput {
+                    row: 10,
+                    col: 79,
+                    button: protocol::MouseButton::Left,
+                    action: protocol::MouseAction::Motion,
+                    modifiers: 0,
+                },
+                &workspace,
+                "ready",
+                None,
+                None,
+                None,
+                Some(&pane_chrome),
+                local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
+                None,
+                80,
+                24,
+            ),
+            Some(LiveMouseDispatch::PaneScrollTo {
+                pane_id: "pane-1".to_owned(),
+                track_position: 7,
+                track_len: 18,
+                visible_rows: 20,
+            }),
+            "scrollbar track drag jumps to the requested pane position"
         );
     }
 
@@ -11057,7 +13240,10 @@ mod tests {
                 "right active",
                 None,
                 None,
+                None,
+                None,
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 None,
                 100,
                 20,
@@ -11078,7 +13264,10 @@ mod tests {
                 "right active",
                 None,
                 None,
+                None,
+                None,
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 None,
                 100,
                 20,
@@ -11114,7 +13303,10 @@ mod tests {
                 "ready",
                 None,
                 None,
+                None,
+                None,
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 None,
                 80,
                 24,
@@ -11127,11 +13319,14 @@ mod tests {
             &workspace,
             &LiveSurfaceState {
                 current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_surface_kind: protocol::SurfaceKind::Main,
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
+                current_pane_surface_kinds: BTreeMap::new(),
+                current_pane_scrollback_totals: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
         );
@@ -11148,11 +13343,14 @@ mod tests {
             &workspace,
             &LiveSurfaceState {
                 current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_surface_kind: protocol::SurfaceKind::Main,
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
+                current_pane_surface_kinds: BTreeMap::new(),
+                current_pane_scrollback_totals: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
         );
@@ -11238,11 +13436,14 @@ mod tests {
             &workspace,
             &LiveSurfaceState {
                 current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_surface_kind: protocol::SurfaceKind::Main,
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
+                current_pane_surface_kinds: BTreeMap::new(),
+                current_pane_scrollback_totals: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
         );
@@ -11271,11 +13472,14 @@ mod tests {
             &workspace,
             &LiveSurfaceState {
                 current_surface_metadata: local::TerminalMetadataSummary::default(),
+                current_surface_kind: protocol::SurfaceKind::Main,
                 current_modes: local::TerminalModeSummary::default(),
                 current_surface_text: String::new(),
                 current_pane_surfaces: BTreeMap::new(),
                 current_pane_surface_summaries: BTreeMap::new(),
                 current_pane_modes: BTreeMap::new(),
+                current_pane_surface_kinds: BTreeMap::new(),
+                current_pane_scrollback_totals: BTreeMap::new(),
                 scrollback_views: BTreeMap::new(),
             },
             Some(&inventory),
@@ -11301,7 +13505,10 @@ mod tests {
                 "ready",
                 None,
                 None,
+                None,
+                None,
                 local::TerminalModeSummary::default(),
+                protocol::SurfaceKind::Main,
                 Some(&overlay),
                 80,
                 24,
@@ -11339,5 +13546,9 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    fn deterministic_scrollback_bg(index: u32) -> u32 {
+        0xff000000 | ((index.wrapping_mul(37) & 0xff) << 16) | 0x00102030
     }
 }

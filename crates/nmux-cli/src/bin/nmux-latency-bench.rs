@@ -52,6 +52,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         &nmux,
         &workspace.socket_path,
         workspace.trace_path.as_deref(),
+        args.case.as_deref(),
         args.iterations,
         args.warmup,
     )?;
@@ -68,6 +69,7 @@ fn run_latency_suite(
     nmux: &Path,
     socket_path: &Path,
     trace_path: Option<&Path>,
+    selected_case: Option<&str>,
     iterations: usize,
     warmup: usize,
 ) -> Result<LatencySuiteReport, Box<dyn std::error::Error>> {
@@ -89,7 +91,12 @@ fn run_latency_suite(
         },
     ];
     let mut reports = Vec::with_capacity(cases.len());
+    let mut matched_case = false;
     for case in cases {
+        if !case_matches(selected_case, case.name) {
+            continue;
+        }
+        matched_case = true;
         let case_socket_path = case_socket_path(socket_path, case.name);
         let report = run_latency_case(
             nmux,
@@ -101,43 +108,83 @@ fn run_latency_suite(
         )?;
         reports.push(report);
     }
-    let interactive_socket_path = case_socket_path(socket_path, "interactive-redraw-stdin-bytes");
-    reports.push(run_interactive_redraw_case(
-        nmux,
-        &interactive_socket_path,
-        trace_path,
-        iterations,
-        warmup,
-    )?);
-    let aged_socket_path = case_socket_path(socket_path, "interactive-redraw-aged-history");
-    reports.push(run_interactive_aged_history_case(
-        nmux,
-        &aged_socket_path,
-        trace_path,
-        iterations,
-        warmup,
-    )?);
-    let repeated_socket_path =
-        case_socket_path(socket_path, "interactive-redraw-after-repeated-output");
-    reports.push(run_interactive_repeated_output_case(
-        nmux,
-        &repeated_socket_path,
-        trace_path,
-        iterations,
-        warmup,
-    )?);
-    let speculative_socket_path = case_socket_path(
-        socket_path,
+    if case_matches(selected_case, "interactive-redraw-stdin-bytes") {
+        matched_case = true;
+        let interactive_socket_path =
+            case_socket_path(socket_path, "interactive-redraw-stdin-bytes");
+        reports.push(run_interactive_redraw_case(
+            nmux,
+            &interactive_socket_path,
+            trace_path,
+            iterations,
+            warmup,
+        )?);
+    }
+    if case_matches(selected_case, "interactive-redraw-aged-history") {
+        matched_case = true;
+        let aged_socket_path = case_socket_path(socket_path, "interactive-redraw-aged-history");
+        reports.push(run_interactive_aged_history_case(
+            nmux,
+            &aged_socket_path,
+            trace_path,
+            iterations,
+            warmup,
+        )?);
+    }
+    if case_matches(selected_case, "interactive-redraw-after-repeated-output") {
+        matched_case = true;
+        let repeated_socket_path =
+            case_socket_path(socket_path, "interactive-redraw-after-repeated-output");
+        reports.push(run_interactive_repeated_output_case(
+            nmux,
+            &repeated_socket_path,
+            trace_path,
+            iterations,
+            warmup,
+        )?);
+    }
+    if case_matches(
+        selected_case,
         "interactive-redraw-speculative-after-repeated-output",
-    );
-    reports.push(run_interactive_speculative_repeated_output_case(
-        nmux,
-        &speculative_socket_path,
-        trace_path,
-        iterations,
-        warmup,
-    )?);
+    ) {
+        matched_case = true;
+        let speculative_socket_path = case_socket_path(
+            socket_path,
+            "interactive-redraw-speculative-after-repeated-output",
+        );
+        reports.push(run_interactive_speculative_repeated_output_case(
+            nmux,
+            &speculative_socket_path,
+            trace_path,
+            iterations,
+            warmup,
+        )?);
+    }
+    if selected_case.is_some() && !matched_case {
+        return Err(format!(
+            "unknown latency case {:?}; expected one of: {}",
+            selected_case,
+            latency_case_names().join(", ")
+        )
+        .into());
+    }
     Ok(LatencySuiteReport { cases: reports })
+}
+
+fn case_matches(selected_case: Option<&str>, case_name: &str) -> bool {
+    selected_case.is_none_or(|selected| selected == case_name)
+}
+
+fn latency_case_names() -> &'static [&'static str] {
+    &[
+        "key-input-echo",
+        "raw-input-echo",
+        "paste-input-echo",
+        "interactive-redraw-stdin-bytes",
+        "interactive-redraw-aged-history",
+        "interactive-redraw-after-repeated-output",
+        "interactive-redraw-speculative-after-repeated-output",
+    ]
 }
 
 #[instrument(level = "info", skip(nmux, socket_path, trace_path))]
@@ -216,10 +263,7 @@ fn run_interactive_redraw_client(
     let mut samples = Vec::with_capacity(iterations);
 
     for index in 0..(warmup + iterations) {
-        let token = format!(
-            "interactive-redraw-stdin-bytes-{}-{index}",
-            std::process::id()
-        );
+        let token = redraw_visible_token(index);
         let input = format!("{token}\n");
         let sample_span = tracing::trace_span!("interactive_redraw_sample", token = %token, index);
         let elapsed = sample_span.in_scope(|| {
@@ -270,17 +314,17 @@ fn run_interactive_aged_history_client(
     client.wait_for_output("pane-1", DEFAULT_TIMEOUT)?;
 
     for cycle in 0..AGED_HISTORY_CYCLES {
-        let fill_marker = format!("aged-history-fill-{}-{cycle}", std::process::id());
+        let fill_marker = redraw_visible_token(cycle * 3);
         client.write_input(
             format!("__nmux_bench_fill:{fill_marker}:{AGED_HISTORY_LINES_PER_CYCLE}\n").as_bytes(),
         )?;
         client.wait_for_output(&fill_marker, AGED_HISTORY_SETUP_TIMEOUT)?;
 
-        let clear_marker = format!("aged-history-clear-{}-{cycle}", std::process::id());
+        let clear_marker = redraw_visible_token(cycle * 3 + 1);
         client.write_input(format!("__nmux_bench_clear:{clear_marker}\n").as_bytes())?;
         client.wait_for_output(&clear_marker, AGED_HISTORY_SETUP_TIMEOUT)?;
 
-        let alt_marker = format!("aged-history-alt-{}-{cycle}", std::process::id());
+        let alt_marker = redraw_visible_token(cycle * 3 + 2);
         client.write_input(
             format!("__nmux_bench_alt:{alt_marker}:{AGED_HISTORY_ALT_FRAMES_PER_CYCLE}\n")
                 .as_bytes(),
@@ -290,10 +334,7 @@ fn run_interactive_aged_history_client(
 
     let mut samples = Vec::with_capacity(iterations);
     for index in 0..(warmup + iterations) {
-        let token = format!(
-            "interactive-redraw-aged-history-{}-{index}",
-            std::process::id()
-        );
+        let token = redraw_visible_token(index);
         let input = format!("{token}\n");
         let sample_span =
             tracing::trace_span!("interactive_aged_history_sample", token = %token, index);
@@ -346,14 +387,8 @@ fn run_interactive_repeated_output_client(
     let mut samples = Vec::with_capacity(iterations);
 
     for index in 0..(warmup + iterations) {
-        let token = format!(
-            "interactive-redraw-after-repeated-output-{}-{index}",
-            std::process::id()
-        );
-        let burst_marker = format!(
-            "interactive-redraw-repeated-output-burst-{}-{index}",
-            std::process::id()
-        );
+        let token = redraw_visible_token(index);
+        let burst_marker = redraw_visible_token(index + warmup + iterations);
         let burst = format!(
             "__nmux_bench_repeated_output:{burst_marker}:{REPEATED_OUTPUT_LINES_PER_SAMPLE}\n"
         );
@@ -415,15 +450,9 @@ fn run_interactive_speculative_repeated_output_client(
     let mut samples = Vec::with_capacity(iterations);
 
     for index in 0..(warmup + iterations) {
-        let anchor = format!(
-            "interactive-redraw-speculative-anchor-{}-{index}",
-            std::process::id()
-        );
+        let anchor = redraw_visible_token(index);
         let expected = "\x1b[4mx";
-        let burst_marker = format!(
-            "interactive-redraw-speculative-burst-{}-{index}",
-            std::process::id()
-        );
+        let burst_marker = redraw_visible_token(index + warmup + iterations);
         client.write_input(format!("{anchor}\n").as_bytes())?;
         client.wait_for_output(&anchor, DEFAULT_TIMEOUT)?;
 
@@ -466,6 +495,12 @@ struct InteractiveNmuxClient {
     output_rx: mpsc::Receiver<Vec<u8>>,
     reader_thread: thread::JoinHandle<()>,
     output: Vec<u8>,
+}
+
+fn redraw_visible_token(index: usize) -> String {
+    let alphabet = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let ch = alphabet[index % alphabet.len()] as char;
+    std::iter::repeat_n(ch, 48).collect()
 }
 
 fn spawn_interactive_nmux_client(
@@ -594,7 +629,7 @@ fn attach_live_stream(
         client_kind: "nmux-latency-bench".to_owned(),
         mode,
         focused_pane_id: Some(pane_id.to_owned()),
-        known_surfaces: Vec::new(),
+        known_viewports: Vec::new(),
         subscribe_client_inventory: false,
     };
     local::write_attach_request(stream, &request)?;
@@ -1006,6 +1041,7 @@ impl Drop for BenchWorkspace {
 struct Args {
     iterations: usize,
     warmup: usize,
+    case: Option<String>,
     socket_path: Option<PathBuf>,
     trace_path: Option<PathBuf>,
     json: bool,
@@ -1017,6 +1053,7 @@ impl Args {
         let mut parsed = Self {
             iterations: DEFAULT_ITERATIONS,
             warmup: DEFAULT_WARMUP,
+            case: None,
             socket_path: None,
             trace_path: None,
             json: false,
@@ -1032,6 +1069,9 @@ impl Args {
                 }
                 Some("--warmup") => {
                     parsed.warmup = parse_usize_arg("--warmup", args.next())?;
+                }
+                Some("--case") => {
+                    parsed.case = Some(parse_string_arg("--case", args.next())?);
                 }
                 Some("--socket") => {
                     parsed.socket_path = Some(PathBuf::from(
@@ -1051,6 +1091,16 @@ impl Args {
         }
         Ok(parsed)
     }
+}
+
+fn parse_string_arg(
+    name: &str,
+    value: Option<OsString>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let value = value.ok_or_else(|| format!("{name} requires a value"))?;
+    value
+        .into_string()
+        .map_err(|value| format!("{name} value is not UTF-8: {value:?}").into())
 }
 
 fn parse_usize_arg(
@@ -1079,7 +1129,7 @@ fn nmux_binary_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 fn usage() -> &'static str {
-    "Usage: nmux-latency-bench [--iterations N] [--warmup N] [--socket PATH] [--trace PATH] [--json]\n"
+    "Usage: nmux-latency-bench [--case NAME] [--iterations N] [--warmup N] [--socket PATH] [--trace PATH] [--json]\n"
 }
 
 fn default_trace_path() -> Option<PathBuf> {

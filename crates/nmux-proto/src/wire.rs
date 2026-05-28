@@ -1,5 +1,6 @@
 use std::fmt;
 use std::io::{self, Read, Write};
+use std::time::Duration;
 
 use crate::{PROTOCOL_VERSION, protocol};
 
@@ -56,7 +57,7 @@ impl From<flatbuffers::InvalidFlatbuffer> for WireError {
 
 pub fn read_frame<R: Read>(reader: &mut R, max_len: usize) -> Result<Vec<u8>, WireError> {
     let mut prefix = [0_u8; 4];
-    reader.read_exact(&mut prefix)?;
+    read_frame_bytes(reader, &mut prefix)?;
 
     let payload_len = u32::from_le_bytes(prefix) as usize;
     if payload_len > max_len {
@@ -69,10 +70,31 @@ pub fn read_frame<R: Read>(reader: &mut R, max_len: usize) -> Result<Vec<u8>, Wi
     let mut frame = Vec::with_capacity(4 + payload_len);
     frame.extend_from_slice(&prefix);
     frame.resize(4 + payload_len, 0);
-    reader.read_exact(&mut frame[4..])?;
+    read_frame_bytes(reader, &mut frame[4..])?;
 
     validate_protocol_version(&frame)?;
     Ok(frame)
+}
+
+fn read_frame_bytes<R: Read>(reader: &mut R, mut buf: &mut [u8]) -> io::Result<()> {
+    let mut consumed = false;
+    while !buf.is_empty() {
+        match reader.read(buf) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(n) => {
+                consumed = true;
+                let (_, remaining) = buf.split_at_mut(n);
+                buf = remaining;
+            }
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock && !consumed => return Err(err),
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
 }
 
 pub fn write_frame<W: Write>(
@@ -118,11 +140,48 @@ fn validate_protocol_version(frame: &[u8]) -> Result<(), WireError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::io::{self, Cursor};
 
     use flatbuffers::FlatBufferBuilder;
 
     use super::*;
+
+    enum ReadStep {
+        Data(Vec<u8>),
+        WouldBlock,
+    }
+
+    struct ScriptedReader {
+        steps: VecDeque<ReadStep>,
+    }
+
+    impl ScriptedReader {
+        fn new(steps: impl IntoIterator<Item = ReadStep>) -> Self {
+            Self {
+                steps: steps.into_iter().collect(),
+            }
+        }
+    }
+
+    impl Read for ScriptedReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            match self.steps.pop_front() {
+                Some(ReadStep::Data(data)) => {
+                    let count = data.len().min(buf.len());
+                    buf[..count].copy_from_slice(&data[..count]);
+                    if count < data.len() {
+                        self.steps
+                            .push_front(ReadStep::Data(data[count..].to_vec()));
+                    }
+                    Ok(count)
+                }
+                Some(ReadStep::WouldBlock) => Err(io::ErrorKind::WouldBlock.into()),
+                None => Ok(0),
+            }
+        }
+    }
+
     fn workspace_frame() -> Vec<u8> {
         workspace_frame_with_version(PROTOCOL_VERSION)
     }
@@ -227,6 +286,33 @@ mod tests {
             err,
             WireError::Io(ref io_err) if io_err.kind() == io::ErrorKind::UnexpectedEof
         ));
+    }
+
+    #[test]
+    fn returns_would_block_without_consuming_an_empty_nonblocking_read() {
+        let mut reader = ScriptedReader::new([ReadStep::WouldBlock]);
+        let err = read_frame(&mut reader, DEFAULT_MAX_FRAME_LEN).expect_err("would block");
+
+        assert!(matches!(
+            err,
+            WireError::Io(ref io_err) if io_err.kind() == io::ErrorKind::WouldBlock
+        ));
+    }
+
+    #[test]
+    fn completes_frame_after_partial_nonblocking_stalls() {
+        let frame = workspace_frame();
+        let mut reader = ScriptedReader::new([
+            ReadStep::Data(frame[..2].to_vec()),
+            ReadStep::WouldBlock,
+            ReadStep::Data(frame[2..7].to_vec()),
+            ReadStep::WouldBlock,
+            ReadStep::Data(frame[7..].to_vec()),
+        ]);
+
+        let decoded = read_frame(&mut reader, DEFAULT_MAX_FRAME_LEN).expect("frame");
+
+        assert_eq!(decoded, frame);
     }
 
     #[test]
