@@ -128,6 +128,7 @@ const LIVE_RTT_PING_INTERVAL: Duration = Duration::from_secs(1);
 const LIVE_RTT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_FPS_WINDOW: Duration = Duration::from_secs(2);
 const LIVE_SCROLL_WHEEL_ROWS: u64 = 3;
+const STDIN_BYTE_READ_CHUNK: usize = 32;
 
 fn main() {
     if let Err(err) = run() {
@@ -1308,7 +1309,12 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                         let (input, detach) =
                             split_stdin_bytes_for_detach(&input, args.detach_key.byte());
                         if let Some(input) = input {
-                            for forward in stdin_byte_forwards(&input) {
+                            let tui_enter_enabled =
+                                active_overlay.is_some() || active_menu_index.is_some();
+                            for forward in stdin_byte_forwards_with_options(
+                                &input,
+                                StdinForwardOptions { tui_enter_enabled },
+                            ) {
                                 match forward {
                                     StdinByteForward::Raw(input) => {
                                         let input_span = tracing::trace_span!(
@@ -3057,7 +3063,7 @@ fn spawn_stdin_byte_reader() -> io::Result<StdinByteReader> {
     wake_writer.set_nonblocking(true)?;
     thread::spawn(move || {
         let mut stdin = io::stdin().lock();
-        let mut buffer = [0_u8; 1024];
+        let mut buffer = [0_u8; STDIN_BYTE_READ_CHUNK];
         loop {
             match stdin.read(&mut buffer) {
                 Ok(0) => {
@@ -3243,14 +3249,27 @@ fn split_stdin_bytes_for_detach(input: &[u8], detach_byte: Option<u8>) -> (Optio
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct StdinForwardOptions {
+    tui_enter_enabled: bool,
+}
+
+#[cfg(test)]
 fn stdin_byte_forwards(input: &[u8]) -> Vec<StdinByteForward> {
+    stdin_byte_forwards_with_options(input, StdinForwardOptions::default())
+}
+
+fn stdin_byte_forwards_with_options(
+    input: &[u8],
+    options: StdinForwardOptions,
+) -> Vec<StdinByteForward> {
     let mut forwards = Vec::new();
     let mut offset = 0;
     while offset < input.len() {
         let paste = find_bytes(&input[offset..], BRACKETED_PASTE_START);
         let mouse = find_sgr_mouse_sequence(&input[offset..])
             .map(|(start, mouse, end)| (start, StdinByteForward::Mouse(mouse), end));
-        let key = find_tui_key_sequence(&input[offset..])
+        let key = find_tui_key_sequence(&input[offset..], options)
             .map(|(start, key, end)| (start, StdinByteForward::Key(key), end));
         let Some((start_rel, forward, end_rel)) = next_structured_stdin_forward(
             paste.map(|start| (start, StdinByteForward::Raw(Vec::new()), 0)),
@@ -3306,24 +3325,28 @@ fn next_structured_stdin_forward(
         .min_by_key(|candidate| candidate.0)
 }
 
-fn find_tui_key_sequence(input: &[u8]) -> Option<(usize, StdinKeyInput, usize)> {
+fn find_tui_key_sequence(
+    input: &[u8],
+    options: StdinForwardOptions,
+) -> Option<(usize, StdinKeyInput, usize)> {
     for start in 0..input.len() {
-        if let Some((key, len)) = parse_tui_key_sequence(&input[start..]) {
+        if let Some((key, len)) = parse_tui_key_sequence(&input[start..], options) {
             return Some((start, key, start + len));
         }
     }
     None
 }
 
-fn parse_tui_key_sequence(input: &[u8]) -> Option<(StdinKeyInput, usize)> {
-    let candidates: &[(&[u8], StdinKey)] = &[
+fn parse_tui_key_sequence(
+    input: &[u8],
+    options: StdinForwardOptions,
+) -> Option<(StdinKeyInput, usize)> {
+    const BASE_CANDIDATES: &[(&[u8], StdinKey)] = &[
         (b"\x1b[A", StdinKey::Up),
         (b"\x1b[B", StdinKey::Down),
         (b"\x1b[C", StdinKey::Right),
         (b"\x1b[D", StdinKey::Left),
         (b"\x1b[Z", StdinKey::BackTab),
-        (b"\r", StdinKey::Enter),
-        (b"\n", StdinKey::Enter),
         (b"\t", StdinKey::Tab),
         (b"\x1bs", StdinKey::OpenMenu(tui::MenuAction::Sessions)),
         (b"\x1bn", StdinKey::OpenMenu(tui::MenuAction::NewSession)),
@@ -3331,9 +3354,22 @@ fn parse_tui_key_sequence(input: &[u8]) -> Option<(StdinKeyInput, usize)> {
         (b"\x1bc", StdinKey::OpenMenu(tui::MenuAction::Clipboard)),
         (b"\x1b", StdinKey::Escape),
     ];
-    let (bytes, key) = candidates
-        .iter()
-        .find(|(bytes, _)| input.starts_with(bytes))?;
+    const ENTER_CANDIDATES: &[(&[u8], StdinKey)] =
+        &[(b"\r", StdinKey::Enter), (b"\n", StdinKey::Enter)];
+
+    let enter_match = options
+        .tui_enter_enabled
+        .then(|| {
+            ENTER_CANDIDATES
+                .iter()
+                .find(|(bytes, _)| input.starts_with(bytes))
+        })
+        .flatten();
+    let (bytes, key) = enter_match.or_else(|| {
+        BASE_CANDIDATES
+            .iter()
+            .find(|(bytes, _)| input.starts_with(bytes))
+    })?;
     Some((
         StdinKeyInput {
             key: *key,
@@ -9200,28 +9236,29 @@ mod tests {
         NoInputResizeArgs, PositiveNumericArgs, RawTerminalModeContext, RedrawState,
         RedrawTerminalContext, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand,
         ScrollbackSelectionArgFlags, SgrMouseInput, SigwinchResizeContext, StateInfoSocketSummary,
-        StdinByteForward, StdinKey, StdinKeyInput, args_from_iter, configure_default_live_args,
-        default_attach_error_needs_restart, default_live_error_needs_restart,
-        format_cli_error_json, format_context_json, format_input_choices_json,
-        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
-        format_live_detach_json, format_live_error_json, format_live_presence_json,
-        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
-        format_scrollback, format_state_info_json, format_state_info_text, format_stats_right,
-        frontend_resize_pane_size, host_mouse_mode_disable_sequence,
-        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
-        interim_surface_fidelity_warning_needed, live_mouse_dispatch_for_workspace_size,
-        live_pane_chrome_state, live_session_new_should_fallback, live_update_print_kind,
-        managed_ready_error_message, menu_overlay_for_action,
-        menu_overlay_for_action_with_session_inventory, next_scroll_offset, parse_detach_key,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        preprocess_args, raw_terminal_fixup_termios, raw_terminal_mode_needed,
-        record_live_surface_scrollback_total, record_live_update_scrollback_total,
-        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        render_scrollback_view_summary, render_scrollback_view_text, scrollback_viewport_range,
-        scrollbar_offset_from_track, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        stdin_byte_forwards, terminal_size_from_fds, terminal_size_unavailable, tui, usage,
-        validate_explicit_input_modes as super_validate_explicit_input_modes,
+        StdinByteForward, StdinForwardOptions, StdinKey, StdinKeyInput, args_from_iter,
+        configure_default_live_args, default_attach_error_needs_restart,
+        default_live_error_needs_restart, format_cli_error_json, format_context_json,
+        format_input_choices_json, format_key_names_json, format_live_attach_json,
+        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
+        format_live_presence_json, format_live_surface_update_json, format_live_workspace_json,
+        format_rendered_attach_json, format_scrollback, format_state_info_json,
+        format_state_info_text, format_stats_right, frontend_resize_pane_size,
+        host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
+        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
+        live_mouse_dispatch_for_workspace_size, live_pane_chrome_state,
+        live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
+        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory,
+        next_scroll_offset, parse_detach_key, parse_env_assignment, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_fixup_termios,
+        raw_terminal_mode_needed, record_live_surface_scrollback_total,
+        record_live_update_scrollback_total, redraw_terminal_guard_needed,
+        redraw_text_with_context, redraw_workspace_surface_text, render_scrollback_view_summary,
+        render_scrollback_view_text, scrollback_viewport_range, scrollbar_offset_from_track,
+        sigwinch_resize_needed, split_stdin_bytes_for_detach, stdin_byte_forwards,
+        stdin_byte_forwards_with_options, terminal_size_from_fds, terminal_size_unavailable, tui,
+        usage, validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
     };
@@ -12212,6 +12249,27 @@ mod tests {
     fn stdin_bytes_decode_tui_keyboard_navigation_for_forwarding() {
         assert_eq!(
             stdin_byte_forwards(b"before\x1b[A\x1bw\rafter"),
+            vec![
+                StdinByteForward::Raw(b"before".to_vec()),
+                StdinByteForward::Key(StdinKeyInput {
+                    key: StdinKey::Up,
+                    bytes: b"\x1b[A".to_vec(),
+                }),
+                StdinByteForward::Key(StdinKeyInput {
+                    key: StdinKey::OpenMenu(tui::MenuAction::Windows),
+                    bytes: b"\x1bw".to_vec(),
+                }),
+                StdinByteForward::Raw(b"\rafter".to_vec()),
+            ]
+        );
+
+        assert_eq!(
+            stdin_byte_forwards_with_options(
+                b"before\x1b[A\x1bw\rafter",
+                StdinForwardOptions {
+                    tui_enter_enabled: true,
+                },
+            ),
             vec![
                 StdinByteForward::Raw(b"before".to_vec()),
                 StdinByteForward::Key(StdinKeyInput {

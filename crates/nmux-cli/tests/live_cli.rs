@@ -107,6 +107,15 @@ impl PtyCommand {
         let _ = self.writer.flush();
     }
 
+    fn write_all(&mut self, bytes: &[u8]) {
+        self.writer.write_all(bytes).expect("write to pty");
+        self.writer.flush().expect("flush pty");
+    }
+
+    fn is_running(&mut self) -> bool {
+        self.child.try_wait().expect("poll nmux in pty").is_none()
+    }
+
     fn resize(&mut self, cols: u16, rows: u16) {
         self.master
             .resize(PtySize {
@@ -135,6 +144,56 @@ impl PtyCommand {
             output: String::from_utf8_lossy(&output).into_owned(),
         }
     }
+}
+
+#[test]
+fn live_redraw_tty_holding_enter_does_not_detach() {
+    let socket_path = test_socket_path();
+    let socket = socket_path.to_str().expect("socket path");
+    let _ = fs::remove_file(&socket_path);
+
+    let mut daemon = daemon_command()
+        .args([
+            "--socket",
+            socket,
+            "--live",
+            "--command",
+            "printf 'ready\\n'; while IFS= read -r line; do printf 'line:%s\\n' \"$line\"; done",
+        ])
+        .spawn()
+        .expect("spawn daemon");
+    wait_for_socket(&socket_path);
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--live", "--redraw", "--interval-ms", "20"],
+        &[("NMUX_SOCKET", socket)],
+    );
+    thread::sleep(Duration::from_millis(300));
+    client.write_all(&vec![b'\r'; 256]);
+    thread::sleep(Duration::from_millis(500));
+    assert!(client.is_running(), "client exited after held Enter");
+    client.kill();
+    let output = client.wait();
+
+    let _kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill daemon");
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    let _ = fs::remove_file(&socket_path);
+
+    assert!(
+        !output.output.contains("stdin EOF; detached"),
+        "held Enter detached through stdin EOF:\n{}",
+        output.output
+    );
+    assert!(
+        !output.output.contains("detached by local Ctrl-]"),
+        "held Enter should not be treated as local detach:\n{}",
+        output.output
+    );
 }
 
 #[test]
