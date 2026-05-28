@@ -305,6 +305,7 @@ fn start_default_daemon(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         &args.socket_path,
         args.target_session_id.as_deref(),
         &command,
+        args.bug_report_dir.as_deref(),
         terminal_size()?,
         Duration::from_millis(args.startup_timeout_ms),
     )
@@ -625,14 +626,66 @@ fn collect_leaf_panes(
     }
 }
 
+fn extract_builtin_bug_report_dir(
+    raw_args: &[std::ffi::OsString],
+) -> Result<(Vec<std::ffi::OsString>, Option<PathBuf>), Box<dyn std::error::Error>> {
+    let mut stripped = Vec::new();
+    let mut bug_report_dir = None;
+    let mut index = 1;
+    while index < raw_args.len() {
+        let arg = &raw_args[index];
+        if arg == "--bug-report-dir" {
+            let Some(value) = raw_args.get(index + 1) else {
+                return Err("--bug-report-dir requires a directory path".into());
+            };
+            if value.is_empty() {
+                return Err("--bug-report-dir requires a non-empty directory path".into());
+            }
+            bug_report_dir = Some(PathBuf::from(value));
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg
+            .to_str()
+            .and_then(|arg| arg.strip_prefix("--bug-report-dir="))
+        {
+            if value.is_empty() {
+                return Err("--bug-report-dir requires a non-empty directory path".into());
+            }
+            bug_report_dir = Some(PathBuf::from(value));
+            index += 1;
+            continue;
+        }
+        stripped.push(arg.clone());
+        index += 1;
+    }
+    Ok((stripped, bug_report_dir))
+}
+
 fn run_builtin_subcommand(
     raw_args: &[std::ffi::OsString],
 ) -> Option<Result<(), Box<dyn std::error::Error>>> {
     let first = raw_args.first()?.to_str()?;
     match first {
         "daemon" => {
-            let argv = std::iter::once(std::ffi::OsString::from("nmux daemon"))
-                .chain(raw_args.iter().skip(1).cloned());
+            let (daemon_args, bug_report_dir) = match extract_builtin_bug_report_dir(raw_args) {
+                Ok(result) => result,
+                Err(err) => return Some(Err(err)),
+            };
+            let _signal_bug_report = if let Some(path) = bug_report_dir {
+                nmux_cli::bug_report::set_bug_report_dir(path);
+                match SignalBugReportGuard::install(
+                    std::env::args_os()
+                        .map(|arg| arg.to_string_lossy().into_owned())
+                        .collect(),
+                ) {
+                    Ok(guard) => Some(guard),
+                    Err(err) => return Some(Err(Box::new(err))),
+                }
+            } else {
+                None
+            };
+            let argv = std::iter::once(std::ffi::OsString::from("nmux daemon")).chain(daemon_args);
             Some(daemon::run_from_iter(argv))
         }
         "version" => {
@@ -2542,6 +2595,7 @@ impl PersistentDaemon {
         socket_path: &Path,
         session_id: Option<&str>,
         command: &str,
+        bug_report_dir: Option<&Path>,
         initial_size: Option<(u32, u32)>,
         startup_timeout: Duration,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -2549,14 +2603,21 @@ impl PersistentDaemon {
         let socket_arg = socket_path
             .to_str()
             .ok_or("daemon socket path is not UTF-8")?;
-        let mut command_args = vec![
-            "daemon".to_owned(),
+        let mut command_args = vec!["daemon".to_owned()];
+        if let Some(bug_report_dir) = bug_report_dir {
+            let bug_report_dir = bug_report_dir
+                .to_str()
+                .ok_or("bug report directory path is not UTF-8")?;
+            command_args.push("--bug-report-dir".to_owned());
+            command_args.push(bug_report_dir.to_owned());
+        }
+        command_args.extend([
             "--socket".to_owned(),
             socket_arg.to_owned(),
             "--live-forever".to_owned(),
             "--command".to_owned(),
             command.to_owned(),
-        ];
+        ]);
         if let Some(session_id) = session_id {
             command_args.push("--session".to_owned());
             command_args.push(session_id.to_owned());
@@ -9527,32 +9588,32 @@ mod tests {
         LIVE_SCROLL_WHEEL_ROWS, LiveDetachReason, LiveMouseDispatch, LiveScrollDirection,
         LiveScrollbackView, LiveSurfaceState, LiveUpdatePrintKind, LocalEcho, MouseEvent,
         NoInputResizeArgs, PositiveNumericArgs, RawTerminalModeContext, RedrawState,
-        RedrawTerminalContext, STDIN_BYTES_DETACH, SUPPORTED_KEY_NAMES, ScriptCommand,
-        ScrollbackSelectionArgFlags, SgrMouseInput, SigwinchResizeContext, StateInfoSocketSummary,
-        StdinByteForward, StdinForwardOptions, StdinKey, StdinKeyInput, args_from_iter,
-        configure_default_live_args, default_attach_error_needs_restart,
-        default_live_error_needs_restart, format_cli_error_json, format_context_json,
-        format_input_choices_json, format_key_names_json, format_live_attach_json,
-        format_live_cli_error_json, format_live_detach_json, format_live_error_json,
-        format_live_presence_json, format_live_surface_update_json, format_live_workspace_json,
-        format_rendered_attach_json, format_scrollback, format_state_info_json,
-        format_state_info_text, format_stats_right, frontend_resize_pane_size,
-        host_mouse_mode_disable_sequence, host_mouse_mode_enable_sequence,
-        host_mouse_mode_mirror_needed, interim_surface_fidelity_warning_needed,
-        is_requested_scrollback_view_update, live_mouse_dispatch_for_workspace_size,
-        live_pane_chrome_state, live_session_new_should_fallback, live_update_print_kind,
-        managed_ready_error_message, menu_overlay_for_action,
-        menu_overlay_for_action_with_session_inventory, next_scroll_offset, parse_detach_key,
-        parse_env_assignment, parse_focus_event, parse_key_modifiers, parse_key_name,
-        parse_local_echo, parse_mouse_event, parse_mouse_pixels, parse_numeric_arg,
-        preprocess_args, raw_terminal_mode_needed, raw_terminal_mode_termios,
-        record_live_surface_scrollback_total, record_live_update_scrollback_total,
-        redraw_terminal_guard_needed, redraw_text_with_context, redraw_workspace_surface_text,
-        render_scrollback_view_summary, render_scrollback_view_text,
-        restore_live_pane_surface_before_input, scrollback_viewport_range,
-        scrollbar_offset_from_track, sigwinch_resize_needed, split_stdin_bytes_for_detach,
-        stdin_byte_forwards, stdin_byte_forwards_with_options, terminal_size_from_fds,
-        terminal_size_unavailable, tui, usage,
+        RedrawTerminalContext, SIGUSR1_LIVE_BUG_REPORT_REQUESTED, STDIN_BYTES_DETACH,
+        SUPPORTED_KEY_NAMES, ScriptCommand, ScrollbackSelectionArgFlags, SgrMouseInput,
+        SignalBugReportGuard, SigwinchResizeContext, StateInfoSocketSummary, StdinByteForward,
+        StdinForwardOptions, StdinKey, StdinKeyInput, args_from_iter, configure_default_live_args,
+        default_attach_error_needs_restart, default_live_error_needs_restart,
+        format_cli_error_json, format_context_json, format_input_choices_json,
+        format_key_names_json, format_live_attach_json, format_live_cli_error_json,
+        format_live_detach_json, format_live_error_json, format_live_presence_json,
+        format_live_surface_update_json, format_live_workspace_json, format_rendered_attach_json,
+        format_scrollback, format_state_info_json, format_state_info_text, format_stats_right,
+        frontend_resize_pane_size, host_mouse_mode_disable_sequence,
+        host_mouse_mode_enable_sequence, host_mouse_mode_mirror_needed,
+        interim_surface_fidelity_warning_needed, is_requested_scrollback_view_update,
+        live_mouse_dispatch_for_workspace_size, live_pane_chrome_state,
+        live_session_new_should_fallback, live_update_print_kind, managed_ready_error_message,
+        menu_overlay_for_action, menu_overlay_for_action_with_session_inventory,
+        next_scroll_offset, parse_detach_key, parse_env_assignment, parse_focus_event,
+        parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
+        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_mode_needed,
+        raw_terminal_mode_termios, record_live_surface_scrollback_total,
+        record_live_update_scrollback_total, redraw_terminal_guard_needed,
+        redraw_text_with_context, redraw_workspace_surface_text, render_scrollback_view_summary,
+        render_scrollback_view_text, restore_live_pane_surface_before_input,
+        scrollback_viewport_range, scrollbar_offset_from_track, sigwinch_resize_needed,
+        split_stdin_bytes_for_detach, stdin_byte_forwards, stdin_byte_forwards_with_options,
+        terminal_size_from_fds, terminal_size_unavailable, tui, usage,
         validate_explicit_input_modes as super_validate_explicit_input_modes,
         validate_mode_args as super_validate_mode_args, validate_no_input_resize_args,
         validate_positive_numeric_args, validate_scrollback_selection_args,
@@ -9560,8 +9621,12 @@ mod tests {
     use nmux_cli::local;
     use nmux_proto::{protocol, wire};
     use std::collections::BTreeMap;
+    use std::fs;
     use std::io;
     use std::path::Path;
+    use std::sync::atomic::Ordering;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     fn zero_termios() -> libc::termios {
         // SAFETY: tests assign the termios fields read by raw_terminal_mode_termios
@@ -9615,6 +9680,75 @@ mod tests {
             hyperlinks: Vec::new(),
             text: String::new(),
         }
+    }
+
+    fn temp_signal_bug_report_dir() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "nmux-signal-guard-test-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create signal bug report dir");
+        dir
+    }
+
+    #[test]
+    fn sigusr1_bug_report_guard_writes_signal_report() {
+        let dir = temp_signal_bug_report_dir();
+        let prior_env = std::env::var_os("NMUX_BUG_REPORT_DIR");
+        unsafe {
+            std::env::set_var("NMUX_BUG_REPORT_DIR", &dir);
+        }
+        SIGUSR1_LIVE_BUG_REPORT_REQUESTED.store(false, Ordering::SeqCst);
+        let guard = SignalBugReportGuard::install(vec![
+            "nmux".to_owned(),
+            "--bug-report-dir".to_owned(),
+            dir.display().to_string(),
+        ])
+        .expect("install signal bug report guard");
+
+        // SAFETY: sending SIGUSR1 to the current process is the behavior under test.
+        assert_eq!(unsafe { libc::kill(libc::getpid(), libc::SIGUSR1) }, 0);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let report_path = loop {
+            let report = fs::read_dir(&dir)
+                .expect("read signal bug report dir")
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .find(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.ends_with("-signal-interrupt.json"))
+                });
+            if let Some(path) = report {
+                break path;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "SIGUSR1 did not write a signal-interrupt report in {}",
+                dir.display()
+            );
+            thread::sleep(Duration::from_millis(20));
+        };
+
+        drop(guard);
+        match prior_env {
+            Some(value) => unsafe {
+                std::env::set_var("NMUX_BUG_REPORT_DIR", value);
+            },
+            None => unsafe {
+                std::env::remove_var("NMUX_BUG_REPORT_DIR");
+            },
+        }
+        let metadata = fs::read_to_string(report_path).expect("read signal report");
+        assert!(metadata.contains("\"kind\":\"signal-interrupt\""));
+        assert!(metadata.contains("\"signal\":\"SIGUSR1\""));
+        assert!(SIGUSR1_LIVE_BUG_REPORT_REQUESTED.load(Ordering::SeqCst));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn positive_numeric_defaults() -> PositiveNumericArgs {

@@ -334,6 +334,10 @@ fn linux_proc_stat(pid: i32) -> LinuxProcStat {
 }
 
 impl PtyCommand {
+    fn process_id(&self) -> u32 {
+        self.child.process_id().expect("pty child process id")
+    }
+
     fn detach(&mut self) {
         let _ = self.writer.write_all(&[STDIN_BYTES_DETACH]);
         let _ = self.writer.flush();
@@ -2659,6 +2663,198 @@ fn bare_tty_nmux_starts_shared_default_session_and_can_reattach() {
     let _ = fs::remove_file(&socket_path);
     let _ = fs::remove_file(&shell_path);
 
+    assert!(
+        kill.status.success(),
+        "kill failed: {}\n{}",
+        String::from_utf8_lossy(&kill.stderr),
+        String::from_utf8_lossy(&kill.stdout)
+    );
+}
+
+#[test]
+fn bare_tty_nmux_sigusr1_writes_live_bug_report() {
+    let socket_path = test_socket_path();
+    let shell_path = socket_path.with_extension("shell");
+    let bug_report_dir = socket_path.with_extension("bugs");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+    let _ = fs::remove_dir_all(&bug_report_dir);
+    fs::create_dir_all(&bug_report_dir).expect("create bug report dir");
+    fs::write(
+        &shell_path,
+        "#!/bin/sh\nprintf 'sigusr-ready\\n'\nwhile :; do sleep 1; done\n",
+    )
+    .expect("write test shell");
+    fs::set_permissions(&shell_path, fs::Permissions::from_mode(0o755)).expect("chmod test shell");
+    let socket = socket_path.to_str().expect("socket path");
+    let shell = shell_path.to_str().expect("shell path");
+    let bug_report = bug_report_dir.to_str().expect("bug report dir");
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--bug-report-dir", bug_report],
+        &[("NMUX_SOCKET", socket), ("SHELL", shell)],
+    );
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(500));
+    let client_pid = client.process_id() as libc::pid_t;
+    assert_eq!(
+        unsafe { libc::kill(client_pid, libc::SIGUSR1) },
+        0,
+        "send SIGUSR1 to nmux client"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let report_path = loop {
+        let report = fs::read_dir(&bug_report_dir)
+            .expect("read bug report dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with("-live-interrupt.json"))
+            });
+        if let Some(path) = report {
+            break path;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "SIGUSR1 did not write a live bug report; output so far:\n{}",
+            client.output_snapshot()
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        client.is_running(),
+        "client exited after SIGUSR1; output so far:\n{}",
+        client.output_snapshot()
+    );
+
+    client.detach();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !client
+        .output_snapshot()
+        .contains("detached by local Ctrl-]")
+    {
+        assert!(
+            Instant::now() < deadline,
+            "client did not render local detach after SIGUSR1:\n{}",
+            client.output_snapshot()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill bare nmux daemon");
+    let output = client.wait();
+    let report = fs::read_to_string(report_path).expect("read live interrupt report");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+    let _ = fs::remove_dir_all(&bug_report_dir);
+
+    assert!(
+        report.contains("\"kind\":\"live-interrupt\""),
+        "wrong report:\n{report}"
+    );
+    assert!(output.success, "client detach failed:\n{}", output.output);
+    assert!(
+        kill.status.success(),
+        "kill failed: {}\n{}",
+        String::from_utf8_lossy(&kill.stderr),
+        String::from_utf8_lossy(&kill.stdout)
+    );
+}
+
+#[test]
+fn bare_tty_nmux_passes_bug_report_dir_to_persistent_daemon() {
+    let socket_path = test_socket_path();
+    let shell_path = socket_path.with_extension("shell");
+    let bug_report_dir = socket_path.with_extension("bugs");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+    let _ = fs::remove_dir_all(&bug_report_dir);
+    fs::create_dir_all(&bug_report_dir).expect("create bug report dir");
+    fs::write(
+        &shell_path,
+        "#!/bin/sh\nprintf 'daemon-sigusr-ready\\n'\nwhile :; do sleep 1; done\n",
+    )
+    .expect("write test shell");
+    fs::set_permissions(&shell_path, fs::Permissions::from_mode(0o755)).expect("chmod test shell");
+    let socket = socket_path.to_str().expect("socket path");
+    let shell = shell_path.to_str().expect("shell path");
+    let bug_report = bug_report_dir.to_str().expect("bug report dir");
+
+    let mut client = spawn_nmux_client_in_pty_with_env(
+        &["--bug-report-dir", bug_report],
+        &[("NMUX_SOCKET", socket), ("SHELL", shell)],
+    );
+    wait_for_socket(&socket_path);
+    thread::sleep(Duration::from_millis(500));
+    let daemon_pid =
+        find_daemon_pid_for_socket(&socket_path).expect("find shared default daemon process");
+    assert_eq!(
+        unsafe { libc::kill(daemon_pid, libc::SIGUSR1) },
+        0,
+        "send SIGUSR1 to nmux daemon"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let report_path = loop {
+        let report = fs::read_dir(&bug_report_dir)
+            .expect("read bug report dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with("-signal-interrupt.json"))
+            });
+        if let Some(path) = report {
+            break path;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "SIGUSR1 to daemon did not write a signal report; output so far:\n{}",
+            client.output_snapshot()
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    assert!(
+        find_daemon_pid_for_socket(&socket_path).is_some(),
+        "daemon exited after SIGUSR1"
+    );
+    client.detach();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !client
+        .output_snapshot()
+        .contains("detached by local Ctrl-]")
+    {
+        assert!(
+            Instant::now() < deadline,
+            "client did not render local detach after daemon SIGUSR1:\n{}",
+            client.output_snapshot()
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let kill = Command::new(env!("CARGO_BIN_EXE_nmux"))
+        .env("NMUX_SOCKET", socket)
+        .arg("kill")
+        .output()
+        .expect("kill bare nmux daemon");
+    let output = client.wait();
+    let report = fs::read_to_string(report_path).expect("read daemon signal report");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_file(&shell_path);
+    let _ = fs::remove_dir_all(&bug_report_dir);
+
+    assert!(
+        report.contains("\"kind\":\"signal-interrupt\""),
+        "wrong report:\n{report}"
+    );
+    assert!(output.success, "client detach failed:\n{}", output.output);
     assert!(
         kill.status.success(),
         "kill failed: {}\n{}",
