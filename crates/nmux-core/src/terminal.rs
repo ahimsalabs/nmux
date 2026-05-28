@@ -821,6 +821,7 @@ mod ghostty_vt {
 
     const DEFAULT_MAX_SCROLLBACK_LINES: usize = 1_000_000;
     const VT_WRITE_CHUNK_BYTES: usize = 4096;
+    const LIVE_SCROLLBACK_PRESERVE_THRESHOLD_ROWS: usize = 128;
     pub struct LibghosttyVtTerminalEngine {
         state: Option<GhosttyVtState>,
     }
@@ -1253,8 +1254,14 @@ mod ghostty_vt {
             let surface_dirty_rows = surface_rows.dirty_rows.clone();
             let surface_kitty_placeholders = surface_rows.kitty_placeholders.clone();
             let cursor = cursor(&snapshot, input.cursor)?;
-            let preserve_scrollback = false;
-            let scrollback_rows = if preserve_input_rows && surface == input.surface {
+            let preserve_scrollback = !force_rows
+                && total_main_rows.is_some_and(|total_rows| {
+                    total_rows > surface_rows.lines.len()
+                        && total_rows >= LIVE_SCROLLBACK_PRESERVE_THRESHOLD_ROWS
+                });
+            let scrollback_rows = if preserve_scrollback
+                || preserve_input_rows && surface == input.surface
+            {
                 ExtractedRows {
                     lines: input.scrollback_lines.to_vec(),
                     row_runs: input.scrollback_row_runs.to_vec(),
@@ -5150,8 +5157,26 @@ mod tests {
             .expect("terminal update");
 
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
-        assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 999);
-        assert_surface_is_transcript_tail(&update);
+        assert!(
+            update.preserve_scrollback,
+            "large live output should preserve prior scrollback instead of rebuilding full history"
+        );
+        let retained_scrollback = numbered_rows(&update.scrollback_lines);
+        assert!(
+            (100..1000).contains(&retained_scrollback.len()),
+            "scrollback should be bounded under live-output pressure: {:?}",
+            update.scrollback_lines
+        );
+        assert_numbered_rows_are_contiguous(
+            &update.scrollback_lines,
+            0,
+            retained_scrollback.len() - 1,
+        );
+        assert!(
+            numbered_rows(&update.surface_lines).contains(&999),
+            "visible surface should still track the latest output: {:?}",
+            update.surface_lines
+        );
         assert_run_style_ids_are_valid(&update);
     }
 
@@ -5170,8 +5195,26 @@ mod tests {
             .expect("terminal update");
 
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
-        assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 1_999);
-        assert_surface_is_transcript_tail(&update);
+        assert!(
+            update.preserve_scrollback,
+            "large ls-sized output should not rebuild the full scrollback transcript"
+        );
+        let retained_scrollback = numbered_rows(&update.scrollback_lines);
+        assert!(
+            (100..2_000).contains(&retained_scrollback.len()),
+            "scrollback should be bounded under live-output pressure: {:?}",
+            update.scrollback_lines
+        );
+        assert_numbered_rows_are_contiguous(
+            &update.scrollback_lines,
+            0,
+            retained_scrollback.len() - 1,
+        );
+        assert!(
+            numbered_rows(&update.surface_lines).contains(&1_999),
+            "visible surface should still track the latest output: {:?}",
+            update.surface_lines
+        );
         assert_run_style_ids_are_valid(&update);
     }
 
@@ -5210,8 +5253,16 @@ mod tests {
         }
 
         assert_eq!(update.surface, protocol::SurfaceKind::Main);
-        assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 499);
-        assert_surface_is_transcript_tail(&update);
+        assert!(
+            update.preserve_scrollback,
+            "post-threshold live output should preserve bounded scrollback"
+        );
+        assert_numbered_rows_are_contiguous(&update.scrollback_lines, 0, 249);
+        assert!(
+            numbered_rows(&update.surface_lines).contains(&499),
+            "visible surface should still reach the latest post-resize output: {:?}",
+            update.surface_lines
+        );
         assert_run_style_ids_are_valid(&update);
     }
 

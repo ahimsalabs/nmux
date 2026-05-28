@@ -3682,10 +3682,16 @@ mod tests {
             .session()
             .pane_scrollback("pane-1")
             .expect("pane scrollback");
-        assert_eq!(scrollback.lines.len(), 300);
-        for (index, line) in scrollback.lines.iter().enumerate() {
-            assert_eq!(line, &format!("line {index:04}"));
-        }
+        assert!(
+            scrollback.lines.len() < 300,
+            "live replay should preserve bounded scrollback under pressure"
+        );
+        let pane = replayed.session().pane("pane-1").expect("pane");
+        assert!(
+            pane.surface_lines.iter().any(|line| line == "line 0299"),
+            "visible surface should still contain latest replayed output: {:?}",
+            pane.surface_lines
+        );
     }
 
     #[test]
@@ -4956,7 +4962,7 @@ mod tests {
 
     #[cfg(feature = "libghostty-vt")]
     #[test]
-    fn ghostty_vt_scrollback_chunk_serves_contiguous_daemon_transcript() {
+    fn ghostty_vt_scrollback_chunk_preserves_bounded_transcript_under_pressure() {
         let mut session = Session::initial();
         if let Some(pane) = session.pane_mut("pane-1") {
             pane.cols = 80;
@@ -4985,15 +4991,31 @@ mod tests {
             engines.engine_mut("pane-1")
         ));
 
+        let pane = session.pane("pane-1").expect("pane");
+        assert!(
+            pane.scrollback_lines.len() < 1000,
+            "large live output should not rebuild the full daemon transcript"
+        );
+        assert!(
+            pane.surface_lines.iter().any(|line| line == "line 0999"),
+            "visible surface should still contain latest output: {:?}",
+            pane.surface_lines
+        );
+
+        let line_count = pane.scrollback_lines.len() as u32;
+        let request_count = line_count.max(1);
         let frame = session
-            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, 1000)
+            .scrollback_chunk_frame_for_pane("conn-1", 11, "pane-1", 1, request_count)
             .expect("scrollback chunk");
         let envelope = protocol::size_prefixed_root_as_envelope(&frame).expect("valid envelope");
         let chunk = envelope.body_as_pane_viewport_snapshot().expect("chunk");
         assert_eq!(chunk.viewport_top_line(), 1);
-        assert_eq!(chunk.total_lines(), 1000);
+        assert_eq!(chunk.total_lines(), u64::from(line_count));
+        if line_count == 0 {
+            return;
+        }
         let rows = chunk.rows_data().expect("scrollback rows");
-        assert_eq!(rows.len(), 1000);
+        assert_eq!(rows.len(), line_count as usize);
         for index in 0..rows.len() {
             let row = rows.get(index);
             assert_eq!(

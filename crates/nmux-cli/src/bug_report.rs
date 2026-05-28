@@ -678,14 +678,23 @@ mod tests {
             .iter()
             .filter_map(|line| trace_line_number(line))
             .collect::<Vec<_>>();
-        assert_eq!(transcript, (0..200).collect::<Vec<_>>());
+        assert!(
+            (100..200).contains(&transcript.len()),
+            "live replay should keep bounded scrollback under pressure: {:?}",
+            update.scrollback_lines
+        );
+        assert_eq!(transcript, (0..transcript.len()).collect::<Vec<_>>());
         let surface = update
             .surface_lines
             .iter()
             .filter_map(|line| trace_line_number(line))
             .collect::<Vec<_>>();
         assert!(!surface.is_empty(), "surface did not include trace rows");
-        assert_eq!(surface, transcript[transcript.len() - surface.len()..]);
+        assert!(
+            surface.contains(&199),
+            "surface should still show latest trace rows: {:?}",
+            update.surface_lines
+        );
 
         let _ = fs::remove_dir_all(dir);
     }
