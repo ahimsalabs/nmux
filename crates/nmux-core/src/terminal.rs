@@ -758,12 +758,15 @@ fn merge_interim_pty_output(
     };
     let mut saw_output = false;
     let mut ended_with_newline = false;
+    let mut skipped_leading_newline = false;
 
     for ch in text.chars() {
         saw_output = true;
         if ch == '\n' {
             if appending {
                 appending = false;
+            } else if current.is_empty() && lines.is_empty() && !skipped_leading_newline {
+                skipped_leading_newline = true;
             } else {
                 lines.push(std::mem::take(&mut current));
             }
@@ -837,7 +840,9 @@ mod ghostty_vt {
         cell_iterator: CellIterator<'static>,
         osc7: Osc7Tracker,
         scrollback_parser: super::InterimAnsiParser,
+        scrollback_style_parser: IncrementalSgrRowParser,
         main_scrollback_lines: Vec<String>,
+        main_scrollback_row_runs: Vec<Vec<CellRun>>,
         pending_decrqm: Vec<u8>,
         pty_writes: Rc<RefCell<Vec<Vec<u8>>>>,
         main_tail_ref: Option<TrackedGridRef>,
@@ -1059,8 +1064,14 @@ mod ghostty_vt {
             };
             let suffix_start = original_scrollback_len.min(state.main_scrollback_lines.len());
             let suffix = state.main_scrollback_lines[suffix_start..].to_vec();
+            let suffix_row_runs =
+                if state.main_scrollback_row_runs.len() == state.main_scrollback_lines.len() {
+                    state.main_scrollback_row_runs[suffix_start..].to_vec()
+                } else {
+                    super::plain_row_runs(&suffix)
+                };
             update.scrollback_replace_from = Some(suffix_start);
-            update.scrollback_row_runs = super::plain_row_runs(&suffix);
+            update.scrollback_row_runs = suffix_row_runs;
             update.scrollback_semantic_prompts = super::plain_row_semantic_prompts(&suffix);
             update.scrollback_dirty_rows = super::plain_row_dirty_flags(&suffix);
             update.scrollback_kitty_placeholders = super::plain_row_kitty_placeholders(&suffix);
@@ -1213,7 +1224,9 @@ mod ghostty_vt {
                 cell_iterator: CellIterator::new().ok()?,
                 osc7: Osc7Tracker::default(),
                 scrollback_parser: super::InterimAnsiParser::default(),
+                scrollback_style_parser: IncrementalSgrRowParser::default(),
                 main_scrollback_lines: Vec::new(),
+                main_scrollback_row_runs: Vec::new(),
                 pending_decrqm: Vec::new(),
                 pty_writes,
                 main_tail_ref: None,
@@ -1299,8 +1312,12 @@ mod ghostty_vt {
                 && output.is_some();
             let mut scrollback_replace_from = None;
             let scrollback_rows = if use_incremental_scrollback {
-                let (base_len, rows) =
-                    self.incremental_main_scrollback_rows(&input, output.expect("checked output"));
+                let (base_len, rows) = self.incremental_main_scrollback_rows(
+                    &input,
+                    output.expect("checked output"),
+                    &mut styles,
+                    &colors,
+                );
                 scrollback_replace_from = Some(base_len);
                 rows
             } else if preserve_input_rows && surface == input.surface {
@@ -1344,6 +1361,7 @@ mod ghostty_vt {
             };
             if !use_incremental_scrollback && surface == protocol::SurfaceKind::Main {
                 self.main_scrollback_lines = scrollback_rows.lines.clone();
+                self.main_scrollback_row_runs = scrollback_rows.row_runs.clone();
             }
             self.track_main_tail(surface, !scrollback_rows.lines.is_empty());
             let modes = modes(&self.terminal)?;
@@ -1419,9 +1437,17 @@ mod ghostty_vt {
             &mut self,
             input: &TerminalInput<'_>,
             output: &[u8],
+            styles: &mut Vec<PaneStyle>,
+            colors: &TerminalColors,
         ) -> (usize, ExtractedRows) {
             if self.main_scrollback_lines.is_empty() && !input.scrollback_lines.is_empty() {
                 self.main_scrollback_lines = input.scrollback_lines.to_vec();
+                self.main_scrollback_row_runs =
+                    if input.scrollback_row_runs.len() == input.scrollback_lines.len() {
+                        input.scrollback_row_runs.to_vec()
+                    } else {
+                        super::plain_row_runs(input.scrollback_lines)
+                    };
             }
             let parsed = self.scrollback_parser.consume(output, input.modes);
             if parsed.text.is_empty() {
@@ -1437,8 +1463,12 @@ mod ghostty_vt {
                 );
             }
 
+            let starts_new_line = parsed
+                .text
+                .first()
+                .is_some_and(|byte| matches!(byte, b'\r' | b'\n'));
             let append_to_previous_line =
-                input.cursor.col > 0 && !self.main_scrollback_lines.is_empty();
+                input.cursor.col > 0 && !starts_new_line && !self.main_scrollback_lines.is_empty();
             let base_len = if append_to_previous_line {
                 self.main_scrollback_lines.len().saturating_sub(1)
             } else {
@@ -1451,17 +1481,43 @@ mod ghostty_vt {
             };
             let (suffix, _) =
                 super::merge_interim_pty_output(&seed, append_to_previous_line, &parsed.text);
+            let seed_runs = if append_to_previous_line {
+                self.main_scrollback_row_runs
+                    .get(base_len)
+                    .cloned()
+                    .or_else(|| input.scrollback_row_runs.get(base_len).cloned())
+                    .unwrap_or_else(|| super::plain_row_runs(&seed).pop().unwrap_or_default())
+            } else {
+                Vec::new()
+            };
+            let styled_rows = self.scrollback_style_parser.consume(
+                output,
+                append_to_previous_line
+                    .then(|| (seed.first().cloned().unwrap_or_default(), seed_runs)),
+                styles,
+                colors,
+            );
+            let suffix_row_runs =
+                rows_or_plain_row_runs(&suffix, styled_rows.lines, styled_rows.row_runs);
             self.main_scrollback_lines.truncate(base_len);
+            self.main_scrollback_row_runs.truncate(base_len);
             self.main_scrollback_lines.extend(suffix.iter().cloned());
+            self.main_scrollback_row_runs
+                .extend(suffix_row_runs.iter().cloned());
             if self.main_scrollback_lines.len() > DEFAULT_MAX_SCROLLBACK_LINES {
                 let drop_count = self.main_scrollback_lines.len() - DEFAULT_MAX_SCROLLBACK_LINES;
                 self.main_scrollback_lines.drain(..drop_count);
+                if self.main_scrollback_row_runs.len() > drop_count {
+                    self.main_scrollback_row_runs.drain(..drop_count);
+                } else {
+                    self.main_scrollback_row_runs.clear();
+                }
             }
 
             (
                 base_len,
                 ExtractedRows {
-                    row_runs: super::plain_row_runs(&suffix),
+                    row_runs: suffix_row_runs,
                     semantic_prompts: super::plain_row_semantic_prompts(&suffix),
                     dirty_rows: super::plain_row_dirty_flags(&suffix),
                     kitty_placeholders: super::plain_row_kitty_placeholders(&suffix),
@@ -1575,6 +1631,321 @@ mod ghostty_vt {
         fn truncated(mut self, len: usize) -> Self {
             self.truncate(len);
             self
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct IncrementalSgrRowParser {
+        state: IncrementalSgrState,
+        current_style: PaneStyle,
+        pending_text: Vec<u8>,
+        pending_cr: bool,
+    }
+
+    #[derive(Debug, Default)]
+    enum IncrementalSgrState {
+        #[default]
+        Ground,
+        Escape,
+        Csi(Vec<u8>),
+        Osc {
+            escape_pending: bool,
+        },
+        StringControl {
+            escape_pending: bool,
+        },
+    }
+
+    impl IncrementalSgrRowParser {
+        fn consume(
+            &mut self,
+            bytes: &[u8],
+            seed: Option<(String, Vec<CellRun>)>,
+            styles: &mut Vec<PaneStyle>,
+            colors: &TerminalColors,
+        ) -> ExtractedRows {
+            let mut lines = Vec::new();
+            let mut row_runs = Vec::new();
+            let (mut current_line, mut current_runs) = seed.unwrap_or_default();
+            let mut skipped_leading_newline = false;
+
+            for byte in bytes.iter().copied() {
+                match &mut self.state {
+                    IncrementalSgrState::Ground => match byte {
+                        b'\r' => {
+                            self.flush_text(&mut current_line, &mut current_runs, styles);
+                            if current_line.is_empty()
+                                && current_runs.is_empty()
+                                && lines.is_empty()
+                                && !skipped_leading_newline
+                            {
+                                skipped_leading_newline = true;
+                            } else {
+                                lines.push(std::mem::take(&mut current_line));
+                                row_runs.push(std::mem::take(&mut current_runs));
+                            }
+                            self.pending_cr = true;
+                        }
+                        b'\n' => {
+                            self.flush_text(&mut current_line, &mut current_runs, styles);
+                            if self.pending_cr {
+                                self.pending_cr = false;
+                            } else if current_line.is_empty()
+                                && current_runs.is_empty()
+                                && lines.is_empty()
+                                && !skipped_leading_newline
+                            {
+                                skipped_leading_newline = true;
+                            } else {
+                                lines.push(std::mem::take(&mut current_line));
+                                row_runs.push(std::mem::take(&mut current_runs));
+                            }
+                        }
+                        0x1b => {
+                            self.flush_text(&mut current_line, &mut current_runs, styles);
+                            self.pending_cr = false;
+                            self.state = IncrementalSgrState::Escape;
+                        }
+                        0x9b => {
+                            self.flush_text(&mut current_line, &mut current_runs, styles);
+                            self.pending_cr = false;
+                            self.state = IncrementalSgrState::Csi(Vec::new());
+                        }
+                        b'\t' => {
+                            self.pending_cr = false;
+                            self.pending_text.push(byte);
+                        }
+                        0x20..=0x7e | 0x80..=0xff => {
+                            self.pending_cr = false;
+                            self.pending_text.push(byte);
+                        }
+                        _ => {}
+                    },
+                    IncrementalSgrState::Escape => match byte {
+                        b'[' => self.state = IncrementalSgrState::Csi(Vec::new()),
+                        b']' => {
+                            self.state = IncrementalSgrState::Osc {
+                                escape_pending: false,
+                            }
+                        }
+                        b'P' | b'X' | b'^' | b'_' => {
+                            self.state = IncrementalSgrState::StringControl {
+                                escape_pending: false,
+                            };
+                        }
+                        0x1b => self.state = IncrementalSgrState::Escape,
+                        _ => self.state = IncrementalSgrState::Ground,
+                    },
+                    IncrementalSgrState::Csi(buffer) => {
+                        if byte == 0x1b {
+                            self.state = IncrementalSgrState::Escape;
+                        } else if (0x40..=0x7e).contains(&byte) {
+                            let params = std::mem::take(buffer);
+                            if byte == b'm' {
+                                apply_incremental_sgr(&mut self.current_style, &params, colors);
+                            }
+                            self.state = IncrementalSgrState::Ground;
+                        } else {
+                            buffer.push(byte);
+                        }
+                    }
+                    IncrementalSgrState::Osc { escape_pending } => {
+                        if *escape_pending {
+                            if byte == b'\\' {
+                                self.state = IncrementalSgrState::Ground;
+                            } else {
+                                *escape_pending = byte == 0x1b;
+                            }
+                        } else if byte == 0x07 {
+                            self.state = IncrementalSgrState::Ground;
+                        } else if byte == 0x1b {
+                            *escape_pending = true;
+                        }
+                    }
+                    IncrementalSgrState::StringControl { escape_pending } => {
+                        if *escape_pending {
+                            if byte == b'\\' {
+                                self.state = IncrementalSgrState::Ground;
+                            } else {
+                                *escape_pending = byte == 0x1b;
+                            }
+                        } else if byte == 0x1b {
+                            *escape_pending = true;
+                        }
+                    }
+                }
+            }
+
+            self.flush_text(&mut current_line, &mut current_runs, styles);
+            if !current_line.is_empty() || !current_runs.is_empty() {
+                lines.push(current_line);
+                row_runs.push(current_runs);
+            }
+
+            ExtractedRows {
+                semantic_prompts: super::plain_row_semantic_prompts(&lines),
+                dirty_rows: super::plain_row_dirty_flags(&lines),
+                kitty_placeholders: super::plain_row_kitty_placeholders(&lines),
+                lines,
+                row_runs,
+            }
+        }
+
+        fn flush_text(
+            &mut self,
+            current_line: &mut String,
+            current_runs: &mut Vec<CellRun>,
+            styles: &mut Vec<PaneStyle>,
+        ) {
+            if self.pending_text.is_empty() {
+                return;
+            }
+            let text = String::from_utf8_lossy(&self.pending_text).into_owned();
+            self.pending_text.clear();
+            let style_id = style_id(styles, self.current_style.clone());
+            append_incremental_run(current_line, current_runs, text, style_id);
+        }
+    }
+
+    fn append_incremental_run(
+        current_line: &mut String,
+        current_runs: &mut Vec<CellRun>,
+        text: String,
+        style_id: u32,
+    ) {
+        if text.is_empty() {
+            return;
+        }
+        current_line.push_str(&text);
+        let widths = vec![1_u8; text.chars().count()];
+        if let Some(last) = current_runs.last_mut()
+            && last.style_id == style_id
+            && last.flags == 0
+            && last.hyperlink_id == 0
+            && last.semantic_content == protocol::CellSemanticContent::Output
+        {
+            last.text.push_str(&text);
+            last.cell_widths.extend(widths);
+            return;
+        }
+        current_runs.push(CellRun {
+            text,
+            cell_widths: widths,
+            style_id,
+            flags: 0,
+            hyperlink_id: 0,
+            semantic_content: protocol::CellSemanticContent::Output,
+        });
+    }
+
+    fn apply_incremental_sgr(style: &mut PaneStyle, params: &[u8], colors: &TerminalColors) {
+        let parsed = parse_sgr_params(params);
+        let params = if parsed.is_empty() { vec![0] } else { parsed };
+        let mut index = 0;
+        while index < params.len() {
+            let code = params[index];
+            match code {
+                0 => *style = PaneStyle::default(),
+                1 => style.flags |= 1 << 0,
+                2 => style.flags |= 1 << 2,
+                3 => style.flags |= 1 << 1,
+                4 => style.flags |= 1 << 8,
+                5 => style.flags |= 1 << 3,
+                7 => style.flags |= 1 << 4,
+                8 => style.flags |= 1 << 5,
+                9 => style.flags |= 1 << 6,
+                22 => style.flags &= !((1 << 0) | (1 << 2)),
+                23 => style.flags &= !(1 << 1),
+                24 => style.flags &= !((1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | (1 << 12)),
+                25 => style.flags &= !(1 << 3),
+                27 => style.flags &= !(1 << 4),
+                28 => style.flags &= !(1 << 5),
+                29 => style.flags &= !(1 << 6),
+                30..=37 => style.fg_rgba = palette_color(colors, code - 30),
+                39 => style.fg_rgba = 0,
+                40..=47 => style.bg_rgba = palette_color(colors, code - 40),
+                49 => style.bg_rgba = 0,
+                53 => style.flags |= 1 << 7,
+                55 => style.flags &= !(1 << 7),
+                90..=97 => style.fg_rgba = palette_color(colors, code - 90 + 8),
+                100..=107 => style.bg_rgba = palette_color(colors, code - 100 + 8),
+                38 | 48 | 58 => {
+                    index += apply_extended_sgr_color(style, colors, &params[index..]);
+                    continue;
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+
+    fn apply_extended_sgr_color(
+        style: &mut PaneStyle,
+        colors: &TerminalColors,
+        params: &[u32],
+    ) -> usize {
+        if params.len() < 3 {
+            return 1;
+        }
+        let target = params[0];
+        match params[1] {
+            5 => {
+                let rgba = palette_color(colors, params[2]);
+                set_extended_style_color(style, target, rgba);
+                3
+            }
+            2 if params.len() >= 5 => {
+                let rgba = u32::from_be_bytes([
+                    params[2].min(255) as u8,
+                    params[3].min(255) as u8,
+                    params[4].min(255) as u8,
+                    0xff,
+                ]);
+                set_extended_style_color(style, target, rgba);
+                5
+            }
+            _ => 1,
+        }
+    }
+
+    fn set_extended_style_color(style: &mut PaneStyle, target: u32, rgba: u32) {
+        match target {
+            38 => style.fg_rgba = rgba,
+            48 => style.bg_rgba = rgba,
+            58 => style.underline_rgba = rgba,
+            _ => {}
+        }
+    }
+
+    fn palette_color(colors: &TerminalColors, index: u32) -> u32 {
+        colors
+            .palette_rgba
+            .get(index as usize)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn parse_sgr_params(params: &[u8]) -> Vec<u32> {
+        params
+            .split(|byte| *byte == b';' || *byte == b':')
+            .filter_map(|param| {
+                if param.is_empty() {
+                    return Some(0);
+                }
+                std::str::from_utf8(param).ok()?.parse::<u32>().ok()
+            })
+            .collect()
+    }
+
+    fn rows_or_plain_row_runs(
+        lines: &[String],
+        styled_lines: Vec<String>,
+        row_runs: Vec<Vec<CellRun>>,
+    ) -> Vec<Vec<CellRun>> {
+        if styled_lines == lines {
+            row_runs
+        } else {
+            super::plain_row_runs(lines)
         }
     }
 
@@ -5279,6 +5650,115 @@ mod tests {
             update.surface_lines
         );
         assert_run_style_ids_are_valid(&update);
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_incremental_scrollback_preserves_sgr_styles_across_chunks() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let mut output = numbered_output(0, 900);
+        output.push_str("\x1b[34;1mblue-dir\x1b[0m\r\nplain-tail");
+
+        let update = engine
+            .apply_output(
+                terminal_input_with_size(80, 10, &empty, &empty),
+                output.as_bytes(),
+            )
+            .expect("terminal update");
+
+        assert!(
+            update.preserve_scrollback,
+            "large colored output should use an incremental range update"
+        );
+        assert!(update.scrollback_replace_from.is_some());
+        assert!(
+            update
+                .scrollback_lines
+                .iter()
+                .any(|line| line.contains("blue-dir")),
+            "colored row missing from scrollback: {:?}",
+            update.scrollback_lines
+        );
+        let styled_run = update
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("blue-dir"))
+            .expect("styled scrollback run");
+        assert_ne!(
+            styled_run.style_id, 0,
+            "incremental scrollback should preserve SGR style runs: {:?}",
+            update.scrollback_row_runs
+        );
+        let style = update
+            .styles
+            .get(styled_run.style_id as usize)
+            .expect("style table entry");
+        assert_ne!(style.fg_rgba, 0, "styled run should resolve a foreground");
+        assert_ne!(style.flags & (1 << 0), 0, "styled run should preserve bold");
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    #[test]
+    fn libghostty_vt_incremental_newline_after_prompt_keeps_previous_row() {
+        let mut engine = super::ghostty_vt::LibghosttyVtTerminalEngine::new();
+        let empty = Vec::new();
+        let mut output = numbered_output(0, 80);
+        output.push_str("prompt ls");
+        let first = engine
+            .apply_output(
+                terminal_input_with_size(80, 10, &empty, &empty),
+                output.as_bytes(),
+            )
+            .expect("initial terminal update");
+        assert!(
+            first
+                .scrollback_lines
+                .iter()
+                .any(|line| line.contains("prompt ls")),
+            "initial prompt row missing: {:?}",
+            first.scrollback_lines
+        );
+
+        let mut input = terminal_input_from_update(&first);
+        input.cursor.col = "prompt ls".len() as u32;
+        let update = engine
+            .apply_output(input, b"\r\n\x1b[32mdir\x1b[0m  file")
+            .expect("newline terminal update");
+
+        let replace_from = update
+            .scrollback_replace_from
+            .expect("incremental range replacement");
+        let mut combined_lines = first.scrollback_lines[..replace_from].to_vec();
+        combined_lines.extend(update.scrollback_lines.iter().cloned());
+
+        assert!(
+            combined_lines.iter().any(|line| line.contains("prompt ls")),
+            "newline chunk replaced the previous prompt row: {:?}",
+            combined_lines
+        );
+        assert!(
+            combined_lines.iter().any(|line| line.contains("dir  file")),
+            "post-newline output missing: {:?}",
+            combined_lines
+        );
+        assert!(
+            update.scrollback_lines.iter().all(|line| !line.is_empty())
+                && combined_lines.iter().all(|line| !line.contains('\u{1b}')),
+            "control bytes leaked into scrollback text: {:?}",
+            combined_lines
+        );
+        let styled_run = update
+            .scrollback_row_runs
+            .iter()
+            .flat_map(|row| row.iter())
+            .find(|run| run.text.contains("dir"))
+            .expect("styled newline run");
+        assert_ne!(
+            styled_run.style_id, 0,
+            "newline output should retain SGR style runs"
+        );
     }
 
     #[cfg(feature = "libghostty-vt")]
