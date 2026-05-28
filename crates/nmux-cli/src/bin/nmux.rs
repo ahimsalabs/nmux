@@ -1973,7 +1973,7 @@ fn run_live(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
                             reader.wake_reader(),
                             timeout,
                             sent_stdin_bytes_this_cycle,
-                            stdin_tty,
+                            prefer_stdin_for_live_poll(sent_stdin_bytes_this_cycle, stdin_tty),
                         )
                     })?
                 };
@@ -3310,6 +3310,10 @@ fn poll_live_stream_or_stdin(
             return Err(err);
         }
     }
+}
+
+fn prefer_stdin_for_live_poll(sent_stdin_bytes_this_cycle: bool, stdin_tty: bool) -> bool {
+    stdin_tty && !sent_stdin_bytes_this_cycle
 }
 
 fn poll_live_stream(stream: &UnixStream, timeout: Duration) -> io::Result<LiveLoopReadiness> {
@@ -9684,8 +9688,8 @@ mod tests {
         menu_overlay_for_action, menu_overlay_for_action_with_session_inventory,
         next_scroll_offset, parse_detach_key, parse_env_assignment, parse_focus_event,
         parse_key_modifiers, parse_key_name, parse_local_echo, parse_mouse_event,
-        parse_mouse_pixels, parse_numeric_arg, preprocess_args, raw_terminal_mode_needed,
-        raw_terminal_mode_termios, record_live_surface_scrollback_total,
+        parse_mouse_pixels, parse_numeric_arg, prefer_stdin_for_live_poll, preprocess_args,
+        raw_terminal_mode_needed, raw_terminal_mode_termios, record_live_surface_scrollback_total,
         record_live_update_scrollback_total, redraw_terminal_guard_needed,
         redraw_text_with_context, redraw_workspace_surface_text, render_scrollback_view_summary,
         render_scrollback_view_text, restore_live_pane_surface_before_input,
@@ -9705,6 +9709,13 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn live_poll_prefers_stream_after_forwarding_stdin_bytes() {
+        assert!(prefer_stdin_for_live_poll(false, true));
+        assert!(!prefer_stdin_for_live_poll(false, false));
+        assert!(!prefer_stdin_for_live_poll(true, true));
+    }
 
     fn zero_termios() -> libc::termios {
         // SAFETY: tests assign the termios fields read by raw_terminal_mode_termios

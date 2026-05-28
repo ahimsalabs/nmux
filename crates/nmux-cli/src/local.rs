@@ -11987,6 +11987,66 @@ mod tests {
     }
 
     #[test]
+    fn client_attach_state_ignores_stale_duplicate_surface_patch() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            15,
+            None,
+            vec![surface_row(0, "current")],
+        );
+        let mut state = ClientAttachState::default();
+        state
+            .render_surface_update(&snapshot)
+            .expect("cache current snapshot");
+
+        let duplicate = surface_update(
+            SurfaceUpdateKind::Patch,
+            15,
+            Some(14),
+            vec![surface_row(0, "stale")],
+        );
+        let rendered = state
+            .render_surface_update(&duplicate)
+            .expect("ignore stale duplicate patch");
+
+        assert_eq!(rendered, "current");
+        assert_eq!(
+            state.cached_surface_text("pane-1").as_deref(),
+            Some("current")
+        );
+    }
+
+    #[test]
+    fn client_attach_state_ignores_stale_base_surface_patch() {
+        let snapshot = surface_update(
+            SurfaceUpdateKind::Snapshot,
+            17,
+            None,
+            vec![surface_row(0, "current")],
+        );
+        let mut state = ClientAttachState::default();
+        state
+            .render_surface_update(&snapshot)
+            .expect("cache current snapshot");
+
+        let stale_base = surface_update(
+            SurfaceUpdateKind::Patch,
+            18,
+            Some(16),
+            vec![surface_row(0, "stale")],
+        );
+        let rendered = state
+            .render_surface_update(&stale_base)
+            .expect("ignore stale-base patch");
+
+        assert_eq!(rendered, "current");
+        assert_eq!(
+            state.cached_surface_text("pane-1").as_deref(),
+            Some("current")
+        );
+    }
+
+    #[test]
     fn full_refresh_required_surface_response_uses_snapshot() {
         assert_eq!(
             surface_response_for_known_version(2, 1, protocol::PatchKind::FullRefreshRequired),

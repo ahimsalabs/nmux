@@ -358,6 +358,22 @@ impl ClientAttachState {
             .iter_mut()
             .find(|surface| surface.pane_id == update.pane_id)
         {
+            if update.version <= surface.version {
+                return Ok(if styled && surface.has_styled_runs() {
+                    surface.render_styled_text()
+                } else {
+                    surface.render_text()
+                });
+            }
+            if update.kind == SurfaceUpdateKind::Patch
+                && update.base_version != Some(surface.version)
+            {
+                return Ok(if styled && surface.has_styled_runs() {
+                    surface.render_styled_text()
+                } else {
+                    surface.render_text()
+                });
+            }
             surface.apply_update(update)?;
             return Ok(if styled && surface.has_styled_runs() {
                 surface.render_styled_text()
