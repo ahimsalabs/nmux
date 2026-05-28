@@ -154,6 +154,23 @@ impl ConnectionLimit {
     }
 }
 
+fn live_idle_poll_timeout(
+    connection_limit: ConnectionLimit,
+    cycles_per_client: usize,
+) -> Option<Duration> {
+    if matches!(connection_limit, ConnectionLimit::Unbounded) && cycles_per_client == usize::MAX {
+        None
+    } else {
+        Some(LIVE_IDLE_POLL_TIMEOUT)
+    }
+}
+
+fn poll_timeout_ms(timeout: Option<Duration>) -> libc::c_int {
+    timeout.map_or(-1, |timeout| {
+        timeout.as_millis().min(i32::MAX as u128) as libc::c_int
+    })
+}
+
 impl ServeConfig {
     /// One snapshot-mode client with default terminal engine.
     pub fn one() -> Self {
@@ -535,14 +552,11 @@ where
     let inventory_started_at = Instant::now();
     let mut inventory_version = 0_u64;
     let mut next_connection_id = 1_u64;
+    let idle_poll_timeout = live_idle_poll_timeout(connection_limit, cycles_per_client);
 
     while connection_limit.accepts_more(accepted_clients) || !clients.is_empty() {
-        let readiness = poll_live_concurrent_sources(
-            listener,
-            &clients,
-            host.notify_fd(),
-            LIVE_IDLE_POLL_TIMEOUT,
-        )?;
+        let readiness =
+            poll_live_concurrent_sources(listener, &clients, host.notify_fd(), idle_poll_timeout)?;
         if let Some(notify_fd) = host.notify_fd()
             && readiness.host_output
         {
@@ -754,7 +768,7 @@ where
                 listener,
                 &clients,
                 Some(notify_fd),
-                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+                Some(LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT),
             )?;
             if readiness.host_output {
                 drain_notify_fd(notify_fd)?;
@@ -984,14 +998,11 @@ where
     let mut inventory_version = 0_u64;
     let mut next_connection_id = 1_u64;
     let async_runtime = LiveAsyncRuntime::new()?;
+    let idle_poll_timeout = live_idle_poll_timeout(connection_limit, cycles_per_client);
 
     while connection_limit.accepts_more(accepted_clients) || !clients.is_empty() {
-        let readiness = poll_live_concurrent_sources(
-            listener,
-            &clients,
-            host.notify_fd(),
-            LIVE_IDLE_POLL_TIMEOUT,
-        )?;
+        let readiness =
+            poll_live_concurrent_sources(listener, &clients, host.notify_fd(), idle_poll_timeout)?;
         if let Some(notify_fd) = host.notify_fd()
             && readiness.host_output
         {
@@ -1218,7 +1229,7 @@ where
                 listener,
                 &clients,
                 Some(notify_fd),
-                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+                Some(LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT),
             )?;
             if readiness.host_output {
                 drain_notify_fd(notify_fd)?;
@@ -2858,9 +2869,9 @@ fn poll_live_concurrent_sources(
     listener: &UnixListener,
     clients: &[LiveAttachedClient],
     notify_fd: Option<std::os::fd::RawFd>,
-    timeout: Duration,
+    timeout: Option<Duration>,
 ) -> io::Result<LiveConcurrentReadiness> {
-    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let timeout_ms = poll_timeout_ms(timeout);
     let mut fds = Vec::with_capacity(1 + clients.len() + usize::from(notify_fd.is_some()));
     fds.push(libc::pollfd {
         fd: listener.as_raw_fd(),
@@ -3088,7 +3099,7 @@ fn serve_live_attached_client(
     while completed_cycles < cycles {
         let mut count_cycle = false;
         let mut readiness =
-            poll_live_client_sources(stream, host.notify_fd(), LIVE_IDLE_POLL_TIMEOUT)?;
+            poll_live_client_sources(stream, host.notify_fd(), Some(LIVE_IDLE_POLL_TIMEOUT))?;
         if let Some(notify_fd) = host.notify_fd()
             && readiness.host_output
         {
@@ -3096,7 +3107,7 @@ fn serve_live_attached_client(
         }
         if readiness.host_output && !readiness.client_input {
             let client_readiness =
-                poll_live_client_sources(stream, None, LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT)?;
+                poll_live_client_sources(stream, None, Some(LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT))?;
             readiness.client_input = client_readiness.client_input;
         }
 
@@ -3277,7 +3288,7 @@ fn serve_live_attached_client(
             let readiness = poll_live_client_sources(
                 stream,
                 Some(notify_fd),
-                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+                Some(LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT),
             )?;
             if readiness.host_output {
                 drain_notify_fd(notify_fd)?;
@@ -3453,7 +3464,7 @@ fn serve_live_attached_client_with_session_actor(
     while completed_cycles < cycles {
         let mut count_cycle = false;
         let mut readiness =
-            poll_live_client_sources(stream, host.notify_fd(), LIVE_IDLE_POLL_TIMEOUT)?;
+            poll_live_client_sources(stream, host.notify_fd(), Some(LIVE_IDLE_POLL_TIMEOUT))?;
         if let Some(notify_fd) = host.notify_fd()
             && readiness.host_output
         {
@@ -3461,7 +3472,7 @@ fn serve_live_attached_client_with_session_actor(
         }
         if readiness.host_output && !readiness.client_input {
             let client_readiness =
-                poll_live_client_sources(stream, None, LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT)?;
+                poll_live_client_sources(stream, None, Some(LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT))?;
             readiness.client_input = client_readiness.client_input;
         }
 
@@ -3670,7 +3681,7 @@ fn serve_live_attached_client_with_session_actor(
             let readiness = poll_live_client_sources(
                 stream,
                 Some(notify_fd),
-                LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT,
+                Some(LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT),
             )?;
             if readiness.host_output {
                 drain_notify_fd(notify_fd)?;
@@ -3876,9 +3887,9 @@ struct LiveReadiness {
 fn poll_live_client_sources(
     stream: &UnixStream,
     notify_fd: Option<std::os::fd::RawFd>,
-    timeout: Duration,
+    timeout: Option<Duration>,
 ) -> io::Result<LiveReadiness> {
-    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let timeout_ms = poll_timeout_ms(timeout);
     let mut fds = vec![libc::pollfd {
         fd: stream.as_raw_fd(),
         events: libc::POLLIN,
@@ -8346,6 +8357,28 @@ mod tests {
         let error = io::Error::from(io::ErrorKind::NotConnected);
 
         assert!(socket_closed_error(&error));
+    }
+
+    #[test]
+    fn unbounded_live_forever_blocks_until_fd_readiness() {
+        assert_eq!(
+            live_idle_poll_timeout(ConnectionLimit::Unbounded, usize::MAX),
+            None
+        );
+        assert_eq!(poll_timeout_ms(None), -1);
+    }
+
+    #[test]
+    fn bounded_live_keeps_idle_timer_for_cycle_progress() {
+        assert_eq!(
+            live_idle_poll_timeout(ConnectionLimit::Bounded(1), usize::MAX),
+            Some(LIVE_IDLE_POLL_TIMEOUT)
+        );
+        assert_eq!(
+            live_idle_poll_timeout(ConnectionLimit::Unbounded, 1),
+            Some(LIVE_IDLE_POLL_TIMEOUT)
+        );
+        assert_eq!(poll_timeout_ms(Some(LIVE_IDLE_POLL_TIMEOUT)), 20);
     }
 
     fn scrollback_fetch_spec(
