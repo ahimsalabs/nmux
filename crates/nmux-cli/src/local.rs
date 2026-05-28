@@ -73,7 +73,7 @@ const LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT: Duration = Duration::from_millis(20)
 const LIVE_HOST_READY_CLIENT_GRACE_TIMEOUT: Duration = Duration::ZERO;
 const LIVE_HOST_OUTPUT_POLL_DEADLINE: Duration = Duration::from_millis(120);
 const LIVE_POST_INPUT_FIRST_OUTPUT_TIMEOUT: Duration = Duration::ZERO;
-const LIVE_POST_INPUT_POLL_TIMEOUT: Duration = Duration::from_millis(100);
+const LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT: Duration = LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT;
 const LIVE_POST_INPUT_COALESCE_DEADLINE: Duration = Duration::from_millis(250);
 const PANE_OUTPUT_HANDOFF_CHUNK_BYTES: usize = 4096;
 const PANE_OUTPUT_HANDOFF_MAX_CHUNKS: usize = 16;
@@ -872,7 +872,7 @@ where
         }
 
         let quiet_timeout = if had_input {
-            LIVE_POST_INPUT_POLL_TIMEOUT
+            LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
@@ -1332,7 +1332,7 @@ where
         }
 
         let quiet_timeout = if had_input {
-            LIVE_POST_INPUT_POLL_TIMEOUT
+            LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
@@ -3428,7 +3428,7 @@ fn serve_live_attached_client(
         }
 
         let quiet_timeout = if input_pane_id.is_some() {
-            LIVE_POST_INPUT_POLL_TIMEOUT
+            LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
@@ -3844,7 +3844,7 @@ fn serve_live_attached_client_with_session_actor(
         }
 
         let quiet_timeout = if input_pane_id.is_some() {
-            LIVE_POST_INPUT_POLL_TIMEOUT
+            LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT
         } else {
             LIVE_BACKGROUND_OUTPUT_QUIET_TIMEOUT
         };
@@ -17044,6 +17044,36 @@ mod tests {
     }
 
     #[test]
+    fn post_input_notify_poll_flushes_changed_output_after_short_quiet_window() {
+        let mut session = Session::initial();
+        let mut engines = PaneTerminalEngines::interim();
+        let mut host = ScriptedOutputHost::with_ready_notify(vec![b"file-a\nfile-b\n$ ".to_vec()]);
+        host.start_pane("pane-1", &session.tabs[0].root.host)
+            .expect("start scripted pane");
+
+        let started_at = Instant::now();
+        let changed = poll_panes_output_with_host_until_poll_quiet_state(
+            &mut session,
+            &mut engines,
+            &mut host,
+            &["pane-1".to_owned()],
+            LIVE_POST_INPUT_CHANGED_QUIET_TIMEOUT,
+            false,
+        )
+        .expect("poll post-input output");
+
+        assert!(changed, "post-input output should update the surface");
+        assert!(
+            started_at.elapsed() < Duration::from_millis(80),
+            "post-input changed output waited for the old long coalesce timeout"
+        );
+        let surface_text = surface_text_from_frame(&session.pane_surface_frame("local-client", 1))
+            .expect("render surface text");
+        assert!(surface_text.contains("file-a"));
+        assert!(surface_text.contains("file-b"));
+    }
+
+    #[test]
     fn actor_pane_output_handoff_flushes_large_output_in_ordered_chunks() {
         let mut actor = SessionActor::initial(64);
         let mut output = Vec::new();
@@ -20596,12 +20626,22 @@ mod tests {
         events: Vec<HostEvent>,
         output: VecDeque<Vec<u8>>,
         pending: VecDeque<u8>,
+        notify_pipe: Option<TestNotifyPipe>,
     }
 
     impl ScriptedOutputHost {
         fn new(output: Vec<Vec<u8>>) -> Self {
             Self {
                 output: output.into(),
+                ..Self::default()
+            }
+        }
+
+        fn with_ready_notify(output: Vec<Vec<u8>>) -> Self {
+            let notify_pipe = TestNotifyPipe::ready().expect("create test notify pipe");
+            Self {
+                output: output.into(),
+                notify_pipe: Some(notify_pipe),
                 ..Self::default()
             }
         }
@@ -20696,6 +20736,66 @@ mod tests {
             }
             Ok(count)
         }
+
+        fn notify_fd(&self) -> Option<std::os::fd::RawFd> {
+            self.notify_pipe.as_ref().map(|pipe| pipe.read_fd)
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestNotifyPipe {
+        read_fd: std::os::fd::RawFd,
+        write_fd: std::os::fd::RawFd,
+    }
+
+    impl TestNotifyPipe {
+        fn ready() -> std::io::Result<Self> {
+            let mut fds = [-1; 2];
+            // SAFETY: fds points to two valid c_int slots for pipe(2) to fill.
+            if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            for fd in fds {
+                if let Err(error) = set_test_fd_nonblocking(fd) {
+                    // SAFETY: fds were opened by pipe(2) above and are owned here.
+                    unsafe {
+                        libc::close(fds[0]);
+                        libc::close(fds[1]);
+                    }
+                    return Err(error);
+                }
+            }
+            let byte = [1_u8];
+            // SAFETY: fds[1] is a valid pipe write fd and byte is a valid one-byte buffer.
+            let _ = unsafe { libc::write(fds[1], byte.as_ptr().cast(), byte.len()) };
+            Ok(Self {
+                read_fd: fds[0],
+                write_fd: fds[1],
+            })
+        }
+    }
+
+    impl Drop for TestNotifyPipe {
+        fn drop(&mut self) {
+            // SAFETY: both fds are owned by this test pipe.
+            unsafe {
+                libc::close(self.read_fd);
+                libc::close(self.write_fd);
+            }
+        }
+    }
+
+    fn set_test_fd_nonblocking(fd: std::os::fd::RawFd) -> std::io::Result<()> {
+        // SAFETY: fd is a valid file descriptor owned by the test pipe.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fd is valid and flags were just read successfully.
+        if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     #[derive(Debug, Default)]
